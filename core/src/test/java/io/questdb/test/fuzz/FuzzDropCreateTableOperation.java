@@ -26,7 +26,6 @@ package io.questdb.test.fuzz;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
@@ -40,19 +39,20 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.LongList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 
 public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
     static final Log LOG = LogFactory.getLog(FuzzDropCreateTableOperation.class);
+    private boolean dedupTsColumn;
     private boolean isWal;
     private RecordMetadata recreateTableMetadata;
     private String tableName;
-    private boolean dedupTsColumn;
 
     @Override
-    public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex) {
+    public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex, LongList excludedTsIntervals) {
         TableToken tableToken = tableWriter.getTableToken();
         tableName = tableToken.getTableName();
         isWal = engine.isWalTable(tableToken);
@@ -63,7 +63,7 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
             engine.releaseInactive();
             while (true) {
                 try {
-                    LOG.info().$("dropping table ").$(tableToken.getDirName()).$();
+                    LOG.info().$("dropping table ").$(tableToken).$();
                     engine.dropTableOrMatView(path, tableToken);
                     break;
                 } catch (CairoException ignore) {
@@ -128,7 +128,6 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
         GenericRecordMetadata newMeta = new GenericRecordMetadata();
         int tsIndex = -1;
         int denseIndex = 0;
-        int tableReaderIndex = 0;
         for (int i = 0; i < metadata.getColumnCount(); i++) {
             int type = metadata.getColumnType(i);
             if (type > 0) {

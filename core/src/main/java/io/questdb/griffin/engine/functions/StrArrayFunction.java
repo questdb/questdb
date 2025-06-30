@@ -26,7 +26,9 @@ package io.questdb.griffin.engine.functions;
 
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.BinarySequence;
@@ -36,7 +38,18 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
-public abstract class StrArrayFunction implements Function {
+public abstract class StrArrayFunction implements Function, FunctionExtension {
+
+    @Override
+    public FunctionExtension extendedOps() {
+        throw new UnsupportedOperationException("Implementation error! StrArrayFunction must return a FunctionExtension");
+    }
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
     @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
@@ -143,11 +156,6 @@ public abstract class StrArrayFunction implements Function {
     }
 
     @Override
-    public Record getRecord(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public final RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
     }
@@ -172,10 +180,9 @@ public abstract class StrArrayFunction implements Function {
         throw new UnsupportedOperationException();
     }
 
-    // array type is not yet supported, this is a stub type to implement pg_* views
     @Override
     public final int getType() {
-        return ColumnType.STRING;
+        return ColumnType.ARRAY_STRING;
     }
 
     @Override

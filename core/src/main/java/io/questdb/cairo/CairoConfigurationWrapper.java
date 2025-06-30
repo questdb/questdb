@@ -172,6 +172,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getCommitLatency() {
+        return getDelegate().getCommitLatency();
+    }
+
+    @Override
     public int getCommitMode() {
         return getDelegate().getCommitMode();
     }
@@ -1318,6 +1323,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean mangleTableDirNames() {
         return getDelegate().mangleTableDirNames();
+    }
+
+    @Override
+    public int maxArrayElementCount() {
+        return getDelegate().maxArrayElementCount();
     }
 
     public void setDelegate(CairoConfiguration delegate) {

@@ -63,6 +63,7 @@ public class FuzzTransactionGenerator {
             double probabilityOfTruncate,
             double probabilityOfDropTable,
             double probabilityOfSetTtl,
+            double replaceInsertProb,
             int maxStrLenForStrColumns,
             String[] symbols,
             int metaVersion
@@ -213,7 +214,13 @@ public class FuzzTransactionGenerator {
                 }
                 stopTs = Math.min(startTs + size, maxTimestamp);
 
-                generateDataBlock(
+                // Replace commits with TTL may result in partition drop, if the data is deleted from WAL table at the end
+                // it'll be the reason to drop prior partitions because of the TTL.
+                // Non-wal tables don't have the replaced data inserted, and they will not drop partitions
+                // because of TTL, and it will generate expected vs actual difference.
+                // The workaround is to not generate replace inserts on the tables with TTL set.
+                boolean replaceInsert = rnd.nextDouble() < replaceInsertProb && (setTtlIteration < 0 || i < setTtlIteration);
+                waitBarrierVersion = generateDataBlock(
                         transactionList,
                         rnd,
                         metaVersion,
@@ -228,7 +235,8 @@ public class FuzzTransactionGenerator {
                         probabilityOfTransactionRollback,
                         maxStrLenForStrColumns,
                         symbols,
-                        probabilityOfSameTimestamp
+                        probabilityOfSameTimestamp,
+                        replaceInsert
                 );
                 rowCount -= blockRows;
                 lastTimestamp = stopTs;
@@ -306,6 +314,8 @@ public class FuzzTransactionGenerator {
                 return ColumnType.getGeoHashTypeWithBits(25);
             case ColumnType.GEOLONG:
                 return ColumnType.getGeoHashTypeWithBits(35);
+            case ColumnType.ARRAY:
+                return ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
             default:
                 return columnType;
         }
@@ -427,7 +437,7 @@ public class FuzzTransactionGenerator {
         return newMeta;
     }
 
-    static void generateDataBlock(
+    static int generateDataBlock(
             ObjList<FuzzTransaction> transactionList,
             Rnd rnd,
             int metadataVersion,
@@ -442,11 +452,15 @@ public class FuzzTransactionGenerator {
             double rollback,
             int strLen,
             String[] symbols,
-            double probabilityOfRowsSameTimestamp
+            double probabilityOfRowsSameTimestamp,
+            boolean replaceInsert
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
         long timestamp = startTs;
         final long delta = stopTs - startTs;
+        long minTs = Long.MAX_VALUE;
+        long maxTs = Long.MIN_VALUE;
+
         for (int i = 0; i < rowCount; i++) {
             // Don't change timestamp sometimes with probabilityOfRowsSameTimestamp
             if (rnd.nextDouble() >= probabilityOfRowsSameTimestamp) {
@@ -459,12 +473,34 @@ public class FuzzTransactionGenerator {
             long seed1 = rnd.nextLong();
             long seed2 = rnd.nextLong();
             transaction.operationList.add(new FuzzInsertOperation(seed1, seed2, timestamp, notSet, nullSet, cancelRows, strLen, symbols));
+            minTs = Math.min(minTs, timestamp);
+            maxTs = Math.max(maxTs, timestamp);
         }
 
         transaction.rollback = rnd.nextDouble() < rollback;
         transaction.structureVersion = metadataVersion;
         transaction.waitBarrierVersion = waitBarrierVersion;
         transactionList.add(transaction);
+
+        if (replaceInsert) {
+            minTs = minTs - (long) Math.exp(24);
+            maxTs = maxTs + (long) Math.exp(24);
+            if (!transaction.rollback) {
+                // Add up to 2 partition to the range from each side to make things more interesting
+                transaction.setReplaceRange(minTs, maxTs);
+
+                return waitBarrierVersion + 1;
+            } else if (rnd.nextBoolean()) {
+                // Instead of rollback, insert empty replace range
+                transaction.operationList.clear();
+                transaction.rollback = false;
+                transaction.setReplaceRange(minTs, maxTs);
+
+                return waitBarrierVersion + 1;
+            }
+        }
+
+        return waitBarrierVersion;
     }
 
     static RecordMetadata generateDropColumn(

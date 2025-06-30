@@ -24,7 +24,16 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitFailedException;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.log.Log;
@@ -245,13 +254,17 @@ class LineTcpMeasurementEvent implements Closeable {
                         row.putLong128(colIndex, buffer.readLong(address), buffer.readLong(address + Long.BYTES));
                         address += Long.BYTES * 2;
                         break;
-                    case LineTcpParser.ENTITY_TYPE_VARCHAR: {
+                    case LineTcpParser.ENTITY_TYPE_VARCHAR:
                         final boolean ascii = buffer.readByte(address++) == 0;
                         Utf8Sequence s = buffer.readVarchar(address, ascii);
                         row.putVarchar(colIndex, s);
                         address += Integer.BYTES + s.size();
-                    }
-                    break;
+                        break;
+                    case LineTcpParser.ENTITY_TYPE_ARRAY:
+                        ArrayView array = buffer.readArray(address);
+                        row.putArray(colIndex, array);
+                        address += buffer.columnValueLength(entityType, address);
+                        break;
                     case ENTITY_TYPE_NULL:
                         // ignored, default nulls is used
                         break;
@@ -266,7 +279,7 @@ class LineTcpMeasurementEvent implements Closeable {
         } catch (Throwable th) {
             LOG.error()
                     .$("could not write line protocol measurement [tableName=").$(tableUpdateDetails.getTableToken())
-                    .$(", message=").$(th.getMessage())
+                    .$(", message=").$safe(th.getMessage())
                     .$(th)
                     .I$();
             if (row != null) {
@@ -315,7 +328,7 @@ class LineTcpMeasurementEvent implements Closeable {
                 if (autoCreateNewColumns && TableUtils.isValidColumnName(colNameUtf16, maxColumnNameLength)) {
                     securityContext.authorizeAlterTableAddColumn(tud.getTableToken());
                     offset = buffer.addColumnName(offset, colNameUtf16, securityContext.getPrincipal());
-                    colType = localDetails.getColumnType(localDetails.getColNameUtf8(), entityType);
+                    colType = localDetails.getColumnType(localDetails.getColNameUtf8(), entity);
                 } else if (!autoCreateNewColumns) {
                     throw newColumnsNotAllowed(colNameUtf16, tableUpdateDetails.getTableNameUtf16());
                 } else {
@@ -563,6 +576,13 @@ class LineTcpMeasurementEvent implements Closeable {
                     }
                     break;
                 }
+                case LineTcpParser.ENTITY_TYPE_ARRAY:
+                    BorrowedArray array = entity.getArray();
+                    if (array.getType() != colType && !array.isNull()) {
+                        throw castError(tud.getTableNameUtf16(), ColumnType.nameOf(array.getType()), colType, entity.getName());
+                    }
+                    offset = buffer.addArray(offset, array);
+                    break;
                 case ENTITY_TYPE_NULL:
                     offset = buffer.addNull(offset);
                     break;

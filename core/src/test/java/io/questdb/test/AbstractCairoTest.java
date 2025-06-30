@@ -125,7 +125,6 @@ import org.junit.runner.Description;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.Map;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -555,7 +554,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     public void tearDown(boolean removeDir) {
-        LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
+        LOG.info().$("Tearing down test ").$safe(getClass().getSimpleName()).$('#').$safe(testName.getMethodName()).$();
         forEachNode(node -> node.tearDownCairo(removeDir));
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
@@ -1076,6 +1075,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             try {
                 code.run();
                 forEachNode(node -> releaseInactive(node.getEngine()));
+                CLOSEABLES.forEach(Misc::free);
             } catch (Throwable th) {
                 LOG.error().$("Error in test: ").$(th).$();
                 throw th;
@@ -1271,9 +1271,17 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
 
             if (expectAscendingOrder) {
-                Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_FORWARD, factory.getScanDirection());
+                try {
+                    Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_FORWARD, factory.getScanDirection());
+                } catch (AssertionError e) {
+                    throw new AssertionError("expected ASCENDING timestamp", e);
+                }
             } else {
-                Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_BACKWARD, factory.getScanDirection());
+                try {
+                    Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_BACKWARD, factory.getScanDirection());
+                } catch (AssertionError e) {
+                    throw new AssertionError("expected DESCENDING timestamp", e);
+                }
             }
 
             int index = factory.getMetadata().getColumnIndexQuiet(expectedTimestamp);
@@ -1307,10 +1315,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
         }
         assertFactoryMemoryUsage();
-    }
-
-    protected static void configOverrideEnv(Map<String, String> env) {
-        node1.getConfigurationOverrides().setEnv(env);
     }
 
     protected static void configOverrideRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {
@@ -1659,8 +1663,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
             boolean expectSize,
             boolean sizeCanBeVariable
     ) throws SqlException {
-        assertTimestamp(expectedTimestamp, factory, executionContext);
         assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
+        // v Please keep this check after ^ that one.
+        // Factories that have a scan order dependent on the bind variable will not test correctly.
+        // See generate_series
+        assertTimestamp(expectedTimestamp, factory, executionContext);
         // make sure we get the same outcome when we get factory to create new cursor
         assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
         // make sure strings, binary fields and symbols are compliant with expected record behaviour

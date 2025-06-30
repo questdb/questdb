@@ -126,11 +126,13 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
      *
      * @param offset position from 0 in virtual memory.
      */
+    @Override
     public void jumpTo(long offset) {
         checkAndExtend(pageAddress + offset);
         appendAddress = pageAddress + offset;
     }
 
+    @Override
     public final void putLong256(@NotNull CharSequence hexString, int start, int end) {
         putLong256(hexString, start, end, long256Acceptor);
     }
@@ -244,7 +246,11 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
 
     protected long reallocateMemory(long currentBaseAddress, long currentSize, long newSize) {
         if (currentBaseAddress != 0) {
-            return Unsafe.realloc(currentBaseAddress, currentSize, newSize, memoryTag);
+            if (currentSize != newSize) {
+                return Unsafe.realloc(currentBaseAddress, currentSize, newSize, memoryTag);
+            } else {
+                return currentBaseAddress;
+            }
         }
         return Unsafe.malloc(newSize, memoryTag);
     }

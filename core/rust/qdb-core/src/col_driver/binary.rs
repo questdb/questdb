@@ -197,7 +197,7 @@ mod tests {
 
         // out of range
         let err = BinaryDriver.col_sizes_for_row_count(&col, 6).unwrap_err();
-        let msg = format!("{:#}", err);
+        let msg = format!("{err:#}");
         // eprintln!("{}", &msg);
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("binary entry index 6 not found in aux for column b1 in"));
@@ -213,7 +213,7 @@ mod tests {
 
         // out of range
         let err = BinaryDriver.col_sizes_for_row_count(&col, 1).unwrap_err();
-        let msg = format!("{:#}", err);
+        let msg = format!("{err:#}");
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         // eprintln!("{msg}");
         assert!(msg.contains("binary entry index 1 not found in aux for column bempty in"));

@@ -34,6 +34,8 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
@@ -725,6 +727,24 @@ public class WalWriterTest extends AbstractCairoTest {
                 final WalEventCursor eventCursor = reader.getEventCursor();
                 assertFalse(eventCursor.hasNext());
             }
+        });
+    }
+
+    @Test
+    public void testDropIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            TableToken tableToken = createTable(testName.getMethodName());
+            execute("ALTER TABLE " + tableName + " ADD COLUMN sym SYMBOL INDEX");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym DROP INDEX");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN SYM DROP INDEX");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN SYM Add INDEX");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym DROP INDEX");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN SYm DROP INDEX");
+
+            drainWalQueue();
+
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
         });
     }
 
@@ -1805,7 +1825,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 if (rnd.nextBoolean()) {
                     walWriter.commit();
                 } else {
-                    walWriter.commitMatView(0, 0);
+                    walWriter.commitMatView(0, 0, 0, 0);
                 }
 
                 drainWalQueue();
@@ -2073,6 +2093,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     .col("IPv4", ColumnType.IPv4)
                     .col("varchara", ColumnType.VARCHAR)
                     .col("varcharb", ColumnType.VARCHAR)
+                    .col("array", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
                     .timestamp("ts")
                     .wal();
             tableToken = createTable(model);
@@ -2087,7 +2108,9 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 final String walName;
                 final IntList walSymbolCounts = new IntList();
-                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                     DirectArray array = new DirectArray()) {
+
                     assertEquals(tableName, walWriter.getTableToken().getTableName());
                     walName = walWriter.getWalName();
                     for (int i = 0; i < rowsToInsertTotal; i++) {
@@ -2145,6 +2168,15 @@ public class WalWriterTest extends AbstractCairoTest {
                         row.putVarchar(31, new Utf8String(String.valueOf(i)));
                         row.putVarchar(32, null);
 
+                        array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+                        int arrLen = i % 10;
+                        array.setDimLen(0, arrLen);
+                        array.applyShape();
+                        for (int j = 0; j < arrLen; j++) {
+                            array.putDouble(j, i + j);
+                        }
+                        row.putArray(33, array);
+
                         row.append();
                     }
 
@@ -2158,7 +2190,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
 
                 try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowsToInsertTotal)) {
-                    assertEquals(34, reader.getColumnCount());
+                    assertEquals(35, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
                     assertEquals(rowsToInsertTotal, reader.size());
@@ -2234,8 +2266,15 @@ public class WalWriterTest extends AbstractCairoTest {
                         assertNull(record.getVarcharB(32));
                         // the string is ascii, so length is same as size
                         assertEquals(-1, record.getVarcharSize(32));
+                        ArrayView array = record.getArray(33, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+                        assertEquals(1, array.getDimCount());
+                        assertEquals(i % 10, array.getCardinality());
+                        assertEquals(i % 10, array.getDimLen(0));
+                        for (int j = 0; j < array.getCardinality(); j++) {
+                            assertEquals(i + j, array.getDouble(j), 0.0001);
+                        }
 
-                        assertEquals(ts, record.getTimestamp(33));
+                        assertEquals(ts, record.getTimestamp(34));
                         assertEquals(i, record.getRowId());
                         testSink.clear();
                         ((Sinkable) record).toSink(testSink);
@@ -4116,7 +4155,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     row.putSym(1, "sym" + i);
                     row.append();
                     if (i == 1) {
-                        walWriter.commitMatView(42, 42);
+                        walWriter.commitMatView(42, 42, 0, 1);
                     } else {
                         walWriter.commit();
                     }
@@ -4213,7 +4252,7 @@ public class WalWriterTest extends AbstractCairoTest {
         TableToken tableToken = createTable(model);
         try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
             for (int i = 0; i < 10; i++) {
-                TableWriter.Row row = walWriter.newRow(0);
+                TableWriter.Row row = walWriter.newRow(i);
                 row.putByte(0, (byte) i);
                 row.putSym(1, "sym" + i);
                 row.append();
@@ -4222,7 +4261,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     walWriter.commit();
                 } else {
                     if (newFormat) {
-                        walWriter.commitMatView(refreshTxn + i, i);
+                        walWriter.commitMatView(refreshTxn + i, i, i, i + 1);
                     } else {
                         walWriter.commit();
                     }

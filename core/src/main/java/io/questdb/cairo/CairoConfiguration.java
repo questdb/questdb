@@ -142,9 +142,7 @@ public interface CairoConfiguration {
 
     int getColumnPurgeTaskPoolCapacity();
 
-    default long getCommitLatency() {
-        return 30_000_000; // 30s
-    }
+    long getCommitLatency();
 
     int getCommitMode();
 
@@ -742,6 +740,8 @@ public interface CairoConfiguration {
      * @return true if mangling of directory names for non-WAL tables is enabled, false otherwise.
      */
     boolean mangleTableDirNames();
+
+    int maxArrayElementCount();
 
     boolean useFastAsOfJoin();
 

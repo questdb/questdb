@@ -217,7 +217,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     pool.close();
                     Assert.fail();
                 } catch (CairoException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), reader.getTableToken().getDirName() + "' is left behind");
+                    TestUtils.assertContains(ex.getFlyweightMessage(),
+                            "table is left behind on pool shutdown [table=" + reader.getTableToken().getDirName() + "]");
                 }
                 Assert.assertTrue(reader.isOpen());
             }
@@ -233,7 +234,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 pool.close();
                 Assert.fail();
             } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), reader.getTableToken().getDirName() + "' is left behind");
+                TestUtils.assertContains(ex.getFlyweightMessage(),
+                        "table is left behind on pool shutdown [table=" + reader.getTableToken().getDirName() + "]");
             }
             Assert.assertTrue(reader.isOpen());
             reader.close();
@@ -855,8 +857,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         barrier.await();
                         pool.close();
                     } catch (CairoException e) {
-                        // "is left behind" exception is a valid outcome, ignore it
-                        if (!Chars.contains(e.getFlyweightMessage(), xyzTableToken.getDirName() + "' is left behind")) {
+                        // "table is left behind" exception is a valid outcome, ignore it
+                        if (!Chars.contains(e.getFlyweightMessage(), "table is left behind on pool shutdown")) {
                             exceptionCount.incrementAndGet();
                             e.printStackTrace();
                         }

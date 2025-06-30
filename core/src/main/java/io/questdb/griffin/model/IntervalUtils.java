@@ -314,6 +314,7 @@ public final class IntervalUtils {
         intervals.setPos(writeIndex);
     }
 
+    // Checks if the timestamp is in the intervals, both sides inclusive.
     public static boolean isInIntervals(LongList intervals, long timestamp) {
         return findInterval(intervals, timestamp) != -1;
     }

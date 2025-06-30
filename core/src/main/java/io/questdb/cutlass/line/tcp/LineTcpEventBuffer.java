@@ -27,13 +27,27 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
+import io.questdb.cairo.arr.BorrowedFlatArrayView;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Long128;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Uuid;
+import io.questdb.std.Vect;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.FlyweightDirectUtf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
 
 public class LineTcpEventBuffer {
+    private final BorrowedArray borrowedDirectArrayView = new BorrowedArray();
     private final long bufLo;
     private final long bufSize;
     private final FlyweightDirectUtf16Sink tempSink = new FlyweightDirectUtf16Sink();
@@ -43,6 +57,38 @@ public class LineTcpEventBuffer {
     public LineTcpEventBuffer(long bufLo, long bufSize) {
         this.bufLo = bufLo;
         this.bufSize = bufLo + bufSize;
+    }
+
+    public long addArray(long address, BorrowedArray arrayView) {
+        if (arrayView == null) {
+            return addNull(address);
+        }
+
+        int dims = arrayView.getDimCount();
+        BorrowedFlatArrayView values = (BorrowedFlatArrayView) arrayView.flatView();
+
+        // record totalLength to trade space for time.
+        // +-------------+-------------+-------------+------------------------+--------------------+
+        // |  type flag  | totalLength |  arrayType  |       shapes           |    flat values     |
+        // +-------------+-------------+-------------+------------------------+--------------------+
+        // |    1 byte   |   4 bytes   |  4 bytes    |     $dims * 4 bytes    |                    |
+        // +-------------+-------------+-------------+------------------------+--------------------+
+        int totalLength = Integer.BYTES + Integer.BYTES + dims * Integer.BYTES + values.size();
+        // non-wal tables do not support large array ingestion.
+        checkCapacity(address, totalLength + Byte.BYTES);
+        Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_ARRAY);
+        address += Byte.BYTES;
+        Unsafe.getUnsafe().putInt(address, totalLength);
+        address += Integer.BYTES;
+        Unsafe.getUnsafe().putInt(address, arrayView.getType());
+        address += Integer.BYTES;
+        for (int i = 0; i < dims; i++) {
+            Unsafe.getUnsafe().putInt(address, arrayView.getDimLen(i));
+            address += Integer.BYTES;
+        }
+        Vect.memcpy(address, values.ptr(), values.size());
+        address += values.size();
+        return address;
     }
 
     public long addBoolean(long address, byte value) {
@@ -268,7 +314,7 @@ public class LineTcpEventBuffer {
         Unsafe.getUnsafe().putInt(address, valueSize);
         address += Integer.BYTES;
         value.writeTo(address, 0, valueSize);
-        return address + totalSize;
+        return address + valueSize;
     }
 
     public long columnValueLength(byte entityType, long offset) {
@@ -303,6 +349,8 @@ public class LineTcpEventBuffer {
                 return Double.BYTES;
             case LineTcpParser.ENTITY_TYPE_UUID:
                 return Long128.BYTES;
+            case LineTcpParser.ENTITY_TYPE_ARRAY:
+                return readInt(offset);
             case ENTITY_TYPE_NULL:
                 return 0;
             default:
@@ -317,6 +365,21 @@ public class LineTcpEventBuffer {
     public long getAddressAfterHeader() {
         // The header contains structure version (long), timestamp (long) and number of columns (int).
         return bufLo + 2 * Long.BYTES + Integer.BYTES;
+    }
+
+    public ArrayView readArray(long address) {
+        int totalSize = readInt(address);
+        address += Integer.BYTES;
+        int type = readInt(address);
+        address += Integer.BYTES;
+        int dims = ColumnType.decodeArrayDimensionality(type);
+        borrowedDirectArrayView.of(
+                type,
+                address,
+                address + (long) dims * Integer.BYTES,
+                totalSize - (dims + 2) * Integer.BYTES
+        );
+        return borrowedDirectArrayView;
     }
 
     public byte readByte(long address) {

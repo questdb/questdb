@@ -27,7 +27,13 @@ package io.questdb.cutlass.text;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.std.*;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.SwarUtils;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8String;
 
 import java.io.Closeable;
@@ -112,7 +118,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         if (useLineRollBuf) {
             if (inQuote && lastQuotePos < fieldHi) {
                 errorCount++;
-                LOG.info().$("quote is missing [table=").$(tableName).$(']').$();
+                LOG.info().$("quote is missing [table=").$safe(tableName).$(']').$();
             } else {
                 this.fieldHi++;
                 stashField(fieldIndex);
@@ -203,7 +209,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
 
     private void extraField(int fieldIndex) {
         LogRecord logRecord = LOG.error()
-                .$("extra fields [table=").$(tableName)
+                .$("extra fields [table=").$safe(tableName)
                 .$(", fieldIndex=").$(fieldIndex)
                 .$(", fieldMax=").$(fieldMax)
                 .$("]\n\t").$(lineCount)
@@ -232,7 +238,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     private boolean growRollBuf(int requiredLength, boolean updateFields) {
         if (requiredLength > lineRollBufLimit) {
             LOG.info()
-                    .$("too long [table=").$(tableName)
+                    .$("too long [table=").$safe(tableName)
                     .$(", line=").$(lineCount)
                     .$(", requiredLen=").$(requiredLength)
                     .$(", rollLimit=").$(lineRollBufLimit)
@@ -243,7 +249,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         }
 
         final int len = Math.min(lineRollBufLimit, requiredLength << 1);
-        LOG.info().$("resizing ").$(lineRollBufSize).$(" -> ").$(len).$(" [table=").$(tableName).$(']').$();
+        LOG.info().$("resizing ").$(lineRollBufSize).$(" -> ").$(len).$(" [table=").$safe(tableName).$(']').$();
         long p = Unsafe.malloc(len, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         long l = lineRollBufCur - lineRollBufPtr;
         if (l > 0) {

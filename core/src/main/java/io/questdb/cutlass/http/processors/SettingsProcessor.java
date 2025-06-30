@@ -83,6 +83,11 @@ public class SettingsProcessor implements HttpRequestHandler {
         }
 
         @Override
+        public boolean ignoreConnectionLimitCheck() {
+            return true;
+        }
+
+        @Override
         public void onHeadersReady(HttpConnectionContext context) {
             final Utf8StringSink settings = LV_GET_SINK.get(context);
             if (settings == null) {
@@ -147,7 +152,7 @@ public class SettingsProcessor implements HttpRequestHandler {
                 settingsStore.save(transientState.utf8Sink, mode, version);
                 sendOk();
             } catch (CairoException e) {
-                LOG.error().$("could not save preferences [msg=").$(e.getFlyweightMessage()).I$();
+                LOG.error().$("could not save preferences [msg=").$safe(e.getFlyweightMessage()).I$();
                 sendErr(e);
             } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
                 throw e;

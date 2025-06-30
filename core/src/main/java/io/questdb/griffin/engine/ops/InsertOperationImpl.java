@@ -61,6 +61,7 @@ public class InsertOperationImpl implements InsertOperation {
 
     @Override
     public void close() {
+        Misc.free(insertMethod);
         Misc.freeObjList(insertRows);
     }
 

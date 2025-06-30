@@ -294,7 +294,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 case TableUtils.TABLE_EXISTS:
                     if (!ff.rmdir(path)) {
                         LOG.error()
-                                .$("could not overwrite table [tableName='").utf8(tableName)
+                                .$("could not overwrite table [tableName='").$safe(tableName)
                                 .$("',path='").$(path)
                                 .$(", errno=").$(ff.errno())
                                 .I$();
@@ -675,7 +675,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         } catch (TextImportException e) {
             LOG.error()
                     .$("could not import [phase=").$(CopyTask.getPhaseName(e.getPhase()))
-                    .$(", ex=").$(e.getFlyweightMessage())
+                    .$(", ex=").$safe(e.getFlyweightMessage())
                     .I$();
             throw e;
         }
@@ -951,7 +951,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void logTypeError(int i, int type) {
         LOG.info()
-                .$("mis-detected [table=").$(tableName)
+                .$("mis-detected [table=").$safe(tableName)
                 .$(", column=").$(i)
                 .$(", type=").$(ColumnType.nameOf(type))
                 .$(", workerCount=").$(workerCount)

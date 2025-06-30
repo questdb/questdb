@@ -201,6 +201,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getCommitLatency() {
+        return 30_000_000; // 30s
+    }
+
+    @Override
     public int getCommitMode() {
         return CommitMode.NOSYNC;
     }
@@ -1338,6 +1343,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean mangleTableDirNames() {
         return false;
+    }
+
+    @Override
+    public int maxArrayElementCount() {
+        return 1_000_000;
     }
 
     @Override
