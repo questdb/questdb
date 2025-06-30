@@ -151,6 +151,7 @@ public class SqlOptimiser implements Mutable {
     private final LiteralRewritingVisitor literalRewritingVisitor = new LiteralRewritingVisitor();
     private final int maxRecursion;
     private final CharSequenceHashSet missingDependedTokens = new CharSequenceHashSet();
+    private final AtomicInteger nonAggSelectCount = new AtomicInteger(0);
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntSortedList orderingStack = new IntSortedList();
     private final Path path;
@@ -1843,6 +1844,12 @@ public class SqlOptimiser implements Mutable {
                 if (found) {
                     return nextLiteral(map.valueAtQuick(index), node.position);
                 }
+            }
+
+            // also search the virtual model and do not register the literal with the
+            // translating model if this is a projection only reference.
+            if (baseModel.getAliasToColumnMap().excludes(node.token) && innerVirtualModel.getAliasToColumnMap().contains(node.token)) {
+                return node;
             }
 
             // this is the first time we've seen this column and must create alias
@@ -6092,7 +6099,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         groupByUsed.setAll(groupBy.size(), false);
-        AtomicInteger nonAggSelectCount = new AtomicInteger(0);
+        nonAggSelectCount.set(0);
 
         // create virtual columns from select list
         for (int i = 0, k = columns.size(); i < k; i++) {

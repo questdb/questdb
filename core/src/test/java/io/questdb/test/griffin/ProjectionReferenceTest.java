@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class ProjectionReferenceTest extends AbstractCairoTest {
@@ -119,7 +118,6 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore("Broken test, needs investigation")
     public void testJoinWithProjectionReference() throws Exception {
         execute("create table orders (id int, amount int)");
         execute("create table customers (id int, name string)");
@@ -128,11 +126,16 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
 
         assertQuery(
                 "order_id\tcustomer_name\tamount\ttax\ttotal\n" +
-                        "1\tAlice\t100\t10\t110\n" +
-                        "2\tBob\t200\t20\t220\n",
-                "select o.id as order_id, c.name as customer_name, o.amount, " +
-                        "o.amount * 0.1 as tax, o.amount + tax as total " +
-                        "from orders o join customers c on o.id = c.id",
+                        "1\tAlice\t100\t10.0\t110.0\n" +
+                        "2\tBob\t200\t20.0\t220.0\n",
+                "select" +
+                        " o.id as order_id," +
+                        " c.name as customer_name," +
+                        " o.amount," +
+                        " o.amount * 0.1 as tax," +
+                        " o.amount + tax as total" +
+                        " from orders o join customers c on o.id = c.id",
+                false,
                 true
         );
     }
