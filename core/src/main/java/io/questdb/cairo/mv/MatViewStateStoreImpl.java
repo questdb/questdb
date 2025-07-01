@@ -127,18 +127,23 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     }
 
     @Override
+    public void enqueueCacheTxnIntervals(TableToken matViewToken) {
+        enqueueTaskIfStateExists(matViewToken, MatViewRefreshTask.CACHE_TXN_INTERVALS, null);
+    }
+
+    @Override
     public void enqueueFullRefresh(TableToken matViewToken) {
-        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.FULL_REFRESH, null);
+        enqueueTaskIfStateExists(matViewToken, MatViewRefreshTask.FULL_REFRESH, null);
     }
 
     @Override
     public void enqueueIncrementalRefresh(TableToken matViewToken) {
-        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.INCREMENTAL_REFRESH, null);
+        enqueueTaskIfStateExists(matViewToken, MatViewRefreshTask.INCREMENTAL_REFRESH, null);
     }
 
     @Override
     public void enqueueInvalidate(TableToken matViewToken, String invalidationReason) {
-        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.INVALIDATE, invalidationReason);
+        enqueueTaskIfStateExists(matViewToken, MatViewRefreshTask.INVALIDATE, invalidationReason);
     }
 
     @Override
@@ -155,10 +160,10 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
 
     @Override
     public void enqueueRangeRefresh(TableToken matViewToken, long rangeFrom, long rangeTo) {
-        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.RANGE_REFRESH, null, rangeFrom, rangeTo);
+        enqueueTaskIfStateExists(matViewToken, MatViewRefreshTask.RANGE_REFRESH, null, rangeFrom, rangeTo);
     }
 
-    public void enqueueRefreshTaskIfStateExists(
+    public void enqueueTaskIfStateExists(
             TableToken matViewToken,
             int operation,
             String invalidationReason,
@@ -169,10 +174,6 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         if (state != null && !state.isDropped()) {
             enqueueMatViewTask(matViewToken, null, operation, invalidationReason, rangeFrom, rangeTo);
         }
-    }
-
-    public void enqueueRefreshTaskIfStateExists(TableToken matViewToken, int operation, String invalidationReason) {
-        enqueueRefreshTaskIfStateExists(matViewToken, operation, invalidationReason, Numbers.LONG_NULL, Numbers.LONG_NULL);
     }
 
     @Override
@@ -272,6 +273,10 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
             task.refreshTriggerTimestamp = microsecondClock.getTicks();
         }
         taskQueue.enqueue(task);
+    }
+
+    private void enqueueTaskIfStateExists(TableToken matViewToken, int operation, String invalidationReason) {
+        enqueueTaskIfStateExists(matViewToken, operation, invalidationReason, Numbers.LONG_NULL, Numbers.LONG_NULL);
     }
 
     private void storeMatViewTelemetry(short event, TableToken tableToken, long baseTableTxn, CharSequence errorMessage, long latencyUs) {

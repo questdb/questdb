@@ -355,7 +355,7 @@ public class MatViewState implements QuietCloseable {
         this.lastRefreshBaseTxn = baseTableTxn;
         this.lastPeriodHi = periodHi;
         // Successful incremental refresh means that cached intervals were applied and should be evicted.
-        cachedIntervalsBaseTxn = -1;
+        this.cachedIntervalsBaseTxn = -1;
         cachedTxnIntervals.clear();
         telemetryFacade.store(
                 MAT_VIEW_REFRESH_SUCCESS,
@@ -377,7 +377,7 @@ public class MatViewState implements QuietCloseable {
         this.lastRefreshBaseTxn = baseTableTxn;
         this.lastPeriodHi = periodHi;
         // Successful incremental refresh means that cached intervals were applied and should be evicted.
-        cachedIntervalsBaseTxn = -1;
+        this.cachedIntervalsBaseTxn = -1;
         cachedTxnIntervals.clear();
         telemetryFacade.store(
                 MAT_VIEW_REFRESH_SUCCESS,

@@ -202,7 +202,8 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 assertSql(
                         "sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
                                 "1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z\n" +
-                                "2\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z\n",
+                                "2\t\t\n" +
+                                "3\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z\n",
                         "select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')"
                 );
 

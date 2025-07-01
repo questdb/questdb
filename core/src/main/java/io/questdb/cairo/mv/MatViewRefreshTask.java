@@ -29,6 +29,7 @@ import io.questdb.mp.ValueHolder;
 import io.questdb.std.Numbers;
 
 public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
+    public static final int CACHE_TXN_INTERVALS = 4;
     public static final int FULL_REFRESH = 1;
     public static final int INCREMENTAL_REFRESH = 0;
     public static final int INVALIDATE = 3;

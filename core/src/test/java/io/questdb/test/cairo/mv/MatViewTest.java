@@ -3992,7 +3992,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                             "base_price\tfalse\t2\t0\t2\t\t\t0\n" +
-                            "price_1h\ttrue\t1\t0\t2\t\t\t0\n",
+                            "price_1h\ttrue\t1\t0\t3\t\t\t0\n",
                     "wal_tables()",
                     null,
                     false
@@ -4014,7 +4014,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                             "base_price\tfalse\t2\t0\t2\t\t\t0\n" +
-                            "price_1h\tfalse\t2\t0\t2\t\t\t0\n",
+                            "price_1h\tfalse\t3\t0\t3\t\t\t0\n",
                     "wal_tables()",
                     null,
                     false
@@ -4038,7 +4038,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                             "base_price\tfalse\t3\t0\t3\t\t\t0\n" +
-                            "price_1h\ttrue\t2\t0\t3\t\t\t0\n",
+                            "price_1h\ttrue\t3\t0\t5\t\t\t0\n",
                     "wal_tables()",
                     null,
                     false
@@ -4060,7 +4060,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                             "base_price\tfalse\t3\t0\t3\t\t\t0\n" +
-                            "price_1h\tfalse\t3\t0\t3\t\t\t0\n",
+                            "price_1h\tfalse\t5\t0\t5\t\t\t0\n",
                     "wal_tables()",
                     null,
                     false
@@ -5109,7 +5109,8 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
                             "1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z\n" +
-                            "2\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z\n",
+                            "2\t\t\n" +
+                            "3\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z\n",
                     "select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')",
                     null,
                     false

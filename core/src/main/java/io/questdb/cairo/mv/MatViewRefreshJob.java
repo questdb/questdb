@@ -171,6 +171,88 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    private void cacheTxnIntervals(@NotNull TableToken viewToken) {
+        final MatViewState viewState = stateStore.getViewState(viewToken);
+        if (viewState != null && !viewState.isPendingInvalidation() && !viewState.isInvalid() && !viewState.isDropped()) {
+            if (!viewState.tryLock()) {
+                LOG.debug().$("skipping WAL txn intervals caching, locked by a refresh run [view=").$(viewToken).I$();
+                stateStore.enqueueCacheTxnIntervals(viewToken);
+                return;
+            }
+
+            try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
+                final TableToken baseTableToken = verifyBaseTableToken(viewState, walWriter);
+                if (baseTableToken == null) {
+                    return;
+                }
+
+                try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
+                    cacheTxnIntervals0(baseTableReader, viewState, walWriter);
+                }
+            } catch (Throwable th) {
+                // If we're here, we couldn't obtain the WAL writer.
+                // Update the in-memory state and call it a day.
+                LOG.error()
+                        .$("could not get table writer for view [view=").$(viewToken)
+                        .$(", ex=").$(th)
+                        .I$();
+                refreshFailState(viewState, null, th);
+            } finally {
+                viewState.unlock();
+                viewState.tryCloseIfDropped();
+            }
+        }
+    }
+
+    private LongList cacheTxnIntervals0(
+            @NotNull TableReader baseTableReader,
+            @NotNull MatViewState viewState,
+            @NotNull WalWriter walWriter
+    ) {
+        assert viewState.isLocked();
+
+        final long lastTxn = baseTableReader.getSeqTxn();
+        final TableToken baseTableToken = baseTableReader.getTableToken();
+        final MatViewDefinition viewDefinition = viewState.getViewDefinition();
+        final TableToken viewToken = viewDefinition.getMatViewToken();
+        final long lastRefreshTxn = Math.max(viewState.getLastRefreshBaseTxn(), viewState.getCachedIntervalsBaseTxn());
+
+        if (lastRefreshTxn > -1) {
+            try {
+                intervals.clear();
+                txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, intervals, lastRefreshTxn, lastTxn);
+                if (intervals.size() > 0) {
+                    final int dividerIndex = viewState.getCachedTxnIntervals().size();
+                    viewState.getCachedTxnIntervals().addAll(intervals);
+                    // TODO(puzpuzpuz): put an upper cap to intervals size
+                    IntervalUtils.unionInPlace(viewState.getCachedTxnIntervals(), dividerIndex);
+                    viewState.setCachedIntervalsBaseTxn(lastTxn);
+                }
+
+                walWriter.resetMatViewState(
+                        viewState.getLastRefreshBaseTxn(),
+                        viewState.getLastRefreshFinishTimestamp(),
+                        false,
+                        null,
+                        viewState.getLastPeriodHi(),
+                        viewState.getCachedTxnIntervals(),
+                        viewState.getCachedIntervalsBaseTxn()
+                );
+
+                return viewState.getCachedTxnIntervals();
+            } catch (CairoException ex) {
+                LOG.error().$("could not read WAL transactions, falling back to full refresh [view=").$(viewToken)
+                        .$(", ex=").$safe(ex.getFlyweightMessage())
+                        .$(", errno=").$(ex.getErrno())
+                        .I$();
+                viewState.getCachedTxnIntervals().clear();
+                viewState.setCachedIntervalsBaseTxn(-1);
+            }
+        }
+
+        return null;
+    }
+
     private boolean checkIfBaseTableDropped(MatViewRefreshTask refreshTask) {
         final TableToken baseTableToken = refreshTask.baseTableToken;
         final TableToken viewToken = refreshTask.matViewToken;
@@ -197,14 +279,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private RefreshContext findRefreshIntervals(
             @NotNull TableReader baseTableReader,
             @NotNull MatViewState viewState,
+            @NotNull WalWriter walWriter,
             long lastRefreshTxn
     ) throws SqlException {
-        return findRefreshIntervals(baseTableReader, viewState, lastRefreshTxn, Numbers.LONG_NULL, Numbers.LONG_NULL);
+        return findRefreshIntervals(baseTableReader, viewState, walWriter, lastRefreshTxn, Numbers.LONG_NULL, Numbers.LONG_NULL);
     }
 
     private RefreshContext findRefreshIntervals(
             @NotNull TableReader baseTableReader,
             @NotNull MatViewState viewState,
+            @NotNull WalWriter walWriter,
             long lastRefreshTxn,
             long rangeFrom,
             long rangeTo
@@ -229,17 +313,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Let's find min/max timestamps in the new WAL transactions.
             if (lastRefreshTxn > -1) {
                 // It's a subsequent incremental refresh, so WalPurgeJob must be aware of us.
-                txnIntervals = intervals;
-                txnIntervals.clear();
-                try {
-                    txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, txnIntervals, lastRefreshTxn, lastTxn);
-                    minTs = txnRangeLoader.getMinTimestamp();
-                    maxTs = txnRangeLoader.getMaxTimestamp();
-                } catch (CairoException ex) {
-                    LOG.error().$("could not read WAL transactions, falling back to full refresh [view=").$(viewToken)
-                            .$(", ex=").$safe(ex.getFlyweightMessage())
-                            .$(", errno=").$(ex.getErrno())
-                            .I$();
+                txnIntervals = cacheTxnIntervals0(baseTableReader, viewState, walWriter);
+                if (txnIntervals != null) {
+                    if (txnIntervals.size() > 0) {
+                        // BAU incremental refresh.
+                        minTs = txnIntervals.getQuick(0);
+                        maxTs = txnIntervals.getQuick(txnIntervals.size() - 1);
+                    } // else - no data transactions, nothing to refresh
+                } else {
+                    // Looks like we need a full refresh.
+                    // We must have failed to read WAL transactions.
                     minTs = baseTableReader.getMinTimestamp();
                     maxTs = baseTableReader.getMaxTimestamp();
                 }
@@ -430,17 +513,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         final MatViewDefinition viewDefinition = viewState.getViewDefinition();
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
-            final TableToken baseTableToken;
-            final String baseTableName = viewState.getViewDefinition().getBaseTableName();
-            try {
-                baseTableToken = engine.verifyTableName(viewState.getViewDefinition().getBaseTableName());
-            } catch (CairoException e) {
-                LOG.error().$("could not perform full refresh, could not verify base table [view=").$(viewToken)
-                        .$(", baseTableName=").$(baseTableName)
-                        .$(", errno=").$(e.getErrno())
-                        .$(", errorMsg=").$safe(e.getFlyweightMessage())
-                        .I$();
-                refreshFailState(viewState, walWriter, e);
+            final TableToken baseTableToken = verifyBaseTableToken(viewState, walWriter);
+            if (baseTableToken == null) {
                 return false;
             }
 
@@ -465,7 +539,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     walWriter.truncateSoft();
                     resetInvalidState(viewState, walWriter);
 
-                    final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewState, Numbers.LONG_NULL);
+                    final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewState, walWriter, Numbers.LONG_NULL);
                     insertAsSelect(viewState, walWriter, refreshContext, refreshTriggerTimestamp);
                 } finally {
                     refreshSqlExecutionContext.clearReader();
@@ -889,6 +963,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 case MatViewRefreshTask.INVALIDATE:
                     invalidate(refreshTask);
                     break;
+                case MatViewRefreshTask.CACHE_TXN_INTERVALS:
+                    assert refreshTask.matViewToken != null;
+                    cacheTxnIntervals(refreshTask.matViewToken);
+                    break;
                 default:
                     throw new RuntimeException("unexpected operation: " + operation);
             }
@@ -947,7 +1025,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 engine.detachReader(baseTableReader);
                 refreshSqlExecutionContext.of(baseTableReader);
                 try {
-                    final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewState, Numbers.LONG_NULL, rangeFrom, rangeTo);
+                    final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewState, walWriter, Numbers.LONG_NULL, rangeFrom, rangeTo);
                     insertAsSelect(viewState, walWriter, refreshContext, refreshTriggerTimestamp);
                 } finally {
                     refreshSqlExecutionContext.clearReader();
@@ -998,10 +1076,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         childViewSink.clear();
         graph.getDependentViews(baseTableToken, childViewSink);
         for (int v = 0, n = childViewSink.size(); v < n; v++) {
-            TableToken viewToken = childViewSink.get(v);
+            final TableToken viewToken = childViewSink.get(v);
             final MatViewState viewState = stateStore.getViewState(viewToken);
             if (viewState != null && !viewState.isPendingInvalidation() && !viewState.isInvalid() && !viewState.isDropped()) {
                 if (viewState.getViewDefinition().getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
+                    // The refresh is not immediate, i.e. manual or timer.
+                    // To avoid blocking WalPurgeJob's progress, read WAL txn intervals into state-local cache
+                    // to use them later, when a refresh is triggered.
+                    cacheTxnIntervals(viewToken);
                     continue;
                 }
 
@@ -1010,6 +1092,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     stateStore.enqueueIncrementalRefresh(viewToken);
                     continue;
                 }
+
                 try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
                     try {
                         refreshed |= refreshIncremental0(baseTableToken, viewState, walWriter, refreshTriggerTimestamp);
@@ -1085,19 +1168,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
-        final String baseTableName = viewState.getViewDefinition().getBaseTableName();
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
-            final TableToken baseTableToken;
-            try {
-                baseTableToken = engine.verifyTableName(baseTableName);
-            } catch (CairoException e) {
-                LOG.error()
-                        .$("could not perform incremental refresh, could not verify base table [view=").$(viewToken)
-                        .$(", baseTableName=").$(baseTableName)
-                        .$(", errno=").$(e.getErrno())
-                        .$(", errorMsg=").$safe(e.getFlyweightMessage())
-                        .I$();
-                refreshFailState(viewState, walWriter, e);
+            final TableToken baseTableToken = verifyBaseTableToken(viewState, walWriter);
+            if (baseTableToken == null) {
                 return false;
             }
 
@@ -1168,7 +1241,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             engine.detachReader(baseTableReader);
             refreshSqlExecutionContext.of(baseTableReader);
             try {
-                final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewState, fromBaseTxn);
+                final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewState, walWriter, fromBaseTxn);
                 return insertAsSelect(viewState, walWriter, refreshContext, refreshTriggerTimestamp);
             } finally {
                 refreshSqlExecutionContext.clearReader();
@@ -1235,6 +1308,25 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 viewState.getCachedTxnIntervals(),
                 viewState.getCachedIntervalsBaseTxn()
         );
+    }
+
+    private @Nullable TableToken verifyBaseTableToken(@NotNull MatViewState viewState, @NotNull WalWriter walWriter) {
+        final TableToken baseTableToken;
+        final MatViewDefinition viewDefinition = viewState.getViewDefinition();
+        final String baseTableName = viewDefinition.getBaseTableName();
+        try {
+            baseTableToken = engine.verifyTableName(baseTableName);
+        } catch (CairoException e) {
+            LOG.error()
+                    .$("could not verify base table [view=").$(viewDefinition.getMatViewToken())
+                    .$(", baseTableName=").$(baseTableName)
+                    .$(", errno=").$(e.getErrno())
+                    .$(", errorMsg=").$safe(e.getFlyweightMessage())
+                    .I$();
+            refreshFailState(viewState, walWriter, e);
+            return null;
+        }
+        return baseTableToken;
     }
 
     private static class RefreshContext implements Mutable {
