@@ -1919,7 +1919,7 @@ public class SqlOptimiser implements Mutable {
             QueryModel groupByModel,
             QueryModel translatingModel,
             QueryModel innerVirtualModel,
-            QueryModel validatingModel,
+            QueryModel baseModel,
             ObjList<ExpressionNode> groupByNodes,
             ObjList<CharSequence> groupByAliases
     ) throws SqlException {
@@ -1933,7 +1933,7 @@ public class SqlOptimiser implements Mutable {
                                 groupByModel,
                                 translatingModel,
                                 innerVirtualModel,
-                                validatingModel,
+                                baseModel,
                                 groupByNodes,
                                 groupByAliases
                         );
@@ -1949,7 +1949,7 @@ public class SqlOptimiser implements Mutable {
                             groupByModel,
                             translatingModel,
                             innerVirtualModel,
-                            validatingModel,
+                            baseModel,
                             groupByNodes,
                             groupByAliases
                     );
@@ -1967,7 +1967,7 @@ public class SqlOptimiser implements Mutable {
                                 groupByModel,
                                 translatingModel,
                                 innerVirtualModel,
-                                validatingModel,
+                                baseModel,
                                 groupByNodes,
                                 groupByAliases
                         );
