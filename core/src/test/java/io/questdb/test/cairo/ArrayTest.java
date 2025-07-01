@@ -710,8 +710,10 @@ public class ArrayTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (arr DOUBLE[])");
             execute("INSERT INTO tango VALUES (ARRAY[1.0/0.0, 0.0/0.0, -1.0/0.0])");
-            assertSql("array_position\nnull\n", "SELECT array_position(arr, 1.0/0.0) FROM tango");
             assertSql("array_position\n2\n", "SELECT array_position(arr, 0.0/0.0) FROM tango");
+            //TODO These two assertions document the current behavior, but it isn't the desired one.
+            // The function should find infinities as well.
+            assertSql("array_position\nnull\n", "SELECT array_position(arr, 1.0/0.0) FROM tango");
             assertSql("array_position\nnull\n", "SELECT array_position(arr, -1.0/0.0) FROM tango");
         });
     }
