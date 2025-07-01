@@ -1335,15 +1335,13 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testExplicitCastDimensionalityChange() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cast\n" +
-                            "[[1.0,2.0]]\n",
+            assertQuery("cast\n[[1.0,2.0]]\n",
                     "SELECT ARRAY[1.0, 2.0]::double[][]",
                     true
             );
 
             // no element arrays
-            assertQuery("cast\n" +
-                            "[]\n", // arrays with no elements are always printed as []
+            assertQuery("cast\n[]\n", // arrays with no elements are always printed as []
                     "SELECT ARRAY[]::double[][]",
                     true
             );
@@ -1352,7 +1350,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertException("SELECT ARRAY[[1.0], [2.0]]::double[]",
                     26,
                     "cannot cast array to lower dimension [from=DOUBLE[][] (2D), to=DOUBLE[] (1D)]. " +
-                            "Use array flattening operation (e.g. 'arr[:]' or 'flatten_array(arr)') instead"
+                            "Use array flattening operation (e.g. 'flatten(arr)') instead"
             );
         });
     }
@@ -1515,20 +1513,6 @@ public class ArrayTest extends AbstractCairoTest {
                     "SELECT arr[1:, 1:, 2:4] arr FROM tango");
             assertSql("arr\n[2.0,3.0,5.0,6.0,8.0,9.0,11.0,12.0]\n",
                     "SELECT flatten(arr[1:, 1:, 2:4]) arr FROM tango");
-        });
-    }
-
-    @Test
-    public void testFlattenInvalid() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (arr DOUBLE[][][], flatten_dim INT)");
-            execute("INSERT INTO tango VALUES (ARRAY[[[1.0, 2], [3.0, 4]], [[5.0, 6], [7.0, 8]]], 4)");
-            assertException("SELECT flatten(arr, 3) FROM tango", 20,
-                    "cannot flatten dim with stride = 1 and length > 1 [dim=3, dimLen=2, nDims=3]");
-            assertException("SELECT flatten(arr, 4) FROM tango", 20,
-                    "dimension to flatten out of range [nDims=3, flattenDim=4]");
-            assertException("SELECT flatten(arr, flatten_dim) FROM tango", 20,
-                    "dimension to flatten out of range [nDims=3, flattenDim=4]");
         });
     }
 
