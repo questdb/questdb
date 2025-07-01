@@ -812,6 +812,29 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImplicitTimestampPropagationWontCauseAmbiguity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 (x int, ts timestamp) timestamp(ts) partition by day");
+
+            execute("insert into t1 values (1, '2022-10-05T08:15:00.000000Z')");
+            execute("insert into t1 values (2, '2022-10-05T08:17:00.000000Z')");
+            execute("insert into t1 values (3, '2022-10-05T08:21:00.000000Z')");
+
+            execute("create table t2 (x int, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t2 values (4, '2022-10-05T08:18:00.000000Z')");
+            execute("insert into t2 values (5, '2022-10-05T08:19:00.000000Z')");
+            execute("insert into t2 values (6, '2023-10-05T09:00:00.000000Z')");
+
+            assertQuery("ts\n" +
+                            "2022-10-05T08:15:00.000000Z\n" +
+                            "2022-10-05T08:17:00.000000Z\n" +
+                            "2022-10-05T08:21:00.000000Z\n",
+                    "select ts from t1 asof join (select x from t2)",
+                    null, "ts", false, true);
+        });
+    }
+
+    @Test
     public void testInterleaved1() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
