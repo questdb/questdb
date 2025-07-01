@@ -39,7 +39,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.QueryProgress;
-import io.questdb.griffin.engine.table.FwdPageFrameRowCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Rnd;
@@ -81,7 +81,7 @@ public class ReaderLeakTest extends AbstractCairoTest {
                                                         metadata,
                                                         PartitionFrameCursorFactory.ORDER_ASC
                                                 ),
-                                                new FwdPageFrameRowCursorFactory(),
+                                                new PageFrameRowCursorFactory(PartitionFrameCursorFactory.ORDER_ASC),
                                                 false,
                                                 null,
                                                 true,

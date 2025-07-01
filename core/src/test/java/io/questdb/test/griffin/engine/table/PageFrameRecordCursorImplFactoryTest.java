@@ -41,7 +41,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.FwdPageFrameRowCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import io.questdb.std.IntList;
@@ -258,7 +258,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
                 try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC)) {
-                    FwdPageFrameRowCursorFactory rowCursorFactory = new FwdPageFrameRowCursorFactory(); // stub RowCursorFactory
+                    PageFrameRowCursorFactory rowCursorFactory = new PageFrameRowCursorFactory(ORDER_ASC); // stub RowCursorFactory
                     try (PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,
                             metadata,
@@ -368,7 +368,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
                 try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tt, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC)) {
-                    FwdPageFrameRowCursorFactory rowCursorFactory = new FwdPageFrameRowCursorFactory(); // stub RowCursorFactory
+                    PageFrameRowCursorFactory rowCursorFactory = new PageFrameRowCursorFactory(ORDER_ASC); // stub RowCursorFactory
                     try (PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,
                             metadata,
