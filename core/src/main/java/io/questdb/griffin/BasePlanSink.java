@@ -165,6 +165,14 @@ public abstract class BasePlanSink implements PlanSink {
     }
 
     @Override
+    public PlanSink val(Plannable s, RecordCursorFactory factory) {
+        factoryStack.push(factory);
+        val(s);
+        factoryStack.pop();
+        return this;
+    }
+
+    @Override
     public PlanSink val(ObjList<?> list) {
         return val(list, 0, list.size());
     }
