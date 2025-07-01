@@ -493,41 +493,7 @@ public abstract class ArrayView implements QuietCloseable {
     public boolean isVanilla() {
         return isVanilla;
     }
-
-    public final int linearSearchDoubleNull1DArray() {
-        if (isNull() || isEmpty()) {
-            return Numbers.INT_NULL;
-        }
-        for (int i = 0, dimLen = getDimLen(0); i < dimLen; i++) {
-            double val = getDouble(i);
-            if (val != val) {
-                return i;
-            }
-        }
-        return Numbers.INT_NULL;
-    }
-
-    public final int linearSearchDoubleValue1DArray(double value) {
-        if (isNull() || isEmpty()) {
-            return Numbers.INT_NULL;
-        }
-        if (isVanilla) {
-            return flatView.linearSearch(value, flatViewOffset, flatViewLength);
-        } else {
-            int stride = getStride(0);
-            int index = 0;
-            for (int i = 0, n = getDimLen(0); i < n; i++) {
-                double v = getDouble(index);
-                if (Math.abs(v - value) <= Numbers.DOUBLE_TOLERANCE) {
-                    return i;
-                }
-                index += stride;
-            }
-        }
-
-        return Numbers.INT_NULL;
-    }
-
+    
     /**
      * Tells whether this array has the same shape as the other one.
      * <p>

@@ -59,9 +59,45 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
         if (valueArg.isConstant()) {
             double value = valueArg.getDouble(null);
             valueArg.close();
-            return value == value ? new ArrayPositionConstFunction(arrayArg, value) : new ArrayPositionConstNaNFunction(arrayArg);
+            return Double.isNaN(value)
+                    ? new ArrayPositionConstNaNFunction(arrayArg)
+                    : new ArrayPositionConstFunction(arrayArg, value);
         }
         return new ArrayIndexOfFunction(arrayArg, valueArg);
+    }
+
+    static int linearSearchNan(ArrayView array) {
+        if (array.isNull() || array.isEmpty()) {
+            return Numbers.INT_NULL;
+        }
+        for (int i = 0, dimLen = array.getDimLen(0); i < dimLen; i++) {
+            double val = array.getDouble(i);
+            if (Double.isNaN(val)) {
+                return i;
+            }
+        }
+        return Numbers.INT_NULL;
+    }
+
+    static int linearSearchValue(ArrayView array, double value) {
+        if (array.isNull() || array.isEmpty()) {
+            return Numbers.INT_NULL;
+        }
+        if (array.isVanilla()) {
+            return array.flatView().linearSearch(value, array.getFlatViewOffset(), array.getFlatViewLength());
+        } else {
+            int stride = array.getStride(0);
+            int index = 0;
+            for (int i = 0, n = array.getDimLen(0); i < n; i++) {
+                double v = array.getDouble(index);
+                if (Math.abs(v - value) <= Numbers.DOUBLE_TOLERANCE) {
+                    return i;
+                }
+                index += stride;
+            }
+        }
+
+        return Numbers.INT_NULL;
     }
 
     static class ArrayIndexOfFunction extends IntFunction implements BinaryFunction {
@@ -81,8 +117,7 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
                 return Numbers.INT_NULL;
             }
             double value = valueArg.getDouble(rec);
-            int index = value != value ? array.linearSearchDoubleNull1DArray()
-                    : array.linearSearchDoubleValue1DArray(value);
+            int index = Double.isNaN(value) ? linearSearchNan(array) : linearSearchValue(array, value);
             return Numbers.INT_NULL == index ? Numbers.INT_NULL : index + 1;
         }
 
@@ -100,6 +135,8 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(FUNCTION_NAME).val('(').val(arrayArg).val(", ").val(valueArg).val(')');
         }
+
+
     }
 
     static class ArrayPositionConstFunction extends IntFunction implements UnaryFunction {
@@ -123,7 +160,7 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
             if (arr.isNull()) {
                 return Numbers.INT_NULL;
             }
-            int pos = arr.linearSearchDoubleValue1DArray(value);
+            int pos = linearSearchValue(arr, value);
             return Numbers.INT_NULL == pos ? Numbers.INT_NULL : pos + 1;
         }
 
@@ -152,7 +189,7 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
             if (arr.isNull()) {
                 return Numbers.INT_NULL;
             }
-            return arr.linearSearchDoubleNull1DArray() + 1;
+            return linearSearchNan(arr) + 1;
         }
 
         @Override
