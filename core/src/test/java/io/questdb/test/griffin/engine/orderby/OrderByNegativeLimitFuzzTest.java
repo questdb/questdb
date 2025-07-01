@@ -176,7 +176,7 @@ public class OrderByNegativeLimitFuzzTest extends AbstractCairoTest {
         // We span over a year, with a partition per day so keep things in this interval
         final long min = TimestampFormatUtils.parseTimestamp("2024-01-01");
         final long max = (N_PARTITIONS - nPartitions) * Timestamps.DAY_MICROS;
-        final long start = min + rnd.nextLong(max);
+        final long start = min + (max == 0L ? 0 : rnd.nextLong(max));
         final long end = start + nPartitions * Timestamps.DAY_MICROS + rnd.nextLong(Timestamps.DAY_MICROS) - 1;
         return "ts >= " + start + " AND ts < " + end;
     }
