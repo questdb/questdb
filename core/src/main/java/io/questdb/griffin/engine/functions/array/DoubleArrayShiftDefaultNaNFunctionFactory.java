@@ -64,7 +64,6 @@ public class DoubleArrayShiftDefaultNaNFunctionFactory implements FunctionFactor
             this.array = new DirectArray(configuration);
         }
 
-
         @Override
         public void close() {
             BinaryFunction.super.close();
@@ -115,5 +114,4 @@ public class DoubleArrayShiftDefaultNaNFunctionFactory implements FunctionFactor
             return false;
         }
     }
-
 }

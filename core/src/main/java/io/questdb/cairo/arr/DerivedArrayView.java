@@ -258,7 +258,7 @@ public class DerivedArrayView extends ArrayView {
      *
      * @param dim    the dimension to slice
      * @param lo     lower bound of the slice
-     * @param hi     upper boudn of the slice (exclusive)
+     * @param hi     upper bound of the slice (exclusive)
      * @param argPos SQL syntax position where to report an error if needed
      */
     public void slice(int dim, int lo, int hi, int argPos) {

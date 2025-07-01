@@ -161,7 +161,7 @@ final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
 
         // Check client is not misbehaving. Buggy clients can send arrays with wrong size. see: https://github.com/pgjdbc/pgjdbc/issues/3567
         // Important: We have to validate that the array size is as expected only after we have checked for null elements.
-        // Since a presence of nulls also affects the size of the array and we want to report null elements to user
+        // Since a presence of nulls also affects the size of the array, and we want to report null elements to user
         // since that's more likely than a buggy client.
         long totalExpectedSizeBytes = (long) (expectedElementSize + Integer.BYTES) * flatViewLength;
         if (hi - lo != totalExpectedSizeBytes) {

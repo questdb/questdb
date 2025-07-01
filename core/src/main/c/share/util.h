@@ -95,17 +95,6 @@ inline uint32_t ceil_pow_2(uint32_t v) {
     return v + 1;
 }
 
-constexpr double DOUBLE_EPSILON = 1e-10;
-
-template <typename T, typename V>
-inline bool value_equal(T a, V b) {
-  if constexpr (std::is_floating_point_v<T>) {
-    return std::abs(a - b) < DOUBLE_EPSILON;
-  } else {
-    return a == b;
-  }
-}
-
 template<class T, class V>
 inline int64_t scroll_up(T data, int64_t low, int64_t high, V value) {
     do {
@@ -114,7 +103,7 @@ inline int64_t scroll_up(T data, int64_t low, int64_t high, V value) {
         } else {
             return high;
         }
-    } while (value_equal(data[high], value));
+    } while (data[high] == value);
     return high + 1;
 }
 
@@ -126,60 +115,60 @@ inline int64_t scroll_down(T data, int64_t low, int64_t high, V value) {
         } else {
             return low;
         }
-    } while (value_equal(data[low], value));
+    } while (data[low] == value);
     return low - 1;
 }
 
-template <bool A, class T, class V>
-inline int64_t scan_up(T *data, V value, int64_t low, int64_t high) {
-  for (int64_t i = low; i < high; i++) {
-    T that = data[i];
-    if (value_equal(that, value)) {
-      return i;
+template<class T, class V>
+inline int64_t scan_up(T* data, V value, int64_t low, int64_t high) {
+    for (int64_t i = low; i < high; i++) {
+        T that = data[i];
+        if (that == value) {
+            return i;
+        }
+        if (that > value) {
+            return -(i + 1);
+        }
     }
-    if ((A && that > value) || (!A && that < value)) {
-      return -(i + 1);
-    }
-  }
-  return -(high + 1);
+    return -(high + 1);
 }
 
-template <bool A, class T, class V>
-inline int64_t scan_down(T *data, V value, int64_t low, int64_t high) {
-  for (int64_t i = high - 1; i >= low; i--) {
-    T that = data[i];
-    if (value_equal(that, value)) {
-      return i;
+template<class T, class V>
+inline int64_t scan_down(T* data, V value, int64_t low, int64_t high) {
+    for (int64_t i = high - 1; i >= low; i--) {
+        T that = data[i];
+        if (that == value) {
+            return i;
+        }
+        if (that < value) {
+            return -(i + 2);
+        }
     }
-    if ((A && that < value) || (!A && that > value)) {
-      return -(i + 2);
-    }
-  }
-  return -(low + 1);
+    return -(low + 1);
 }
 
 // the "high" boundary is inclusive
-template<bool A = true, class T, class V>
+template<class T, class V>
 inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir) {
     int64_t diff;
     while ((diff = high - low) > 65) {
         const int64_t mid = low + diff / 2;
         const T midVal = data[mid];
 
-        if (value_equal(midVal, value)) {
-          // In case of multiple equal values, find the first
-          return scan_dir == -1 ? scroll_up(data, low, mid, midVal)
-                                : scroll_down(data, mid, high, midVal);
-        } else if ((A && midVal < value) ||
-                   (!A && midVal > value)) {
-          low = mid;
+        if (midVal < value) {
+            low = mid;
+        } else if (midVal > value) {
+            high = mid - 1;
         } else {
-          high = mid - 1;
+            // In case of multiple equal values, find the first
+            return scan_dir == -1 ?
+                   scroll_up(data, low, mid, midVal) :
+                   scroll_down(data, mid, high, midVal);
         }
     }
     return scan_dir == -1 ?
-           scan_up<A>(data, value, low, high + 1) :
-           scan_down<A>(data, value, low, high + 1);
+           scan_up(data, value, low, high + 1) :
+           scan_down(data, value, low, high + 1);
 }
 
 template<typename T>

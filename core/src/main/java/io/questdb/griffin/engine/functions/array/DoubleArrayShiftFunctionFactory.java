@@ -178,5 +178,4 @@ public class DoubleArrayShiftFunctionFactory implements FunctionFactory {
             return false;
         }
     }
-
 }

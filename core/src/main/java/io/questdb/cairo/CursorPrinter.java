@@ -174,7 +174,8 @@ public class CursorPrinter {
                         record.getArray(columnIndex, columnType),
                         sink,
                         NoopArrayWriteState.INSTANCE,
-                        false);
+                        false
+                );
                 break;
             case ColumnType.ARRAY_STRING:
                 sink.put(record.getStrA(columnIndex));

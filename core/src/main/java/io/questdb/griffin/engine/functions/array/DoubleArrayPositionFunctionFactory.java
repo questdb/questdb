@@ -135,8 +135,6 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(FUNCTION_NAME).val('(').val(arrayArg).val(", ").val(valueArg).val(')');
         }
-
-
     }
 
     static class ArrayPositionConstFunction extends IntFunction implements UnaryFunction {
