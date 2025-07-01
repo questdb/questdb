@@ -27,11 +27,13 @@ package io.questdb.test.cairo;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.NoopArrayWriteState;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.line.tcp.ArrayBinaryFormatParser;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -58,6 +60,30 @@ public class ArrayTest extends AbstractCairoTest {
         int flatSize = array.borrowedFlatView().size();
         Vect.memcpy(addr + offset, array.ptr(), flatSize);
         return offset + flatSize;
+    }
+
+    public void assertBroadcastShape(IntList shapeLeft, IntList shapeRight, IntList shapeOutExpected) throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectArray left = new DirectArray();
+                 DirectArray right = new DirectArray()
+            ) {
+                left.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, shapeLeft.size()));
+                right.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, shapeRight.size()));
+
+                for (int i = 0; i < shapeLeft.size(); i++) {
+                    left.setDimLen(i, shapeLeft.get(i));
+                }
+                left.applyShape();
+                for (int i = 0; i < shapeRight.size(); i++) {
+                    right.setDimLen(i, shapeRight.get(i));
+                }
+                right.applyShape();
+                IntList shapeOut = new IntList();
+                DerivedArrayView.computeBroadcastShape(left, right, shapeOut, -1);
+                System.out.println(shapeOut);
+                Assert.assertEquals(shapeOutExpected, shapeOut);
+            }
+        });
     }
 
     @Override
@@ -903,6 +929,53 @@ public class ArrayTest extends AbstractCairoTest {
             assertException("ALTER TABLE tango ALTER COLUMN n TYPE LONG128[]", 38, "unsupported array element type [type=LONG128]");
             assertException("ALTER TABLE tango ALTER COLUMN n TYPE GEOHASH[]", 38, "unsupported array element type [type=GEOHASH]");
         });
+    }
+
+    @Test
+    public void testComputeBroadcastShape() throws Exception {
+        IntList shapeLeft = new IntList();
+        IntList shapeRight = new IntList();
+        IntList shapeOutExpected = new IntList();
+
+        fillIntList(shapeLeft, 1);
+        fillIntList(shapeRight, 2);
+        fillIntList(shapeOutExpected, 2);
+        assertBroadcastShape(shapeLeft, shapeRight, shapeOutExpected);
+
+        fillIntList(shapeLeft, 1, 1);
+        fillIntList(shapeRight, 2, 2);
+        fillIntList(shapeOutExpected, 2, 2);
+        assertBroadcastShape(shapeLeft, shapeRight, shapeOutExpected);
+
+        fillIntList(shapeLeft, 1, 2);
+        fillIntList(shapeRight, 2, 1);
+        fillIntList(shapeOutExpected, 2, 2);
+        assertBroadcastShape(shapeLeft, shapeRight, shapeOutExpected);
+
+        fillIntList(shapeLeft, 1);
+        fillIntList(shapeRight, 1, 1);
+        fillIntList(shapeOutExpected, 1, 1);
+        assertBroadcastShape(shapeLeft, shapeRight, shapeOutExpected);
+
+        fillIntList(shapeLeft, 1);
+        fillIntList(shapeRight, 1, 2);
+        fillIntList(shapeOutExpected, 1, 2);
+        assertBroadcastShape(shapeLeft, shapeRight, shapeOutExpected);
+
+        fillIntList(shapeLeft, 1);
+        fillIntList(shapeRight, 2, 2);
+        fillIntList(shapeOutExpected, 2, 2);
+        assertBroadcastShape(shapeLeft, shapeRight, shapeOutExpected);
+
+        fillIntList(shapeLeft, 1, 2);
+        fillIntList(shapeRight, 2, 1, 2);
+        fillIntList(shapeOutExpected, 2, 1, 2);
+        assertBroadcastShape(shapeLeft, shapeRight, shapeOutExpected);
+
+        fillIntList(shapeLeft, 1, 2);
+        fillIntList(shapeRight, 2, 2, 1);
+        fillIntList(shapeOutExpected, 2, 2, 2);
+        assertBroadcastShape(shapeLeft, shapeRight, shapeOutExpected);
     }
 
     @Test
@@ -2564,5 +2637,12 @@ public class ArrayTest extends AbstractCairoTest {
                     "too many array dimensions [nDims=33, maxNDims=32]"
             );
         });
+    }
+
+    private static void fillIntList(IntList list, int... values) {
+        list.clear();
+        for (int i : values) {
+            list.add(i);
+        }
     }
 }

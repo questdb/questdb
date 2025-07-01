@@ -35,24 +35,53 @@ import io.questdb.std.IntList;
  */
 public class DerivedArrayView extends ArrayView {
 
-    public static void computeBroadcastShape(ArrayView left, ArrayView right, IntList out, int leftArgPosition) {
-        out.clear();
+    /**
+     * Takes two n-dimensional arrays, and fills the {@code shapeOut} list with the
+     * shape of the array that tightly fits both of them, broadcasting the smaller
+     * array's dimensions if necessary.
+     * <p>
+     * The resulting shape is as long as the longer of the two arrays' shapes.
+     * <p>
+     * The shape lists are aligned at the right end, matching up the rightmost
+     * number in each (i.e., the matching deepest dimensions of each array).
+     * <p>
+     * The missing numbers in the shorter shape are set to 1.
+     * <p>
+     * Where both numbers are present, they must either be equal, or one of them
+     * must be 1.
+     * <p>
+     * The resulting number at matching position is the larger of the two numbers.
+     * <p>
+     * Examples:
+     * <pre>
+     *     [ 1 ]      [ 1 ]      [ 1 ]    [ 1 2 ]    [ 2 2 ]
+     *     [ 2 ]    [ 1 2 ]    [ 2 2 ]    [ 2 1 ]    [ 2 3 ]
+     *     -----    -------    -------    -------   --------
+     *     [ 2 ]    [ 1 2 ]    [ 2 2 ]    [ 2 2 ]    illegal!
+     * </pre>
+     *
+     * @param left            the left array
+     * @param right           the right array
+     * @param shapeOut        the target list for the shape
+     * @param leftArgPosition position of the left array in SQL syntax, to report error if needed
+     */
+    public static void computeBroadcastShape(ArrayView left, ArrayView right, IntList shapeOut, int leftArgPosition) {
         int nDimsA = left.getDimCount();
         int nDimsB = right.getDimCount();
         int maxDims = Math.max(nDimsA, nDimsB);
-        out.setPos(maxDims);
+        shapeOut.setPos(maxDims);
 
-        for (int i = 0; i < maxDims; i++) {
-            int posA = nDimsA - 1 - i;
-            int posB = nDimsB - 1 - i;
+        for (int i = 1; i <= maxDims; i++) {
+            int posA = nDimsA - i;
+            int posB = nDimsB - i;
             int dimLenA = (posA >= 0) ? left.shape.get(posA) : 1;
             int dimLenB = (posB >= 0) ? right.shape.get(posB) : 1;
             if (dimLenA == dimLenB) {
-                out.setQuick(maxDims - 1 - i, dimLenA);
+                shapeOut.setQuick(maxDims - i, dimLenA);
             } else if (dimLenA == 1) {
-                out.setQuick(maxDims - 1 - i, dimLenB);
+                shapeOut.setQuick(maxDims - i, dimLenB);
             } else if (dimLenB == 1) {
-                out.setQuick(maxDims - 1 - i, dimLenA);
+                shapeOut.setQuick(maxDims - i, dimLenA);
             } else {
                 throw CairoException.nonCritical().position(leftArgPosition)
                         .put("arrays have incompatible shapes [leftShape=").put(left.shapeToString())
