@@ -28,6 +28,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.Numbers;
 
 public interface FlatArrayView {
+
     /**
      * Appends a block of elements from this flat array to the supplied memory
      * block.
@@ -48,7 +49,7 @@ public interface FlatArrayView {
         int count = 0;
         for (int i = offset, n = offset + length; i < n; i++) {
             double v = getDoubleAtAbsIndex(i);
-            if (v == v) {
+            if (!Double.isNaN(v)) {
                 sum += v;
                 count++;
             }
@@ -128,7 +129,7 @@ public interface FlatArrayView {
         int count = 0;
         for (int i = offset, n = offset + length; i < n; i++) {
             double v = getDoubleAtAbsIndex(i);
-            if (v == v) {
+            if (!Double.isNaN(v)) {
                 count++;
             }
         }
@@ -175,7 +176,7 @@ public interface FlatArrayView {
         double sum = 0d;
         for (int i = offset, n = offset + length; i < n; i++) {
             double v = getDoubleAtAbsIndex(i);
-            if (v == v) {
+            if (!Double.isNaN(v)) {
                 sum += v;
             }
         }
