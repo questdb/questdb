@@ -52,6 +52,18 @@ public class DedupWalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedupNoPartitionRewriteLong256() throws Exception {
+        assertMemoryLeak(() -> testSameAndShuffledInserts(
+                        "Long256",
+                        "",
+                        "0x01",
+                        "0x02",
+                        "0x03"
+                )
+        );
+    }
+
+    @Test
     public void testDedupNoPartitionRewriteShort() throws Exception {
         assertMemoryLeak(() -> testSameAndShuffledInserts("short", "0", "123", "2342", "22"));
     }
@@ -59,6 +71,18 @@ public class DedupWalWriterTest extends AbstractCairoTest {
     @Test
     public void testDedupNoPartitionRewriteString() throws Exception {
         assertMemoryLeak(() -> testSameAndShuffledInserts("string", "", "'123'", "'2345567'", "'22'"));
+    }
+
+    @Test
+    public void testDedupNoPartitionRewriteUUID() throws Exception {
+        assertMemoryLeak(() -> testSameAndShuffledInserts(
+                        "UUID",
+                        "",
+                        "'00000000-0000-0006-0000-000000000006'",
+                        "'00000000-0000-0005-0000-000000000005'",
+                        "'00000000-0000-0007-0000-000000000007'"
+                )
+        );
     }
 
     @Test

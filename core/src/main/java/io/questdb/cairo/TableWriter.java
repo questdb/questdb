@@ -10231,7 +10231,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long commitLo,
             long commitHi
     ) {
-        // This code is thread safe, e.g. can be triggered from multiple partition merge tasks
         TableRecordMetadata metadata = getMetadata();
         FrameFactory frameFactory = engine.getFrameFactory();
         try (Frame partitionFrame = frameFactory.openRO(path, partitionTimestamp, partitionNameTxn, partitionBy, metadata, columnVersionWriter, partitionRowCount)) {

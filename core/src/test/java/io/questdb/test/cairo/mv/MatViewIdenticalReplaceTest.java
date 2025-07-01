@@ -36,37 +36,12 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
 
     @Test
     public void testReplaceNoPartitionRewriteArray() throws Exception {
-        testSameAndShuffledInserts("double[]", "null", "ARRAY[1.0,1.0]", "ARRAY[2.0,2.0]", "ARRAY[3.0,3.0]");
+        testSameAndShuffledInserts("double[]", "null", "ARRAY[1.0,1.0]", "ARRAY[2.0,2.0]", "ARRAY[3.0,3.0]", "first");
     }
 
     @Test
     public void testReplaceNoPartitionRewriteByte() throws Exception {
-        testSameAndShuffledInserts("byte", "0", "123", "127", "22");
-    }
-
-    @Test
-    public void testReplaceNoPartitionRewriteInt() throws Exception {
-        testSameAndShuffledInserts("int", "null", "123", "2345567", "22");
-    }
-
-    @Test
-    public void testReplaceNoPartitionRewriteLong() throws Exception {
-        testSameAndShuffledInserts("long", "null", "123", "2345567", "22");
-    }
-
-    @Test
-    public void testReplaceNoPartitionRewriteShort() throws Exception {
-        testSameAndShuffledInserts("short", "0", "123", "2342", "22");
-    }
-
-    @Test
-    public void testReplaceNoPartitionRewriteString() throws Exception {
-        testSameAndShuffledInserts("string", "", "'123'", "'2345567'", "'22'");
-    }
-
-    @Test
-    public void testReplaceNoPartitionRewriteVarchar() throws Exception {
-        testSameAndShuffledInserts("varchar", "", "'123'", "'2345567'", "'22'");
+        testSameAndShuffledInserts("byte", "0", "123", "127", "22", "first");
     }
 
     @Test
@@ -120,10 +95,53 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
         });
     }
 
-    private void testSameAndShuffledInserts(String columnType, String nullValue, String value1, String value2, String nullValueUpdated) throws Exception {
+    @Test
+    public void testReplaceNoPartitionRewriteInt() throws Exception {
+        testSameAndShuffledInserts("int", "null", "123", "2345567", "22", "first");
+    }
+
+    @Test
+    public void testReplaceNoPartitionRewriteLong() throws Exception {
+        testSameAndShuffledInserts("long", "null", "123", "2345567", "22", "first");
+    }
+
+    @Test
+    public void testReplaceNoPartitionRewriteLong256() throws Exception {
+        testSameAndShuffledInserts("Long256", "", "0x01", "0x02", "0x03", "sum"
+        );
+    }
+
+    @Test
+    public void testReplaceNoPartitionRewriteShort() throws Exception {
+        testSameAndShuffledInserts("short", "0", "123", "2342", "22", "first");
+    }
+
+    @Test
+    public void testReplaceNoPartitionRewriteString() throws Exception {
+        testSameAndShuffledInserts("string", "", "'123'", "'2345567'", "'22'", "first");
+    }
+
+    @Test
+    public void testReplaceNoPartitionRewriteUUID() throws Exception {
+        testSameAndShuffledInserts(
+                "UUID",
+                "",
+                "'00000000-0000-0006-0000-000000000006'",
+                "'00000000-0000-0005-0000-000000000005'",
+                "'00000000-0000-0007-0000-000000000007'",
+                "first"
+        );
+    }
+
+    @Test
+    public void testReplaceNoPartitionRewriteVarchar() throws Exception {
+        testSameAndShuffledInserts("varchar", "", "'123'", "'2345567'", "'22'", "first");
+    }
+
+    private void testSameAndShuffledInserts(String columnType, String nullValue, String value1, String value2, String nullValueUpdated, String mvGroupFunction) throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test (ts timestamp, x int, v " + columnType + ") timestamp(ts) partition by DAY WAL dedup upsert keys (ts, x) ");
-            execute("create materialized view test_mv as select ts, x, first(v) as v from test sample by 1s");
+            execute("create materialized view test_mv as select ts, x, " + mvGroupFunction + "(v) as v from test sample by 1s");
             execute("insert into test(ts,x,v) values ('2022-02-24', 1, " + value1 + "), ('2022-02-24', 2, null), ('2022-02-24', 3, " + value2 + ")");
 
             drainWalAndMatViewQueues();
