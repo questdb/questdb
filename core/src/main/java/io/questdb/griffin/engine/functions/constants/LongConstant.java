@@ -31,6 +31,7 @@ import io.questdb.std.Numbers;
 
 public class LongConstant extends LongFunction implements ConstantFunction {
     public static final LongConstant NULL = new LongConstant(Numbers.LONG_NULL);
+    public static final LongConstant ONE = new LongConstant(1);
     public static final LongConstant ZERO = new LongConstant(0);
     private final long value;
 

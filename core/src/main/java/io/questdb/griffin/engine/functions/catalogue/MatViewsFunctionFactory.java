@@ -43,7 +43,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -60,6 +59,25 @@ import io.questdb.std.str.StringSink;
 
 public class MatViewsFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(MatViewsFunctionFactory.class);
+
+    public static String getIntervalUnit(char unit) {
+        switch (unit) {
+            case 'm':
+                return "MINUTE";
+            case 'h':
+                return "HOUR";
+            case 'd':
+                return "DAY";
+            case 'w':
+                return "WEEK";
+            case 'y':
+                return "YEAR";
+            case 'M':
+                return "MONTH";
+            default:
+                return null;
+        }
+    }
 
     @Override
     public String getSignature() {
@@ -82,25 +100,6 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         };
     }
 
-    private static String getTimerIntervalUnit(char unit) {
-        switch (unit) {
-            case 'm':
-                return "MINUTE";
-            case 'h':
-                return "HOUR";
-            case 'd':
-                return "DAY";
-            case 'w':
-                return "WEEK";
-            case 'y':
-                return "YEAR";
-            case 'M':
-                return "MONTH";
-            default:
-                return null;
-        }
-    }
-
     private static class MatViewsCursorFactory implements RecordCursorFactory {
         private static final int COLUMN_VIEW_NAME = 0;
         private static final int COLUMN_REFRESH_TYPE = COLUMN_VIEW_NAME + 1;
@@ -111,37 +110,34 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_TABLE_DIR_NAME = COLUMN_VIEW_SQL + 1;
         private static final int COLUMN_INVALIDATION_REASON = COLUMN_TABLE_DIR_NAME + 1;
         private static final int COLUMN_VIEW_STATUS = COLUMN_INVALIDATION_REASON + 1;
-        private static final int COLUMN_LAST_REFRESH_BASE_TABLE_TXN = COLUMN_VIEW_STATUS + 1;
-        private static final int COLUMN_LAST_APPLIED_BASE_TABLE_TXN = COLUMN_LAST_REFRESH_BASE_TABLE_TXN + 1;
-        private static final int COLUMN_REFRESH_LIMIT_VALUE = COLUMN_LAST_APPLIED_BASE_TABLE_TXN + 1;
-        private static final int COLUMN_REFRESH_LIMIT_UNIT = COLUMN_REFRESH_LIMIT_VALUE + 1;
-        private static final int COLUMN_TIMER_START = COLUMN_REFRESH_LIMIT_UNIT + 1;
-        private static final int COLUMN_TIMER_INTERVAL_VALUE = COLUMN_TIMER_START + 1;
-        private static final int COLUMN_TIMER_INTERVAL_UNIT = COLUMN_TIMER_INTERVAL_VALUE + 1;
+        private static final int COLUMN_REFRESH_PERIOD_HI = COLUMN_VIEW_STATUS + 1;
+        private static final int COLUMN_REFRESH_BASE_TABLE_TXN = COLUMN_REFRESH_PERIOD_HI + 1;
+        private static final int COLUMN_APPLIED_BASE_TABLE_TXN = COLUMN_REFRESH_BASE_TABLE_TXN + 1;
+        private static final int COLUMN_REFRESH_LIMIT = COLUMN_APPLIED_BASE_TABLE_TXN + 1;
+        private static final int COLUMN_REFRESH_LIMIT_UNIT = COLUMN_REFRESH_LIMIT + 1;
+        private static final int COLUMN_TIMER_TIME_ZONE = COLUMN_REFRESH_LIMIT_UNIT + 1;
+        private static final int COLUMN_TIMER_START = COLUMN_TIMER_TIME_ZONE + 1;
+        private static final int COLUMN_TIMER_INTERVAL = COLUMN_TIMER_START + 1;
+        private static final int COLUMN_TIMER_INTERVAL_UNIT = COLUMN_TIMER_INTERVAL + 1;
+        private static final int COLUMN_PERIOD_LENGTH = COLUMN_TIMER_INTERVAL_UNIT + 1;
+        private static final int COLUMN_PERIOD_LENGTH_UNIT = COLUMN_PERIOD_LENGTH + 1;
+        private static final int COLUMN_PERIOD_DELAY = COLUMN_PERIOD_LENGTH_UNIT + 1;
+        private static final int COLUMN_PERIOD_DELAY_UNIT = COLUMN_PERIOD_DELAY + 1;
         private static final RecordMetadata METADATA;
-        private final CairoConfiguration configuration;
-        private final ViewsListCursor cursor = new ViewsListCursor();
-        private final CairoEngine engine;
-        private final Path path = new Path();
-        private final BlockFileReader reader;
+        private final ViewsListCursor cursor;
 
         public MatViewsCursorFactory(CairoEngine engine) {
-            this.engine = engine;
-            this.configuration = engine.getConfiguration();
-            this.reader = new BlockFileReader(this.configuration);
-            System.out.println("MatViewsFunctionFactory: Creating cursor factory for materialized views");
+            this.cursor = new ViewsListCursor(engine);
         }
 
         @Override
         public void close() {
-            Misc.free(path);
-            Misc.free(reader);
-            System.out.println("MatViewsFunctionFactory: Closing cursor factory for materialized views");
+            Misc.free(cursor);
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            cursor.init();
+            cursor.toTop();
             return cursor;
         }
 
@@ -160,144 +156,25 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             sink.val("materialized_views()");
         }
 
-        private static class MatViewsRecord implements Record {
-            private final StringSink invalidationReason = new StringSink();
-            private boolean invalid;
-            private long lastAppliedBaseTxn;
-            private long lastRefreshFinishTimestamp;
-            private long lastRefreshStartTimestamp;
-            private long lastRefreshTxn;
-            private int refreshLimitHoursOrMonths;
-            private int timerInterval;
-            private char timerIntervalUnit;
-            private long timerStart;
-            private MatViewDefinition viewDefinition;
-
-            @Override
-            public int getInt(int col) {
-                switch (col) {
-                    case COLUMN_REFRESH_LIMIT_VALUE:
-                        return TablesFunctionFactory.getTtlValue(refreshLimitHoursOrMonths);
-                    case COLUMN_TIMER_INTERVAL_VALUE:
-                        return timerInterval;
-                    default:
-                        return 0;
-                }
-            }
-
-            @Override
-            public long getLong(int col) {
-                switch (col) {
-                    case COLUMN_LAST_REFRESH_START_TIMESTAMP:
-                        return lastRefreshStartTimestamp;
-                    case COLUMN_LAST_REFRESH_FINISH_TIMESTAMP:
-                        return lastRefreshFinishTimestamp;
-                    case COLUMN_LAST_REFRESH_BASE_TABLE_TXN:
-                        return lastRefreshTxn;
-                    case COLUMN_LAST_APPLIED_BASE_TABLE_TXN:
-                        return lastAppliedBaseTxn;
-                    case COLUMN_TIMER_START:
-                        return timerStart;
-                    default:
-                        return 0;
-                }
-            }
-
-            @Override
-            public CharSequence getStrA(int col) {
-                switch (col) {
-                    case COLUMN_VIEW_NAME:
-                        return viewDefinition.getMatViewToken().getTableName();
-                    case COLUMN_REFRESH_TYPE:
-                        switch (viewDefinition.getRefreshType()) {
-                            case MatViewDefinition.INCREMENTAL_REFRESH_TYPE:
-                                return "incremental";
-                            case MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE:
-                                return "incremental_timer";
-                            default:
-                                return "unknown";
-                        }
-                    case COLUMN_BASE_TABLE_NAME:
-                        return viewDefinition.getBaseTableName();
-                    case COLUMN_VIEW_SQL:
-                        return viewDefinition.getMatViewSql();
-                    case COLUMN_TABLE_DIR_NAME:
-                        return viewDefinition.getMatViewToken().getDirName();
-                    case COLUMN_VIEW_STATUS:
-                        return getViewStatus();
-                    case COLUMN_INVALIDATION_REASON:
-                        return invalidationReason.length() > 0 ? invalidationReason : null;
-                    case COLUMN_REFRESH_LIMIT_UNIT:
-                        if (refreshLimitHoursOrMonths == 0) {
-                            return null;
-                        }
-                        return TablesFunctionFactory.getTtlUnit(refreshLimitHoursOrMonths);
-                    case COLUMN_TIMER_INTERVAL_UNIT:
-                        return getTimerIntervalUnit(timerIntervalUnit);
-                    default:
-                        return null;
-                }
-            }
-
-            @Override
-            public CharSequence getStrB(int col) {
-                return getStrA(col);
-            }
-
-            @Override
-            public int getStrLen(int col) {
-                return TableUtils.lengthOf(getStrA(col));
-            }
-
-            public void of(
-                    MatViewDefinition viewDefinition,
-                    long lastRefreshStartTimestamp,
-                    long lastRefreshFinishTimestamp,
-                    long lastRefreshTxn,
-                    long lastAppliedBaseTxn,
-                    CharSequence invalidationReason,
-                    boolean invalid,
-                    int refreshLimitHoursOrMonths,
-                    long timerStart,
-                    int timerInterval,
-                    char timerIntervalUnit
-            ) {
-                this.viewDefinition = viewDefinition;
-                this.lastRefreshStartTimestamp = lastRefreshStartTimestamp;
-                this.lastRefreshFinishTimestamp = lastRefreshFinishTimestamp;
-                this.lastRefreshTxn = lastRefreshTxn;
-                this.lastAppliedBaseTxn = lastAppliedBaseTxn;
-                this.invalidationReason.clear();
-                this.invalidationReason.put(invalidationReason);
-                this.invalid = invalid;
-                this.refreshLimitHoursOrMonths = refreshLimitHoursOrMonths;
-                this.timerStart = timerStart;
-                this.timerInterval = timerInterval;
-                this.timerIntervalUnit = timerIntervalUnit;
-            }
-
-            private CharSequence getViewStatus() {
-                if (invalid) {
-                    return "invalid";
-                }
-                return (lastRefreshStartTimestamp != Numbers.LONG_NULL && lastRefreshStartTimestamp > lastRefreshFinishTimestamp)
-                        ? "refreshing"
-                        : "valid";
-            }
-        }
-
-        private class ViewsListCursor implements NoRandomAccessRecordCursor {
+        private static class ViewsListCursor implements NoRandomAccessRecordCursor {
+            private final CairoEngine engine;
+            private final Path path;
             private final MatViewsRecord record = new MatViewsRecord();
+            private final BlockFileReader viewStateFileReader;
             private final MatViewStateReader viewStateReader = new MatViewStateReader();
             private final ObjList<TableToken> viewTokens = new ObjList<>();
             private int viewIndex = 0;
 
+            public ViewsListCursor(CairoEngine engine) {
+                this.engine = engine;
+                this.viewStateFileReader = new BlockFileReader(engine.getConfiguration());
+                this.path = new Path();
+            }
+
             @Override
             public void close() {
-                viewTokens.clear();
-                // close the reader to release mmap memory, but keep the object for reuse
-                reader.close();
-                path.resetCapacity();
+                Misc.free(path);
+                Misc.free(viewStateFileReader);
             }
 
             @Override
@@ -305,23 +182,18 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 return record;
             }
 
-            private void init() {
-                viewTokens.clear();
-                engine.getMatViewGraph().getViews(viewTokens);
-                viewIndex = 0;
-            }
-
             @Override
             public boolean hasNext() throws DataUnavailableException {
+                final CairoConfiguration configuration = engine.getConfiguration();
                 path.of(configuration.getDbRoot());
                 final int pathLen = path.size();
 
                 final int n = viewTokens.size();
                 for (; viewIndex < n; viewIndex++) {
                     final TableToken viewToken = viewTokens.get(viewIndex);
-                    if (!engine.isTableDropped(viewToken)) {
-                        final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
-                        if (matViewDefinition == null) {
+                    if (engine.getTableTokenIfExists(viewToken.getTableName()) != null) {
+                        final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
+                        if (viewDefinition == null) {
                             continue; // mat view was dropped concurrently
                         }
 
@@ -329,8 +201,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, viewToken.getDirName());
                         if (isMatViewStateExists) {
                             try {
-                                reader.of(path.trimTo(pathLen).concat(viewToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
-                                viewStateReader.of(reader, viewToken);
+                                viewStateFileReader.of(path.trimTo(pathLen).concat(viewToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                                viewStateReader.of(viewStateFileReader, viewToken);
                             } catch (CairoException e) {
                                 LOG.info().$("could not read materialized view state file [view=").$safe(viewToken.getTableName())
                                         .$(", msg=").$safe(e.getFlyweightMessage())
@@ -340,35 +212,39 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             }
                         }
 
+                        final long lastPeriodHi = viewStateReader.getLastPeriodHi();
                         final long lastRefreshedBaseTxn = viewStateReader.getLastRefreshBaseTxn();
                         final long lastRefreshTimestamp = viewStateReader.getLastRefreshTimestamp();
 
-                        final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
+                        final TableToken baseTableToken = engine.getTableTokenIfExists(viewDefinition.getBaseTableName());
                         // Read base table txn after mat view's last refreshed txn to avoid
                         // showing obsolete base table txn.
                         final long lastAppliedBaseTxn = baseTableToken != null
                                 ? engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn() : -1;
 
-                        final int refreshLimitHoursOrMonths;
+                        final int refreshLimitHoursOrMonths = viewDefinition.getRefreshLimitHoursOrMonths();
+                        final int periodLength = viewDefinition.getPeriodLength();
+                        final char periodLengthUnit = viewDefinition.getPeriodLengthUnit();
+                        final int periodDelay = viewDefinition.getPeriodDelay();
+                        final char periodDelayUnit = viewDefinition.getPeriodDelayUnit();
                         long timerStart = Numbers.LONG_NULL;
                         int timerInterval = 0;
                         char timerIntervalUnit = 0;
-                        try (TableMetadata matViewMeta = engine.getTableMetadata(viewToken)) {
-                            refreshLimitHoursOrMonths = matViewMeta.getMatViewRefreshLimitHoursOrMonths();
-                            if (matViewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
-                                timerStart = matViewMeta.getMatViewTimerStart();
-                                timerInterval = matViewMeta.getMatViewTimerInterval();
-                                timerIntervalUnit = matViewMeta.getMatViewTimerIntervalUnit();
-                            }
+                        if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_TIMER || periodLength > 0) {
+                            timerStart = viewDefinition.getTimerStart();
+                            timerInterval = viewDefinition.getTimerInterval();
+                            timerIntervalUnit = viewDefinition.getTimerUnit();
                         }
 
                         final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+                        // start timestamp is not persisted
                         final long lastRefreshStartTimestamp = state != null ? state.getLastRefreshStartTimestamp() : Numbers.LONG_NULL;
 
                         record.of(
-                                matViewDefinition,
+                                viewDefinition,
                                 lastRefreshStartTimestamp,
                                 lastRefreshTimestamp,
+                                lastPeriodHi,
                                 lastRefreshedBaseTxn,
                                 lastAppliedBaseTxn,
                                 viewStateReader.getInvalidationReason(),
@@ -376,7 +252,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                 refreshLimitHoursOrMonths,
                                 timerStart,
                                 timerInterval,
-                                timerIntervalUnit
+                                timerIntervalUnit,
+                                periodLength,
+                                periodLengthUnit,
+                                periodDelay,
+                                periodDelayUnit
                         );
                         viewIndex++;
                         return true;
@@ -386,18 +266,170 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public long preComputedStateSize() {
-                return viewTokens.size();
-            }
-
-            @Override
             public long size() throws DataUnavailableException {
                 return -1;
             }
 
             @Override
             public void toTop() {
+                viewTokens.clear();
+                engine.getMatViewGraph().getViews(viewTokens);
                 viewIndex = 0;
+            }
+
+            private static class MatViewsRecord implements Record {
+                private final StringSink invalidationReason = new StringSink();
+                private boolean invalid;
+                private long lastAppliedBaseTxn;
+                private long lastPeriodHi;
+                private long lastRefreshFinishTimestamp;
+                private long lastRefreshStartTimestamp;
+                private long lastRefreshTxn;
+                private int periodDelay;
+                private char periodDelayUnit;
+                private int periodLength;
+                private char periodLengthUnit;
+                private int refreshLimitHoursOrMonths;
+                private int timerInterval;
+                private char timerIntervalUnit;
+                private long timerStart;
+                private MatViewDefinition viewDefinition;
+
+                @Override
+                public int getInt(int col) {
+                    switch (col) {
+                        case COLUMN_REFRESH_LIMIT:
+                            return TablesFunctionFactory.getTtlValue(refreshLimitHoursOrMonths);
+                        case COLUMN_TIMER_INTERVAL:
+                            return timerInterval;
+                        case COLUMN_PERIOD_LENGTH:
+                            return periodLength;
+                        case COLUMN_PERIOD_DELAY:
+                            return periodDelay;
+                        default:
+                            return 0;
+                    }
+                }
+
+                @Override
+                public long getLong(int col) {
+                    switch (col) {
+                        case COLUMN_LAST_REFRESH_START_TIMESTAMP:
+                            return lastRefreshStartTimestamp;
+                        case COLUMN_LAST_REFRESH_FINISH_TIMESTAMP:
+                            return lastRefreshFinishTimestamp;
+                        case COLUMN_REFRESH_PERIOD_HI:
+                            return lastPeriodHi;
+                        case COLUMN_REFRESH_BASE_TABLE_TXN:
+                            return lastRefreshTxn;
+                        case COLUMN_APPLIED_BASE_TABLE_TXN:
+                            return lastAppliedBaseTxn;
+                        case COLUMN_TIMER_START:
+                            return timerStart;
+                        default:
+                            return 0;
+                    }
+                }
+
+                @Override
+                public CharSequence getStrA(int col) {
+                    switch (col) {
+                        case COLUMN_VIEW_NAME:
+                            return viewDefinition.getMatViewToken().getTableName();
+                        case COLUMN_REFRESH_TYPE:
+                            switch (viewDefinition.getRefreshType()) {
+                                case MatViewDefinition.REFRESH_TYPE_IMMEDIATE:
+                                    return "immediate";
+                                case MatViewDefinition.REFRESH_TYPE_TIMER:
+                                    return "timer";
+                                case MatViewDefinition.REFRESH_TYPE_MANUAL:
+                                    return "manual";
+                                default:
+                                    return "unknown";
+                            }
+                        case COLUMN_BASE_TABLE_NAME:
+                            return viewDefinition.getBaseTableName();
+                        case COLUMN_VIEW_SQL:
+                            return viewDefinition.getMatViewSql();
+                        case COLUMN_TABLE_DIR_NAME:
+                            return viewDefinition.getMatViewToken().getDirName();
+                        case COLUMN_VIEW_STATUS:
+                            return getViewStatus();
+                        case COLUMN_INVALIDATION_REASON:
+                            return invalidationReason.length() > 0 ? invalidationReason : null;
+                        case COLUMN_REFRESH_LIMIT_UNIT:
+                            if (refreshLimitHoursOrMonths == 0) {
+                                return null;
+                            }
+                            return TablesFunctionFactory.getTtlUnit(refreshLimitHoursOrMonths);
+                        case COLUMN_TIMER_INTERVAL_UNIT:
+                            return getIntervalUnit(timerIntervalUnit);
+                        case COLUMN_TIMER_TIME_ZONE:
+                            return viewDefinition.getTimerTimeZone();
+                        case COLUMN_PERIOD_LENGTH_UNIT:
+                            return getIntervalUnit(periodLengthUnit);
+                        case COLUMN_PERIOD_DELAY_UNIT:
+                            return getIntervalUnit(periodDelayUnit);
+                        default:
+                            return null;
+                    }
+                }
+
+                @Override
+                public CharSequence getStrB(int col) {
+                    return getStrA(col);
+                }
+
+                @Override
+                public int getStrLen(int col) {
+                    return TableUtils.lengthOf(getStrA(col));
+                }
+
+                public void of(
+                        MatViewDefinition viewDefinition,
+                        long lastRefreshStartTimestamp,
+                        long lastRefreshFinishTimestamp,
+                        long lastPeriodHi,
+                        long lastRefreshTxn,
+                        long lastAppliedBaseTxn,
+                        CharSequence invalidationReason,
+                        boolean invalid,
+                        int refreshLimitHoursOrMonths,
+                        long timerStart,
+                        int timerInterval,
+                        char timerIntervalUnit,
+                        int periodLength,
+                        char periodLengthUnit,
+                        int periodDelay,
+                        char periodDelayUnit
+                ) {
+                    this.viewDefinition = viewDefinition;
+                    this.lastRefreshStartTimestamp = lastRefreshStartTimestamp;
+                    this.lastRefreshFinishTimestamp = lastRefreshFinishTimestamp;
+                    this.lastPeriodHi = lastPeriodHi;
+                    this.lastRefreshTxn = lastRefreshTxn;
+                    this.lastAppliedBaseTxn = lastAppliedBaseTxn;
+                    this.invalidationReason.clear();
+                    this.invalidationReason.put(invalidationReason);
+                    this.invalid = invalid;
+                    this.refreshLimitHoursOrMonths = refreshLimitHoursOrMonths;
+                    this.timerStart = timerStart;
+                    this.timerInterval = timerInterval;
+                    this.timerIntervalUnit = timerIntervalUnit;
+                    this.periodLength = periodLength;
+                    this.periodLengthUnit = periodLengthUnit;
+                    this.periodDelay = periodDelay;
+                    this.periodDelayUnit = periodDelayUnit;
+                }
+
+                private CharSequence getViewStatus() {
+                    if (invalid) {
+                        return "invalid";
+                    }
+                    return (lastRefreshStartTimestamp != Numbers.LONG_NULL && lastRefreshStartTimestamp > lastRefreshFinishTimestamp)
+                            ? "refreshing"
+                            : "valid";
+                }
             }
         }
 
@@ -412,13 +444,19 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("view_table_dir_name", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("invalidation_reason", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("view_status", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("refresh_period_hi", ColumnType.TIMESTAMP));
             metadata.add(new TableColumnMetadata("refresh_base_table_txn", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("base_table_txn", ColumnType.LONG));
-            metadata.add(new TableColumnMetadata("refresh_limit_value", ColumnType.INT));
+            metadata.add(new TableColumnMetadata("refresh_limit", ColumnType.INT));
             metadata.add(new TableColumnMetadata("refresh_limit_unit", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("timer_time_zone", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("timer_start", ColumnType.TIMESTAMP));
-            metadata.add(new TableColumnMetadata("timer_interval_value", ColumnType.INT));
+            metadata.add(new TableColumnMetadata("timer_interval", ColumnType.INT));
             metadata.add(new TableColumnMetadata("timer_interval_unit", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("period_length", ColumnType.INT));
+            metadata.add(new TableColumnMetadata("period_length_unit", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("period_delay", ColumnType.INT));
+            metadata.add(new TableColumnMetadata("period_delay_unit", ColumnType.STRING));
             METADATA = metadata;
         }
     }

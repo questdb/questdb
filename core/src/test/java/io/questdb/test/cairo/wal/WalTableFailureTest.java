@@ -1029,12 +1029,12 @@ public class WalTableFailureTest extends AbstractCairoTest {
             drainWalQueue();
 
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
-            execute("insert into " + tableToken.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            execute("insert into " + tableToken.getTableName() + " values (1, 'ac', '2022-02-24T23', 'ef')");
             execute("ALTER TABLE " + tableToken.getTableName() + " RESUME WAL FROM TXN 3");
 
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n" +
-                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n", tableToken.getTableName());
+                    "1\tac\t2022-02-24T23:00:00.000000Z\tef\n", tableToken.getTableName());
         });
     }
 

@@ -54,7 +54,7 @@ public interface Utf8Sequence extends ByteSequence {
     default int intAt(int offset) {
         int result = 0;
         result |= byteAt(offset) & 0xff;
-        result |= (byteAt(offset + 1) & 0xff) << (8);
+        result |= (byteAt(offset + 1) & 0xff) << 8;
         result |= (byteAt(offset + 2) & 0xff) << (8 * 2);
         result |= (byteAt(offset + 3) & 0xff) << (8 * 3);
         return result;
@@ -108,11 +108,11 @@ public interface Utf8Sequence extends ByteSequence {
         return -1;
     }
 
-    default int shortAt(int offset) {
+    default short shortAt(int offset) {
         int result = 0;
         result |= byteAt(offset) & 0xff;
         result |= (byteAt(offset + 1) & 0xff) << 8;
-        return result;
+        return (short) result;
     }
 
     /**

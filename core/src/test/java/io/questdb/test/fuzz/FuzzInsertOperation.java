@@ -30,13 +30,13 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractTest;
@@ -104,6 +104,17 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
         this.nullSet = nullSet;
     }
 
+    public FuzzInsertOperation(FuzzInsertOperation operation) {
+        this.s0 = operation.s0;
+        this.s1 = operation.s1;
+        this.timestamp = operation.timestamp;
+        this.notSet = operation.notSet;
+        this.nullSet = operation.nullSet;
+        this.cancelRows = operation.cancelRows;
+        this.strLen = operation.strLen;
+        this.symbols = operation.symbols != null ? operation.symbols.clone() : null;
+    }
+
     @Override
     public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex, LongList excludedTsIntervals) {
         if (excludedTsIntervals != null && IntervalUtils.isInIntervals(excludedTsIntervals, timestamp)) {
@@ -135,126 +146,19 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
         tempList.setAll(tableColumnCount, 0);
 
         for (int i = 0; i < columnCount; i++) {
-            int index = rnd.nextInt(tableColumnCount);
-            while (tempList.getQuick(index % tableColumnCount) != 0) {
-                index++;
+            int columnIndex = rnd.nextInt(tableColumnCount);
+            while (tempList.getQuick(columnIndex % tableColumnCount) != 0) {
+                columnIndex++;
             }
-            index = index % tableColumnCount;
-            tempList.setQuick(index, 1);
+            columnIndex = columnIndex % tableColumnCount;
+            tempList.setQuick(columnIndex, 1);
 
-            if (index != metadata.getTimestampIndex() && index != virtualTimestampIndex) {
-                int type = metadata.getColumnType(index);
+            if (columnIndex != metadata.getTimestampIndex() && columnIndex != virtualTimestampIndex) {
+                int type = metadata.getColumnType(columnIndex);
                 if (type > 0) {
                     if (rnd.nextDouble() > notSet) {
                         boolean isNull = rnd.nextDouble() < nullSet;
-
-                        switch (ColumnType.tagOf(type)) {
-                            case ColumnType.CHAR:
-                                row.putChar(index, rnd.nextChar());
-                                break;
-
-                            case ColumnType.INT:
-                                row.putInt(index, isNull ? Numbers.INT_NULL : rnd.nextInt());
-                                break;
-
-                            case ColumnType.IPv4:
-                                row.putInt(index, isNull ? Numbers.IPv4_NULL : rnd.nextInt());
-                                break;
-
-                            case ColumnType.LONG:
-                                row.putLong(index, isNull ? Numbers.LONG_NULL : rnd.nextLong());
-                                break;
-
-                            case ColumnType.TIMESTAMP:
-                                row.putTimestamp(index, isNull ? Numbers.LONG_NULL : rnd.nextLong());
-                                break;
-
-                            case ColumnType.DATE:
-                                row.putDate(index, isNull ? Numbers.LONG_NULL : rnd.nextLong());
-                                break;
-
-                            case ColumnType.SYMBOL:
-                                row.putSym(index, isNull || symbols.length == 0 ? null : symbols[rnd.nextInt(symbols.length)]);
-                                break;
-
-                            case ColumnType.FLOAT:
-                                row.putFloat(index, isNull ? Float.NaN : rnd.nextFloat());
-                                break;
-
-                            case ColumnType.SHORT:
-                                row.putShort(index, isNull ? 0 : rnd.nextShort());
-                                break;
-
-                            case ColumnType.BYTE:
-                                row.putByte(index, isNull ? 0 : rnd.nextByte());
-                                break;
-
-                            case ColumnType.BOOLEAN:
-                                row.putBool(index, rnd.nextBoolean());
-                                break;
-
-                            case ColumnType.LONG128:
-                                if (!isNull) {
-                                    row.putLong128(index, rnd.nextLong(), rnd.nextLong());
-                                } else {
-                                    row.putLong128(index, Numbers.LONG_NULL, Numbers.LONG_NULL);
-                                }
-                                break;
-
-                            case ColumnType.LONG256:
-                                if (!isNull) {
-                                    row.putLong256(index, Long256Impl.NULL_LONG256);
-                                } else {
-                                    row.putLong256(index, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
-                                }
-                                break;
-
-                            case ColumnType.DOUBLE:
-                                row.putDouble(index, isNull ? Double.NaN : rnd.nextDouble());
-                                break;
-
-                            case ColumnType.VARCHAR:
-                                if (isNull) {
-                                    row.putVarchar(index, null);
-                                    break;
-                                }
-                                utf8StringSink.clear();
-                                int varcharLen = strLen > 0 ? nextVariableColumnLen(rnd) : 0;
-                                rnd.nextUtf8Str(varcharLen, utf8StringSink);
-                                row.putVarchar(index, utf8StringSink);
-                                break;
-
-                            case ColumnType.STRING:
-                                row.putStr(index, isNull ? null : strLen == 0 ? "" : rnd.nextString(nextVariableColumnLen(rnd)));
-                                break;
-
-                            case ColumnType.BINARY:
-                                int len = strLen > 0 ? nextVariableColumnLen(rnd) : 0;
-                                row.putBin(index, isNull ? null : binarySequence.of(len == 0 ? new byte[0] : rnd.nextBytes(len)));
-                                break;
-
-                            case ColumnType.GEOBYTE:
-                            case ColumnType.GEOSHORT:
-                            case ColumnType.GEOINT:
-                            case ColumnType.GEOLONG:
-                                row.putGeoHash(index, rnd.nextLong());
-                                break;
-                            case ColumnType.UUID:
-                                row.putLong128(index, rnd.nextLong(), rnd.nextLong());
-                                break;
-                            case ColumnType.ARRAY:
-                                DirectArray array = tlArray.get();
-                                if (rnd.nextPositiveInt() % 4 == 0) {
-                                    array.ofNull();
-                                    row.putArray(index, array);
-                                } else {
-                                    rnd.nextDoubleArray(ColumnType.decodeArrayDimensionality(type), array, 1, 8, 0);
-                                    row.putArray(index, array);
-                                }
-                                break;
-                            default:
-                                throw new UnsupportedOperationException();
-                        }
+                        appendColumnValue(rnd, type, row, columnIndex, isNull, utf8StringSink, binarySequence);
                     }
                 }
             }
@@ -282,6 +186,116 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
 
     public long getTimestamp() {
         return timestamp;
+    }
+
+    protected void appendColumnValue(Rnd rnd, int type, TableWriter.Row row, int columnIndex, boolean isNull, Utf8StringSink utf8StringSink, TestRecord.ArrayBinarySequence binarySequence) {
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.CHAR:
+                row.putChar(columnIndex, rnd.nextChar());
+                break;
+
+            case ColumnType.INT:
+                row.putInt(columnIndex, isNull ? Numbers.INT_NULL : rnd.nextInt());
+                break;
+
+            case ColumnType.IPv4:
+                row.putInt(columnIndex, isNull ? Numbers.IPv4_NULL : rnd.nextInt());
+                break;
+
+            case ColumnType.LONG:
+                row.putLong(columnIndex, isNull ? Numbers.LONG_NULL : rnd.nextLong());
+                break;
+
+            case ColumnType.TIMESTAMP:
+                row.putTimestamp(columnIndex, isNull ? Numbers.LONG_NULL : rnd.nextLong());
+                break;
+
+            case ColumnType.DATE:
+                row.putDate(columnIndex, isNull ? Numbers.LONG_NULL : rnd.nextLong());
+                break;
+
+            case ColumnType.SYMBOL:
+                row.putSym(columnIndex, isNull || symbols.length == 0 ? null : symbols[rnd.nextInt(symbols.length)]);
+                break;
+
+            case ColumnType.FLOAT:
+                row.putFloat(columnIndex, isNull ? Float.NaN : rnd.nextFloat());
+                break;
+
+            case ColumnType.SHORT:
+                row.putShort(columnIndex, isNull ? 0 : rnd.nextShort());
+                break;
+
+            case ColumnType.BYTE:
+                row.putByte(columnIndex, isNull ? 0 : rnd.nextByte());
+                break;
+
+            case ColumnType.BOOLEAN:
+                row.putBool(columnIndex, rnd.nextBoolean());
+                break;
+
+            case ColumnType.LONG128:
+                if (!isNull) {
+                    row.putLong128(columnIndex, rnd.nextLong(), rnd.nextLong());
+                } else {
+                    row.putLong128(columnIndex, Numbers.LONG_NULL, Numbers.LONG_NULL);
+                }
+                break;
+
+            case ColumnType.LONG256:
+                if (!isNull) {
+                    row.putLong256(columnIndex, Long256Impl.NULL_LONG256);
+                } else {
+                    row.putLong256(columnIndex, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+                }
+                break;
+
+            case ColumnType.DOUBLE:
+                row.putDouble(columnIndex, isNull ? Double.NaN : rnd.nextDouble());
+                break;
+
+            case ColumnType.VARCHAR:
+                if (isNull) {
+                    row.putVarchar(columnIndex, null);
+                    break;
+                }
+                utf8StringSink.clear();
+                int varcharLen = strLen > 0 ? nextVariableColumnLen(rnd) : 0;
+                rnd.nextUtf8Str(varcharLen, utf8StringSink);
+                row.putVarchar(columnIndex, utf8StringSink);
+                break;
+
+            case ColumnType.STRING:
+                row.putStr(columnIndex, isNull ? null : strLen == 0 ? "" : rnd.nextString(nextVariableColumnLen(rnd)));
+                break;
+
+            case ColumnType.BINARY:
+                int len = strLen > 0 ? nextVariableColumnLen(rnd) : 0;
+                row.putBin(columnIndex, isNull ? null : binarySequence.of(len == 0 ? new byte[0] : rnd.nextBytes(len)));
+                break;
+
+            case ColumnType.GEOBYTE:
+            case ColumnType.GEOSHORT:
+            case ColumnType.GEOINT:
+            case ColumnType.GEOLONG:
+                row.putGeoHash(columnIndex, rnd.nextLong());
+                break;
+            case ColumnType.UUID:
+                row.putLong128(columnIndex, rnd.nextLong(), rnd.nextLong());
+                break;
+            case ColumnType.ARRAY:
+                DirectArray array = tlArray.get();
+                if (rnd.nextPositiveInt() % 4 == 0) {
+                    array.ofNull();
+                    row.putArray(columnIndex, array);
+                } else {
+                    rnd.nextDoubleArray(ColumnType.decodeArrayDimensionality(type), array, 1, 8, 0);
+                    row.putArray(columnIndex, array);
+                }
+                break;
+            default:
+                throw new UnsupportedOperationException();
+        }
     }
 
     private int nextVariableColumnLen(Rnd rnd) {

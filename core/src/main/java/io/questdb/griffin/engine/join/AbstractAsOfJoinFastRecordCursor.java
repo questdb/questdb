@@ -49,12 +49,12 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
     protected RecordCursor masterCursor;
     protected boolean masterHasNext;
     protected Record masterRecord;
-    protected TimeFrameRecordCursor slaveCursor;
     protected int slaveFrameIndex = -1;
     protected long slaveFrameRow = Long.MIN_VALUE;
     protected Record slaveRecA; // used for internal navigation
     protected Record slaveRecB; // used inside the user-facing OuterJoinRecord
     protected TimeFrame slaveTimeFrame;
+    protected TimeFrameRecordCursor slaveTimeFrameCursor;
 
     public AbstractAsOfJoinFastRecordCursor(
             int columnSplit,
@@ -78,7 +78,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
     @Override
     public void close() {
         masterCursor = Misc.free(masterCursor);
-        slaveCursor = Misc.free(slaveCursor);
+        slaveTimeFrameCursor = Misc.free(slaveTimeFrameCursor);
     }
 
     @Override
@@ -91,7 +91,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         if (columnIndex < columnSplit) {
             return masterCursor.getSymbolTable(columnIndex);
         }
-        return slaveCursor.getSymbolTable(columnIndex - columnSplit);
+        return slaveTimeFrameCursor.getSymbolTable(columnIndex - columnSplit);
     }
 
     @Override
@@ -99,12 +99,12 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         if (columnIndex < columnSplit) {
             return masterCursor.newSymbolTable(columnIndex);
         }
-        return slaveCursor.newSymbolTable(columnIndex - columnSplit);
+        return slaveTimeFrameCursor.newSymbolTable(columnIndex - columnSplit);
     }
 
     public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor) {
         this.masterCursor = masterCursor;
-        this.slaveCursor = slaveCursor;
+        this.slaveTimeFrameCursor = slaveCursor;
         this.slaveTimeFrame = slaveCursor.getTimeFrame();
         masterRecord = masterCursor.getRecord();
         slaveRecA = slaveCursor.getRecord();
@@ -114,11 +114,6 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         slaveFrameRow = Long.MIN_VALUE;
         slaveFrameIndex = -1;
         toTop();
-    }
-
-    @Override
-    public long preComputedStateSize() {
-        return 0;
     }
 
     @Override
@@ -140,15 +135,15 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         slaveFrameRow = Long.MIN_VALUE;
         record.hasSlave(false);
         masterCursor.toTop();
-        slaveCursor.toTop();
+        slaveTimeFrameCursor.toTop();
         isMasterHasNextPending = true;
         isSlaveOpenPending = false;
         isSlaveForwardScan = true;
     }
 
-    private long binarySearchScanDown(long v, long low, long high) {
+    private long binarySearchScanDown(long v, long low, long high, long totalRowLo) {
         for (long i = high - 1; i >= low; i--) {
-            slaveCursor.recordAtRowIndex(slaveRecA, i);
+            slaveTimeFrameCursor.recordAtRowIndex(slaveRecA, i);
             long that = slaveRecA.getTimestamp(slaveTimestampIndex);
             // Here the code differs from the original C code:
             // We want to find the last row with value less *or equal* to v
@@ -157,8 +152,8 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                 return i;
             }
         }
-        // all values are greater than v, return low - 1
-        return low - 1;
+        // all values are greater than v, return totalRowLo - 1
+        return totalRowLo - 1;
     }
 
     private long binarySearchScrollDown(long low, long high, long value) {
@@ -169,7 +164,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
             } else {
                 return low;
             }
-            slaveCursor.recordAtRowIndex(slaveRecA, low);
+            slaveTimeFrameCursor.recordAtRowIndex(slaveRecA, low);
             data = slaveRecA.getTimestamp(slaveTimestampIndex);
         } while (data == value);
         return low - 1;
@@ -185,13 +180,13 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
     private boolean linearScan(long masterTimestamp) {
         final long scanHi = Math.min(slaveFrameRow + lookahead, slaveTimeFrame.getRowHi());
         while (slaveFrameRow < scanHi || (lookaheadTimestamp == masterTimestamp && slaveFrameRow < slaveTimeFrame.getRowHi())) {
-            slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
+            slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
             lookaheadTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
             if (lookaheadTimestamp > masterTimestamp) {
                 return true;
             }
             record.hasSlave(true);
-            slaveCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
+            slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
             slaveFrameRow++;
         }
         return false;
@@ -202,7 +197,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
 
             // Case 1: Process a frame that was previously marked for opening
             if (isSlaveOpenPending) {
-                if (slaveCursor.open() < 1) {
+                if (slaveTimeFrameCursor.open() < 1) {
                     // Empty frame, scan further -> case 2
                     isSlaveOpenPending = false;
                     continue;
@@ -232,7 +227,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
             // This uses only estimated timestamp boundaries since we don't know
             // the precise boundaries until we open the frame.
             if (isSlaveForwardScan) {
-                if (!slaveCursor.next() || masterTimestamp < slaveTimeFrame.getTimestampEstimateLo()) {
+                if (!slaveTimeFrameCursor.next() || masterTimestamp < slaveTimeFrame.getTimestampEstimateLo()) {
                     // We've reached the last frame or a frame after the searched timestamp.
                     // Try to find something in previous frames.
                     isSlaveForwardScan = false;
@@ -243,7 +238,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                     isSlaveOpenPending = true;
                 }
             } else {
-                if (!slaveCursor.prev() || slaveFrameIndex == slaveTimeFrame.getFrameIndex()) {
+                if (!slaveTimeFrameCursor.prev() || slaveFrameIndex == slaveTimeFrame.getFrameIndex()) {
                     // We've reached the first frame or an already opened frame. The scan is over.
                     isSlaveForwardScan = true;
                     return false;
@@ -277,7 +272,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         long high = rowHi;
         while (high - low > 65) {
             final long mid = (low + high) >>> 1;
-            slaveCursor.recordAtRowIndex(slaveRecA, mid);
+            slaveTimeFrameCursor.recordAtRowIndex(slaveRecA, mid);
             long midVal = slaveRecA.getTimestamp(slaveTimestampIndex);
 
             if (midVal < value) {
@@ -290,7 +285,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
             }
         }
 
-        return binarySearchScanDown(value, low, high + 1);
+        return binarySearchScanDown(value, low, high + 1, rowLo);
     }
 
     protected void nextSlave(long masterTimestamp) {
@@ -311,10 +306,10 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                     }
                     slaveFrameRow = foundRow;
                     record.hasSlave(true);
-                    slaveCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
+                    slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
                     long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
                     if (slaveFrameRow < slaveTimeFrame.getRowHi() - 1) {
-                        slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow + 1));
+                        slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow + 1));
                         lookaheadTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
                     } else {
                         lookaheadTimestamp = slaveTimestamp;
