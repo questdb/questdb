@@ -1507,15 +1507,14 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testFlatten() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (arr DOUBLE[][][], flatten_dim INT)");
-            execute("INSERT INTO tango VALUES (ARRAY[[[1.0, 2], [3.0, 4]], [[5.0, 6], [7.0, 8]]], 1)");
-            assertSql("arr\n[[1.0,2.0],[3.0,4.0],[5.0,6.0],[7.0,8.0]]\n", "SELECT flatten(arr, 1) arr FROM tango");
-            assertSql("arr\n[[1.0,2.0],[3.0,4.0],[5.0,6.0],[7.0,8.0]]\n", "SELECT flatten(arr, flatten_dim) arr FROM tango");
-            assertSql("arr\n[[1.0,2.0,3.0,4.0],[5.0,6.0,7.0,8.0]]\n", "SELECT flatten(arr, 2) arr FROM tango");
-            assertSql("arr\n[1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0]\n", "SELECT flatten(flatten(arr, 1), 1) arr FROM tango");
-            assertSql("arr\n[[[2.0],[4.0]],[[6.0],[8.0]]]\n", "SELECT arr[1:, 1:, 2:3] arr FROM tango");
-            assertSql("arr\n[[2.0,4.0],[6.0,8.0]]\n", "SELECT arr[1:, 1:, 2] arr FROM tango");
-            assertSql("arr\n[[2.0,4.0],[6.0,8.0]]\n", "SELECT flatten(arr[1:, 1:, 2:3], 3) arr FROM tango");
+            execute("CREATE TABLE tango (arr DOUBLE[][][])");
+            execute("INSERT INTO tango VALUES (ARRAY[[[1.0, 2, 3], [4.0, 5, 6]], [[7.0, 8, 9], [10.0, 11, 12]]])");
+            assertSql("arr\n[1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0,11.0,12.0]\n",
+                    "SELECT flatten(arr) arr FROM tango");
+            assertSql("arr\n[[[2.0,3.0],[5.0,6.0]],[[8.0,9.0],[11.0,12.0]]]\n",
+                    "SELECT arr[1:, 1:, 2:4] arr FROM tango");
+            assertSql("arr\n[2.0,3.0,5.0,6.0,8.0,9.0,11.0,12.0]\n",
+                    "SELECT flatten(arr[1:, 1:, 2:4]) arr FROM tango");
         });
     }
 

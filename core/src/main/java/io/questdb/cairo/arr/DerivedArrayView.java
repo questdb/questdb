@@ -159,34 +159,16 @@ public class DerivedArrayView extends ArrayView {
     }
 
     /**
-     * Flattens the provided dimension into the next-finer one, and removes it
-     * from the array's shape. If {@code dim} is the finest dimension (with
-     * stride = 1), flattens it into the one to the next-coarser one. The finest
-     * dimension cannot be flattened if its length is greater than 1.
-     *
-     * @param dim    the dimension to flatten
-     * @param argPos SQL syntax position where to report an error
+     * Flattens this array to a 1D array. Works only for a vanilla array, because a
+     * non-vanilla array can't be flattened through shape/stride manipulation.
      */
-    public void flattenDim(int dim, int argPos) {
-        final int nDims = getDimCount();
-        assert dim >= 0 && dim < nDims : "dim out of range: " + dim + ", nDims: " + nDims;
-        if (getStride(dim) == 1 && getDimLen(dim) > 1) {
-            throw CairoException.nonCritical()
-                    .position(argPos)
-                    .put("cannot flatten dim with stride = 1 and length > 1 [dim=").put(dim + 1)
-                    .put(", dimLen=").put(getDimLen(dim))
-                    .put(", nDims=").put(nDims).put(']');
-        }
-        final int dimToFlattenInto;
-        if (dim == 0) {
-            dimToFlattenInto = 1;
-        } else if (dim == nDims - 1) {
-            dimToFlattenInto = dim - 1;
-        } else {
-            dimToFlattenInto = getStride(dim - 1) < getStride(dim + 1) ? dim - 1 : dim + 1;
-        }
-        shape.set(dimToFlattenInto, shape.get(dimToFlattenInto) * shape.get(dim));
-        removeDim(dim);
+    public void flatten() {
+        assert isVanilla : "flatten() only allowed on a vanilla array";
+        shape.clear();
+        shape.add(getCardinality());
+        strides.clear();
+        strides.add(1);
+        type = ColumnType.encodeArrayType(getElemType(), 1);
     }
 
     public void of(ArrayView other) {
