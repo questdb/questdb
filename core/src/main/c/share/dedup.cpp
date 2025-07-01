@@ -452,6 +452,7 @@ int64_t dedup_sorted_timestamp_index_many_addresses_segment_bits_clean(
     return dedup_rows;
 }
 
+
 int64_t dedup_sorted_timestamp_index_many_addresses_segment_bits_row_encoding(
         int32_t segment_encoding_bytes,
         jlong indexOut,
@@ -491,6 +492,375 @@ int64_t dedup_sorted_timestamp_index_many_addresses_segment_bits_row_encoding(
             );
         default:
             return error_out_of_range;
+    }
+}
+
+
+template<typename IsNotNull, typename AreNotEqual>
+inline bool is_column_merge_identical(
+        int64_t column_top1, int64_t lo1, int64_t hi1,
+        int64_t column_top2, int64_t lo2, int64_t hi2,
+        const index_t *merge_index, int64_t merge_index_rows,
+        AreNotEqual &&are_not_equal_lambda,
+        IsNotNull &&is_not_null_lambda
+) {
+    if (column_top1 >= hi1) {
+        // All old values are nulls, check that the new values are null
+        for (int64_t i = std::max<int64_t>(lo2 - column_top2, 0); i < hi2 - column_top2; i++) {
+            if (is_not_null_lambda(1, i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    for (int64_t out_index = 0; out_index < merge_index_rows; out_index++) {
+        uint64_t index = merge_index[out_index].i;
+        const uint32_t bit = (index >> 63);
+
+        // Row is replaced, check if the data is the same
+        if (bit == 0) {
+            auto merge_side_index = (int64_t) (index & ~(1ull << 63));
+
+            const auto data1_index = out_index + lo1 - column_top1;
+            const auto data2_index = merge_side_index - column_top2;
+
+            if (data1_index < 0) {
+                // data1 points to column top, check new data2 is also null
+                if (data2_index > -1 && is_not_null_lambda(1, data2_index)) {
+                    return false;
+                }
+            } else {
+                if (data2_index > -1) {
+                    // data was not null, check new data is the same
+                    if (are_not_equal_lambda(data1_index, data2_index)) {
+                        return false;
+                    }
+                } else {
+                    // data2 points to column top, check new data is also null
+                    if (is_not_null_lambda(0, data1_index)) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+
+template<typename IsNotNull, typename AreNotEqual>
+inline bool is_column_replace_identical(
+        int64_t column_top1, int64_t lo1, int64_t hi1,
+        int64_t column_top2, int64_t lo2, int64_t hi2,
+        AreNotEqual &&are_not_equal_lambda, IsNotNull &&is_not_null_lambda
+) {
+    column_top1 = std::min<int64_t>(column_top1, hi1);
+    column_top2 = std::min<int64_t>(column_top2, hi2);
+    auto row_count = hi1 - lo1;
+
+    if (row_count != hi2 - lo2) {
+        // Different row counts, cannot be identical
+        return false;
+    }
+
+    int64_t min_col_top_rel = std::max<int64_t>(
+            std::min<int64_t>(column_top1 - lo1, column_top2 - lo2),
+            0
+    );
+
+    // If first column has column top sticking out of min_col_top_rel,
+    // check that second column values are nulls in that range
+    auto col1_col_top_sticks_out_count = column_top1 - lo1;
+    if (col1_col_top_sticks_out_count > min_col_top_rel
+        && is_not_null_lambda(
+            1,
+            lo2 - column_top2 + min_col_top_rel,
+            lo2 - column_top2 + col1_col_top_sticks_out_count)) {
+        return false;
+    }
+
+    // If second column has column top sticking out of min_col_top_rel,
+    // check that second column values are nulls in that range
+    auto col2_col_top_sticks_out_count = column_top2 - lo2;
+    if (col2_col_top_sticks_out_count > min_col_top_rel
+        && is_not_null_lambda(
+            0,
+            lo1 - column_top1 + min_col_top_rel,
+            lo1 - column_top1 + col2_col_top_sticks_out_count)) {
+        return false;
+    }
+
+    auto max_col_top_rel = std::max<int64_t>(
+            std::max<int64_t>(column_top1 - lo1, column_top2 - lo2),
+            0
+    );
+    auto compare_row_count = row_count - max_col_top_rel;
+    if (compare_row_count > 0 && are_not_equal_lambda(lo1 + max_col_top_rel, lo2 + max_col_top_rel, compare_row_count)) {
+        return false;
+    }
+    return true;
+}
+
+template<typename T>
+bool is_fixed_column_merge_identical(
+        int64_t column_top1, int64_t lo1, int64_t hi1, const T *data1,
+        int64_t column_top2, int64_t lo2, int64_t hi2, const T *data2,
+        const index_t *merge_index, int64_t merge_index_rows,
+        T null_value
+) {
+    const T *data_ptrs[2] = {data1, data2};
+    if (merge_index != nullptr) {
+        return is_column_merge_identical(
+                column_top1, lo1, hi1,
+                column_top2, lo2, hi2,
+                merge_index, merge_index_rows,
+                // are_not_equal
+                [&](int64_t index1, int64_t index2) -> bool {
+                    return data1[index1] != data2[index2];
+                },
+                // is_not_null_lambda
+                [&](int data_index, int64_t index) -> bool {
+                    return data_ptrs[data_index][index] != null_value;
+                }
+        );
+    } else {
+        return is_column_replace_identical(
+                column_top1, lo1, hi1,
+                column_top2, lo2, hi2,
+                // are_not_equal
+                [&](int64_t lo1, int64_t lo2, int64_t size) -> bool {
+                    return memcmp(data1 + lo1, data2 + lo2, size * sizeof(T)) != 0;
+                },
+                // is_not_null_lambda
+                [&](int data_index, int64_t lo, int64_t hi) -> bool {
+                    auto data = data_ptrs[data_index];
+                    for (int64_t i = lo; i < hi; i++) {
+                        if (data[i] != null_value) {
+                            return true;
+                        }
+                    }
+                }
+        );
+    }
+}
+
+bool is_varchar_column_merge_identical(
+        int64_t column_top1, int64_t lo1_pos, int64_t hi1_pos, const VarcharAuxEntryInlined *aux1, const uint8_t *data1,
+        int64_t column_top2, int64_t lo2_pos, int64_t hi2_pos, const VarcharAuxEntryInlined *aux2, const uint8_t *data2,
+        const index_t *merge_index, int64_t merge_index_rows
+) {
+    const VarcharAuxEntryInlined *aux_ptrs[2] = {aux1, aux2};
+    if (merge_index != nullptr) {
+        return is_column_merge_identical(
+                column_top1, lo1_pos, hi1_pos,
+                column_top2, lo2_pos, hi2_pos,
+                merge_index, merge_index_rows,
+                // are_not_equal
+                [&](int64_t index1, int64_t index2) -> bool {
+                    return compare_varchar(
+                            (uint8_t *) aux1, data1, std::numeric_limits<int64_t>::max(), index1,
+                            (uint8_t *) aux2, data2, std::numeric_limits<int64_t>::max(), index2
+                    ) != 0;
+                },
+                // is_not_null_lambda
+                [&](int data_index, int64_t index) -> bool {
+                    return !(aux_ptrs[data_index][index].header & HEADER_FLAG_NULL);
+                }
+        );
+    } else {
+        return is_column_replace_identical(
+                column_top1, lo1_pos, hi1_pos,
+                column_top2, lo2_pos, hi2_pos,
+                // are_not_equal
+                [&](int64_t lo1, int64_t lo2, int64_t size) -> bool {
+
+                    // Aux entry is 10 bytes of meta + 6 bytes of pointer for both split and inlined
+                    // Compare first 10 bytes of aux entries
+                    auto aux1_cmp = reinterpret_cast<const VarcharAuxEntryBoth *>(aux1 + lo1);
+                    auto aux2_cmp = reinterpret_cast<const VarcharAuxEntryBoth *>(aux2 + lo2);
+                    for (int64_t i = 0; i < size; i++) {
+                        auto aux1_entry = aux1_cmp[i];
+                        auto aux2_entry = aux2_cmp[i];
+                        if (aux1_entry.header1 != aux2_entry.header1 ||
+                            aux1_entry.header2 != aux2_entry.header2) {
+                            return true;
+                        }
+                    }
+                    // Compare data
+                    auto data1_offset_lo = aux1_cmp[0].get_data_offset();
+                    auto data1_offset_hi = aux1_cmp[size - 1].get_data_offset();
+                    auto data2_offset_lo = aux2_cmp[0].get_data_offset();
+                    auto data2_offset_hi = aux2_cmp[size - 1].get_data_offset();
+                    if (data1_offset_hi - data1_offset_lo != data2_offset_hi - data2_offset_lo) {
+                        return true;
+                    }
+                    if (memcmp(data1 + data1_offset_lo, data2 + data2_offset_lo,
+                               data1_offset_hi - data1_offset_lo) != 0) {
+                        return true;
+                    }
+                    return false;
+                },
+                // is_not_null_lambda
+                [&](int data_index, int64_t lo, int64_t hi) -> bool {
+                    auto aux = aux_ptrs[data_index];
+                    for (int64_t i = lo; i < hi; i++) {
+                        if (!(aux[i].header & HEADER_FLAG_NULL)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+        );
+    }
+}
+
+template<typename T>
+bool is_str_bin_column_merge_identical(
+        int64_t column_top1, int64_t lo1_pos, int64_t hi1_pos, const int64_t *aux1, const uint8_t *data1,
+        int64_t column_top2, int64_t lo2_pos, int64_t hi2_pos, const int64_t *aux2, const uint8_t *data2,
+        const index_t *merge_index, int64_t merge_index_rows, int32_t char_size_bytes
+) {
+    constexpr T null_len(-1);
+    const int64_t *aux_ptrs[2] = {aux1, aux2};
+    const uint8_t *data_ptrs[2] = {data1, data2};
+    if (merge_index != nullptr) {
+        return is_column_merge_identical(
+                column_top1, lo1_pos, hi1_pos,
+                column_top2, lo2_pos, hi2_pos,
+                merge_index, merge_index_rows,
+                // are_not_equal
+                [&](int64_t index1, int64_t index2) -> bool {
+                    // data was not null, check new data is the same
+                    auto data1_offset = aux1[index1];
+                    auto data2_offset = aux2[index2];
+                    T len1 = *(T * )(data1 + data1_offset);
+                    T len2 = *(T * )(data2 + data2_offset);
+
+                    return len1 != len2 ||
+                           (len1 > 0 && memcmp(
+                                   data1 + data1_offset + sizeof(T),
+                                   data2 + data2_offset + sizeof(T),
+                                   len1 * char_size_bytes) != 0);
+
+                },
+                // is_not_null_lambda
+                [&](int data_index, int64_t index) -> bool {
+                    auto offset = aux_ptrs[data_index][index];
+                    auto data = data_ptrs[data_index];
+                    return *(T * )(data + offset) != null_len;
+                }
+        );
+    } else {
+        return is_column_replace_identical(
+                column_top1, lo1_pos, hi1_pos,
+                column_top2, lo2_pos, hi2_pos,
+                [&](int64_t lo1, int64_t lo2, int64_t size) -> bool {
+
+                    // Compare data
+                    auto data1_offset_lo = aux1[lo1];
+                    auto data1_offset_hi = aux1[lo1 + size - 1];
+                    auto data2_offset_lo = aux2[lo2];
+                    auto data2_offset_hi = aux2[lo2 + size - 1];
+                    if (data1_offset_hi - data1_offset_lo != data2_offset_hi - data2_offset_lo
+                        || memcmp(
+                            data1 + data1_offset_lo,
+                            data2 + data2_offset_lo,
+                            data1_offset_hi - data1_offset_lo
+                    ) != 0) {
+                        return true;
+                    }
+                    return false;
+                },
+                [&](int data_index, int64_t lo, int64_t hi) -> bool {
+                    auto data1_offset_lo = aux_ptrs[data_index][lo];
+                    auto data1_offset_hi = aux_ptrs[data_index][hi];
+
+                    // Check that data length contains only a length entry for each row
+                    if (data1_offset_hi - data1_offset_lo != sizeof(T) * (hi - lo)) {
+                        return true;
+                    }
+
+                    // Check that the data has all length as -1
+                    auto data = data_ptrs[data_index];
+                    for (int64_t o = data1_offset_lo; o < data1_offset_hi; o += sizeof(T)) {
+                        if (*(T * )(data + o) != null_len) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+        );
+    }
+}
+
+bool is_array_column_merge_identical(
+        int64_t column_top1, int64_t lo1_pos, int64_t hi1_pos, const ArrayAuxEntry *aux1, const uint8_t *data1,
+        int64_t column_top2, int64_t lo2_pos, int64_t hi2_pos, const ArrayAuxEntry *aux2, const uint8_t *data2,
+        const index_t *merge_index, int64_t merge_index_rows
+) {
+    const ArrayAuxEntry *aux_ptrs[2] = {aux1, aux2};
+    if (merge_index != nullptr) {
+        return is_column_merge_identical(
+                column_top1, lo1_pos, hi1_pos,
+                column_top2, lo2_pos, hi2_pos,
+                merge_index, merge_index_rows,
+                // are_not_equal
+                [&](int64_t index1, int64_t index2) -> bool {
+                    int32_t size1 = aux1[index1].data_size;
+                    int32_t size2 = aux2[index2].data_size;
+                    if (size1 != size2) {
+                        return true;
+                    }
+                    auto offset1 = aux1[index1].offset_48 & ARRAY_OFFSET_MAX;
+                    auto offset2 = aux2[index2].offset_48 & ARRAY_OFFSET_MAX;
+                    return memcmp(data1 + offset1, data2 + offset2, size1) != 0;
+                },
+                // is_not_null_lambda
+                [&](int data_index, int64_t index) -> bool {
+                    return aux_ptrs[data_index][index].data_size > 0;
+                }
+        );
+    } else {
+        return is_column_replace_identical(
+                column_top1, lo1_pos, hi1_pos,
+                column_top2, lo2_pos, hi2_pos,
+                // are_not_equal
+                [&](int64_t lo1, int64_t lo2, int64_t size) -> bool {
+                    auto data1_offset_lo = aux1[lo1].offset_48 & ARRAY_OFFSET_MAX;
+                    auto data1_offset_hi = aux1[lo1 + size - 1].offset_48 & ARRAY_OFFSET_MAX;
+                    auto data2_offset_lo = aux2[lo2].offset_48 & ARRAY_OFFSET_MAX;
+                    auto data2_offset_hi = aux2[lo2 + size - 1].offset_48 & ARRAY_OFFSET_MAX;
+
+                    if (data1_offset_hi - data1_offset_lo != data2_offset_hi - data2_offset_lo) {
+                        // Compare array sizes
+                        for (int64_t i = 0; i < size; i++) {
+                            if (aux1[lo1 + i].data_size != aux2[lo2 + i].data_size) {
+                                return true;
+                            }
+                        }
+
+                        // Compare array data
+                        if (memcmp(
+                                data1 + data1_offset_lo,
+                                data2 + data2_offset_lo,
+                                data1_offset_hi - data1_offset_lo
+                        ) != 0)
+                            return true;
+                    }
+                    return false;
+                },
+
+                // is_not_null_lambda
+                [&](int data_index, int64_t lo, int64_t hi) -> bool {
+                    auto aux = aux_ptrs[data_index];
+                    for (int64_t i = lo; i < hi; i++) {
+                        if (aux[i].data_size > 0) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+        );
     }
 }
 
@@ -987,10 +1357,10 @@ Java_io_questdb_std_Vect_dedupMergeVarcharColumnSize(JNIEnv *env, jclass cl,
 
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_dedupMergeArrayColumnSize(JNIEnv *env, jclass cl,
-                                                     jlong merge_index_addr,
-                                                     jlong merge_index_row_count,
-                                                     jlong src_data_fix_addr,
-                                                     jlong src_ooo_fix_addr) {
+                                                   jlong merge_index_addr,
+                                                   jlong merge_index_row_count,
+                                                   jlong src_data_fix_addr,
+                                                   jlong src_ooo_fix_addr) {
     auto merge_index = reinterpret_cast<index_t *>(merge_index_addr);
     auto src_ooo_fix = reinterpret_cast<int64_t *>(src_ooo_fix_addr);
     auto src_data_fix = reinterpret_cast<int64_t *>(src_data_fix_addr);
@@ -1002,10 +1372,167 @@ Java_io_questdb_std_Vect_dedupMergeArrayColumnSize(JNIEnv *env, jclass cl,
         const uint32_t bit = (row >> 63);
         const uint64_t rr = row & ~(1ull << 63);
         // add up non-zero array sizes
-        dst_var_offset += std::max<int64_t >(0LL, src_fix[bit][rr * 2 + 1] & ARRAY_SIZE_MAX);
+        dst_var_offset += std::max<int64_t>(0LL, src_fix[bit][rr * 2 + 1] & ARRAY_SIZE_MAX);
     }
     return dst_var_offset;
 }
 
+JNIEXPORT bool JNICALL
+Java_io_questdb_cairo_frm_FrameAlgebra_isColumnReplaceIdentical(
+        JNIEnv *env, jclass cl,
+        jint columnType,
+        jint valueSizeBytes,
+        jlong columnTop1,
+        jlong lo1,
+        jlong hi1,
+        jlong auxAddr1,
+        jlong dataAddr1,
+        jlong columnTop2,
+        jlong lo2,
+        jlong hi2,
+        jlong auxAddr2,
+        jlong dataAddr2,
+        jlong mergeIndexAddr,
+        jlong mergeIndexRows,
+        jlong nullLong,
+        jlong nullLong1,
+        jlong nullLong2,
+        jlong nullLong3
+) {
+    auto merge_index = reinterpret_cast<index_t *>(mergeIndexAddr);
+    auto merge_index_rows = __JLONG_REINTERPRET_CAST__(int64_t, mergeIndexRows);
+    auto column_top1 = __JLONG_REINTERPRET_CAST__(int64_t, columnTop1);
+    auto column_top2 = __JLONG_REINTERPRET_CAST__(int64_t, columnTop2);
+    auto data1 = reinterpret_cast<void *>(dataAddr1);
+    auto data2 = reinterpret_cast<void *>(dataAddr2);
+    auto aux1 = reinterpret_cast<void *>(auxAddr1);
+    auto aux2 = reinterpret_cast<void *>(auxAddr2);
+    auto lo1_pos = __JLONG_REINTERPRET_CAST__(int64_t, lo1);
+    auto hi1_pos = __JLONG_REINTERPRET_CAST__(int64_t, hi1);
+    auto lo2_pos = __JLONG_REINTERPRET_CAST__(int64_t, lo2);
+    auto hi2_pos = __JLONG_REINTERPRET_CAST__(int64_t, hi2);
+
+    auto value_size_bytes = (int32_t) valueSizeBytes;
+    auto column_type = (int32_t) columnType;
+
+    auto null_long = __JLONG_REINTERPRET_CAST__(int64_t, nullLong);
+    auto null_long1 = __JLONG_REINTERPRET_CAST__(int64_t, nullLong1);
+    auto null_long2 = __JLONG_REINTERPRET_CAST__(int64_t, nullLong2);
+    auto null_long3 = __JLONG_REINTERPRET_CAST__(int64_t, nullLong3);
+    int64_t null_val[4] = {null_long, null_long1, null_long2, null_long3};
+    void *null_ptr = static_cast<void *>(null_val);
+
+    switch (value_size_bytes) {
+        case 1: {
+            return is_fixed_column_merge_identical<int8_t>(
+                    column_top1, lo1_pos, hi1_pos, (int8_t *) data1,
+                    column_top2, lo2_pos, hi2_pos, (int8_t *) data2,
+                    merge_index, merge_index_rows,
+                    *reinterpret_cast<const int8_t *>(null_ptr)
+            );
+        }
+        case 2: {
+            return is_fixed_column_merge_identical<int16_t>(
+                    column_top1, lo1_pos, hi1_pos, (int16_t *) data1,
+                    column_top2, lo2_pos, hi2_pos, (int16_t *) data2,
+                    merge_index, merge_index_rows,
+                    *reinterpret_cast<const int16_t *>(null_ptr)
+            );
+        }
+        case 4: {
+            return is_fixed_column_merge_identical<int32_t>(
+                    column_top1, lo1_pos, hi1_pos, (int32_t *) data1,
+                    column_top2, lo2_pos, hi2_pos, (int32_t *) data2,
+                    merge_index, merge_index_rows,
+                    *reinterpret_cast<const int32_t *>(null_ptr)
+            );
+        }
+        case 8: {
+            return is_fixed_column_merge_identical<int64_t>(
+                    column_top1, lo1_pos, hi1_pos, (int64_t *) data1,
+                    column_top2, lo2_pos, hi2_pos, (int64_t *) data2,
+                    merge_index, merge_index_rows,
+                    *reinterpret_cast<const int64_t *>(null_ptr)
+            );
+        }
+        case 16: {
+            return is_fixed_column_merge_identical<__int128>(
+                    column_top1, lo1_pos, hi1_pos, (__int128 *) data1,
+                    column_top2, lo2_pos, hi2_pos, (__int128 *) data2,
+                    merge_index, merge_index_rows,
+                    *reinterpret_cast<const __int128 *>(null_ptr)
+            );
+        }
+        case 32: {
+            return is_fixed_column_merge_identical<int256>(
+                    column_top1, lo1_pos, hi1_pos, (int256 *) data1,
+                    column_top2, lo2_pos, hi2_pos, (int256 *) data2,
+                    merge_index, merge_index_rows,
+                    *reinterpret_cast<const int256 *>(null_ptr)
+            );
+        }
+        case -1: {
+            switch ((ColumnType) (column_type)) {
+                case ColumnType::VARCHAR: {
+                    return is_varchar_column_merge_identical(
+                            column_top1, lo1_pos, hi1_pos, (const VarcharAuxEntryInlined *) aux1,
+                            (const uint8_t *) data1,
+                            column_top2, lo2_pos, hi2_pos, (const VarcharAuxEntryInlined *) aux2,
+                            (const uint8_t *) data2,
+                            merge_index, merge_index_rows
+                    );
+                }
+                case ColumnType::STRING: {
+                    return is_str_bin_column_merge_identical<int32_t>(
+                            column_top1, lo1_pos, hi1_pos, (const int64_t *) aux1, (const uint8_t *) data1,
+                            column_top2, lo2_pos, hi2_pos, (const int64_t *) aux2, (const uint8_t *) data2,
+                            merge_index, merge_index_rows, 2
+                    );
+                }
+                case ColumnType::BINARY: {
+                    return is_str_bin_column_merge_identical<int64_t>(
+                            column_top1, lo1_pos, hi1_pos, (const int64_t *) aux1, (const uint8_t *) data1,
+                            column_top2, lo2_pos, hi2_pos, (const int64_t *) aux2, (const uint8_t *) data2,
+                            merge_index, merge_index_rows, 1
+                    );
+                }
+                case ColumnType::ARRAY: {
+                    return is_array_column_merge_identical(
+                            column_top1, lo1_pos, hi1_pos, (const ArrayAuxEntry *) aux1, (const uint8_t *) data1,
+                            column_top2, lo2_pos, hi2_pos, (const ArrayAuxEntry *) aux2, (const uint8_t *) data2,
+                            merge_index, merge_index_rows
+                    );
+                }
+                default:
+                    assertm(false, "unsupported column type");
+                    return false;
+            }
+        }
+        default:
+            assertm(false, "unsupported column type");
+            return false;
+    }
+}
+
+JNIEXPORT bool JNICALL
+Java_io_questdb_cairo_frm_FrameAlgebra_isDesignatedTimestampColumnReplaceIdentical0(
+        JNIEnv *env, jclass cl,
+        jlong partitionColumnAddr,
+        jlong commitColumnAddr,
+        jlong rowCount
+) {
+    auto data1 = reinterpret_cast<int64_t *>(partitionColumnAddr);
+    auto data2 = reinterpret_cast<index_l *>(commitColumnAddr);
+    auto row_count = __JLONG_REINTERPRET_CAST__(int64_t, rowCount);
+
+    for(int64_t i = 0; i < row_count; i++) {
+        if (data1[i] != data2[i].ts) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // extern C
+
 

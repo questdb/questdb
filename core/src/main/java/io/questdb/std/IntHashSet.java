@@ -77,6 +77,12 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
         }
     }
 
+    public final void addAll(IntList that) {
+        for (int i = 0, k = that.size(); i < k; i++) {
+            add(that.get(i));
+        }
+    }
+
     public void addAt(int index, int key) {
         keys[index] = key;
         list.add(key);

@@ -25,16 +25,14 @@
 package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.std.Misc;
 
@@ -42,38 +40,26 @@ public abstract class DoubleArrayBinaryOperator extends ArrayFunction implements
     protected final DirectArray arrayOut;
     private final Function leftArg;
     private final int leftArgPos;
+    private final DerivedArrayView leftArgView = new DerivedArrayView();
     private final String opName;
     private final Function rightArg;
-    private final int rightArgPos;
+    private final DerivedArrayView rightArgView = new DerivedArrayView();
 
     public DoubleArrayBinaryOperator(
             String opName,
             CairoConfiguration configuration,
             Function leftArg,
             Function rightArg,
-            int leftArgPos,
-            int rightArgPos
-    ) throws SqlException {
-        try {
-            this.opName = opName;
-            this.leftArg = leftArg;
-            this.rightArg = rightArg;
-            this.arrayOut = new DirectArray(configuration);
-            this.leftArgPos = leftArgPos;
-            this.rightArgPos = rightArgPos;
-            int nDimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
-            int nDimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
-            if (nDimsLeft != nDimsRight) {
-                throw SqlException.position(leftArgPos)
-                        .put("arrays have different number of dimensions [nDimsLeft=").put(nDimsLeft)
-                        .put(", nDimsRight=").put(nDimsRight).put(']');
-            }
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDimsLeft);
-            arrayOut.setType(type);
-        } catch (Throwable th) {
-            close();
-            throw th;
-        }
+            int leftArgPos
+    ) {
+        this.opName = opName;
+        this.leftArg = leftArg;
+        this.rightArg = rightArg;
+        this.arrayOut = new DirectArray(configuration);
+        this.leftArgPos = leftArgPos;
+        int nDimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
+        int nDimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
+        this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, Math.max(nDimsLeft, nDimsRight));
     }
 
     @Override
@@ -90,31 +76,26 @@ public abstract class DoubleArrayBinaryOperator extends ArrayFunction implements
             arrayOut.ofNull();
             return arrayOut;
         }
-        if (left.getType() != type) {
-            throw CairoException.nonCritical().position(leftArgPos)
-                    .put("unexpected array type [expected=").put(type)
-                    .put(", actual=").put(left.getType())
-                    .put(']');
-        }
-        if (right.getType() != type) {
-            throw CairoException.nonCritical().position(rightArgPos)
-                    .put("unexpected array type [expected=").put(type)
-                    .put(", actual=").put(right.getType())
-                    .put(']');
-        }
-        if (!left.shapeEquals(right)) {
-            throw CairoException.nonCritical().position(leftArgPos)
-                    .put("arrays have different shapes [leftShape=").put(left.shapeToString())
-                    .put(", rightShape=").put(right.shapeToString())
-                    .put(']');
-        }
         arrayOut.setType(type);
-        arrayOut.copyShapeFrom(left);
+        if (!left.shapeEquals(right)) {
+            DerivedArrayView.computeBroadcastShape(left, right, arrayOut.getShape(), leftArgPos);
+            if (!left.shapeEquals(arrayOut)) {
+                leftArgView.of(left);
+                leftArgView.broadcast(arrayOut.getShape());
+                left = leftArgView;
+            }
+            if (!right.shapeEquals(arrayOut)) {
+                rightArgView.of(right);
+                rightArgView.broadcast(arrayOut.getShape());
+                right = rightArgView;
+            }
+        } else {
+            arrayOut.copyShapeFrom(left);
+        }
+
         arrayOut.applyShape();
         if (left.isVanilla() && right.isVanilla()) {
-            FlatArrayView flatViewLeft = left.flatView();
-            FlatArrayView flatViewRight = right.flatView();
-            bulkApplyOperation(flatViewLeft, flatViewRight);
+            bulkApplyOperation(left, right);
         } else {
             applyRecursive(0, left, 0, right, 0, arrayOut.startMemoryA());
         }
@@ -161,7 +142,7 @@ public abstract class DoubleArrayBinaryOperator extends ArrayFunction implements
         if (atDeepestDim) {
             for (int i = 0; i < count; i++) {
                 double leftVal = left.getDouble(flatIndexLeft);
-                double rightVal = right.getDouble(flatIndexLeft);
+                double rightVal = right.getDouble(flatIndexRight);
                 memOut.putDouble(applyOperation(leftVal, rightVal));
                 flatIndexLeft += strideLeft;
                 flatIndexRight += strideRight;
@@ -177,5 +158,5 @@ public abstract class DoubleArrayBinaryOperator extends ArrayFunction implements
 
     protected abstract double applyOperation(double leftVal, double rightVal);
 
-    protected abstract void bulkApplyOperation(FlatArrayView leftFlatView, FlatArrayView rightFlatView);
+    protected abstract void bulkApplyOperation(ArrayView leftFlatView, ArrayView rightFlatView);
 }
