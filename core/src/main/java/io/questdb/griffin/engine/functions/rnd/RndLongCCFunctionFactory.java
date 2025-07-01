@@ -82,7 +82,7 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean canPrefetch() {
+        public boolean shouldMemoize() {
             return true;
         }
 
@@ -103,7 +103,7 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void prefetch(Record record) {
+        public void memoize(Record record) {
             this.values = compute();
             this.prefetched = true;
         }

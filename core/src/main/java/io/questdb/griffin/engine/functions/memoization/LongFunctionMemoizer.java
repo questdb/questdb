@@ -38,12 +38,12 @@ public final class LongFunctionMemoizer extends LongFunction implements UnaryFun
     private long value;
 
     public LongFunctionMemoizer(Function fn) {
-        assert fn.canPrefetch();
+        assert fn.shouldMemoize();
         this.fn = fn;
     }
 
     @Override
-    public boolean canPrefetch() {
+    public boolean shouldMemoize() {
         return true;
     }
 
@@ -64,7 +64,7 @@ public final class LongFunctionMemoizer extends LongFunction implements UnaryFun
     }
 
     @Override
-    public void prefetch(Record record) {
+    public void memoize(Record record) {
         value = fn.getLong(record);
         memoized = true;
     }

@@ -38,12 +38,12 @@ public final class TimestampFunctionMemoizer extends TimestampFunction implement
     private long value;
 
     public TimestampFunctionMemoizer(Function fn) {
-        assert fn.canPrefetch();
+        assert fn.shouldMemoize();
         this.fn = fn;
     }
 
     @Override
-    public boolean canPrefetch() {
+    public boolean shouldMemoize() {
         return true;
     }
 
@@ -64,7 +64,7 @@ public final class TimestampFunctionMemoizer extends TimestampFunction implement
     }
 
     @Override
-    public void prefetch(Record record) {
+    public void memoize(Record record) {
         value = fn.getTimestamp(record);
         memoized = true;
     }

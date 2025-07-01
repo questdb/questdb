@@ -76,7 +76,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean canPrefetch() {
+        public boolean shouldMemoize() {
             return true;
         }
 

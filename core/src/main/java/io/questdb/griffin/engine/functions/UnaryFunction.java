@@ -34,8 +34,8 @@ import io.questdb.griffin.SqlExecutionContext;
 public interface UnaryFunction extends Function {
 
     @Override
-    default boolean canPrefetch() {
-        return getArg().canPrefetch();
+    default boolean shouldMemoize() {
+        return getArg().shouldMemoize();
     }
 
     @Override
@@ -83,8 +83,8 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
-    default void prefetch(Record record) {
-        getArg().prefetch(record);
+    default void memoize(Record record) {
+        getArg().memoize(record);
     }
 
     @Override

@@ -35,8 +35,8 @@ import io.questdb.std.Misc;
 public interface BinaryFunction extends Function {
 
     @Override
-    default boolean canPrefetch() {
-        return getLeft().canPrefetch() && getRight().canPrefetch();
+    default boolean shouldMemoize() {
+        return getLeft().shouldMemoize() && getRight().shouldMemoize();
     }
 
     @Override
@@ -97,9 +97,9 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
-    default void prefetch(Record recordA) {
-        getLeft().prefetch(recordA);
-        getRight().prefetch(recordA);
+    default void memoize(Record recordA) {
+        getLeft().memoize(recordA);
+        getRight().memoize(recordA);
     }
 
     @Override

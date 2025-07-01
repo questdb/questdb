@@ -91,7 +91,7 @@ public class JsonExtractFunction implements Function {
     }
 
     @Override
-    public boolean canPrefetch() {
+    public boolean shouldMemoize() {
         return true;
     }
 

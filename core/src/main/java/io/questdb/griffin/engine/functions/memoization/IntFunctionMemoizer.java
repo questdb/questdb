@@ -38,12 +38,12 @@ public final class IntFunctionMemoizer extends IntFunction implements UnaryFunct
     private int value;
 
     public IntFunctionMemoizer(Function fn) {
-        assert fn.canPrefetch();
+        assert fn.shouldMemoize();
         this.fn = fn;
     }
 
     @Override
-    public boolean canPrefetch() {
+    public boolean shouldMemoize() {
         return true;
     }
 
@@ -64,7 +64,7 @@ public final class IntFunctionMemoizer extends IntFunction implements UnaryFunct
     }
 
     @Override
-    public void prefetch(Record record) {
+    public void memoize(Record record) {
         value = fn.getInt(record);
         memoized = true;
     }

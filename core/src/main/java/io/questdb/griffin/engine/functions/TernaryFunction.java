@@ -34,8 +34,8 @@ import io.questdb.griffin.SqlExecutionContext;
 public interface TernaryFunction extends Function {
 
     @Override
-    default boolean canPrefetch() {
-        return getLeft().canPrefetch() && getCenter().canPrefetch() && getRight().canPrefetch();
+    default boolean shouldMemoize() {
+        return getLeft().shouldMemoize() && getCenter().shouldMemoize() && getRight().shouldMemoize();
     }
 
     @Override
@@ -103,10 +103,10 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
-    default void prefetch(Record record) {
-        getLeft().prefetch(record);
-        getCenter().prefetch(record);
-        getRight().prefetch(record);
+    default void memoize(Record record) {
+        getLeft().memoize(record);
+        getCenter().memoize(record);
+        getRight().memoize(record);
     }
 
     @Override

@@ -55,7 +55,7 @@ public class RndLongFunctionFactory implements FunctionFactory {
         private Rnd rnd;
 
         @Override
-        public boolean canPrefetch() {
+        public boolean shouldMemoize() {
             return true;
         }
 

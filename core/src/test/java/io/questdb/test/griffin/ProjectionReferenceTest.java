@@ -60,18 +60,16 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                             "1\t2\n" +
                             "1\t2\n",
                     "select $1 as b, b + 1 as inc from long_sequence(3)",
-                    true,
                     true
             );
 
-            // we can use a projected column insude an expression
+            // we can use a projected column inside an expression
             assertQuery(
                     "b\tinc\n" +
                             "2\t3\n" +
                             "3\t4\n" +
                             "4\t5\n",
                     "select $1 + x as b, b + 1 as inc from long_sequence(3)",
-                    true,
                     true
             );
 
@@ -82,7 +80,6 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                             "1\t2\n" +
                             "1\t3\n",
                     "select $1 as x, x as x_orig from long_sequence(3)",
-                    true,
                     true
             );
 
@@ -92,10 +89,54 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                             "3\t2\n" +
                             "4\t3\n",
                     "select $1 + x as x, x as x_orig from long_sequence(3)",
-                    true,
+                    true
+            );
+
+            assertQuery(
+                    "i\tc\n" +
+                            "1\t2\n" +
+                            "2\t3\n" +
+                            "3\t4\n",
+                    "select x as i, $1 + i c from long_sequence(3)",
                     true
             );
         });
+    }
+
+    @Test
+    public void testColumnAsColumnReference() throws Exception {
+        assertSql(
+                "k\tk1\n" +
+                        "1\t1\n" +
+                        "2\t2\n" +
+                        "3\t3\n" +
+                        "4\t4\n" +
+                        "5\t5\n" +
+                        "6\t6\n" +
+                        "7\t7\n" +
+                        "8\t8\n" +
+                        "9\t9\n" +
+                        "10\t10\n",
+                "select x k, k from long_sequence(10)"
+        );
+    }
+
+    @Test
+    public void testColumnAsColumnReferencePreferBaseTable() throws Exception {
+        assertSql(
+                "x\tx1\n" +
+                        "1\t1\n" +
+                        "2\t2\n" +
+                        "3\t3\n" +
+                        "4\t4\n" +
+                        "5\t5\n" +
+                        "6\t6\n" +
+                        "7\t7\n" +
+                        "8\t8\n" +
+                        "9\t9\n" +
+                        "10\t10\n",
+                "select a x, x from (select x a, x b, x from long_sequence(10))"
+        );
     }
 
     @Test
@@ -427,38 +468,64 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testColumnAsColumnReference() throws Exception {
-        assertSql(
-                "k\tk1\n" +
-                        "1\t1\n" +
-                        "2\t2\n" +
-                        "3\t3\n" +
-                        "4\t4\n" +
-                        "5\t5\n" +
-                        "6\t6\n" +
-                        "7\t7\n" +
-                        "8\t8\n" +
-                        "9\t9\n" +
-                        "10\t10\n",
-                "select x k, k from long_sequence(10)"
+    public void testWindowFunction() throws Exception {
+        execute("create table tmp as (select rnd_symbol('abc', 'cde') sym, rnd_double() price from long_sequence(20))");
+        assertQuery(
+                "sym\ti\tprev\n" +
+                        "abc\t-0.8043224099968393\tnull\n" +
+                        "cde\t-0.08486964232560668\tnull\n" +
+                        "abc\t-0.0843832076262595\t-0.8043224099968393\n" +
+                        "abc\t-0.6508594025855301\t-0.0843832076262595\n" +
+                        "abc\t-0.7905675319675964\t-0.6508594025855301\n" +
+                        "abc\t-0.22452340856088226\t-0.7905675319675964\n" +
+                        "cde\t-0.3491070363730514\t-0.08486964232560668\n" +
+                        "cde\t-0.7611029514995744\t-0.3491070363730514\n" +
+                        "cde\t-0.4217768841969397\t-0.7611029514995744\n" +
+                        "abc\t-0.0367581207471136\t-0.22452340856088226\n" +
+                        "cde\t-0.6276954028373309\t-0.4217768841969397\n" +
+                        "cde\t-0.6778564558839208\t-0.6276954028373309\n" +
+                        "cde\t-0.8756771741121929\t-0.6778564558839208\n" +
+                        "abc\t-0.8799634725391621\t-0.0367581207471136\n" +
+                        "cde\t-0.5249321062686694\t-0.8756771741121929\n" +
+                        "abc\t-0.7675673070796104\t-0.8799634725391621\n" +
+                        "cde\t-0.21583224269349388\t-0.5249321062686694\n" +
+                        "cde\t-0.15786635599554755\t-0.21583224269349388\n" +
+                        "abc\t-0.1911234617573182\t-0.7675673070796104\n" +
+                        "cde\t-0.5793466326862211\t-0.15786635599554755\n",
+                "select sym, -price i, lag(i) over (partition by sym) prev from tmp",
+                false,
+                true
         );
     }
 
     @Test
-    public void testColumnAsColumnReferencePreferBaseTable() throws Exception {
-        assertSql(
-                "x\tx1\n" +
-                        "1\t1\n" +
-                        "2\t2\n" +
-                        "3\t3\n" +
-                        "4\t4\n" +
-                        "5\t5\n" +
-                        "6\t6\n" +
-                        "7\t7\n" +
-                        "8\t8\n" +
-                        "9\t9\n" +
-                        "10\t10\n",
-                "select a x, x from (select x a, x b, x from long_sequence(10))"
+    public void testWindowFunctionPreferBaseTable() throws Exception {
+        execute("create table tmp as (select rnd_symbol('abc', 'cde') sym, rnd_double() price from long_sequence(20))");
+        assertQuery(
+                "sym\tprice\tprev\n" +
+                        "abc\t-0.8043224099968393\tnull\n" +
+                        "cde\t-0.08486964232560668\tnull\n" +
+                        "abc\t-0.0843832076262595\t0.8043224099968393\n" +
+                        "abc\t-0.6508594025855301\t0.0843832076262595\n" +
+                        "abc\t-0.7905675319675964\t0.6508594025855301\n" +
+                        "abc\t-0.22452340856088226\t0.7905675319675964\n" +
+                        "cde\t-0.3491070363730514\t0.08486964232560668\n" +
+                        "cde\t-0.7611029514995744\t0.3491070363730514\n" +
+                        "cde\t-0.4217768841969397\t0.7611029514995744\n" +
+                        "abc\t-0.0367581207471136\t0.22452340856088226\n" +
+                        "cde\t-0.6276954028373309\t0.4217768841969397\n" +
+                        "cde\t-0.6778564558839208\t0.6276954028373309\n" +
+                        "cde\t-0.8756771741121929\t0.6778564558839208\n" +
+                        "abc\t-0.8799634725391621\t0.0367581207471136\n" +
+                        "cde\t-0.5249321062686694\t0.8756771741121929\n" +
+                        "abc\t-0.7675673070796104\t0.8799634725391621\n" +
+                        "cde\t-0.21583224269349388\t0.5249321062686694\n" +
+                        "cde\t-0.15786635599554755\t0.21583224269349388\n" +
+                        "abc\t-0.1911234617573182\t0.7675673070796104\n" +
+                        "cde\t-0.5793466326862211\t0.15786635599554755\n",
+                "select sym, -price price, lag(price) over (partition by sym) prev from tmp",
+                false,
+                true
         );
     }
 }

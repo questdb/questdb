@@ -34,8 +34,8 @@ import io.questdb.griffin.SqlExecutionContext;
 public interface QuaternaryFunction extends Function {
 
     @Override
-    default boolean canPrefetch() {
-        return getFunc0().canPrefetch() && getFunc1().canPrefetch() && getFunc2().canPrefetch() && getFunc3().canPrefetch();
+    default boolean shouldMemoize() {
+        return getFunc0().shouldMemoize() && getFunc1().shouldMemoize() && getFunc2().shouldMemoize() && getFunc3().shouldMemoize();
     }
 
     @Override
@@ -120,11 +120,11 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
-    default void prefetch(Record record) {
-        getFunc0().prefetch(record);
-        getFunc1().prefetch(record);
-        getFunc2().prefetch(record);
-        getFunc3().prefetch(record);
+    default void memoize(Record record) {
+        getFunc0().memoize(record);
+        getFunc1().memoize(record);
+        getFunc2().memoize(record);
+        getFunc3().memoize(record);
     }
 
     @Override

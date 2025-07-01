@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.Function;
 
 public interface ConstantFunction extends Function {
     @Override
-    default boolean canPrefetch() {
+    default boolean shouldMemoize() {
         return true;
     }
 

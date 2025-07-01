@@ -40,21 +40,21 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
 
     protected final VirtualFunctionRecord recordA;
     private final ObjList<Function> functions;
-    private final int prefetcherCount;
-    private final ObjList<Function> prefetchers;
+    private final int memoizerCount;
+    private final ObjList<Function> memoizers;
     private final VirtualFunctionRecord recordB;
     private final boolean supportsRandomAccess;
     protected RecordCursor baseCursor;
 
     public VirtualFunctionRecordCursor(
             ObjList<Function> functions,
-            ObjList<Function> prefetchers,
+            ObjList<Function> memoizers,
             boolean supportsRandomAccess,
             int virtualColumnReservedSlots
     ) {
         this.functions = functions;
-        this.prefetchers = prefetchers;
-        this.prefetcherCount = prefetchers.size();
+        this.memoizers = memoizers;
+        this.memoizerCount = memoizers.size();
         if (supportsRandomAccess) {
             this.recordA = new VirtualFunctionRecord(functions, virtualColumnReservedSlots);
             this.recordB = new VirtualFunctionRecord(functions, virtualColumnReservedSlots);
@@ -103,7 +103,7 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     @Override
     public boolean hasNext() {
         final boolean result = baseCursor.hasNext();
-        if (result && prefetcherCount > 0) {
+        if (result && memoizerCount > 0) {
             prefetchRowStableFunctions();
         }
         return result;
@@ -157,8 +157,8 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     }
 
     private void prefetchRowStableFunctions() {
-        for (int i = 0; i < prefetcherCount; i++) {
-            prefetchers.getQuick(i).prefetch(recordA);
+        for (int i = 0; i < memoizerCount; i++) {
+            memoizers.getQuick(i).memoize(recordA);
         }
     }
 }

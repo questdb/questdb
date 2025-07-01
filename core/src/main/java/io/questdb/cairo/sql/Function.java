@@ -98,10 +98,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         throw new UnsupportedOperationException();
     }
 
-    default boolean canPrefetch() {
-        return false;
-    }
-
     @Override
     default void close() {
     }
@@ -270,10 +266,14 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return getType() == ColumnType.UNDEFINED;
     }
 
+    default void memoize(Record record) {
+    }
+
     default void offerStateTo(Function that) {
     }
 
-    default void prefetch(Record record) {
+    default boolean shouldMemoize() {
+        return false;
     }
 
     /**
