@@ -503,7 +503,7 @@ public abstract class ArrayView implements QuietCloseable {
         } else {
             int stride = getStride(0);
             int index = 0;
-            for (int i = 0, n = getDimLen(0) - 1; i < n; i++) {
+            for (int i = 0, n = getDimLen(0); i < n; i++) {
                 double v = getDouble(index);
                 if (Math.abs(v - value) <= Numbers.DOUBLE_TOLERANCE) {
                     return i;

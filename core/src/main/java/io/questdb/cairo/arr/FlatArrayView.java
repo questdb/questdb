@@ -153,7 +153,7 @@ public interface FlatArrayView {
     default int linearSearch(double value, int offset, int length) {
         for (int i = offset, n = offset + length; i < n; i++) {
             if (Math.abs(getDoubleAtAbsIndex(i) - value) <= Numbers.DOUBLE_TOLERANCE) {
-                return i - offset + 1;
+                return i - offset;
             }
         }
         return Numbers.INT_NULL;

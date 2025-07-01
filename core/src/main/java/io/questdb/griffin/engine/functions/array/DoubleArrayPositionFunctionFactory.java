@@ -81,8 +81,9 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
                 return Numbers.INT_NULL;
             }
             double value = valueArg.getDouble(rec);
-            return value != value ? array.linearSearchDoubleNull1DArray() + 1
-                    : array.linearSearchDoubleValue1DArray(value) + 1;
+            int index = value != value ? array.linearSearchDoubleNull1DArray()
+                    : array.linearSearchDoubleValue1DArray(value);
+            return Numbers.INT_NULL == index ? Numbers.INT_NULL : index + 1;
         }
 
         @Override
@@ -122,7 +123,8 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
             if (arr.isNull()) {
                 return Numbers.INT_NULL;
             }
-            return arr.linearSearchDoubleValue1DArray(value);
+            int pos = arr.linearSearchDoubleValue1DArray(value);
+            return Numbers.INT_NULL == pos ? Numbers.INT_NULL : pos + 1;
         }
 
         @Override
@@ -150,7 +152,7 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
             if (arr.isNull()) {
                 return Numbers.INT_NULL;
             }
-            return arr.linearSearchDoubleNull1DArray();
+            return arr.linearSearchDoubleNull1DArray() + 1;
         }
 
         @Override
