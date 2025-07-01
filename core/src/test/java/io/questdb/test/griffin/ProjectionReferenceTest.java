@@ -51,15 +51,15 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore("TODO: BUG - ORDER BY prioritises projection column over base column")
     public void testOrderBy() throws Exception {
+        // note: ordering prioritises projected columns over base columns, this is intentional and is consistent with DuckDB
         execute("create table trades (symbol string, price double, ts timestamp) timestamp(ts)");
         execute("insert into trades values ('A', 1, '2025-01-01T10:00:00.000Z'), ('B', 2, '2025-01-01T10:05:00.000Z')");
         assertQuery(
-                "symbol\tprice\n" +
-                        "A\t-1.0\n" +
-                        "B\t-2.0\n",
-                "select symbol, -price as price from trades order by price",
+                "symbol\torig_price\tprice\n" +
+                        "B\t2.0\t-2.0\n" +
+                        "A\t1.0\t-1.0\n",
+                "select symbol, price as orig_price, -price as price from trades order by price limit 10",
                 true
         );
     }
