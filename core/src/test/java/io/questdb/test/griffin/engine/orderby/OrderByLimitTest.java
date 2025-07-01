@@ -24,14 +24,10 @@
 
 package io.questdb.test.griffin.engine.orderby;
 
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class OrderByLimitTest extends AbstractCairoTest {
-    private static final Log LOG = LogFactory.getLog(OrderByLimitTest.class);
-
     @Test
     public void testNegativeLimitDescOrderBy() throws Exception {
         assertQuery(
