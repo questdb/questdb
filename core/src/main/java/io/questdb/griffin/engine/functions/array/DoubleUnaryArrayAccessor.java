@@ -50,6 +50,8 @@ public interface DoubleUnaryArrayAccessor {
         final boolean atDeepestDim = dim == view.getDimCount() - 1;
         if (atDeepestDim) {
             for (int i = 0; i < count; i++) {
+                //TODO: this is a megamorphic call site in the middle of a hot loop. We should consider benchmarking
+                // it and devirtualize if needed.
                 applyToElement(view, flatIndex);
                 flatIndex += stride;
             }
