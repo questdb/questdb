@@ -118,28 +118,7 @@ public final class TableUtils {
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
-    public static final long META_OFFSET_MAT_VIEW_REFRESH_LIMIT_HOURS_OR_MONTHS = META_OFFSET_TTL_HOURS_OR_MONTHS + 4; // INT
-    public static final long META_OFFSET_MAT_VIEW_TIMER_START = META_OFFSET_MAT_VIEW_REFRESH_LIMIT_HOURS_OR_MONTHS + 4; // LONG
-    public static final long META_OFFSET_MAT_VIEW_TIMER_INTERVAL = META_OFFSET_MAT_VIEW_TIMER_START + 8; // INT
-    public static final long META_OFFSET_MAT_VIEW_TIMER_INTERVAL_UNIT = META_OFFSET_MAT_VIEW_TIMER_INTERVAL + 4; // CHAR
     public static final String META_PREV_FILE_NAME = "_meta.prev";
-    /**
-     * TXN file structure
-     * struct {
-     * long txn;
-     * long transient_row_count; // rows count in last partition
-     * long fixed_row_count; // row count in table excluding count in last partition
-     * long max_timestamp; // last timestamp written to table
-     * long struct_version; // data structure version; whenever columns added or removed this version changes.
-     * long partition_version; // version that increments whenever non-current partitions are modified/added/removed
-     * long txn_check; // same as txn - sanity check for concurrent reads and writes
-     * int  map_writer_count; // symbol writer count
-     * int  map_writer_position[map_writer_count]; // position of each of map writers
-     * }
-     * <p>
-     * TableUtils.resetTxn() writes to this file, it could be using different offsets, beware
-     */
-
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     // 24-byte header left empty for possible future use
@@ -157,6 +136,7 @@ public final class TableUtils {
     public static final int TABLE_TYPE_NON_WAL = 0;
     public static final int TABLE_TYPE_WAL = 1;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
+    public static final String TODO_FILE_NAME = "_todo_";
     /**
      * TXN file structure
      * struct {
@@ -173,8 +153,6 @@ public final class TableUtils {
      * <p>
      * TableUtils.resetTxn() writes to this file, it could be using different offsets, beware
      */
-
-    public static final String TODO_FILE_NAME = "_todo_";
     public static final String TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
     // transaction file structure
@@ -1862,10 +1840,6 @@ public final class TableUtils {
         mem.putBool(tableStruct.isWalEnabled());
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
-        mem.putInt(tableStruct.getMatViewRefreshLimitHoursOrMonths());
-        mem.putLong(tableStruct.getMatViewTimerStart());
-        mem.putInt(tableStruct.getMatViewTimerInterval());
-        mem.putChar(tableStruct.getMatViewTimerIntervalUnit());
 
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;
@@ -2009,22 +1983,6 @@ public final class TableUtils {
 
     static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
-    }
-
-    static int getMatViewRefreshLimitHoursOrMonths(MemoryR metaMem) {
-        return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_MAT_VIEW_REFRESH_LIMIT_HOURS_OR_MONTHS) : 0;
-    }
-
-    static int getMatViewTimerInterval(MemoryR metaMem) {
-        return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_MAT_VIEW_TIMER_INTERVAL) : 0;
-    }
-
-    static char getMatViewTimerIntervalUnit(MemoryR metaMem) {
-        return isMetaFormatUpToDate(metaMem) ? metaMem.getChar(TableUtils.META_OFFSET_MAT_VIEW_TIMER_INTERVAL_UNIT) : 0;
-    }
-
-    static long getMatViewTimerStart(MemoryR metaMem) {
-        return isMetaFormatUpToDate(metaMem) ? metaMem.getLong(TableUtils.META_OFFSET_MAT_VIEW_TIMER_START) : 0;
     }
 
     static int getTtlHoursOrMonths(MemoryR metaMem) {
