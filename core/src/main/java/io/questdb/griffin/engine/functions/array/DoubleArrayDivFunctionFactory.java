@@ -22,60 +22,64 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.NoopArrayWriteState;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8StringSink;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.std.Transient;
 
-public class CastDoubleArrayToVarcharFunctionFactory implements FunctionFactory {
+public class DoubleArrayDivFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "cast(D[]ø)";
+        return "/(D[]D[])";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new Func(args.getQuick(0));
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        return new Func(
+                configuration,
+                args.getQuick(0),
+                args.getQuick(1),
+                argPositions.getQuick(0)
+        );
     }
 
-    public static class Func extends AbstractCastToVarcharFunction {
-        private final Utf8StringSink sinkA = new Utf8StringSink();
-        private final Utf8StringSink sinkB = new Utf8StringSink();
+    private static class Func extends DoubleArrayBinaryOperator {
 
-        public Func(Function arg) {
-            super(arg);
+        private Func(
+                CairoConfiguration configuration,
+                Function leftArg,
+                Function rightArg,
+                int leftArgPos
+        ) {
+            super("/", configuration, leftArg, rightArg, leftArgPos);
         }
 
         @Override
-        public @Nullable Utf8Sequence getVarcharA(Record rec) {
-            return toSinkOrNull(sinkA, rec);
+        protected double applyOperation(double leftVal, double rightVal) {
+            return leftVal / rightVal;
         }
 
         @Override
-        public @Nullable Utf8Sequence getVarcharB(Record rec) {
-            return toSinkOrNull(sinkB, rec);
-        }
-
-        private Utf8StringSink toSinkOrNull(Utf8StringSink sink, Record rec) {
-            ArrayView arrayView = arg.getArray(rec);
-            if (arrayView.isNull()) {
-                return null;
+        protected void bulkApplyOperation(ArrayView left, ArrayView right) {
+            for (int i = 0, n = left.getFlatViewLength(); i < n; i++) {
+                double leftVal = left.getDouble(i);
+                double rightVal = right.getDouble(i);
+                arrayOut.putDouble(i, leftVal / rightVal);
             }
-            sink.clear();
-            ArrayTypeDriver.arrayToJson(arrayView, sink, NoopArrayWriteState.INSTANCE, false);
-            return sink;
         }
     }
 }

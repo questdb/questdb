@@ -22,60 +22,71 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.NoopArrayWriteState;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8StringSink;
-import org.jetbrains.annotations.Nullable;
 
-public class CastDoubleArrayToVarcharFunctionFactory implements FunctionFactory {
+public class DoubleArrayInsertionPointAfterEqualFunctionFactory implements FunctionFactory {
+    private static final String FUNCTION_NAME = "insertion_point";
+
     @Override
     public String getSignature() {
-        return "cast(D[]ø)";
+        return FUNCTION_NAME + "(D[]D)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new Func(args.getQuick(0));
+        Function arrayArg = args.getQuick(0);
+        if (ColumnType.decodeArrayDimensionality(arrayArg.getType()) != 1) {
+            throw SqlException.position(argPositions.getQuick(0)).put("array is not one-dimensional");
+        }
+        return new Func(arrayArg, args.get(1));
     }
 
-    public static class Func extends AbstractCastToVarcharFunction {
-        private final Utf8StringSink sinkA = new Utf8StringSink();
-        private final Utf8StringSink sinkB = new Utf8StringSink();
+    static class Func extends IntFunction implements BinaryFunction {
+        private final Function arrayArg;
+        private final Function valueArg;
 
-        public Func(Function arg) {
-            super(arg);
+        Func(Function arrayArg, Function valueArg) {
+            this.arrayArg = arrayArg;
+            this.valueArg = valueArg;
         }
 
         @Override
-        public @Nullable Utf8Sequence getVarcharA(Record rec) {
-            return toSinkOrNull(sinkA, rec);
-        }
-
-        @Override
-        public @Nullable Utf8Sequence getVarcharB(Record rec) {
-            return toSinkOrNull(sinkB, rec);
-        }
-
-        private Utf8StringSink toSinkOrNull(Utf8StringSink sink, Record rec) {
-            ArrayView arrayView = arg.getArray(rec);
-            if (arrayView.isNull()) {
-                return null;
+        public int getInt(Record rec) {
+            ArrayView arr = arrayArg.getArray(rec);
+            if (arr.isNull()) {
+                return Numbers.INT_NULL;
             }
-            sink.clear();
-            ArrayTypeDriver.arrayToJson(arrayView, sink, NoopArrayWriteState.INSTANCE, false);
-            return sink;
+            int index = arr.binarySearchDoubleValue1DArray(valueArg.getDouble(rec), false);
+            return index < 0 ? -index : index + 2;
+        }
+
+        @Override
+        public Function getLeft() {
+            return arrayArg;
+        }
+
+        @Override
+        public String getName() {
+            return FUNCTION_NAME;
+        }
+
+        @Override
+        public Function getRight() {
+            return valueArg;
         }
     }
 }
