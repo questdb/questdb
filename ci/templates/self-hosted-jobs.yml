@@ -21,7 +21,7 @@ jobs:
       jdk: "1.11"
       os: Linux
     steps:
-      - script:
+      - script: |
           sudo alternatives --install /usr/bin/java java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java 1
           sudo alternatives --set java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java
       - template: steps.yml
@@ -48,7 +48,7 @@ jobs:
       jdk: "1.11"
       os: Linux
     steps:
-      - script:
+      - script: |
           sudo alternatives --install /usr/bin/java java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java 1
           sudo alternatives --set java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java
       - template: steps.yml
