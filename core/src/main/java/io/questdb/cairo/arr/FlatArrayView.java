@@ -173,6 +173,7 @@ public interface FlatArrayView {
      * @param length the number of elements in the block
      */
     default double sumDouble(int offset, int length) {
+        //TODO: the naive summing algo doesn't compensate for accumulated error
         double sum = 0d;
         for (int i = offset, n = offset + length; i < n; i++) {
             double v = getDoubleAtAbsIndex(i);
