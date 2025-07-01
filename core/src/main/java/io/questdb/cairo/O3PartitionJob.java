@@ -2112,8 +2112,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     if (duplicateCount > 0) {
                         if (duplicateCount == mergeOOOHi - mergeOOOLo + 1 && prefixType != O3_BLOCK_O3) {
 
-                            // All the rows are duplicates, the commit does not add any new line.
-                            // Check non-key columns if they are exactly same as the rows they replace
+                            // All the rows are duplicates, the commit does not add any new lines.
+                            // Check non-key columns if they are exactly the same as the rows they replace
                             if (tableWriter.checkDedupCommitIdenticalToPartition(
                                     oldPartitionTimestamp,
                                     srcNameTxn,
