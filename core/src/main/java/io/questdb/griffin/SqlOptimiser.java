@@ -394,7 +394,7 @@ public class SqlOptimiser implements Mutable {
         if (baseModel != null) {
             final CharSequence refColumn = column.getAst().token;
             final int dot = Chars.indexOfLastUnquoted(refColumn, '.');
-            validateColumnAndGetModelIndex(baseModel, innerVirtualModel, refColumn, dot, column.getAst().position);
+            validateColumnAndGetModelIndex(baseModel, innerVirtualModel, refColumn, dot, column.getAst().position, false);
             // when we have only one model, e.g. this is not a join,
             // and there is a table alias to lookup column;
             // we will remove this alias as unneeded
@@ -645,10 +645,7 @@ public class SqlOptimiser implements Mutable {
         if (node != null && node.type == LITERAL) {
             CharSequence col = node.token;
             final int dot = Chars.indexOfLastUnquoted(col, '.');
-            int modelIndex = validateColumnAndGetModelIndex(baseModel, innerVirtualModel, col, dot, node.position);
-
-            assert modelIndex != -1;
-
+            int modelIndex = validateColumnAndGetModelIndex(baseModel, innerVirtualModel, col, dot, node.position, true);
             boolean addAlias = dot == -1 && baseModel.getJoinModels().size() > 1;
             boolean removeAlias = dot > -1 && baseModel.getJoinModels().size() == 1;
 
@@ -4679,7 +4676,7 @@ public class SqlOptimiser implements Mutable {
                 // is this a table reference?
                 if (dot > -1 || model.getAliasToColumnMap().excludes(column)) {
                     // validate column
-                    validateColumnAndGetModelIndex(base, null, column, dot, orderBy.position);
+                    validateColumnAndGetModelIndex(base, null, column, dot, orderBy.position, false);
                     // good news, our column matched base model
                     // this condition is to ignore order by columns that are not in select and behind group by
                     if (base != model) {
@@ -6739,6 +6736,8 @@ public class SqlOptimiser implements Mutable {
      *                          -1 when dot is missing. When dot is present, the literal will not be matched to the projection. We assume this is a
      *                          reference to the base model.
      * @param position          literal position in the SQL text to aid SQL error reporting
+     * @param groupByCall       flag indicating that the return value is required, which is in turn asking to ignore projection lookup.
+     *                          This lookup will be unhandled when the return value is needed to disambigute the column name.
      * @return -1 if literal was matched to the projection, otherwise 0-based index of the join model where it was matched.
      * @throws SqlException exception is throw when literal could not be matched, or it matches several models at the same time (ambiguous).
      */
@@ -6747,12 +6746,13 @@ public class SqlOptimiser implements Mutable {
             QueryModel innerVirtualModel,
             CharSequence literal,
             int dot,
-            int position
+            int position,
+            boolean groupByCall
     ) throws SqlException {
         ObjList<QueryModel> joinModels = baseModel.getJoinModels();
         int index = -1;
         if (dot == -1) {
-            if (innerVirtualModel != null && innerVirtualModel.getAliasToColumnMap().contains(literal)) {
+            if (innerVirtualModel != null && innerVirtualModel.getAliasToColumnMap().contains(literal) && !groupByCall) {
                 // Ror now, most places ignore the return values, except one - adding missing table prefixes in group-by
                 // cases. We do not yet support projection reference in group-by. When we do, we will need to deal with
                 // -1 there.
@@ -7192,7 +7192,7 @@ public class SqlOptimiser implements Mutable {
                 case LITERAL:
                     int dot = Chars.indexOfLastUnquoted(node.token, '.');
                     CharSequence name = dot == -1 ? node.token : node.token.subSequence(dot + 1, node.token.length());
-                    indexes.add(validateColumnAndGetModelIndex(model, null, node.token, dot, node.position));
+                    indexes.add(validateColumnAndGetModelIndex(model, null, node.token, dot, node.position, false));
                     if (names != null) {
                         names.add(name);
                     }

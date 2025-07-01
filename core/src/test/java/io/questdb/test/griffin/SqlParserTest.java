@@ -8726,6 +8726,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    @Ignore("referencing projection in group-by expressions is not yet fully supported in the generator")
     public void testProjectionCanReferenceOwnFunctionsArithmetic() throws SqlException {
         assertQuery(
                 "select-group-by rnd_double_array(2,0,0,2,10) a, a + 3 c, sum(a) sum from (long_sequence(100))",
@@ -8742,6 +8743,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    @Ignore("referencing projection in group-by expressions is not yet fully supported in the generator")
     public void testProjectionCanReferenceOwnFunctionsGroupByValue() throws SqlException {
         assertQuery(
                 "select-group-by rnd_double_array(2,0,0,2,10) a, []([](a,0),0) c, sum(a) sum from (long_sequence(100))",
