@@ -21,8 +21,7 @@ jobs:
       jdk: "1.11"
       os: Linux
     steps:
-      - displayName: "Enable JDK 17"
-        script: sudo alternatives --set java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java
+      - script: sudo alternatives --set java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java
       - template: steps.yml
 
   - job: linux_x64_zfs_jdk17
@@ -47,6 +46,5 @@ jobs:
       jdk: "1.11"
       os: Linux
     steps:
-      - displayName: "Enable JDK 17"
-        script: sudo alternatives --set java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java
+      - script: sudo alternatives --set java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java
       - template: steps.yml
