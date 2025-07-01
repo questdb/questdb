@@ -873,23 +873,23 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             if (removedDataRangeHi - removedDataRangeLo > 0 && removedDataRangeHi - removedDataRangeLo == o3RangeHi - o3RangeLo) {
 
+                                // Check that replace first timestamp matches exactly the first timestamp in the partition
+                                // and the last timestamp matches the last timestamp in the partition.
                                 if (Unsafe.getUnsafe().getLong(srcTimestampAddr + removedDataRangeLo * Long.BYTES)
                                         == getTimestampIndexValue(sortedTimestampsAddr, o3RangeLo)
                                         && Unsafe.getUnsafe().getLong(srcTimestampAddr + removedDataRangeHi * Long.BYTES)
                                         == getTimestampIndexValue(sortedTimestampsAddr, o3RangeHi)) {
+
                                     // We are replacing with exactly the same number of rows
                                     // Maybe the rows are of the same data, then we don't need to rewrite the partition
-                                    if (tableWriter.checkCommitIdenticalToPartition(
+                                    if (tableWriter.checkReplaceCommitIdenticalToPartition(
                                             partitionTimestamp,
                                             srcNameTxn,
                                             srcDataMax,
                                             removedDataRangeLo,
                                             removedDataRangeHi,
                                             o3RangeLo,
-                                            o3RangeHi,
-                                            0,
-                                            mergeO3Hi - mergeO3Lo,
-                                            false
+                                            o3RangeHi
                                     )) {
                                         LOG.info().$("replace commit resulted in identical data [table=").$safe(tableWriter.getTableToken().getTableName())
                                                 .$(", partitionTimestamp=").$ts(partitionTimestamp)
@@ -2112,9 +2112,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     if (duplicateCount > 0) {
                         if (duplicateCount == mergeOOOHi - mergeOOOLo + 1 && prefixType != O3_BLOCK_O3) {
 
-                            // All the rows are duplicates
-                            // check if all non-key rows are dups
-                            if (tableWriter.checkCommitIdenticalToPartition(
+                            // All the rows are duplicates, the commit does not add any new line.
+                            // Check non-key columns if they are exactly same as the rows they replace
+                            if (tableWriter.checkDedupCommitIdenticalToPartition(
                                     oldPartitionTimestamp,
                                     srcNameTxn,
                                     srcDataOldPartitionSize,
@@ -2123,8 +2123,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     mergeOOOLo,
                                     mergeOOOHi,
                                     timestampMergeIndexAddr,
-                                    dedupRows,
-                                    true
+                                    dedupRows
                             )) {
 
                                 if (suffixType != O3_BLOCK_O3) {
@@ -2146,10 +2145,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             srcDataOldPartitionSize,
                                             0
                                     );
-                                    if (timestampMergeIndexAddr != 0) {
-                                        Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-                                        timestampMergeIndexAddr = 0;
-                                    }
+                                    Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
 
                                     // Remove empty partition dir
                                     Path path = Path.getThreadLocal(pathToTable);
@@ -2202,11 +2198,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             o3SplitPartitionSize = 0;
                         }
 
-                        // No merge anymore, fee the merge index
-                        if (timestampMergeIndexAddr != 0) {
-                            Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-                            timestampMergeIndexAddr = 0;
-                        }
+                        // No merge anymore, free the merge index
+                        Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
 
                         prefixType = O3_BLOCK_DATA;
                         prefixLo = 0;
@@ -2254,9 +2247,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         .$(", e=").$(e)
                         .I$();
 
-                if (timestampMergeIndexAddr != 0) {
-                    Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-                }
+                Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
                 O3CopyJob.closeColumnIdleQuick(
                         0,
                         0,

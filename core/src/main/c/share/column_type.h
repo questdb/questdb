@@ -74,7 +74,8 @@ enum class ColumnType : int {
 struct VarcharAuxEntryInlined {
     uint8_t header;
     uint8_t chars[9];
-    uint8_t offset[6];
+    [[maybe_unused]] uint16_t offset_lo;
+    [[maybe_unused]] uint32_t offset_hi;
 };
 
 struct VarcharAuxEntrySplit {
@@ -93,12 +94,12 @@ struct ArrayAuxEntry {
 struct VarcharAuxEntryBoth {
     uint64_t header1;
     uint16_t header2;
-    uint32_t offset_lo;
-    uint16_t offset_hi;
+    uint16_t offset_lo;
+    uint32_t offset_hi;
 
     [[nodiscard]]
     inline int64_t get_data_offset() const {
-        return (static_cast<int64_t>(offset_hi) << 32) | offset_lo;
+        return (static_cast<int64_t>(offset_hi) << 16) | offset_lo;
     }
 };
 

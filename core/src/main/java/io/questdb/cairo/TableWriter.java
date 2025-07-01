@@ -2552,10 +2552,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    public Frame openCommitFrame() {
-        return engine.getFrameFactory().openROFromMemoryColumns(o3Columns, metadata, commitRowCount);
-    }
-
     public void openLastPartition() {
         try {
             openLastPartitionAndSetAppendPosition(txWriter.getLastPartitionTimestamp());
@@ -10164,7 +10160,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return mixedIOFlag;
     }
 
-    boolean checkCommitIdenticalToPartition(
+    /**
+     * This method is thread safe, e.g. can be triggered from multiple partition merge tasks
+     *
+     * @param partitionTimestamp timestamp of the partition to check
+     * @param partitionNameTxn   transaction name of the partition to check
+     * @param partitionRowCount  row count of the partition to check
+     * @param partitionLo        starting row index of the partition to check
+     * @param partitionHi        ending row index of the partition to check, inclusive
+     * @param commitLo           starting row index of the commit to check
+     * @param commitHi           ending row index of the commit to check, inclusive
+     * @param mergeIndexAddr     address of the merge index
+     * @param mergeIndexRows     number of rows in the merge index
+     * @return true if the commit is identical to the partition, false otherwise
+     */
+    boolean checkDedupCommitIdenticalToPartition(
             long partitionTimestamp,
             long partitionNameTxn,
             long partitionRowCount,
@@ -10173,18 +10183,65 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long commitLo,
             long commitHi,
             long mergeIndexAddr,
-            long mergeIndexRows,
-            boolean nonDedupOnly
+            long mergeIndexRows
+    ) {
+        TableRecordMetadata metadata = getMetadata();
+        FrameFactory frameFactory = engine.getFrameFactory();
+        try (Frame partitionFrame = frameFactory.openRO(path, partitionTimestamp, partitionNameTxn, partitionBy, metadata, columnVersionWriter, partitionRowCount)) {
+            try (Frame commitFrame = engine.getFrameFactory().openROFromMemoryColumns(o3Columns, this.metadata, commitRowCount)) {
+                for (int i = 0; i < metadata.getColumnCount(); i++) {
+                    // Do not compare dedup keys, already a match
+                    if (!metadata.isDedupKey(i) && !FrameAlgebra.isColumnReplaceIdentical(
+                            i,
+                            partitionFrame,
+                            partitionLo,
+                            partitionHi + 1,
+                            commitFrame,
+                            commitLo,
+                            commitHi + 1,
+                            mergeIndexAddr,
+                            mergeIndexRows
+                    )) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * This method is thread safe, e.g. can be triggered from multiple partition merge tasks
+     *
+     * @param partitionTimestamp timestamp of the partition to check
+     * @param partitionNameTxn   transaction name of the partition to check
+     * @param partitionRowCount  row count of the partition to check
+     * @param partitionLo        starting row index of the partition to check
+     * @param partitionHi        ending row index of the partition to check, inclusive
+     * @param commitLo           starting row index of the commit to check
+     * @param commitHi           ending row index of the commit to check, inclusive
+     * @return true if the commit is identical to the partition, false otherwise
+     */
+    boolean checkReplaceCommitIdenticalToPartition(
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long partitionRowCount,
+            long partitionLo,
+            long partitionHi,
+            long commitLo,
+            long commitHi
     ) {
         // This code is thread safe, e.g. can be triggered from multiple partition merge tasks
         TableRecordMetadata metadata = getMetadata();
         FrameFactory frameFactory = engine.getFrameFactory();
         try (Frame partitionFrame = frameFactory.openRO(path, partitionTimestamp, partitionNameTxn, partitionBy, metadata, columnVersionWriter, partitionRowCount)) {
-            try (Frame commitFrame = openCommitFrame()) {
+            try (Frame commitFrame = engine.getFrameFactory().openROFromMemoryColumns(o3Columns, this.metadata, commitRowCount)) {
                 for (int i = 0; i < metadata.getColumnCount(); i++) {
-                    if (nonDedupOnly) {
-                        // Do not compare dedup keys, already a match
-                        if (!metadata.isDedupKey(i) && !FrameAlgebra.isColumnReplaceIdentical(
+
+                    // Compare all columns, dedup keys and non-keys
+                    if (i != metadata.getTimestampIndex()) {
+                        // Non-designated timestamp
+                        if (!FrameAlgebra.isColumnReplaceIdentical(
                                 i,
                                 partitionFrame,
                                 partitionLo,
@@ -10192,41 +10249,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 commitFrame,
                                 commitLo,
                                 commitHi + 1,
-                                mergeIndexAddr,
-                                mergeIndexRows
+                                0,
+                                commitHi + 1 - commitLo
                         )) {
                             return false;
                         }
                     } else {
-                        // Compare all columns, dedup keys and non-keys
-                        if (i != metadata.getTimestampIndex()) {
-                            // Non-designated timestamp
-                            if (!FrameAlgebra.isColumnReplaceIdentical(
-                                    i,
-                                    partitionFrame,
-                                    partitionLo,
-                                    partitionHi + 1,
-                                    commitFrame,
-                                    commitLo,
-                                    commitHi + 1,
-                                    0,
-                                    mergeIndexRows
-                            )) {
-                                return false;
-                            }
-                        } else {
-                            // Designated timestamp
-                            if (!FrameAlgebra.isDesignatedTimestampColumnReplaceIdentical(
-                                    i,
-                                    partitionFrame,
-                                    partitionLo,
-                                    partitionHi + 1,
-                                    commitFrame,
-                                    commitLo,
-                                    commitHi + 1
-                            )) {
-                                return false;
-                            }
+                        // Designated timestamp
+                        if (!FrameAlgebra.isDesignatedTimestampColumnReplaceIdentical(
+                                i,
+                                partitionFrame,
+                                partitionLo,
+                                partitionHi + 1,
+                                commitFrame,
+                                commitLo,
+                                commitHi + 1
+                        )) {
+                            return false;
                         }
                     }
                 }

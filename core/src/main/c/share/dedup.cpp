@@ -774,12 +774,13 @@ bool is_str_bin_column_merge_identical(
                 [&](int data_index, int64_t lo, int64_t hi) -> bool {
                     auto data1_offset_lo = aux_ptrs[data_index][lo];
                     auto data1_offset_hi = aux_ptrs[data_index][hi];
+
+                    // Check that data length contains only a length entry for each row
                     if (data1_offset_hi - data1_offset_lo != sizeof(T) * (hi - lo)) {
-                        // there sum not nulls
                         return true;
                     }
 
-                    // Check that the data has all lenght as -1
+                    // Check that the data has all length as -1
                     auto data = data_ptrs[data_index];
                     for (int64_t o = data1_offset_lo; o < data1_offset_hi; o += sizeof(T)) {
                         if (*(T * )(data + o) != null_len) {

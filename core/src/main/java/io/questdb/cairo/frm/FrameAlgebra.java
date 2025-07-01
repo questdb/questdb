@@ -53,47 +53,7 @@ public class FrameAlgebra {
         }
     }
 
-    public static boolean isColumnReplaceIdentical(
-            FrameColumn partitionColumn,
-            long partitionLo,
-            long partitionHi,
-            FrameColumn commitColumn,
-            long commitLo,
-            long commitHi,
-            long mergeIndexAddr,
-            long mergeIndexRows
-    ) {
-        long partitionAddrAux = partitionColumn.getContiguousAuxAddr(partitionHi);
-        long partitionDataAddr = partitionColumn.getContiguousDataAddr(partitionHi);
-
-        long commitAuxAddr = commitColumn.getContiguousAuxAddr(commitHi);
-        long commitDataAddr = commitColumn.getContiguousDataAddr(commitHi);
-
-        int columnType = partitionColumn.getColumnType();
-        short columnTypeTag = ColumnType.tagOf(columnType);
-
-        return isColumnReplaceIdentical(
-                columnTypeTag,
-                ColumnType.isVarSize(columnType) ? -1 : ColumnType.sizeOf(columnType),
-                partitionColumn.getColumnTop(),
-                partitionLo,
-                partitionHi,
-                partitionAddrAux,
-                partitionDataAddr,
-                commitColumn.getColumnTop(),
-                commitLo,
-                commitHi,
-                commitAuxAddr,
-                commitDataAddr,
-                mergeIndexAddr,
-                mergeIndexRows,
-                TableUtils.getNullLong(columnTypeTag, 0),
-                TableUtils.getNullLong(columnTypeTag, 1),
-                TableUtils.getNullLong(columnTypeTag, 2),
-                TableUtils.getNullLong(columnTypeTag, 3)
-        );
-    }
-
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     public static boolean isColumnReplaceIdentical(
             int columnIndex,
             Frame partitionFrame,
@@ -152,12 +112,6 @@ public class FrameAlgebra {
         }
     }
 
-    private static native boolean isDesignatedTimestampColumnReplaceIdentical0(
-            long partitionTsAddr,
-            long commitTsAddr,
-            long rowCount
-    );
-
     private static void append(FrameColumn targetColumn, long targetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
         int columnType = sourceColumn.getColumnType();
         if (columnType != targetColumn.getColumnType()) {
@@ -188,6 +142,47 @@ public class FrameAlgebra {
         }
     }
 
+    private static boolean isColumnReplaceIdentical(
+            FrameColumn partitionColumn,
+            long partitionLo,
+            long partitionHi,
+            FrameColumn commitColumn,
+            long commitLo,
+            long commitHi,
+            long mergeIndexAddr,
+            long mergeIndexRows
+    ) {
+        long partitionAddrAux = partitionColumn.getContiguousAuxAddr(partitionHi);
+        long partitionDataAddr = partitionColumn.getContiguousDataAddr(partitionHi);
+
+        long commitAuxAddr = commitColumn.getContiguousAuxAddr(commitHi);
+        long commitDataAddr = commitColumn.getContiguousDataAddr(commitHi);
+
+        int columnType = partitionColumn.getColumnType();
+        short columnTypeTag = ColumnType.tagOf(columnType);
+
+        return isColumnReplaceIdentical(
+                columnTypeTag,
+                ColumnType.isVarSize(columnType) ? -1 : ColumnType.sizeOf(columnType),
+                partitionColumn.getColumnTop(),
+                partitionLo,
+                partitionHi,
+                partitionAddrAux,
+                partitionDataAddr,
+                commitColumn.getColumnTop(),
+                commitLo,
+                commitHi,
+                commitAuxAddr,
+                commitDataAddr,
+                mergeIndexAddr,
+                mergeIndexRows,
+                TableUtils.getNullLong(columnTypeTag, 0),
+                TableUtils.getNullLong(columnTypeTag, 1),
+                TableUtils.getNullLong(columnTypeTag, 2),
+                TableUtils.getNullLong(columnTypeTag, 3)
+        );
+    }
+
     private static native boolean isColumnReplaceIdentical(
             int columnTypeTag,
             int columnSize,
@@ -207,5 +202,11 @@ public class FrameAlgebra {
             long nullLong1,
             long nullLong2,
             long nullLong3
+    );
+
+    private static native boolean isDesignatedTimestampColumnReplaceIdentical0(
+            long partitionTsAddr,
+            long commitTsAddr,
+            long rowCount
     );
 }
