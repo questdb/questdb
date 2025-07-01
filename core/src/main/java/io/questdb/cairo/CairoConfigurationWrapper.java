@@ -1222,11 +1222,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean isMatViewDebugEnabled() {
-        return getDelegate().isMatViewDebugEnabled();
-    }
-
-    @Override
     public boolean isMatViewEnabled() {
         return getDelegate().isMatViewEnabled();
     }

@@ -44,7 +44,6 @@ import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -54,13 +53,6 @@ import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 
 public class MatViewFuzzTest extends AbstractFuzzTest {
     private static final int SPIN_LOCK_TIMEOUT = 100_000_000;
-
-    @Before
-    public void setUp() {
-        super.setUp();
-        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
-        setProperty(PropertyKey.MAT_VIEW_DEBUG_ENABLED, "true");
-    }
 
     @Test
     public void test2LevelDependencyView() throws Exception {
