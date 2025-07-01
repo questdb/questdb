@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.memoization.DoubleFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.IntFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.LongFunctionMemoizer;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
@@ -351,6 +352,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         return new IntFunctionMemoizer(function);
                     case ColumnType.TIMESTAMP:
                         return new TimestampFunctionMemoizer(function);
+                    case ColumnType.DOUBLE:
+                        return new DoubleFunctionMemoizer(function);
                     // other types do not have memoization yet
                 }
             }
