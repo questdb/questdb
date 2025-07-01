@@ -279,8 +279,6 @@ public interface CairoConfiguration {
 
     int getMatViewRowsPerQueryEstimate();
 
-    long getMatViewTimerStartEpsilon();
-
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();
@@ -666,6 +664,8 @@ public interface CairoConfiguration {
     boolean isGroupByPresizeEnabled();
 
     boolean isIOURingEnabled();
+
+    boolean isMatViewDebugEnabled();
 
     boolean isMatViewEnabled();
 

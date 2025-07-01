@@ -503,8 +503,10 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
             } finally {
                 barrier.await();
             }
-            if (exception.get() != null) {
-                throw exception.get();
+
+            final Exception ex = exception.get();
+            if (ex != null) {
+                throw ex;
             }
         });
     }
