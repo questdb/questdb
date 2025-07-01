@@ -576,10 +576,10 @@ public class SqlOptimiser implements Mutable {
     }
 
     // add table prefix to all column references to make it easier to compare expressions
-    private void addMissingTablePrefixes(ExpressionNode node, QueryModel baseModel, QueryModel innerVirtualModel) throws SqlException {
+    private void addMissingTablePrefixesForGroupByQueries(ExpressionNode node, QueryModel baseModel, QueryModel innerVirtualModel) throws SqlException {
         sqlNodeStack.clear();
 
-        ExpressionNode temp = replaceIfUnaliasedLiteral(node, baseModel, innerVirtualModel);
+        ExpressionNode temp = addMissingTablePrefixesForGroupByQueries0(node, baseModel, innerVirtualModel);
         if (temp != node) {
             node.of(LITERAL, temp.token, node.precedence, node.position);
             return;
@@ -592,7 +592,7 @@ public class SqlOptimiser implements Mutable {
             if (node != null) {
                 if (node.paramCount < 3) {
                     if (node.rhs != null) {
-                        temp = replaceIfUnaliasedLiteral(node.rhs, baseModel, innerVirtualModel);
+                        temp = addMissingTablePrefixesForGroupByQueries0(node.rhs, baseModel, innerVirtualModel);
                         if (node.rhs == temp) {
                             sqlNodeStack.push(node.rhs);
                         } else {
@@ -601,7 +601,7 @@ public class SqlOptimiser implements Mutable {
                     }
 
                     if (node.lhs != null) {
-                        temp = replaceIfUnaliasedLiteral(node.lhs, baseModel, innerVirtualModel);
+                        temp = addMissingTablePrefixesForGroupByQueries0(node.lhs, baseModel, innerVirtualModel);
                         if (temp == node.lhs) {
                             node = node.lhs;
                         } else {
@@ -614,7 +614,7 @@ public class SqlOptimiser implements Mutable {
                 } else {
                     for (int i = 1, k = node.paramCount; i < k; i++) {
                         ExpressionNode e = node.args.getQuick(i);
-                        temp = replaceIfUnaliasedLiteral(e, baseModel, innerVirtualModel);
+                        temp = addMissingTablePrefixesForGroupByQueries0(e, baseModel, innerVirtualModel);
                         if (e == temp) {
                             sqlNodeStack.push(e);
                         } else {
@@ -623,7 +623,7 @@ public class SqlOptimiser implements Mutable {
                     }
 
                     ExpressionNode e = node.args.getQuick(0);
-                    temp = replaceIfUnaliasedLiteral(e, baseModel, innerVirtualModel);
+                    temp = addMissingTablePrefixesForGroupByQueries0(e, baseModel, innerVirtualModel);
                     if (e == temp) {
                         node = e;
                     } else {
@@ -635,6 +635,36 @@ public class SqlOptimiser implements Mutable {
                 node = sqlNodeStack.poll();
             }
         }
+    }
+
+    private ExpressionNode addMissingTablePrefixesForGroupByQueries0(
+            ExpressionNode node,
+            QueryModel baseModel,
+            QueryModel innerVirtualModel
+    ) throws SqlException {
+        if (node != null && node.type == LITERAL) {
+            CharSequence col = node.token;
+            final int dot = Chars.indexOfLastUnquoted(col, '.');
+            int modelIndex = validateColumnAndGetModelIndex(baseModel, innerVirtualModel, col, dot, node.position);
+
+            assert modelIndex != -1;
+
+            boolean addAlias = dot == -1 && baseModel.getJoinModels().size() > 1;
+            boolean removeAlias = dot > -1 && baseModel.getJoinModels().size() == 1;
+
+            if (addAlias || removeAlias) {
+                CharacterStoreEntry entry = characterStore.newEntry();
+                if (addAlias) {
+                    CharSequence alias = baseModel.getModelAliasIndexes().keys().get(modelIndex);
+                    entry.put(alias).put('.').put(col);
+                } else {
+                    entry.put(col, dot + 1, col.length());
+                }
+                CharSequence prefixedCol = entry.toImmutable();
+                return expressionNodePool.next().of(LITERAL, prefixedCol, node.precedence, node.position);
+            }
+        }
+        return node;
     }
 
     private void addOuterJoinExpression(QueryModel parent, QueryModel model, int joinIndex, ExpressionNode node) {
@@ -4065,34 +4095,6 @@ public class SqlOptimiser implements Mutable {
         return node;
     }
 
-    private ExpressionNode replaceIfUnaliasedLiteral(
-            ExpressionNode node,
-            QueryModel baseModel,
-            QueryModel innerVirtualModel
-    ) throws SqlException {
-        if (node != null && node.type == LITERAL) {
-            CharSequence col = node.token;
-            final int dot = Chars.indexOfLastUnquoted(col, '.');
-            int modelIndex = validateColumnAndGetModelIndex(baseModel, innerVirtualModel, col, dot, node.position);
-
-            boolean addAlias = dot == -1 && baseModel.getJoinModels().size() > 1;
-            boolean removeAlias = dot > -1 && baseModel.getJoinModels().size() == 1;
-
-            if (addAlias || removeAlias) {
-                CharacterStoreEntry entry = characterStore.newEntry();
-                if (addAlias) {
-                    CharSequence alias = baseModel.getModelAliasIndexes().keys().get(modelIndex);
-                    entry.put(alias).put('.').put(col);
-                } else {
-                    entry.put(col, dot + 1, col.length());
-                }
-                CharSequence prefixedCol = entry.toImmutable();
-                return expressionNodePool.next().of(LITERAL, prefixedCol, node.precedence, node.position);
-            }
-        }
-        return node;
-    }
-
     private ExpressionNode replaceLiteral(
             @Transient ExpressionNode node,
             QueryModel translatingModel,
@@ -5575,7 +5577,7 @@ public class SqlOptimiser implements Mutable {
             emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, true, baseModel, true);
             return null;
         } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
-            addMissingTablePrefixes(qc.getAst(), baseModel, innerVirtualModel);
+            addMissingTablePrefixesForGroupByQueries(qc.getAst(), baseModel, innerVirtualModel);
             CharSequence matchingCol = findColumnByAst(groupByNodes, groupByAliases, qc.getAst());
             if (useOuterModel && matchingCol != null) {
                 QueryColumn ref = nextColumn(qc.getAlias(), matchingCol);
@@ -5663,7 +5665,7 @@ public class SqlOptimiser implements Mutable {
                     : originalNode;
 
             // add table or alias prefix to the literal arguments of this function or operator
-            addMissingTablePrefixes(node, baseModel, innerVirtualModel);
+            addMissingTablePrefixesForGroupByQueries(node, baseModel, innerVirtualModel);
 
             // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in outer virtual model
             node = rewriteGroupBySelectExpression(node, groupByModel, groupByNodes, groupByAliases);
@@ -6025,7 +6027,7 @@ public class SqlOptimiser implements Mutable {
 
                 // this loop is processing group-by columns that can only reference
                 // the columns from the underlying table(s). They cannot reference the projection itself
-                addMissingTablePrefixes(node, baseModel, innerVirtualModel);
+                addMissingTablePrefixesForGroupByQueries(node, baseModel, innerVirtualModel);
                 // ignore duplicates in group by
                 if (findColumnByAst(groupByNodes, groupByAliases, node) != null) {
                     continue;
@@ -6094,7 +6096,7 @@ public class SqlOptimiser implements Mutable {
                     } else {
                         if (explicitGroupBy) {
                             nonAggSelectCount.incrementAndGet();
-                            addMissingTablePrefixes(qc.getAst(), baseModel, innerVirtualModel);
+                            addMissingTablePrefixesForGroupByQueries(qc.getAst(), baseModel, innerVirtualModel);
                             int matchingColIdx = findColumnIdxByAst(groupByNodes, qc.getAst());
                             if (matchingColIdx == -1) {
                                 throw SqlException.$(qc.getAst().position, "column must appear in GROUP BY clause or aggregate function");
@@ -6751,7 +6753,9 @@ public class SqlOptimiser implements Mutable {
         int index = -1;
         if (dot == -1) {
             if (innerVirtualModel != null && innerVirtualModel.getAliasToColumnMap().contains(literal)) {
-                // todo: ensure that -1 is handled by the callers
+                // Ror now, most places ignore the return values, except one - adding missing table prefixes in group-by
+                // cases. We do not yet support projection reference in group-by. When we do, we will need to deal with
+                // -1 there.
                 return -1;
             }
             for (int i = 0, n = joinModels.size(); i < n; i++) {
