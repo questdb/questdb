@@ -73,8 +73,8 @@ import static io.questdb.cairo.ErrorTag.OUT_OF_MEMORY;
 import static io.questdb.cairo.ErrorTag.resolveTag;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
-import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
+import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
@@ -568,7 +568,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         txnDetails.getMatViewRefreshTxn(s),
                                         txnDetails.getMatViewRefreshTimestamp(s),
                                         false,
-                                        null
+                                        null,
+                                        txnDetails.getMatViewPeriodHi(s)
                                 );
                             } catch (CairoException e) {
                                 LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
@@ -576,13 +577,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         .$(", errno=").$(e.getErrno())
                                         .I$();
                             }
-                            break;
+                            break; // we've found the latest mat view state, not need to check earlier transactions
                         }
                     }
                 }
 
                 return (int) (writer.getAppliedSeqTxn() - seqTxn + 1);
-
             case SQL:
                 try (WalEventReader eventReader = walEventReader) {
                     final WalEventCursor walEventCursor = eventReader.of(walPath, segmentTxn);
@@ -593,7 +593,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     lastCommittedRows = 0;
                     return 1;
                 }
-
             case TRUNCATE:
                 long txn = writer.getTxn();
                 writer.setSeqTxn(seqTxn);
@@ -615,13 +614,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     int tablePathLen = path.size();
                     path.slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                     final WalEventCursor walEventCursor = eventReader.of(path, segmentTxn);
-                    final WalEventCursor.MatViewInvalidationInfo info = walEventCursor.getMvInvalidationInfo();
+                    final WalEventCursor.MatViewInvalidationInfo info = walEventCursor.getMatViewInvalidationInfo();
                     updateMatViewRefreshState(
                             path.trimTo(tablePathLen),
                             info.getLastRefreshBaseTableTxn(),
                             info.getLastRefreshTimestamp(),
                             info.isInvalid(),
-                            info.getInvalidationReason()
+                            info.getInvalidationReason(),
+                            info.getLastPeriodHi()
                     );
                 } catch (CairoException e) {
                     LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
@@ -740,16 +740,17 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             long lastRefreshBaseTxn,
             long lastRefreshTimestamp,
             boolean invalid,
-            @Nullable CharSequence invalidationReason
+            @Nullable CharSequence invalidationReason,
+            long lastPeriodHi
     ) {
         try (BlockFileWriter stateWriter = mvStateWriter) {
             stateWriter.of(tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
-
             MatViewState.append(
                     lastRefreshTimestamp,
                     lastRefreshBaseTxn,
                     invalid,
                     invalidationReason,
+                    lastPeriodHi,
                     stateWriter
             );
         }

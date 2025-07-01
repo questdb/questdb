@@ -152,7 +152,6 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
             return tableToken;
         }
 
-
         public void goodbye() {
             entry = null;
             pool = null;

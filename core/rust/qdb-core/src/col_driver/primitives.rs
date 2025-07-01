@@ -124,7 +124,7 @@ mod tests {
         let err = IntDriver.col_sizes_for_row_count(&col, 2).unwrap_err();
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         let msg = format!("{err:#}");
-        // eprintln!("{}", msg);
+        // eprintln!("{msg}");
         assert!(msg.contains(
             "data file for int column int_col1 shorter than 2 rows, expected at least 8 bytes but is 4"
         ));
@@ -146,7 +146,7 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         let msg = format!("{err:#}");
-        // eprintln!("{}", msg);
+        // eprintln!("{msg}");
         assert!(msg.contains(
             "data file for timestamp column timestamp_col1 shorter than 2 rows, expected at least 16 bytes but is 8"
         ));
