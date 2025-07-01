@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.frm;
 
+import io.questdb.cairo.frm.file.RecycleBin;
+
 public class DeletedFrameColumn implements FrameColumn {
     public static final FrameColumn INSTANCE = new DeletedFrameColumn();
 
@@ -73,6 +75,20 @@ public class DeletedFrameColumn implements FrameColumn {
 
     @Override
     public int getStorageType() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setRecycleBin(RecycleBin<FrameColumn> pool) {
+    }
+
+    @Override
+    public long getContiguousAuxAddr(long rowHi) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getContiguousDataAddr(long rowHi) {
         throw new UnsupportedOperationException();
     }
 }
