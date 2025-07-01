@@ -545,7 +545,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         ParanoiaState.FD_PARANOIA_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
         engine.getMetrics().clear();
         engine.getMatViewStateStore().clear();
-        SqlCodeGenerator.ALLOW_FUNCTION_PREFETCH = false;
+        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
     }
 
     @After
@@ -553,7 +553,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         tearDown(true);
         super.tearDown();
         spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
-        SqlCodeGenerator.ALLOW_FUNCTION_PREFETCH = false;
+        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
     }
 
     public void tearDown(boolean removeDir) {
@@ -1632,8 +1632,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected final void allowFunctionPrefetch() {
-        SqlCodeGenerator.ALLOW_FUNCTION_PREFETCH = true;
+    protected final void allowFunctionMemoization() {
+        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = true;
     }
 
     protected void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
