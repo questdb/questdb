@@ -22,14 +22,9 @@ jobs:
       JAVA_HOME_17_AARCH64: "/usr/lib/jvm/java-17-amazon-corretto.aarch64"
       os: Linux
     steps:
-      - task: JavaToolInstaller@0
-        inputs:
-          versionSpec: '17'
-          jdkArchitectureOption: 'arm64'
-          jdkSourceOption: 'PreInstalled'
       - script: |
-          sudo alternatives --install /usr/bin/java java /usr/lib/jvm/java-17-amazon-corretto.aarch_64/bin/java 1
-          sudo alternatives --set java /usr/lib/jvm/java-17-amazon-corretto.aarch_64/bin/java
+          sudo alternatives --install /usr/bin/java java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java 1
+          sudo alternatives --set java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java
           echo "##vso[task.setvariable variable=JAVA_HOME_17_X64;]$JAVA_PATH"
       - template: steps.yml
 
@@ -60,4 +55,6 @@ jobs:
           sudo alternatives --install /usr/bin/java java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java 1
           sudo alternatives --set java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java
           echo "##vso[task.setvariable variable=JAVA_HOME_17_X64;]$JAVA_HOME"
+          echo "JAVA_HOME: $JAVA_HOME"
+          echo "JAVA_HOME_17_X64: $JAVA_HOME_17_X64"
       - template: steps.yml
