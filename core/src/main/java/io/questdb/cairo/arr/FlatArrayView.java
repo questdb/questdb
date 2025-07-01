@@ -67,8 +67,8 @@ public interface FlatArrayView {
      *                    otherwise, they must be sorted in the descending order
      * @param forwardScan if true when array has multiple equal elements, return the position of the first equal element;
      *                    otherwise, return the position of the last equal element.
-     * @return if positive, it's the index of the found element. If negative, its absolute value
-     * is the insertion point into the flat array of the element that wasn't found. In both cases,
+     * @return if zero or positive, it's the index of the found element. If negative, its absolute value
+     * is the insertion point into the flat array of the element that wasn't found, plus one. In both cases,
      * the index is relative to the supplied offset.
      */
     default int binarySearchDouble(double value, int offset, int length, boolean ascending, boolean forwardScan) {
