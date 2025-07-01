@@ -24,11 +24,12 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.FullBwdPartitionFrameCursorFactory;
+import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
@@ -997,7 +998,7 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
         return new PageFrameRecordCursorFactory(
                 engine.getConfiguration(),
                 metadata,
-                new FullBwdPartitionFrameCursorFactory(reader.getTableToken(), reader.getMetadataVersion(), GenericRecordMetadata.deepCopyOf(metadata)),
+                new FullPartitionFrameCursorFactory(reader.getTableToken(), reader.getMetadataVersion(), GenericRecordMetadata.deepCopyOf(metadata), PartitionFrameCursorFactory.ORDER_DESC),
                 new BwdPageFrameRowCursorFactory(),
                 false,
                 null,

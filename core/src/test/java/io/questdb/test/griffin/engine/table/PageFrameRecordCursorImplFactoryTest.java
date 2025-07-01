@@ -28,7 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.FullFwdPartitionFrameCursorFactory;
+import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -116,7 +116,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                         BitmapIndexReader.DIR_FORWARD,
                         null
                 );
-                try (FullFwdPartitionFrameCursorFactory frameFactory = new FullFwdPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata)) {
+                try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC)) {
                     // entity index
                     final IntList columnIndexes = new IntList();
                     final IntList columnSizes = new IntList();
@@ -257,7 +257,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 final IntList columnSizes = new IntList();
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
-                try (FullFwdPartitionFrameCursorFactory frameFactory = new FullFwdPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata)) {
+                try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC)) {
                     FwdPageFrameRowCursorFactory rowCursorFactory = new FwdPageFrameRowCursorFactory(); // stub RowCursorFactory
                     try (PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,
@@ -367,7 +367,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 final IntList columnSizes = new IntList();
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
-                try (FullFwdPartitionFrameCursorFactory frameFactory = new FullFwdPartitionFrameCursorFactory(tt, TableUtils.ANY_TABLE_VERSION, metadata)) {
+                try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tt, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC)) {
                     FwdPageFrameRowCursorFactory rowCursorFactory = new FwdPageFrameRowCursorFactory(); // stub RowCursorFactory
                     try (PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,

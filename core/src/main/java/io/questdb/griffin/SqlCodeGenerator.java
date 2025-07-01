@@ -35,11 +35,9 @@ import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.EntityColumnFilter;
-import io.questdb.cairo.FullBwdPartitionFrameCursorFactory;
-import io.questdb.cairo.FullFwdPartitionFrameCursorFactory;
+import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.IntervalBwdPartitionFrameCursorFactory;
-import io.questdb.cairo.IntervalFwdPartitionFrameCursorFactory;
+import io.questdb.cairo.IntervalPartitionFrameCursorFactory;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecordSink;
@@ -3154,18 +3152,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final PartitionFrameCursorFactory partitionFrameCursorFactory;
         if (intrinsicModel.hasIntervalFilters()) {
-            partitionFrameCursorFactory = new IntervalBwdPartitionFrameCursorFactory(
+            partitionFrameCursorFactory = new IntervalPartitionFrameCursorFactory(
                     tableToken,
                     model.getMetadataVersion(),
                     intrinsicModel.buildIntervalModel(),
                     timestampIndex,
-                    GenericRecordMetadata.deepCopyOf(reader.getMetadata())
+                    GenericRecordMetadata.deepCopyOf(reader.getMetadata()),
+                    ORDER_DESC
             );
         } else {
-            partitionFrameCursorFactory = new FullBwdPartitionFrameCursorFactory(
+            partitionFrameCursorFactory = new FullPartitionFrameCursorFactory(
                     tableToken,
                     model.getMetadataVersion(),
-                    GenericRecordMetadata.deepCopyOf(reader.getMetadata())
+                    GenericRecordMetadata.deepCopyOf(reader.getMetadata()),
+                    ORDER_DESC
             );
         }
 
@@ -5751,32 +5751,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // below code block generates index-based filter
             final boolean intervalHitsOnlyOnePartition;
+            final int order = model.isForceBackwardScan() ? ORDER_DESC : ORDER_ASC;
             if (intrinsicModel.hasIntervalFilters()) {
                 RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
-                if (model.isForceBackwardScan()) {
-                    dfcFactory = new IntervalBwdPartitionFrameCursorFactory(
-                            tableToken,
-                            model.getMetadataVersion(),
-                            intervalModel,
-                            readerTimestampIndex,
-                            dfcFactoryMeta
-                    );
-                } else {
-                    dfcFactory = new IntervalFwdPartitionFrameCursorFactory(
-                            tableToken,
-                            model.getMetadataVersion(),
-                            intervalModel,
-                            readerTimestampIndex,
-                            dfcFactoryMeta
-                    );
-                }
+                dfcFactory = new IntervalPartitionFrameCursorFactory(
+                        tableToken,
+                        model.getMetadataVersion(),
+                        intervalModel,
+                        readerTimestampIndex,
+                        dfcFactoryMeta,
+                        order
+                );
                 intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
             } else {
-                if (model.isForceBackwardScan()) {
-                    dfcFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
-                } else {
-                    dfcFactory = new FullFwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
-                }
+                dfcFactory = new FullPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta, order);
                 intervalHitsOnlyOnePartition = reader.getPartitionedBy() == PartitionBy.NONE;
             }
 
@@ -6115,11 +6103,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             AbstractPartitionFrameCursorFactory cursorFactory;
             RowCursorFactory rowCursorFactory;
 
+            final int order = model.isForceBackwardScan() ? ORDER_DESC : ORDER_ASC;
+            cursorFactory = new FullPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta, order);
             if (model.isForceBackwardScan()) {
-                cursorFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 rowCursorFactory = new BwdPageFrameRowCursorFactory();
             } else {
-                cursorFactory = new FullFwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 rowCursorFactory = new FwdPageFrameRowCursorFactory();
             }
 
@@ -6148,7 +6136,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return new LatestByAllIndexedRecordCursorFactory(
                         configuration,
                         myMeta,
-                        new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
+                        new FullPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta, ORDER_DESC),
                         listColumnFilterA.getColumnIndexFactored(0),
                         columnIndexes,
                         columnSizeShifts,
@@ -6162,7 +6150,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return new LatestByDeferredListValuesFilteredRecordCursorFactory(
                         configuration,
                         myMeta,
-                        new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
+                        new FullPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta, ORDER_DESC),
                         latestByColumnIndex,
                         null,
                         columnIndexes,
@@ -6183,7 +6171,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new LatestByAllSymbolsFilteredRecordCursorFactory(
                     configuration,
                     myMeta,
-                    new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
+                    new FullPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta, ORDER_DESC),
                     RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA),
                     keyTypes,
                     partitionByColumnIndexes,
@@ -6197,7 +6185,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new LatestByAllFilteredRecordCursorFactory(
                 configuration,
                 myMeta,
-                new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
+                new FullPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta, ORDER_DESC),
                 RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA),
                 keyTypes,
                 null,

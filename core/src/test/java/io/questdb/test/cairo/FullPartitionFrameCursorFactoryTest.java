@@ -25,7 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.FullFwdPartitionFrameCursorFactory;
+import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
@@ -48,10 +48,10 @@ import java.util.Collection;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 @RunWith(Parameterized.class)
-public class FullFwdPartitionFrameCursorFactoryTest extends AbstractCairoTest {
+public class FullPartitionFrameCursorFactoryTest extends AbstractCairoTest {
     private final boolean convertToParquet;
 
-    public FullFwdPartitionFrameCursorFactoryTest(boolean convertToParquet) {
+    public FullPartitionFrameCursorFactoryTest(boolean convertToParquet) {
         this.convertToParquet = convertToParquet;
     }
 
@@ -106,7 +106,7 @@ public class FullFwdPartitionFrameCursorFactoryTest extends AbstractCairoTest {
                 execute("alter table x convert partition to parquet where timestamp >= 0;");
             }
 
-            try (FullFwdPartitionFrameCursorFactory factory = new FullFwdPartitionFrameCursorFactory(tableToken, 0, metadata)) {
+            try (FullPartitionFrameCursorFactory factory = new FullPartitionFrameCursorFactory(tableToken, 0, metadata, ORDER_ASC)) {
                 long count = 0;
                 try (PartitionFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), ORDER_ASC)) {
                     PartitionFrame frame;
