@@ -378,9 +378,13 @@ public abstract class ArrayView implements QuietCloseable {
     }
 
     /**
-     * Returns the number of elements in the backing flat array. For a {@linkplain
+     * Returns the number of elements in the backing flat view. For a {@linkplain
      * #isVanilla vanilla} array, it is equal to the total number of elements in
      * this array.
+     * <p>
+     * <strong>NOTE:</strong> This value is not the same as {@code flatView().length()}.
+     * It tells you which part of the underlying flat view this array is using, as
+     * opposed to its actual physical length.
      */
     public final int getFlatViewLength() {
         return flatViewLength;
@@ -431,7 +435,7 @@ public abstract class ArrayView implements QuietCloseable {
 
     /**
      * Returns the number of bytes this array would occupy when laid out in its
-     * vanilla form.
+     * vanilla form. This includes the metadata (type and shape) as well as the data.
      */
     public final long getVanillaMemoryLayoutSize() {
         if (isNull()) {
@@ -493,7 +497,7 @@ public abstract class ArrayView implements QuietCloseable {
     public boolean isVanilla() {
         return isVanilla;
     }
-    
+
     /**
      * Tells whether this array has the same shape as the other one.
      * <p>

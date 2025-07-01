@@ -135,8 +135,14 @@ public interface FlatArrayView {
         return count;
     }
 
+    /**
+     * Returns the double value at the provided absolute flat view index.
+     */
     double getDoubleAtAbsIndex(int elemIndex);
 
+    /**
+     * Returns the long value at the provided absolute flat view index.
+     */
     long getLongAtAbsIndex(int elemIndex);
 
     /**
