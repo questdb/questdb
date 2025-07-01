@@ -548,13 +548,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         engine.getMatViewStateStore().clear();
     }
 
-    @After
-    public void tearDown() throws Exception {
-        tearDown(true);
-        super.tearDown();
-        spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
-    }
-
     public void tearDown(boolean removeDir) {
         LOG.info().$("Tearing down test ").$safe(getClass().getSimpleName()).$('#').$safe(testName.getMethodName()).$();
         forEachNode(node -> node.tearDownCairo(removeDir));
@@ -571,6 +564,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 }
             }
         }
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        tearDown(true);
+        super.tearDown();
+        spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
     }
 
     private static void assertCalculateSize(RecordCursorFactory factory) throws SqlException {
@@ -1833,6 +1833,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     false
             );
         }
+    }
+
+    protected void assertQueryAndPlan(String expected, String expectedPlan, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
+        assertMemoryLeak(() -> {
+            assertPlanNoLeakCheck(query, expectedPlan);
+            assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false);
+        });
     }
 
     protected void assertQueryAndPlan(

@@ -25,57 +25,65 @@
 package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.cairo.arr.DirectArray;
+import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
 
-public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
+public class DoubleNegArrayFunctionFactory implements FunctionFactory {
+    private static final String OPERATOR_NAME = "-";
 
     @Override
     public String getSignature() {
-        return "flatten(D[])";
+        return OPERATOR_NAME + "(D[])";
     }
 
     @Override
-    public Function newInstance(
-            int position,
-            @Transient ObjList<Function> args,
-            @Transient IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        Function arrayArg = args.getQuick(0);
-        return new Func(arrayArg);
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return new Func(args.getQuick(0), configuration);
     }
 
-    private static class Func extends ArrayFunction implements UnaryFunction {
-        private final Function arrayArg;
-        private final DerivedArrayView derivedView = new DerivedArrayView();
-        private DirectArray outArray = new DirectArray();
+    private static class Func extends ArrayFunction implements DoubleUnaryArrayAccessor, UnaryFunction {
+        private final DirectArray array;
+        protected Function arrayArg;
+        protected MemoryA memory;
 
-        public Func(Function arrayArg) {
+        public Func(Function arrayArg, CairoConfiguration configuration) {
             this.arrayArg = arrayArg;
-            this.type = ColumnType.encodeArrayType(ColumnType.decodeArrayElementType(arrayArg.getType()), 1);
-            outArray.setType(type);
+            this.array = new DirectArray(configuration);
+            this.type = arrayArg.getType();
+        }
+
+        @Override
+        public void applyToElement(ArrayView view, int index) {
+            memory.putDouble(-view.getDouble(index));
+        }
+
+        @Override
+        public void applyToEntireVanillaArray(ArrayView view) {
+            FlatArrayView flatView = view.flatView();
+            for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
+                memory.putDouble(-flatView.getDoubleAtAbsIndex(i));
+            }
+        }
+
+        @Override
+        public void applyToNullArray() {
         }
 
         @Override
         public void close() {
             UnaryFunction.super.close();
-            outArray = Misc.free(outArray);
+            array.close();
         }
 
         @Override
@@ -85,27 +93,32 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
 
         @Override
         public ArrayView getArray(Record rec) {
-            ArrayView array = arrayArg.getArray(rec);
-            if (array.isVanilla()) {
-                derivedView.of(array);
-                derivedView.flatten();
-                return derivedView;
-            } else {
-                outArray.setDimLen(0, array.getCardinality());
-                outArray.applyShape();
-                array.appendDataToMem(outArray.startMemoryA());
-                return outArray;
+            ArrayView arr = arrayArg.getArray(rec);
+            if (arr.isNull()) {
+                array.ofNull();
+                return array;
             }
+
+            array.setType(getType());
+            array.copyShapeFrom(arr);
+            array.applyShape();
+            memory = array.startMemoryA();
+            calculate(arr);
+            return array;
+        }
+
+        public String getName() {
+            return OPERATOR_NAME;
+        }
+
+        @Override
+        public boolean isOperator() {
+            return true;
         }
 
         @Override
         public boolean isThreadSafe() {
             return false;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val("flatten(").val(arrayArg).val(')');
         }
     }
 }

@@ -22,27 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.NoopArrayWriteState;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8StringSink;
-import org.jetbrains.annotations.Nullable;
 
-public class CastDoubleArrayToVarcharFunctionFactory implements FunctionFactory {
+public class DoubleArrayCountFunctionFactory implements FunctionFactory {
+    private static final String FUNCTION_NAME = "array_count";
+
     @Override
     public String getSignature() {
-        return "cast(D[]ø)";
+        return FUNCTION_NAME + "(D[])";
     }
 
     @Override
@@ -50,32 +49,54 @@ public class CastDoubleArrayToVarcharFunctionFactory implements FunctionFactory 
         return new Func(args.getQuick(0));
     }
 
-    public static class Func extends AbstractCastToVarcharFunction {
-        private final Utf8StringSink sinkA = new Utf8StringSink();
-        private final Utf8StringSink sinkB = new Utf8StringSink();
+    static class Func extends IntFunction implements DoubleUnaryArrayAccessor, UnaryFunction {
 
-        public Func(Function arg) {
-            super(arg);
+        private final Function arrayArg;
+        private int count;
+
+        Func(Function arrayArg) {
+            this.arrayArg = arrayArg;
         }
 
         @Override
-        public @Nullable Utf8Sequence getVarcharA(Record rec) {
-            return toSinkOrNull(sinkA, rec);
-        }
-
-        @Override
-        public @Nullable Utf8Sequence getVarcharB(Record rec) {
-            return toSinkOrNull(sinkB, rec);
-        }
-
-        private Utf8StringSink toSinkOrNull(Utf8StringSink sink, Record rec) {
-            ArrayView arrayView = arg.getArray(rec);
-            if (arrayView.isNull()) {
-                return null;
+        public void applyToElement(ArrayView view, int index) {
+            double v = view.getDouble(index);
+            if (!Double.isNaN(v)) {
+                count++;
             }
-            sink.clear();
-            ArrayTypeDriver.arrayToJson(arrayView, sink, NoopArrayWriteState.INSTANCE, false);
-            return sink;
+        }
+
+        @Override
+        public void applyToEntireVanillaArray(ArrayView view) {
+            count = view.flatView().countDouble(view.getFlatViewOffset(), view.getFlatViewLength());
+        }
+
+        @Override
+        public void applyToNullArray() {
+
+        }
+
+        @Override
+        public Function getArg() {
+            return arrayArg;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            ArrayView arr = arrayArg.getArray(rec);
+            count = 0;
+            calculate(arr);
+            return count;
+        }
+
+        @Override
+        public String getName() {
+            return FUNCTION_NAME;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
     }
 }
