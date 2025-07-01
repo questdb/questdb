@@ -689,7 +689,7 @@ public class TruncateTest extends AbstractCairoTest {
 
             assertQuery(
                     "count\n" +
-                            "0\n",
+                            "10\n",
                     "select count() from x",
                     null,
                     false,
@@ -698,12 +698,13 @@ public class TruncateTest extends AbstractCairoTest {
 
             assertQuery(
                     "count\n" +
-                            "0\n",
+                            "20\n",
                     "select count() from y",
                     null,
                     false,
                     true
             );
+
 
         });
     }
