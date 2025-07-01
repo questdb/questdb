@@ -34,6 +34,7 @@ import io.questdb.std.Misc;
 
 public class IntervalBwdPartitionFrameCursorFactory extends AbstractPartitionFrameCursorFactory {
     private final IntervalBwdPartitionFrameCursor cursor;
+    private IntervalFwdPartitionFrameCursor fwdCursor;
     private final RuntimeIntrinsicIntervalModel intervalModel;
 
     public IntervalBwdPartitionFrameCursorFactory(
@@ -53,21 +54,25 @@ public class IntervalBwdPartitionFrameCursorFactory extends AbstractPartitionFra
         super.close();
         Misc.free(cursor);
         Misc.free(intervalModel);
+        fwdCursor = Misc.free(fwdCursor);
     }
 
     @Override
     public PartitionFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException {
-        if (order == ORDER_DESC || order == ORDER_ANY) {
-            final TableReader reader = getReader(executionContext);
-            try {
-                cursor.of(reader, executionContext);
-                return cursor;
-            } catch (Throwable th) {
-                Misc.free(reader);
-                throw th;
+        final TableReader reader = getReader(executionContext);
+        try {
+            if (order == ORDER_DESC || order == ORDER_ANY) {
+                return cursor.of(reader, executionContext);
             }
+
+            if (fwdCursor == null) {
+                fwdCursor = new IntervalFwdPartitionFrameCursor(intervalModel, cursor.getTimestampIndex());
+            }
+            return fwdCursor.of(reader, executionContext);
+        } catch (Throwable th) {
+            Misc.free(reader);
+            throw th;
         }
-        throw new UnsupportedOperationException();
     }
 
     @Override
