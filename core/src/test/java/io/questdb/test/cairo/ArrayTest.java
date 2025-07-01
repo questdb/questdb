@@ -1404,6 +1404,13 @@ public class ArrayTest extends AbstractCairoTest {
                         "bids  from market_data;",
                 true
         );
+
+        assertQuery(
+                "ARRAY\n" +
+                        "[[1.0,2.0],[3.0,4.0]]\n",
+                "select distinct ARRAY[[1.0, 2.0], [3.0, 4.0]] from long_sequence(10)",
+                true
+        );
     }
 
     @Test
