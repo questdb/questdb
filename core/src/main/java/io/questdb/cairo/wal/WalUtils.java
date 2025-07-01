@@ -72,26 +72,27 @@ public class WalUtils {
     public static final String TXNLOG_PARTS_DIR = "_txn_parts";
     public static final int WALE_HEADER_SIZE = Integer.BYTES + Integer.BYTES;
     public static final long WALE_MAX_TXN_OFFSET_32 = 0L;
-    // DEFAULT DEDUP mode means to follow the table definition. If the table has dedup enabled, then
+    // DEFAULT DEDUP mode means following the table definition. If the table has dedup enabled, then
     // the commit will deduplicate the data, otherwise it will not.
     public static final byte WAL_DEDUP_MODE_DEFAULT = 0;
-    // NO_DEDUP mode means to not deduplicate the data, even if the table definition has dedup enabled. For future use.
+    // NO_DEDUP mode means not deduplicating the data, even if the table definition has dedup enabled. For future use.
     public static final byte WAL_DEDUP_MODE_NO_DEDUP = WAL_DEDUP_MODE_DEFAULT + 1;
-    // UPSERT_NEW mode means to insert new data when on the key match, this is the initially supported deduplication type.
+    // UPSERT_NEW mode means inserting new data when the keys match, this is the initially supported deduplication type.
     public static final byte WAL_DEDUP_MODE_UPSERT_NEW = WAL_DEDUP_MODE_NO_DEDUP + 1;
-    // REPLACE_RANGE mode means to replacing the existing range of data with the new data.
+    // REPLACE_RANGE mode means replacing the existing range of data with the new data.
     public static final byte WAL_DEDUP_MODE_REPLACE_RANGE = WAL_DEDUP_MODE_UPSERT_NEW + 1;
     public static final byte WAL_DEDUP_MODE_MAX = WAL_DEDUP_MODE_REPLACE_RANGE;
+    public static final int WAL_FORMAT_OFFSET_32 = Integer.BYTES;
     public static final short WAL_FORMAT_VERSION = 0;
     public static final short WALE_FORMAT_VERSION = WAL_FORMAT_VERSION;
     public static final short WALE_MAT_VIEW_FORMAT_VERSION = WALE_FORMAT_VERSION + 1;
-    public static final int WAL_FORMAT_OFFSET_32 = Integer.BYTES;
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
     public static final String WAL_NAME_BASE = "wal";
     public static final String WAL_PENDING_FS_MARKER = ".pending";
     public static final int WAL_SEQUENCER_FORMAT_VERSION_V1 = 0;
     public static final int WAL_SEQUENCER_FORMAT_VERSION_V2 = 1;
     public static long WAL_DEFAULT_BASE_TABLE_TXN = Long.MIN_VALUE;
+    public static long WAL_DEFAULT_LAST_PERIOD_HI = Long.MIN_VALUE;
     public static long WAL_DEFAULT_LAST_REFRESH_TIMESTAMP = Long.MIN_VALUE;
 
     public static void createTxnLogFile(FilesFacade ff, MemoryMARW mem, Path txnSeqDirPath, long tableCreateDate, int chunkSize, int mkDirMode) {
@@ -237,7 +238,7 @@ public class WalUtils {
                     return true;
                 }
                 if (walEventCursor.getType() == MAT_VIEW_INVALIDATE) {
-                    matViewStateReader.of(walEventCursor.getMvInvalidationInfo());
+                    matViewStateReader.of(walEventCursor.getMatViewInvalidationInfo());
                     return true;
                 }
             } catch (Throwable th) {
