@@ -50,6 +50,26 @@ public class RowStableRndTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRndDouble() throws SqlException {
+        allowFunctionPrefetch();
+        // assertQuery does not reset rnd between SQL executions - using assertSql
+        assertSql(
+                "d\tk\n" +
+                        "0.6607777894187332\t10.660777789418733\n" +
+                        "0.2246301342497259\t10.224630134249725\n" +
+                        "0.08486964232560668\t10.084869642325607\n" +
+                        "0.299199045961845\t10.299199045961846\n" +
+                        "0.20447441837877756\t10.204474418378778\n" +
+                        "0.6508594025855301\t10.65085940258553\n" +
+                        "0.8423410920883345\t10.842341092088335\n" +
+                        "0.9856290845874263\t10.985629084587426\n" +
+                        "0.22452340856088226\t10.224523408560882\n" +
+                        "0.5093827001617407\t10.50938270016174\n",
+                "select rnd_double() d, d + 10 k from long_sequence(10)"
+        );
+    }
+
+    @Test
     public void testRndIntBinary() throws SqlException {
         allowFunctionPrefetch();
         // assertQuery does not reset rnd between SQL executions - using assertSql
@@ -70,6 +90,27 @@ public class RowStableRndTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRndDoubleBinary() throws SqlException {
+        allowFunctionPrefetch();
+        // assertQuery does not reset rnd between SQL executions - using assertSql
+        assertSql(
+                "d\tk\n" +
+                        "1.3215555788374664\t11.321555578837467\n" +
+                        "0.4492602684994518\t10.44926026849945\n" +
+                        "0.16973928465121335\t10.169739284651213\n" +
+                        "0.59839809192369\t10.59839809192369\n" +
+                        "0.4089488367575551\t10.408948836757554\n" +
+                        "1.3017188051710602\t11.30171880517106\n" +
+                        "1.684682184176669\t11.684682184176669\n" +
+                        "1.9712581691748525\t11.971258169174853\n" +
+                        "0.44904681712176453\t10.449046817121765\n" +
+                        "1.0187654003234814\t11.018765400323481\n",
+                "select rnd_double() * 2 d, d + 10 k from long_sequence(10)"
+        );
+    }
+
+
+    @Test
     public void testRndIntUnary() throws SqlException {
         allowFunctionPrefetch();
         // assertQuery does not reset rnd between SQL executions - using assertSql
@@ -88,6 +129,27 @@ public class RowStableRndTest extends AbstractCairoTest {
                 "select -rnd_int() i, i + 10 k from long_sequence(10)"
         );
     }
+
+    @Test
+    public void testRndDoubleUnary() throws SqlException {
+        allowFunctionPrefetch();
+        // assertQuery does not reset rnd between SQL executions - using assertSql
+        assertSql(
+                "d\tk\n" +
+                        "-0.6607777894187332\t9.339222210581267\n" +
+                        "-0.2246301342497259\t9.775369865750275\n" +
+                        "-0.08486964232560668\t9.915130357674393\n" +
+                        "-0.299199045961845\t9.700800954038154\n" +
+                        "-0.20447441837877756\t9.795525581621222\n" +
+                        "-0.6508594025855301\t9.34914059741447\n" +
+                        "-0.8423410920883345\t9.157658907911665\n" +
+                        "-0.9856290845874263\t9.014370915412574\n" +
+                        "-0.22452340856088226\t9.775476591439118\n" +
+                        "-0.5093827001617407\t9.49061729983826\n",
+                "select -rnd_double() d, d + 10 k from long_sequence(10)"
+        );
+    }
+
 
     @Test
     public void testRndLong() throws SqlException {
