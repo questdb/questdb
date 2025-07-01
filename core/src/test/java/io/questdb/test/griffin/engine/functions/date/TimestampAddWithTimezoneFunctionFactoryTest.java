@@ -237,8 +237,8 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
         assertSqlWithTypes("dateadd\n2020-04-19T05:49:14.886758Z:TIMESTAMP\n", "select dateadd('s', -5, 1587275359886758L, 'Europe/Bratislava')");
         assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.891758Z:TIMESTAMP\n", "select dateadd('T', 5, 1587275359886758L, 'Europe/Bratislava')");
         assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.881758Z:TIMESTAMP\n", "select dateadd('T', -5, 1587275359886758L, 'Europe/Bratislava')");
-        assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.886763Z:TIMESTAMP\n", "select dateadd('u', 5, 1587275359886758L, 'Europe/Bratislava')");
-        assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.886753Z:TIMESTAMP\n", "select dateadd('u', -5, 1587275359886758L, 'Europe/Bratislava')");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.886763Z:TIMESTAMP\n", "select dateadd('U', 5, 1587275359886758L, 'Europe/Bratislava')");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.886753Z:TIMESTAMP\n", "select dateadd('U', -5, 1587275359886758L, 'Europe/Bratislava')");
     }
 
     @Test
@@ -246,9 +246,9 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
         assertSql(
                 "QUERY PLAN\n" +
                         "VirtualRecord\n" +
-                        "  functions: [dateadd('u',-5,now(),'Europe/Bratislava')]\n" +
+                        "  functions: [dateadd('U',-5,now(),'Europe/Bratislava')]\n" +
                         "    long_sequence count: 1\n",
-                "explain select dateadd('u', -5, now, 'Europe/Bratislava') from long_sequence(1)"
+                "explain select dateadd('U', -5, now, 'Europe/Bratislava') from long_sequence(1)"
         );
     }
 
