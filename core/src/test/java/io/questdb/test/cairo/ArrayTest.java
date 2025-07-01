@@ -660,6 +660,81 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayPosition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[1.0, 9, 10, 12, 8, null, 20, 12], ARRAY[[1.0, 9, 10, 12, 8, null, 20, 12]]), " +
+                    "(ARRAY[null], ARRAY[[null]])," +
+                    "(null, null)"
+            );
+            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
+                            "5\t6\tnull\t1\n" +
+                            "null\t1\tnull\tnull\n" +
+                            "null\tnull\tnull\tnull\n",
+                    "SELECT " +
+                            "array_position(arr1, 8), " +
+                            "array_position(arr1, null), " +
+                            "array_position(arr1, 11), " +
+                            "array_position(arr1[2:], 9) " +
+                            "FROM tango");
+
+            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
+                            "5\t6\tnull\t1\n" +
+                            "null\t1\tnull\tnull\n" +
+                            "null\tnull\tnull\tnull\n",
+                    "SELECT " +
+                            "array_position(arr2[1], 8), " +
+                            "array_position(arr2[1], null), " +
+                            "array_position(arr2[1], 11), " +
+                            "array_position(arr2[1][2:], 9) " +
+                            "FROM tango");
+
+            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
+                            "1\t2\t3\t1\n" +
+                            "1\t1\t1\tnull\n" +
+                            "null\tnull\tnull\tnull\n",
+                    "SELECT " +
+                            "array_position(arr1, arr1[1]), " +
+                            "array_position(arr1, arr1[2]), " +
+                            "array_position(arr1, arr1[3]), " +
+                            "array_position(arr1[2:], arr1[2]) " +
+                            "FROM tango");
+            assertExceptionNoLeakCheck("SELECT array_position(arr2, 0) len FROM tango",
+                    22, "array is not one-dimensional");
+        });
+    }
+
+    @Test
+    public void testArrayPositionNanInfinity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[])");
+            execute("INSERT INTO tango VALUES (ARRAY[1.0/0.0, 0.0/0.0, -1.0/0.0])");
+            assertSql("array_position\nnull\n", "SELECT array_position(arr, 1.0/0.0) FROM tango");
+            assertSql("array_position\n2\n", "SELECT array_position(arr, 0.0/0.0) FROM tango");
+            assertSql("array_position\nnull\n", "SELECT array_position(arr, -1.0/0.0) FROM tango");
+        });
+    }
+
+    @Test
+    public void testArrayPositionNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0], [9], [10], [12], [8], [null], [20], [12]]) "
+            );
+            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
+                            "5\t6\tnull\t1\n",
+                    "SELECT " +
+                            "array_position(transpose(arr)[1], 8), " +
+                            "array_position(transpose(arr)[1], null), " +
+                            "array_position(transpose(arr)[1], 11), " +
+                            "array_position(transpose(arr)[1, 2:], 9) " +
+                            "FROM tango");
+        });
+    }
+
+    @Test
     public void testArrayShift() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
@@ -1493,70 +1568,6 @@ public class ArrayTest extends AbstractCairoTest {
                             "from tango\n",
                     true);
 
-        });
-    }
-
-    @Test
-    public void testIndexOf() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
-            execute("INSERT INTO tango VALUES " +
-                    "(ARRAY[1.0, 9, 10, 12, 8, null, 20, 12], ARRAY[[1.0, 9, 10, 12, 8, null, 20, 12]]), " +
-                    "(ARRAY[null], ARRAY[[null]])," +
-                    "(null, null)"
-            );
-            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
-                            "5\t6\tnull\t1\n" +
-                            "null\t1\tnull\tnull\n" +
-                            "null\tnull\tnull\tnull\n",
-                    "SELECT " +
-                            "array_position(arr1, 8), " +
-                            "array_position(arr1, null), " +
-                            "array_position(arr1, 11), " +
-                            "array_position(arr1[2:], 9) " +
-                            "FROM tango");
-
-            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
-                            "5\t6\tnull\t1\n" +
-                            "null\t1\tnull\tnull\n" +
-                            "null\tnull\tnull\tnull\n",
-                    "SELECT " +
-                            "array_position(arr2[1], 8), " +
-                            "array_position(arr2[1], null), " +
-                            "array_position(arr2[1], 11), " +
-                            "array_position(arr2[1][2:], 9) " +
-                            "FROM tango");
-
-            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
-                            "1\t2\t3\t1\n" +
-                            "1\t1\t1\tnull\n" +
-                            "null\tnull\tnull\tnull\n",
-                    "SELECT " +
-                            "array_position(arr1, arr1[1]), " +
-                            "array_position(arr1, arr1[2]), " +
-                            "array_position(arr1, arr1[3]), " +
-                            "array_position(arr1[2:], arr1[2]) " +
-                            "FROM tango");
-            assertExceptionNoLeakCheck("SELECT array_position(arr2, 0) len FROM tango",
-                    22, "array is not one-dimensional");
-        });
-    }
-
-    @Test
-    public void testIndexOfNonVanilla() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (arr DOUBLE[][])");
-            execute("INSERT INTO tango VALUES " +
-                    "(ARRAY[[1.0], [9], [10], [12], [8], [null], [20], [12]]) "
-            );
-            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
-                            "5\t6\tnull\t1\n",
-                    "SELECT " +
-                            "array_position(transpose(arr)[1], 8), " +
-                            "array_position(transpose(arr)[1], null), " +
-                            "array_position(transpose(arr)[1], 11), " +
-                            "array_position(transpose(arr)[1, 2:], 9) " +
-                            "FROM tango");
         });
     }
 
