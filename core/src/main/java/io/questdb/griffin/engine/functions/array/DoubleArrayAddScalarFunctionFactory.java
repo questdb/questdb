@@ -43,13 +43,13 @@ public class DoubleArrayAddScalarFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public boolean isCommutative() {
-        return true;
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return new Func(args.getQuick(0), args.getQuick(1), configuration);
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new Func(args.getQuick(0), args.getQuick(1), configuration);
+    public boolean shouldSwapArgs() {
+        return true;
     }
 
     private static class Func extends DoubleArrayAndScalarArrayOperator {

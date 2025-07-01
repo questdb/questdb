@@ -47,11 +47,6 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
     }
 
     @Override
-    public boolean isCommutative() {
-        return true;
-    }
-
-    @Override
     public Function newInstance(
             int position,
             @Transient ObjList<Function> args,
@@ -60,6 +55,11 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         return new Func(args.getQuick(0), args.getQuick(1));
+    }
+
+    @Override
+    public boolean shouldSwapArgs() {
+        return true;
     }
 
     private static class Func extends DoubleFunction implements BinaryFunction, DoubleUnaryArrayAccessor {
