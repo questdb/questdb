@@ -123,6 +123,13 @@ public class DerivedArrayView extends ArrayView {
         this.type = ColumnType.encodeArrayType(getElemType(), getDimCount() + count);
     }
 
+    /**
+     * Broadcasts this array's shape into the target shape. See the broadcasting rules
+     * {@linkplain #computeBroadcastShape here}
+     * <p>
+     * <strong>NOTE:</strong> this method is unsafe to use with an invalid target shape.
+     * It only uses {@code assert} and doesn't throw an exception in production code.
+     */
     public void broadcast(IntList targetShape) {
         int targetDims = targetShape.size();
         int originalDims = getDimCount();
@@ -151,6 +158,15 @@ public class DerivedArrayView extends ArrayView {
         }
     }
 
+    /**
+     * Flattens the provided dimension into the next-finer one, and removes it
+     * from the array's shape. If {@code dim} is the finest dimension (with
+     * stride = 1), flattens it into the one to the next-coarser one. The finest
+     * dimension cannot be flattened if its length is greater than 1.
+     *
+     * @param dim    the dimension to flatten
+     * @param argPos SQL syntax position where to report an error
+     */
     public void flattenDim(int dim, int argPos) {
         final int nDims = getDimCount();
         assert dim >= 0 && dim < nDims : "dim out of range: " + dim + ", nDims: " + nDims;
@@ -233,13 +249,18 @@ public class DerivedArrayView extends ArrayView {
         type = ColumnType.encodeArrayType(getElemType(), getDimCount() + count);
     }
 
-    public void removeDim(int dim) {
-        assert dim >= 0 && dim < shape.size() : "dim out of range: " + dim;
-        shape.removeIndex(dim);
-        strides.removeIndex(dim);
-        type = ColumnType.encodeArrayType(getElemType(), getDimCount() - 1);
-    }
-
+    /**
+     * Takes a slice of this array at the provided dimension, and the provided
+     * lower and upper bounds for the index at that dimension. After the slicing
+     * operation, the dimension {@code dim} is constrained to indices 0..(hi - lo)
+     * (upper-exclusive), and the new index 0 corresponds to the previous index
+     * {@code lo}.
+     *
+     * @param dim    the dimension to slice
+     * @param lo     lower bound of the slice
+     * @param hi     upper boudn of the slice (exclusive)
+     * @param argPos SQL syntax position where to report an error if needed
+     */
     public void slice(int dim, int lo, int hi, int argPos) {
         if (dim < 0 || dim >= getDimCount()) {
             throw CairoException.nonCritical().position(argPos)
@@ -284,6 +305,15 @@ public class DerivedArrayView extends ArrayView {
         }
     }
 
+    /**
+     * Extracts a sub-array from this array. It does so by first taking a slice of the
+     * array at dimension {@code dim} that contains just the provided {@code index},
+     * and then removing the dimension {@code dim} from the array's shape.
+     *
+     * @param dim    the dimension at which the sub-array is found
+     * @param index  the index of the sub-array within that dimension
+     * @param argPos the SQL syntax position to report an error if needed
+     */
     public void subArray(int dim, int index, int argPos) {
         slice(dim, index, index + 1, argPos);
         if (getDimLen(dim) != 0) {
@@ -293,11 +323,21 @@ public class DerivedArrayView extends ArrayView {
         }
     }
 
+    /**
+     * Transposes this array, reversing its shape and strides.
+     */
     public void transpose() {
         if (isVanilla && getDimCount() > 1) {
             isVanilla = false;
         }
         strides.reverse();
         shape.reverse();
+    }
+
+    private void removeDim(int dim) {
+        assert dim >= 0 && dim < shape.size() : "dim out of range: " + dim;
+        shape.removeIndex(dim);
+        strides.removeIndex(dim);
+        type = ColumnType.encodeArrayType(getElemType(), getDimCount() - 1);
     }
 }
