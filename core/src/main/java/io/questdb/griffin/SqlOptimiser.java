@@ -1995,6 +1995,62 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // warning: this method replaces literals with function call (changes the node)
+    private void emitLambdaParam(@Transient ExpressionNode param, @Transient ExpressionNode body) {
+        CharSequence paramName = param.token;
+        int stackDepthOnEntry = sqlNodeStack.size();
+
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
+        while (true) {
+            if (body != null) {
+                if (body.paramCount < 3) {
+                    if (body.rhs != null) {
+                        ExpressionNode n = replaceLambdaParamWithFunctionX(body.rhs, paramName);
+                        if (body.rhs == n) {
+                            sqlNodeStack.push(body.rhs);
+                        } else {
+                            body.rhs = n;
+                        }
+                    }
+
+                    ExpressionNode n = replaceLambdaParamWithFunctionX(body.lhs, paramName);
+                    if (n == body.lhs) {
+                        body = body.lhs;
+                    } else {
+                        body.lhs = n;
+                        body = null;
+                    }
+                } else {
+                    for (int i = 1, k = body.paramCount; i < k; i++) {
+                        ExpressionNode e = body.args.getQuick(i);
+                        ExpressionNode n = replaceLambdaParamWithFunctionX(e, paramName);
+                        if (e == n) {
+                            sqlNodeStack.push(e);
+                        } else {
+                            body.args.setQuick(i, n);
+                        }
+                    }
+
+                    ExpressionNode e = body.args.getQuick(0);
+                    ExpressionNode n = replaceLambdaParamWithFunctionX(e, paramName);
+                    if (e == n) {
+                        body = e;
+                    } else {
+                        body.args.setQuick(0, n);
+                        body = null;
+                    }
+                }
+            } else {
+                if (sqlNodeStack.size() == stackDepthOnEntry) {
+                    return;
+                }
+                body = sqlNodeStack.poll();
+            }
+        }
+    }
+
     // warning: this method replaces literal with aliases (changes the node)
     private void emitLiterals(
             @Transient ExpressionNode node,
@@ -2012,7 +2068,7 @@ public class SqlOptimiser implements Mutable {
             if (node != null) {
                 if (node.paramCount < 3) {
                     if (node.rhs != null) {
-                        ExpressionNode n = replaceLiteral(node.rhs, translatingModel, innerVirtualModel, validatingModel, windowCall);
+                        ExpressionNode n = replaceLiteralAndLambda(node.rhs, translatingModel, innerVirtualModel, validatingModel, windowCall);
                         if (node.rhs == n) {
                             sqlNodeStack.push(node.rhs);
                         } else {
@@ -2020,7 +2076,7 @@ public class SqlOptimiser implements Mutable {
                         }
                     }
 
-                    ExpressionNode n = replaceLiteral(node.lhs, translatingModel, innerVirtualModel, validatingModel, windowCall);
+                    ExpressionNode n = replaceLiteralAndLambda(node.lhs, translatingModel, innerVirtualModel, validatingModel, windowCall);
                     if (n == node.lhs) {
                         node = node.lhs;
                     } else {
@@ -2030,7 +2086,7 @@ public class SqlOptimiser implements Mutable {
                 } else {
                     for (int i = 1, k = node.paramCount; i < k; i++) {
                         ExpressionNode e = node.args.getQuick(i);
-                        ExpressionNode n = replaceLiteral(e, translatingModel, innerVirtualModel, validatingModel, windowCall);
+                        ExpressionNode n = replaceLiteralAndLambda(e, translatingModel, innerVirtualModel, validatingModel, windowCall);
                         if (e == n) {
                             sqlNodeStack.push(e);
                         } else {
@@ -2039,7 +2095,7 @@ public class SqlOptimiser implements Mutable {
                     }
 
                     ExpressionNode e = node.args.getQuick(0);
-                    ExpressionNode n = replaceLiteral(e, translatingModel, innerVirtualModel, validatingModel, windowCall);
+                    ExpressionNode n = replaceLiteralAndLambda(e, translatingModel, innerVirtualModel, validatingModel, windowCall);
                     if (e == n) {
                         node = e;
                     } else {
@@ -2893,6 +2949,10 @@ public class SqlOptimiser implements Mutable {
 
     private QueryColumn nextColumn(CharSequence alias, CharSequence column) {
         return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column, 0);
+    }
+
+    private ExpressionNode nextFunction(CharSequence token, int position) {
+        return SqlUtil.nextExpr(expressionNodePool, FUNCTION, token, position);
     }
 
     private ExpressionNode nextLiteral(CharSequence token, int position) {
@@ -4032,14 +4092,27 @@ public class SqlOptimiser implements Mutable {
         return node;
     }
 
-    private ExpressionNode replaceLiteral(
+    private ExpressionNode replaceLambdaParamWithFunctionX(ExpressionNode node, CharSequence paramName) {
+        return node != null && node.type == LITERAL && node.token.equals(paramName)
+                ? nextFunction("x", node.position)
+                : node;
+    }
+
+    private ExpressionNode replaceLiteralAndLambda(
             @Transient ExpressionNode node,
             QueryModel translatingModel,
             @Nullable QueryModel innerVirtualModel,
             QueryModel validatingModel,
             boolean windowCall
     ) throws SqlException {
-        if (node != null && node.type == LITERAL) {
+        if (node == null) {
+            return node;
+        }
+        if (node.type == OPERATION && node.token.equals("->")) {
+            emitLambdaParam(node.lhs, node.rhs);
+            return node.rhs;
+        }
+        if (node.type == LITERAL) {
             try {
                 return doReplaceLiteral(node, translatingModel, innerVirtualModel, validatingModel, windowCall);
             } catch (SqlException e) {
@@ -4053,11 +4126,16 @@ public class SqlOptimiser implements Mutable {
         return node;
     }
 
-    private void replaceLiteralList(QueryModel innerVirtualModel, QueryModel translatingModel, QueryModel baseModel, ObjList<ExpressionNode> list) throws SqlException {
+    private void replaceLiteralAndLambdaList(
+            QueryModel innerVirtualModel,
+            QueryModel translatingModel,
+            QueryModel baseModel,
+            ObjList<ExpressionNode> list
+    ) throws SqlException {
         for (int j = 0, n = list.size(); j < n; j++) {
             final ExpressionNode node = list.getQuick(j);
             emitLiterals(node, translatingModel, innerVirtualModel, baseModel, true);
-            list.setQuick(j, replaceLiteral(node, translatingModel, innerVirtualModel, baseModel, true));
+            list.setQuick(j, replaceLiteralAndLambda(node, translatingModel, innerVirtualModel, baseModel, true));
         }
     }
 
@@ -6007,8 +6085,8 @@ public class SqlOptimiser implements Mutable {
                     // inner virtual models.
                     final WindowColumn ac = (WindowColumn) qc;
                     int innerColumnsPre = innerVirtualModel.getBottomUpColumns().size();
-                    replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getPartitionBy());
-                    replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getOrderBy());
+                    replaceLiteralAndLambdaList(innerVirtualModel, translatingModel, baseModel, ac.getPartitionBy());
+                    replaceLiteralAndLambdaList(innerVirtualModel, translatingModel, baseModel, ac.getOrderBy());
                     int innerColumnsPost = innerVirtualModel.getBottomUpColumns().size();
                     // window model might require columns it doesn't explicitly contain (e.g. used for order by or partition by  in over() clause  )
                     // skipping translating model will trigger 'invalid column' exceptions

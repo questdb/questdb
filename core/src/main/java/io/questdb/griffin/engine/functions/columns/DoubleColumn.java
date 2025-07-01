@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.ObjList;
@@ -41,7 +41,7 @@ public class DoubleColumn extends DoubleFunction implements Function {
     }
 
     public static DoubleColumn newInstance(int columnIndex) {
-        if (columnIndex < STATIC_COLUMN_COUNT) {
+        if (columnIndex >= 0 && columnIndex < STATIC_COLUMN_COUNT) {
             return COLUMNS.getQuick(columnIndex);
         }
         return new DoubleColumn(columnIndex);
