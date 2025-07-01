@@ -4282,7 +4282,7 @@ public class SqlOptimiser implements Mutable {
                     abandonRewrite = true;
                     break;
                 }
-                if (alias == ast.token && ast.type != FUNCTION) {
+                if (alias == ast.token && ast.type != FUNCTION && ast.type != ARRAY_ACCESS) {
                     wrapperModel.addBottomUpColumn(qc);
                 } else {
                     wrapperModel.addBottomUpColumn(queryColumnPool.next().of(alias, nextLiteral(alias)));
