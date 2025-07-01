@@ -1135,6 +1135,108 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testAsOfJoinTolerance() throws Exception {
+        assertQuery(
+                "select-choose t.timestamp timestamp, t.tag tag, q.timestamp timestamp1, q.tag tag1 from (select [timestamp, tag] from trades t timestamp (timestamp) asof join select [timestamp, tag] from quotes q timestamp (timestamp) on q.tag = t.tag tolerance 10m post-join-where q.tag = null) t",
+                "select * from trades t ASOF JOIN quotes q on tag TOLERANCE 10m WHERE q.tag is null",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL),
+                modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL)
+        );
+
+
+        execute("create table trades (timestamp timestamp, tag symbol) timestamp(timestamp)");
+        execute("create table quotes (timestamp timestamp, tag symbol) timestamp(timestamp)");
+        assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE 10",
+                61,
+                "expected interval qualifier");
+
+        assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE 10X",
+                59,
+                "unsupported TOLERANCE unit [unit=X]");
+
+        assertException("select * from trades t JOIN quotes q on tag TOLERANCE 10s",
+                44,
+                "TOLERANCE is only supported for ASOF and LT joins");
+
+        assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE",
+                49,
+                "ASOF JOIN TOLERANCE period expected");
+
+        assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE -5m",
+                60,
+                "ASOF JOIN TOLERANCE must be positive");
+
+        assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE $1",
+                59,
+                "ASOF JOIN TOLERANCE must be a constant");
+    }
+
+    @Test
+    public void testAsOfToleranceMaximum() throws Exception {
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "U",
+                48,
+                "invalid tolerance value [value=2147483648U, maximum=2147483647U]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // millis
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "T",
+                48,
+                "invalid tolerance value [value=2147483648T, maximum=2147483647T]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // seconds
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "s",
+                48,
+                "invalid tolerance value [value=2147483648s, maximum=2147483647s]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // minutes
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "m",
+                48,
+                "invalid tolerance value [value=2147483648m, maximum=2147483647m]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // hours
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "h",
+                48,
+                "invalid tolerance value [value=2147483648h, maximum=2147483647h]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // days - int overflow
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "d",
+                48,
+                "invalid tolerance value [value=2147483648d, maximum=106751991d]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // days - overflow in micros
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance 106751992d",
+                48,
+                "tolerance value too high for given units [value=106751992d, maximum=106751991d]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // weeks - int overflow
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "w",
+                48,
+                "invalid tolerance value [value=2147483648w, maximum=15250284w]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // weeks - overflow in micros
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance 15250285w",
+                48,
+                "tolerance value too high for given units [value=15250285w, maximum=15250284w]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+    }
+
+    @Test
     public void testAtAsColumnAlias() throws Exception {
         assertQuery(
                 "select-choose l at from (select [l] from testat timestamp (ts))",
@@ -6898,6 +7000,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose x1.a a, x1.s s, x2.a a1, x2.s s1 from (select [a, s] from (select-virtual [rnd_int() a, rnd_symbol(4,4,4,2) s] rnd_int() a, rnd_symbol(4,4,4,2) s from (long_sequence(10))) x1 join select [a, s] from (select-virtual [rnd_int() a, rnd_symbol(4,4,4,2) s] rnd_int() a, rnd_symbol(4,4,4,2) s from (long_sequence(10))) x2 on x2.s = x1.s) x1",
                 "with x as (select rnd_int() a, rnd_symbol(4,4,4,2) s from long_sequence(10)) " +
                         "select * from x x1 join x x2 on (s)"
+        );
+    }
+
+    @Test
+    public void testJoin_ToleranceAndOnClausesSwitched() throws Exception {
+        assertSyntaxError("select * from tab asof join tab TOLERANCE 1h on sym;",
+                45,
+                "'ON' clause must precede 'TOLERANCE' clause. Hint: put the ON condition right after the JOIN, then add TOLERANCE, e.g. … ASOF JOIN t2 ON t1.ts = t2.ts TOLERANCE 1h",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
         );
     }
 
