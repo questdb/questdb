@@ -68,10 +68,7 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
         private double scalar;
         private double value;
 
-        public Func(
-                Function leftArg,
-                Function rightArg
-        ) {
+        public Func(Function leftArg, Function rightArg) {
             this.leftArg = leftArg;
             this.rightArg = rightArg;
         }
