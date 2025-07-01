@@ -414,13 +414,8 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             int memoryTag,
             long opts
     ) {
-        long lo;
-        if (rowLo > 0) {
-            lo = getDataOffset(auxMem, VARCHAR_AUX_WIDTH_BYTES * rowLo);
-        } else {
-            lo = 0;
-        }
-        long hi = getDataVectorSize(auxMem, VARCHAR_AUX_WIDTH_BYTES * (rowHi - 1));
+        long lo = rowLo > 0 ? getDataOffset(auxMem, VARCHAR_AUX_WIDTH_BYTES * rowLo) : 0;
+        long hi = rowHi > 0 ? getDataVectorSize(auxMem, VARCHAR_AUX_WIDTH_BYTES * (rowHi - 1)) : 0;
         dataMem.ofOffset(
                 ff,
                 dataFd,
@@ -501,6 +496,20 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public boolean isSparseDataVector(long auxMemAddr, long dataMemAddr, long rowCount) {
+        long lastSizeInDataVector = 0;
+        for (int row = 0; row < rowCount; row++) {
+            long offset = getDataVectorOffset(auxMemAddr, row);
+            if (offset != lastSizeInDataVector) {
+                // Swiss cheese hole in var col file
+                return true;
+            }
+            lastSizeInDataVector = getDataVectorSizeAt(auxMemAddr, row);
+        }
+        return false;
+    }
+
+    @Override
     public long mergeShuffleColumnFromManyAddresses(
             long indexFormat,
             long primaryAddressList,
@@ -521,20 +530,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                 destDataOffset,
                 destDataSize
         );
-    }
-
-    @Override
-    public boolean isSparseDataVector(long auxMemAddr, long dataMemAddr, long rowCount) {
-        long lastSizeInDataVector = 0;
-        for (int row = 0; row < rowCount; row++) {
-            long offset = getDataVectorOffset(auxMemAddr, row);
-            if (offset != lastSizeInDataVector) {
-                // Swiss cheese hole in var col file
-                return true;
-            }
-            lastSizeInDataVector = getDataVectorSizeAt(auxMemAddr, row);
-        }
-        return false;
     }
 
     @Override
