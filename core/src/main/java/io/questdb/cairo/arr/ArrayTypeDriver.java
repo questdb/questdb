@@ -389,13 +389,8 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             int memoryTag,
             long opts
     ) {
-        long lo;
-        if (rowLo > 0) {
-            lo = readDataOffset(auxMem, ARRAY_AUX_WIDTH_BYTES * rowLo);
-        } else {
-            lo = 0;
-        }
-        long hi = calcDataOffsetEnd(auxMem, ARRAY_AUX_WIDTH_BYTES * (rowHi - 1));
+        long lo = rowLo > 0 ? readDataOffset(auxMem, ARRAY_AUX_WIDTH_BYTES * rowLo) : 0;
+        long hi = rowHi > 0 ? calcDataOffsetEnd(auxMem, ARRAY_AUX_WIDTH_BYTES * (rowHi - 1)) : 0;
         dataMem.ofOffset(
                 ff,
                 dataFd,
