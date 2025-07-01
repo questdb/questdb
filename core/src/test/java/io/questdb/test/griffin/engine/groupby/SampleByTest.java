@@ -6127,6 +6127,41 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByWeekWithOffset0() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE points (  \n" +
+                    "  timestamp TIMESTAMP,  \n" +
+                    "  value DOUBLE,\n" +
+                    "  name SYMBOL\n" +
+                    ")  TIMESTAMP(timestamp)\n" +
+                    "PARTITION BY DAY wal\n" +
+                    "DEDUP UPSERT KEYS(timestamp, name);");
+            execute("INSERT INTO points VALUES " +
+                    "('2025-02-01T10:00:00.000Z', 1.0, 'point')," +
+                    "('2025-02-02T10:00:00.000Z', 2.0, 'point')," +
+                    "('2025-02-03T10:00:00.000Z', 3.0, 'point')," +
+                    "('2025-02-04T10:00:00.000Z', 4.0, 'point')," +
+                    "('2025-02-05T10:00:00.000Z', 5.0, 'point')," +
+                    "('2025-02-06T10:00:00.000Z', 6.0, 'point')," +
+                    "('2025-02-07T10:00:00.000Z', 7.0, 'point')," +
+                    "('2025-02-08T10:00:00.000Z', 8.0, 'point')," +
+                    "('2025-02-09T10:00:00.000Z', 9.0, 'point')," +
+                    "('2025-02-10T10:00:00.000Z', 10.0, 'point')," +
+                    "('2025-02-11T10:00:00.000Z', 11.0, 'point');");
+            drainWalQueue();
+            assertSql("timestamp\tfirst\n" +
+                            "2025-01-27T00:00:00.000000Z\t1.0\n" +
+                            "2025-02-03T00:00:00.000000Z\t3.0\n" +
+                            "2025-02-10T00:00:00.000000Z\t10.0\n",
+                    "SELECT timestamp, first(value)\n" +
+                            "FROM points\n" +
+                            "WHERE name = 'point'\n" +
+                            "SAMPLE BY 1w\n" +
+                            "ALIGN TO CALENDAR");
+        });
+    }
+
+    @Test
     public void testSampleByWithAsofJoin() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE 'trades1' (\n" +
@@ -13548,8 +13583,8 @@ public class SampleByTest extends AbstractCairoTest {
                     "sample by 1w fill(null)";
             assertQueryNoLeakCheck(
                     "ts\tavg\n" +
-                            "2017-12-28T00:00:00.000000Z\t72.5\n" +
-                            "2018-01-04T00:00:00.000000Z\t312.5\n",
+                            "2018-01-01T00:00:00.000000Z\t168.5\n" +
+                            "2018-01-08T00:00:00.000000Z\t408.5\n",
                     query2,
                     "ts",
                     true
