@@ -103,6 +103,7 @@ import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
+import io.questdb.griffin.engine.functions.memoization.ShortFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.TimestampFunctionMemoizer;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
@@ -354,6 +355,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         return new TimestampFunctionMemoizer(function);
                     case ColumnType.DOUBLE:
                         return new DoubleFunctionMemoizer(function);
+                    case ColumnType.SHORT:
+                        return new ShortFunctionMemoizer(function);
                     // other types do not have memoization yet
                 }
             }

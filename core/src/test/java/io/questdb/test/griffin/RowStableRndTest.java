@@ -50,6 +50,26 @@ public class RowStableRndTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRndShort() throws SqlException {
+        allowFunctionPrefetch();
+        // assertQuery does not reset rnd between SQL executions - using assertSql
+        assertSql(
+                "s\tk\n" +
+                        "-27056\t-27046\n" +
+                        "24814\t24824\n" +
+                        "-11455\t-11445\n" +
+                        "-13027\t-13017\n" +
+                        "-21227\t-21217\n" +
+                        "-22955\t-22945\n" +
+                        "-1398\t-1388\n" +
+                        "21015\t21025\n" +
+                        "30202\t30212\n" +
+                        "-19496\t-19486\n",
+                "select rnd_short() s, s + 10 k from long_sequence(10)"
+        );
+    }
+
+    @Test
     public void testRndDouble() throws SqlException {
         allowFunctionPrefetch();
         // assertQuery does not reset rnd between SQL executions - using assertSql
