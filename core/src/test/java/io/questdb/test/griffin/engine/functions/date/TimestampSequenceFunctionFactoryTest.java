@@ -66,7 +66,7 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
         // within the same row.
         // in other words: timestamps on the same row must differ exactly by 1 hour due to the dateadd()
 
-        allowFunctionPrefetch();
+        allowFunctionMemoization();
 
         final String expected = "ts\tdateadd\n" +
                 "2021-04-25T00:00:00.000000Z\t2021-04-25T01:00:00.000000Z\n" +

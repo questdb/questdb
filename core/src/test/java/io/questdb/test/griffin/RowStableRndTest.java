@@ -31,7 +31,7 @@ import org.junit.Test;
 public class RowStableRndTest extends AbstractCairoTest {
     @Test
     public void testRndInt() throws SqlException {
-        allowFunctionPrefetch();
+        allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
         assertSql(
                 "i\tk\n" +
@@ -51,7 +51,7 @@ public class RowStableRndTest extends AbstractCairoTest {
 
     @Test
     public void testRndShort() throws SqlException {
-        allowFunctionPrefetch();
+        allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
         assertSql(
                 "s\tk\n" +
@@ -71,7 +71,7 @@ public class RowStableRndTest extends AbstractCairoTest {
 
     @Test
     public void testRndDouble() throws SqlException {
-        allowFunctionPrefetch();
+        allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
         assertSql(
                 "d\tk\n" +
@@ -91,7 +91,7 @@ public class RowStableRndTest extends AbstractCairoTest {
 
     @Test
     public void testRndIntBinary() throws SqlException {
-        allowFunctionPrefetch();
+        allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
         assertSql(
                 "i\tk\n" +
@@ -111,7 +111,7 @@ public class RowStableRndTest extends AbstractCairoTest {
 
     @Test
     public void testRndDoubleBinary() throws SqlException {
-        allowFunctionPrefetch();
+        allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
         assertSql(
                 "d\tk\n" +
@@ -132,7 +132,7 @@ public class RowStableRndTest extends AbstractCairoTest {
 
     @Test
     public void testRndIntUnary() throws SqlException {
-        allowFunctionPrefetch();
+        allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
         assertSql(
                 "i\tk\n" +
@@ -152,7 +152,7 @@ public class RowStableRndTest extends AbstractCairoTest {
 
     @Test
     public void testRndDoubleUnary() throws SqlException {
-        allowFunctionPrefetch();
+        allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
         assertSql(
                 "d\tk\n" +
@@ -173,7 +173,7 @@ public class RowStableRndTest extends AbstractCairoTest {
 
     @Test
     public void testRndLong() throws SqlException {
-        allowFunctionPrefetch();
+        allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
         assertSql(
                 "i\tk\n" +
@@ -193,7 +193,7 @@ public class RowStableRndTest extends AbstractCairoTest {
 
     @Test
     public void testRndLongBinary() throws SqlException {
-        allowFunctionPrefetch();
+        allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
         assertSql(
                 "i\tk\n" +
@@ -213,7 +213,7 @@ public class RowStableRndTest extends AbstractCairoTest {
 
     @Test
     public void testRndLongUnary() throws SqlException {
-        allowFunctionPrefetch();
+        allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
         assertSql(
                 "i\tk\n" +
