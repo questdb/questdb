@@ -19,11 +19,17 @@ jobs:
       javadoc_step: ""
       javadoc_profile: ""
       jdk: "1.17"
+      JAVA_HOME_17_AARCH64: "/usr/lib/jvm/java-17-amazon-corretto/aarch_64"
       os: Linux
     steps:
-      - script: |
-          sudo alternatives --install /usr/bin/java java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java 1
-          sudo alternatives --set java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java
+      - task: JavaToolInstaller@0
+        inputs:
+          versionSpec: '17'
+          jdkArchitectureOption: 'arm64'
+          jdkSourceOption: 'PreInstalled'
+#      - script: |
+#          sudo alternatives --install /usr/bin/java java /usr/lib/jvm/java-17-amazon-corretto.aarch_64/bin/java 1
+#          sudo alternatives --set java /usr/lib/jvm/java-17-amazon-corretto.aarch_64/bin/java
       - template: steps.yml
 
   - job: linux_x64_zfs_jdk17
@@ -47,8 +53,14 @@ jobs:
       javadoc_profile: ""
       jdk: "1.17"
       os: Linux
+      JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-amazon-corretto/x86_64"
     steps:
-      - script: |
-          sudo alternatives --install /usr/bin/java java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java 1
-          sudo alternatives --set java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java
+      - task: JavaToolInstaller@0
+        inputs:
+          versionSpec: '17'
+          jdkArchitectureOption: 'x64'
+          jdkSourceOption: 'PreInstalled'
+#      - script: |
+#          sudo alternatives --install /usr/bin/java java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java 1
+#          sudo alternatives --set java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java
       - template: steps.yml
