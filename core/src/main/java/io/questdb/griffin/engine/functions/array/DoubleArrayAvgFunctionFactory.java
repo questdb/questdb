@@ -57,7 +57,7 @@ public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
         @Override
         public void applyToElement(ArrayView view, int index) {
             double v = view.getDouble(index);
-            if (v == v) {
+            if (!Double.isNaN(v)) {
                 sum += v;
                 count++;
             }

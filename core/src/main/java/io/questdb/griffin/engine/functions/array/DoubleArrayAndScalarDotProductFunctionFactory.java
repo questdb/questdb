@@ -79,7 +79,7 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
         @Override
         public void applyToElement(ArrayView view, int index) {
             double v = view.getDouble(index);
-            if (v == v) {
+            if (!Double.isNaN(v)) {
                 value += v * scalar;
             }
         }
@@ -89,7 +89,7 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
             FlatArrayView flatView = view.flatView();
             for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
                 double v = flatView.getDoubleAtAbsIndex(i);
-                if (v == v) {
+                if (!Double.isNaN(v)) {
                     value += v * scalar;
                 }
             }
@@ -106,7 +106,7 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
                 return Double.NaN;
             }
             scalar = rightArg.getDouble(rec);
-            if (scalar != scalar) {
+            if (Double.isNaN(scalar)) {
                 return Double.NaN;
             }
             value = 0d;
