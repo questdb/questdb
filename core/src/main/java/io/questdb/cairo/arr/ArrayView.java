@@ -133,6 +133,7 @@ import io.questdb.std.QuietCloseable;
  * not allowed on the dimension with stride 1, in this special case it is fine.
  */
 public abstract class ArrayView implements QuietCloseable {
+
     /**
      * Maximum size of any given dimension.
      * <p>Why:
@@ -155,6 +156,10 @@ public abstract class ArrayView implements QuietCloseable {
     protected boolean isVanilla = true;
     protected int type = ColumnType.UNDEFINED;
 
+    /**
+     * Appends all the values of this array to the supplied memory block,
+     * in row-major order.
+     */
     public final void appendDataToMem(MemoryA mem) {
         // We need isEmpty() check to protect us from running appendToMemRecursive() for an
         // almost unbounded number of steps, e.g., on an array of shape (100_000_000, 100_000_000, 0).
@@ -355,16 +360,19 @@ public abstract class ArrayView implements QuietCloseable {
      *     flatIndex = i*stride0 + j*stride1 + k*stride2 + ...
      * </pre>
      * <strong>NOTE:</strong> the calculated index is <i>relative:</i> a flat index of
-     * zero corresponds to the element at {@link #getFlatViewOffset} in the backing
-     * flat array. We discourage using {@link FlatArrayView#getDoubleAtAbsIndex}
+     * zero corresponds to the element at {@link #getFlatViewOffset flatViewOffset} in the
+     * backing flat array. We discourage using {@link FlatArrayView#getDoubleAtAbsIndex}
      * directly, because it is easy to forget adding the offset, and it is non-obvious
-     * from looking at the code that it's broken that way. Using absolute indexing is
-     * OK within a branch covered by an {@link #isVanilla()} check.
+     * from looking at the code that it's broken that way.
      */
     public final double getDouble(int flatIndex) {
         return flatView.getDoubleAtAbsIndex(flatViewOffset + flatIndex);
     }
 
+    /**
+     * Returns the type tag of this array's elements, as one of the {@link ColumnType}
+     * constants.
+     */
     public final short getElemType() {
         return ColumnType.decodeArrayElementType(type);
     }
@@ -421,6 +429,10 @@ public abstract class ArrayView implements QuietCloseable {
         return type;
     }
 
+    /**
+     * Returns the number of bytes this array would occupy when laid out in its
+     * vanilla form.
+     */
     public final long getVanillaMemoryLayoutSize() {
         if (isNull()) {
             return 0;
@@ -453,12 +465,13 @@ public abstract class ArrayView implements QuietCloseable {
     }
 
     /**
-     * Tells whether this array is a "vanilla array". A vanilla array's shape
-     * directly describes the physical layout of the underlying flat array. The
+     * Tells whether this array is a "vanilla array". A vanilla array's shape and
+     * strides directly describe the physical layout of the underlying flat array. The
      * main reason to know this is when you're about to iterate over all the array
-     * elements. For a vanilla array, you can go through the flat indices from zero
-     * to {@link #getFlatViewLength()} and you'll iterate over the whole array in
-     * row-major order.
+     * elements. For a vanilla array, you can use the underlying {@link #flatView()
+     * flatView}, iterate over its {@link #getFlatViewLength() flatViewLength} indices
+     * starting at {@link #getFlatViewOffset() flatOffset}, and you'll iterate over the
+     * whole array in row-major order.
      * <p>
      * On a non-vanilla array, you must calculate each element's flat index from its
      * coordinates, applying the array's strides. A non-vanilla array arises when you
