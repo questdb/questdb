@@ -54,8 +54,6 @@ public final class Vect {
     // Note: high is inclusive!
     public static native long binarySearch64Bit(long pData, long value, long low, long high, int scanDirection);
 
-    public static native long binarySearchDouble(long pData, double value, long low, long high, boolean ascending, int scanDirection);
-
     // Note: high is inclusive!
     public static native long binarySearchIndexT(long pData, long value, long low, long high, int scanDirection);
 
