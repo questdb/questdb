@@ -133,10 +133,16 @@ public class DerivedArrayView extends ArrayView {
 
         boolean changed = false;
         for (int i = 0; i < targetDims; i++) {
-            if (shape.getQuick(i) == 1 && targetShape.getQuick(i) != 1) {
-                strides.setQuick(i, 0);
-                shape.setQuick(i, targetShape.getQuick(i));
-                changed = true;
+            int thisDimLen = shape.getQuick(i);
+            int targetDimLen = targetShape.getQuick(i);
+            if (targetDimLen != 1) {
+                if (thisDimLen == 1) {
+                    strides.setQuick(i, 0);
+                    shape.setQuick(i, targetDimLen);
+                    changed = true;
+                } else {
+                    assert thisDimLen == targetDimLen : "incompatible target shape";
+                }
             }
         }
 
