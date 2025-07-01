@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class ProjectionReferenceTest extends AbstractCairoTest {
@@ -45,6 +46,20 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                 "select e.symbol, e.value, q.quote, e.value + q.quote as sum " +
                         "from events e asof join quotes q on e.symbol = q.symbol",
                 false,
+                true
+        );
+    }
+
+    @Test
+    @Ignore("TODO: BUG - ORDER BY prioritises projection column over base column")
+    public void testOrderBy() throws Exception {
+        execute("create table trades (symbol string, price double, ts timestamp) timestamp(ts)");
+        execute("insert into trades values ('A', 1, '2025-01-01T10:00:00.000Z'), ('B', 2, '2025-01-01T10:05:00.000Z')");
+        assertQuery(
+                "symbol\tprice\n" +
+                        "A\t-1.0\n" +
+                        "B\t-2.0\n",
+                "select symbol, -price as price from trades order by price",
                 true
         );
     }
