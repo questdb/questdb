@@ -79,7 +79,7 @@ public class DoubleArrayInsertionPointFunctionFactory implements FunctionFactory
             }
             boolean ahead = aheadEqual.getBool(rec);
             int index = arr.binarySearchDoubleValue1DArray(valueArg.getDouble(rec), ahead);
-            return index < 0 ? -index : (ahead ? index : index + 1);
+            return index < 0 ? -index : (ahead ? index + 1 : index + 2);
         }
 
         @Override

@@ -71,7 +71,7 @@ public class DoubleArrayInsertionPointAfterEqualFunctionFactory implements Funct
                 return Numbers.INT_NULL;
             }
             int index = arr.binarySearchDoubleValue1DArray(valueArg.getDouble(rec), false);
-            return index < 0 ? -index : index + 1;
+            return index < 0 ? -index : index + 2;
         }
 
         @Override

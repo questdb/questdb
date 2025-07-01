@@ -81,8 +81,8 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
                 return Numbers.INT_NULL;
             }
             double value = valueArg.getDouble(rec);
-            return value != value ? array.linearSearchDoubleNull1DArray()
-                    : array.linearSearchDoubleValue1DArray(value);
+            return value != value ? array.linearSearchDoubleNull1DArray() + 1
+                    : array.linearSearchDoubleValue1DArray(value) + 1;
         }
 
         @Override

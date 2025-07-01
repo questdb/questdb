@@ -264,7 +264,7 @@ public abstract class ArrayView implements QuietCloseable {
                                 low = m + 1;
                             }
                         }
-                        return low + 1;
+                        return low;
                     } else {
                         while (mid < high) {
                             int m = mid + (high - mid + 1) / 2;
@@ -274,7 +274,7 @@ public abstract class ArrayView implements QuietCloseable {
                                 high = m - 1;
                             }
                         }
-                        return mid + 1;
+                        return mid;
                     }
                 }
 
@@ -488,7 +488,7 @@ public abstract class ArrayView implements QuietCloseable {
         for (int i = 0, dimLen = getDimLen(0); i < dimLen; i++) {
             double val = getDouble(i);
             if (val != val) {
-                return i + 1;
+                return i;
             }
         }
         return Numbers.INT_NULL;
@@ -506,7 +506,7 @@ public abstract class ArrayView implements QuietCloseable {
             for (int i = 0, n = getDimLen(0) - 1; i < n; i++) {
                 double v = getDouble(index);
                 if (Math.abs(v - value) <= Numbers.DOUBLE_TOLERANCE) {
-                    return i + 1;
+                    return i;
                 }
                 index += stride;
             }

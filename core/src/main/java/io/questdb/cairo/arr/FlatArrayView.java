@@ -87,7 +87,7 @@ public interface FlatArrayView {
                             low = m + 1;
                         }
                     }
-                    return low - offset + 1;
+                    return low - offset;
                 } else {
                     while (mid < high) {
                         int m = mid + (high - mid + 1) / 2;
@@ -97,7 +97,7 @@ public interface FlatArrayView {
                             high = m - 1;
                         }
                     }
-                    return mid - offset + 1;
+                    return mid - offset;
                 }
             }
             if (ascending) {
