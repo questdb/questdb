@@ -188,12 +188,19 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                 try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
                     cacheTxnIntervals0(baseTableReader, viewState, walWriter);
+                } catch (Throwable th) {
+                    LOG.error()
+                            .$("could not cache WAL txn intervals for view [view=").$(viewToken)
+                            .$(", baseTable=").$(baseTableToken)
+                            .$(", ex=").$(th)
+                            .I$();
+                    refreshFailState(viewState, walWriter, th);
                 }
             } catch (Throwable th) {
                 // If we're here, we couldn't obtain the WAL writer.
                 // Update the in-memory state and call it a day.
                 LOG.error()
-                        .$("could not get table writer for view [view=").$(viewToken)
+                        .$("could not cache WAL txn intervals, unexpected error [view=").$(viewToken)
                         .$(", ex=").$(th)
                         .I$();
                 refreshFailState(viewState, null, th);
@@ -1107,7 +1114,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write
                     // invalid state transaction. Update the in-memory state and call it a day.
                     LOG.error()
-                            .$("could not get table writer for view [view=").$(viewToken)
+                            .$("could not perform incremental refresh, unexpected error [view=").$(viewToken)
                             .$(", ex=").$(th)
                             .I$();
                     refreshFailState(viewState, null, th);

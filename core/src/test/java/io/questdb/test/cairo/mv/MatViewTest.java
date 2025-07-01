@@ -69,6 +69,7 @@ import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.EVENT_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
@@ -1482,7 +1483,8 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
             drainQueues();
-            TableToken baseTableToken = engine.getTableTokenIfExists("base_price");
+            final TableToken baseTableToken = engine.getTableTokenIfExists("base_price");
+            Assert.assertNotNull(baseTableToken);
             currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
@@ -3049,6 +3051,57 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testManualPeriodWithTzMatViewIncrementalRefreshNoTimerJob() throws Exception {
         testPeriodWithTzRefresh("manual deferred", "incremental", false);
+    }
+
+    @Test
+    public void testManualRefreshFailsWhenCachingTxnIntervals() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price ( " +
+                            "sym varchar, price double, ts timestamp " +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T14:02')"
+            );
+            execute("create materialized view price_1h refresh manual as select sym, last(price) as price, ts from base_price sample by 1h");
+
+            currentMicros = parseFloorPartialTimestamp("2024-12-31T01:01:01.000000Z");
+            drainQueues();
+
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.420, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.423, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.31, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.521, '2024-09-10T13:02')" +
+                            ",('jpyusd', 103.51, '2024-09-10T14:02')"
+            );
+            drainWalQueue();
+
+            // delete _txn files, so that table reader can't reload
+            final TableToken baseTableToken = engine.getTableTokenIfExists("base_price");
+            Assert.assertNotNull(baseTableToken);
+            try (Path path = new Path()) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(baseTableToken).concat(TXN_FILE_NAME);
+                engine.getConfiguration().getFilesFacade().removeQuiet(path.$());
+            }
+            engine.releaseAllReaders();
+
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tmanual\tbase_price\t2024-12-31T01:01:01.000000Z\t2024-12-31T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2\n",
+                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                            "from materialized_views",
+                    null
+            );
+        });
     }
 
     @Test
@@ -4941,6 +4994,7 @@ public class MatViewTest extends AbstractCairoTest {
             expectedTxnIntervals.add(parseFloorPartialTimestamp("2024-09-12T03:01"), parseFloorPartialTimestamp("2024-09-12T23:02"));
             TestUtils.assertEquals(expectedTxnIntervals, viewState.getCachedTxnIntervals());
 
+            // at this point, new rows shouldn't be reflected in the view
             assertQueryNoLeakCheck(
                     "sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
@@ -4957,6 +5011,19 @@ public class MatViewTest extends AbstractCairoTest {
                     matViewsSql,
                     null
             );
+
+            // WalPurgeJob should be able to delete WAL segments freely
+            final TableToken baseTableToken = engine.getTableTokenIfExists("base_price");
+            Assert.assertNotNull(baseTableToken);
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
+                Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
+
+                engine.releaseInactiveTableSequencers();
+                drainPurgeJob();
+
+                Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
+            }
 
             // the new rows should be reflected in the view after an explicit incremental refresh call
             execute("refresh materialized view price_1h incremental;");
