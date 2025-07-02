@@ -1,0 +1,44 @@
+jobs:
+  - job: RunOn
+    displayName: "on"
+    strategy:
+      matrix:
+        linux-jdk17:
+          imageName: "ubuntu-latest"
+          poolName: "Azure Pipelines"
+          os: Linux
+          jdk: "1.17"
+    pool:
+      vmImage: $(imageName)
+      name: $(poolName)
+    timeoutInMinutes: 15
+    variables:
+      SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
+      COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
+      CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
+      ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
+    steps:
+      - checkout: self
+        fetchDepth: 1
+        lfs: false
+        submodules: false
+
+      - template: java-lint.yml
+
+      # Rust lint and test
+      - template: rust-test-and-lint.yml
+
+      # Compat tests
+      - template: compat-steps.yml
+
+      # Javadoc
+      - task: Maven@3
+        displayName: "Javadoc"
+        inputs:
+          mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
+          mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
+          mavenPomFile: "pom.xml"
+          mavenOptions: "$(MAVEN_OPTS)"
+          options:
+            "compile javadoc:javadoc -DskipTests -P javadoc -P qdbr-release $(MAVEN_RUN_OPTS)"
+          jdkVersionOption: $(jdk)

@@ -65,14 +65,7 @@ stages:
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/lint.yml
-
-  - stage: HostedRunCompatTestsBranches
-    displayName: "Hosted Running CLI util and compat tests"
-    dependsOn:
-      - CheckChanges
-    jobs:
-      - template: templates/hosted-compat-jobs.yml
+      - template: templates/aux-job.yml
 
   - stage: CoverageReports
     displayName: "Coverage Report"
