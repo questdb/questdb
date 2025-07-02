@@ -46,14 +46,11 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
             assertSql("ask_vol\tbid_vol\tratio\n" +
                             "38.0\t68.0\t1.7894736842105263\n" +
                             "37.0\t81.0\t2.189189189189189\n",
-                    "WITH q1 AS (" +
-                            "SELECT " +
+                    "SELECT " +
                             "array_sum(asks[2, 1:4]) ask_vol, " +
-                            "array_sum(bids[2, 1:4]) bid_vol " +
-                            "FROM order_book" +
-                            ")" +
-                            "SELECT ask_vol, bid_vol, bid_vol / ask_vol ratio " +
-                            "FROM q1"
+                            "array_sum(bids[2, 1:4]) bid_vol, " +
+                            "bid_vol / ask_vol ratio " +
+                            "FROM order_book"
             );
         });
     }
@@ -68,10 +65,11 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
             assertSql("cum_volumes\ttarget_level\tprice\n" +
                             "[10.0,25.0,38.0,50.0,68.0,88.0]\t3\t10.04\n" +
                             "[10.0,15.0,18.0,30.0,48.0,68.0]\t4\t10.1\n",
-                    "WITH q1 AS (SELECT asks, array_cum_sum(asks[2]) cum_volumes FROM order_book), " +
-                            "q2 AS (SELECT asks, cum_volumes, insertion_point(cum_volumes, 30.0, true) target_level FROM q1) " +
-                            "SELECT cum_volumes, target_level, asks[1, target_level] price " +
-                            "FROM q2");
+                    "SELECT " +
+                            "array_cum_sum(asks[2]) cum_volumes, " +
+                            "insertion_point(cum_volumes, 30.0, true) target_level, " +
+                            "asks[1, target_level] price " +
+                            "FROM order_book");
         });
     }
 
@@ -85,12 +83,11 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
             assertSql("mid_price\tweighted_ask_pressure\tweighted_bid_pressure\n" +
                             "5.5\t[7.5,14.999999999999991]\t[5.0,8.000000000000007]\n" +
                             "5.65\t[10.999999999999996,6.75]\t[11.000000000000014,11.250000000000004]\n",
-                    "WITH q1 AS (SELECT *, round((asks[1][1] + bids[1][1]) / 2, 2) mid_price FROM order_book) " +
-                            "SELECT " +
-                            "mid_price, " +
+                    "SELECT " +
+                            "round((asks[1][1] + bids[1][1]) / 2, 2) mid_price, " +
                             "(asks[1] - mid_price) * asks[2] weighted_ask_pressure, " +
                             "(mid_price - bids[1]) * bids[2] weighted_bid_pressure " +
-                            "FROM q1");
+                            "FROM order_book");
         });
     }
 
