@@ -26,19 +26,12 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -48,32 +41,25 @@ import org.junit.Test;
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 public class WalWriterReplaceRangeTest extends AbstractCairoTest {
+
     @Test
     public void testRemovesFirstPartitionNoRowsAdded() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
-            TableToken tableToken = engine.verifyTableName("rg");
+        testRemovesFirstPartitionNoRowsAdded(true);
+    }
 
-            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
-                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
-            drainWalQueue();
-
-            insertRowWithReplaceRange(null, "2022-02-19T17", "2022-02-25T01", tableToken, false, true, "rg", "expected", true);
-        });
+    @Test
+    public void testRemovesFirstPartitionNoRowsAddedNoRowsCommit() throws Exception {
+        testRemovesFirstPartitionNoRowsAdded(false);
     }
 
     @Test
     public void testRemovesLastPartitionNoRowsAdded() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
-            TableToken tableToken = engine.verifyTableName("rg");
+        testRemovesLastPartitionNoRowsAdded(false);
+    }
 
-            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
-                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(200)");
-            drainWalQueue();
-
-            insertRowWithReplaceRange(null, "2022-02-26", "2022-02-27", tableToken, false, true, "rg", "expected", true);
-        });
+    @Test
+    public void testRemovesLastPartitionNoRowsAddedNoRowsCommit() throws Exception {
+        testRemovesLastPartitionNoRowsAdded(true);
     }
 
     @Test
@@ -83,62 +69,45 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
     @Test
     public void testReplaceCommitAdds2PartitionsBeforeExisting() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
-            TableToken tableToken = engine.verifyTableName("rg");
+        testReplaceCommitAdds2PartitionsBeforeExisting(false);
+    }
 
-            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
-                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
-            drainWalQueue();
-
-            insertRowWithReplaceRange("2022-02-20T17,2022-02-21T17", "2022-02-20T17", "2022-02-21T18", tableToken, true, true, "rg", "expected", true);
-        });
+    @Test
+    public void testReplaceCommitAdds2PartitionsBeforeExistingNoRowsCommit() throws Exception {
+        testReplaceCommitAdds2PartitionsBeforeExisting(true);
     }
 
     @Test
     public void testReplaceCommitNotOrdered() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
-            TableToken tableToken = engine.verifyTableName("rg");
+        testReplaceCommitNotOrdered(false);
+    }
 
-            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
-                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
-            drainWalQueue();
-
-            insertRowWithReplaceRange("2022-02-21T17,2022-02-20T17", "2022-02-20T17", "2022-02-21T18", tableToken, true, true, "rg", "expected", true);
-        });
+    @Test
+    public void testReplaceCommitNotOrderedNoRowsCommit() throws Exception {
+        testReplaceCommitNotOrdered(true);
     }
 
     @Test
     public void testReplaceCommitRemoves2PartitionsAndAdds1() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
-            TableToken tableToken = engine.verifyTableName("rg");
+        testReplaceCommitRemoves2PartitionsAndAdds1(false);
+    }
 
-            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
-                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
-            drainWalQueue();
-
-            insertRowWithReplaceRange("2022-02-26T17", "2022-02-24T17", "2022-02-28T02", tableToken, true, true, "rg", "expected", true);
-        });
+    @Test
+    public void testReplaceCommitRemoves2PartitionsAndAdds1NoRowsCommit() throws Exception {
+        testReplaceCommitRemoves2PartitionsAndAdds1(true);
     }
 
     @Test
     public void testReplaceDeletesAppendsNothingToLastAndPartitionAndInsertsIntoAnother() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
-            TableToken tableToken = engine.verifyTableName("rg");
-
-            execute("insert into rg select x, timestamp_sequence('2022-02-24T00:31', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
-                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(20)");
-            drainWalQueue();
-
-            insertRowWithReplaceRange("2022-02-25T02:36:07.769840Z", "2022-02-24T23:20:30", "2022-02-27T01:34:56.265527", tableToken, true, true, "rg", "expected", true);
-        });
+        testReplaceDeletesAppendsNothingToLastAndPartitionAndInsertsIntoAnother(false);
     }
 
     @Test
     public void testReplaceDeletesAppendsNothingToLastAndPartitionAndInsertsIntoAnother2() throws Exception {
+        testReplaceDeletesAppendsNothingToLastAndPartitionAndInsertsIntoAnother2(false);
+    }
+
+    public void testReplaceDeletesAppendsNothingToLastAndPartitionAndInsertsIntoAnother2(boolean generateNoRowsCommit) throws Exception {
         assertMemoryLeak(() -> {
             execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
@@ -149,40 +118,28 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(20)");
             drainWalQueue();
 
-            insertRowWithReplaceRange("2022-02-25T02:36:07.769840Z", "2022-02-24T23:20:30", "2022-02-27T01:34:56.265527", tableToken, false, true, "rg", "expected", true);
+            insertRowWithReplaceRange("2022-02-25T02:36:07.769840Z", "2022-02-24T23:20:30", "2022-02-27T01:34:56.265527", tableToken, false, true, "rg", "expected", true, generateNoRowsCommit);
         });
+    }
+
+    @Test
+    public void testReplaceDeletesAppendsNothingToLastAndPartitionAndInsertsIntoAnother2NoRowsCommit() throws Exception {
+        testReplaceDeletesAppendsNothingToLastAndPartitionAndInsertsIntoAnother2(true);
+    }
+
+    @Test
+    public void testReplaceDeletesAppendsNothingToLastAndPartitionAndInsertsIntoAnotherNoRowsCommit() throws Exception {
+        testReplaceDeletesAppendsNothingToLastAndPartitionAndInsertsIntoAnother(true);
     }
 
     @Test
     public void testReplaceRangeBeforeFirstPartitionAndData() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
-            TableToken tableToken = engine.verifyTableName("rg");
-
-            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
-                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
-            drainWalQueue();
-
-            insertRowWithReplaceRange("2022-02-20T17", "2022-02-19T17", "2022-02-21T18", tableToken, true, true, "rg", "expected", true);
-        });
+        testReplaceRangeBeforeFirstPartitionAndData(false);
     }
 
     @Test
-    public void testReplaceRangeNotSupportedParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
-            TableToken tableToken = engine.verifyTableName("rg");
-            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
-                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
-
-            execute("ALTER TABLE rg CONVERT PARTITION TO PARQUET LIST '2022-02-24'");
-            drainWalQueue();
-
-            insertRowsWithRangeReplace(tableToken, new Utf8StringSink(), "2022-02-24T17", "2022-02-14T17", "2022-02-25T18", true);
-            drainWalQueue();
-
-            Assert.assertTrue("table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
-        });
+    public void testReplaceRangeBeforeFirstPartitionAndDataNoRowsCommit() throws Exception {
+        testReplaceRangeBeforeFirstPartitionAndData(true);
     }
 
     @Test
@@ -231,26 +188,27 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
     @Test
     public void testReplaceRangeDeletesMidFirstPartition() throws Exception {
-        testReplaceRangeCommit(null, "2022-02-24T18:30", "2022-02-24T20:59:31", false, false);
+        testReplaceRangeCommit(null, "2022-02-24T18:30", "2022-02-24T20:59:31", false, false, false);
+    }
+
+    @Test
+    public void testReplaceRangeDeletesMidFirstPartitionNoRowsCommit() throws Exception {
+        testReplaceRangeCommit(null, "2022-02-24T18:30", "2022-02-24T20:59:31", false, false, true);
     }
 
     @Test
     public void testReplaceRangeFirstPartitionNoImpact() throws Exception {
-        testReplaceRangeCommit(null, "2022-02-24T23:59:30", "2022-02-24T23:59:31", false, false);
+        testReplaceRangeCommit(null, "2022-02-24T23:59:30", "2022-02-24T23:59:31", false, false, false);
+    }
+
+    @Test
+    public void testReplaceRangeFirstPartitionNoImpactNoRowsCommit() throws Exception {
+        testReplaceRangeCommit(null, "2022-02-24T23:59:30", "2022-02-24T23:59:31", false, false, true);
     }
 
     @Test
     public void testReplaceRangeLastPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
-            TableToken tableToken = engine.verifyTableName("rg");
-
-            execute("insert into rg select x, timestamp_sequence('2022-02-24T00:31', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
-                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(20)");
-            drainWalQueue();
-
-            insertRowWithReplaceRange("2022-02-24T17", "2022-02-19T17", "2022-02-28T18", tableToken, false, true, "rg", "expected", true);
-        });
+        testReplaceRangeLastPartition(true, false);
     }
 
     @Test
@@ -264,6 +222,11 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceRangeLastPartitionNoRowsCommit() throws Exception {
+        testReplaceRangeLastPartition(false, true);
+    }
+
+    @Test
     public void testReplaceRangeLastPartitionPrefix() throws Exception {
         testReplaceRangeCommit("2022-02-25T00:53", "2022-02-25T00:00", "2022-02-25T04");
     }
@@ -271,6 +234,24 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     @Test
     public void testReplaceRangeLastPartitionSuffix() throws Exception {
         testReplaceRangeCommit("2022-02-25T02:53", "2022-02-25T01:00", "2022-02-25T23");
+    }
+
+    @Test
+    public void testReplaceRangeNotSupportedParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
+
+            execute("ALTER TABLE rg CONVERT PARTITION TO PARQUET LIST '2022-02-24'");
+            drainWalQueue();
+
+            insertRowsWithRangeReplace(tableToken, new Utf8StringSink(), "2022-02-24T17", "2022-02-14T17", "2022-02-25T18", true);
+            drainWalQueue();
+
+            Assert.assertTrue("table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+        });
     }
 
     @Test
@@ -319,7 +300,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                             "symbolColumnCount: 1, lagRowCount: 0, " +
                             "lagMinTimestamp: '294247-01-10T04:00:54.775Z', " +
                             "lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}",
-                    readTxnToSTring(tableToken, true, true)
+                    readTxnToString(tableToken, true, true)
             );
         });
     }
@@ -370,7 +351,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                             "symbolColumnCount: 1, lagRowCount: 0, " +
                             "lagMinTimestamp: '294247-01-10T04:00:54.775Z', " +
                             "lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}",
-                    readTxnToSTring(tableToken, true, true)
+                    readTxnToString(tableToken, true, true)
             );
         });
     }
@@ -418,7 +399,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                             "symbolColumnCount: 1, lagRowCount: 0, " +
                             "lagMinTimestamp: '294247-01-10T04:00:54.775Z', " +
                             "lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}",
-                    readTxnToSTring(tableToken, true, true)
+                    readTxnToString(tableToken, true, true)
             );
         });
     }
@@ -435,30 +416,34 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
     @Test
     public void testReplaceTruncatesAllData() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
-            TableToken tableToken = engine.verifyTableName("rg");
-
-            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
-                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(200)");
-            drainWalQueue();
-
-            insertRowWithReplaceRange(null, "2022-02-20", "2022-02-27", tableToken, false, false, "rg", "expected", true);
-        });
+        testReplaceTruncatesAllData(false);
     }
 
     @Test
     public void testReplaceTruncatesAllDataAndAddsNewBeforeExisting() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
-            TableToken tableToken = engine.verifyTableName("rg");
+        testReplaceTruncatesAllDataAndAddsNewBeforeExisting(false);
+    }
 
-            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
-                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(200)");
-            drainWalQueue();
+    @Test
+    public void testReplaceTruncatesAllDataAndAddsNewBeforeExistingNoRowsCommit() throws Exception {
+        testReplaceTruncatesAllDataAndAddsNewBeforeExisting(true);
+    }
 
-            insertRowWithReplaceRange("2022-02-21,2022-02-21T01", "2022-02-21", "2022-02-27", tableToken, false, false, "rg", "expected", true);
-        });
+    @Test
+    public void testReplaceTruncatesAllDataNoRowsCommit() throws Exception {
+        testReplaceTruncatesAllData(true);
+    }
+
+    private static void commitNoRowsWithRangeReplace(
+            TableToken tableToken,
+            String rangeStartStr,
+            String rangeEndStr
+    ) throws NumericException {
+        try (WalWriter ww = engine.getWalWriter(tableToken)) {
+            long rangeStart = IntervalUtils.parseFloorPartialTimestamp(rangeStartStr);
+            long rangeEnd = IntervalUtils.parseFloorPartialTimestamp(rangeEndStr) + 1;
+            ww.commitWithParams(rangeStart, rangeEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
+        }
     }
 
     private static void insertRowsWithRangeReplace(
@@ -470,7 +455,6 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             boolean commitWithRangeReplace
     ) throws NumericException {
         try (WalWriter ww = engine.getWalWriter(tableToken)) {
-
             if (tsStr != null) {
                 int i = 0;
                 String[] sybmols = new String[]{"w", "d", "a", "b", "c"};
@@ -498,85 +482,25 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         }
     }
 
-    private static String readTxnToSTring(TableToken tt, boolean compareTxns, boolean compareTruncateVersion) {
-        try (TxReader rdr = new TxReader(engine.getConfiguration().getFilesFacade())) {
-            Path tempPath = Path.getThreadLocal(root);
-            rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
-            rdr.unsafeLoadAll();
-
-            return txnToString(rdr, compareTxns, compareTruncateVersion);
-        }
-    }
-
-    private static String txnToString(TxReader txReader, boolean compareTxns, boolean compareTruncateVersion) {
-        // Used for debugging, don't use Misc.getThreadLocalSink() to not mess with other debugging values
-        StringSink sink = Misc.getThreadLocalSink();
-        sink.put("{");
-        if (compareTxns) {
-            sink.put("txn: ").put(txReader.getTxn());
-        }
-        sink.put(", attachedPartitions: [");
-        for (int i = 0; i < txReader.getPartitionCount(); i++) {
-            long timestamp = txReader.getPartitionTimestampByIndex(i);
-            long rowCount = txReader.getPartitionRowCountByTimestamp(timestamp);
-
-            if (i - 1 == txReader.getPartitionCount()) {
-                rowCount = txReader.getTransientRowCount();
-            }
-
-            long parquetSize = txReader.getPartitionParquetFileSize(i);
-
-            if (i > 0) {
-                sink.put(",");
-            }
-            sink.put("\n{ts: '");
-            TimestampFormatUtils.appendDateTime(sink, timestamp);
-            sink.put("', rowCount: ").put(rowCount);
-            // Do not print name txn, it can be different in expected and actual table
-
-            if (txReader.isPartitionParquet(i)) {
-                sink.put(", parquetSize: ").put(parquetSize);
-            }
-            if (txReader.isPartitionReadOnly(i)) {
-                sink.put(", readOnly=true");
-            }
-            sink.put("}");
-        }
-        sink.put("\n], transientRowCount: ").put(txReader.getTransientRowCount());
-        sink.put(", fixedRowCount: ").put(txReader.getFixedRowCount());
-        sink.put(", minTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getMinTimestamp());
-        sink.put("', maxTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getMaxTimestamp());
-        if (compareTruncateVersion) {
-            sink.put("', dataVersion: ").put(txReader.getDataVersion());
-        }
-        sink.put(", structureVersion: ").put(txReader.getColumnStructureVersion());
-        sink.put(", columnVersion: ").put(txReader.getColumnVersion());
-        if (compareTruncateVersion) {
-            sink.put(", truncateVersion: ").put(txReader.getTruncateVersion());
-        }
-
-        if (compareTxns) {
-            sink.put(", seqTxn: ").put(txReader.getSeqTxn());
-        }
-        sink.put(", symbolColumnCount: ").put(txReader.getSymbolColumnCount());
-        sink.put(", lagRowCount: ").put(txReader.getLagRowCount());
-        sink.put(", lagMinTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getLagMinTimestamp());
-        sink.put("', lagMaxTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getLagMaxTimestamp());
-        sink.put("', lagTxnCount: ").put(txReader.getLagRowCount());
-        sink.put(", lagOrdered: ").put(txReader.isLagOrdered());
-        sink.put("}");
-        return sink.toString();
-    }
-
-    private void insertRowWithReplaceRange(String tsStr, String rangeStartStr, String rangeEndStr, TableToken tableToken, boolean compareTxns, boolean compareTruncateVersion, String tableName, String expectedTableName, boolean compareTxnDetails) throws SqlException, NumericException {
+    private void insertRowWithReplaceRange(
+            String tsStr,
+            String rangeStartStr,
+            String rangeEndStr,
+            TableToken tableToken,
+            boolean compareTxns,
+            boolean compareTruncateVersion,
+            String tableName,
+            String expectedTableName,
+            boolean compareTxnDetails,
+            boolean generateNoRowsCommit
+    ) throws SqlException, NumericException {
         execute("create table " + expectedTableName + " as (select * from " + tableName + " where ts not between '" + rangeStartStr + "' and '" + rangeEndStr + "') timestamp(ts) partition by DAY WAL");
 
         Utf8StringSink sink = new Utf8StringSink();
 
+        if (generateNoRowsCommit) {
+            commitNoRowsWithRangeReplace(tableToken, rangeStartStr, rangeEndStr);
+        }
         insertRowsWithRangeReplace(tableToken, sink, tsStr, rangeStartStr, rangeEndStr, true);
         drainWalQueue();
 
@@ -588,8 +512,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
         if (compareTxnDetails) {
             Assert.assertEquals(
-                    readTxnToSTring(ttExpected, compareTxns, compareTruncateVersion),
-                    readTxnToSTring(tableToken, compareTxns, compareTruncateVersion)
+                    readTxnToString(ttExpected, compareTxns, compareTruncateVersion),
+                    readTxnToString(tableToken, compareTxns, compareTruncateVersion)
             );
         }
 
@@ -597,28 +521,158 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertSqlCursors("select count(*), min(ts), max(ts) from " + expectedTableName, "select count(*), min(ts), max(ts) from " + tableName);
     }
 
-    private void runReplaceCase(String tsStr, String rangeStartStr, String rangeEndStr, boolean compareTxns, boolean compareTruncateVersion, String tableName, String expectedTableName, boolean compareTxnDetails) throws SqlException, NumericException {
+    private void runReplaceCase(String tsStr, String rangeStartStr, String rangeEndStr, boolean compareTxns, boolean compareTruncateVersion, String tableName, String expectedTableName, boolean compareTxnDetails, boolean generateNoRowsCommit) throws SqlException, NumericException {
         execute("create table " + tableName + " (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
         TableToken tableToken = engine.verifyTableName(tableName);
 
         execute("insert into " + tableName + " select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
                 "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(100)");
         drainWalQueue();
-        insertRowWithReplaceRange(tsStr, rangeStartStr, rangeEndStr, tableToken, compareTxns, compareTruncateVersion, tableName, expectedTableName, compareTxnDetails);
+        insertRowWithReplaceRange(tsStr, rangeStartStr, rangeEndStr, tableToken, compareTxns, compareTruncateVersion, tableName, expectedTableName, compareTxnDetails, generateNoRowsCommit);
     }
 
-    private void testReplaceRangeCommit(String tsStr, String rangeStartStr, String rangeEndStr, boolean compareTxns, boolean compareTruncateVersion) throws Exception {
+    private void testRemovesFirstPartitionNoRowsAdded(boolean generateNoRowsCommit) throws Exception {
         assertMemoryLeak(() -> {
-            runReplaceCase(tsStr, rangeStartStr, rangeEndStr, compareTxns, compareTruncateVersion, "rg", "expected", true);
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
+            drainWalQueue();
+
+            insertRowWithReplaceRange(null, "2022-02-19T17", "2022-02-25T01", tableToken, false, true, "rg", "expected", true, generateNoRowsCommit);
+        });
+    }
+
+    private void testRemovesLastPartitionNoRowsAdded(boolean generateNoRowsCommit) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(200)");
+            drainWalQueue();
+
+            insertRowWithReplaceRange(null, "2022-02-26", "2022-02-27", tableToken, false, true, "rg", "expected", true, generateNoRowsCommit);
+        });
+    }
+
+    private void testReplaceCommitAdds2PartitionsBeforeExisting(boolean generateNoRowsCommit) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
+            drainWalQueue();
+
+            insertRowWithReplaceRange("2022-02-20T17,2022-02-21T17", "2022-02-20T17", "2022-02-21T18", tableToken, !generateNoRowsCommit, !generateNoRowsCommit, "rg", "expected", true, generateNoRowsCommit);
+        });
+    }
+
+    private void testReplaceCommitNotOrdered(boolean generateNoRowsCommit) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
+            drainWalQueue();
+
+            insertRowWithReplaceRange("2022-02-21T17,2022-02-20T17", "2022-02-20T17", "2022-02-21T18", tableToken, !generateNoRowsCommit, !generateNoRowsCommit, "rg", "expected", true, generateNoRowsCommit);
+        });
+    }
+
+    private void testReplaceCommitRemoves2PartitionsAndAdds1(boolean generateNoRowsCommit) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
+            drainWalQueue();
+
+            insertRowWithReplaceRange("2022-02-26T17", "2022-02-24T17", "2022-02-28T02", tableToken, !generateNoRowsCommit, !generateNoRowsCommit, "rg", "expected", true, generateNoRowsCommit);
+        });
+    }
+
+    private void testReplaceDeletesAppendsNothingToLastAndPartitionAndInsertsIntoAnother(boolean generateNoRowsCommit) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T00:31', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(20)");
+            drainWalQueue();
+
+            insertRowWithReplaceRange("2022-02-25T02:36:07.769840Z", "2022-02-24T23:20:30", "2022-02-27T01:34:56.265527", tableToken, !generateNoRowsCommit, !generateNoRowsCommit, "rg", "expected", true, generateNoRowsCommit);
+        });
+    }
+
+    private void testReplaceRangeBeforeFirstPartitionAndData(boolean generateNoRowsCommit) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
+            drainWalQueue();
+
+            insertRowWithReplaceRange("2022-02-20T17", "2022-02-19T17", "2022-02-21T18", tableToken, !generateNoRowsCommit, !generateNoRowsCommit, "rg", "expected", true, generateNoRowsCommit);
+        });
+    }
+
+    private void testReplaceRangeCommit(String tsStr, String rangeStartStr, String rangeEndStr, boolean compareTxns, boolean compareTruncateVersion, boolean generateNoRowsCommit) throws Exception {
+        assertMemoryLeak(() -> {
+            runReplaceCase(tsStr, rangeStartStr, rangeEndStr, compareTxns, compareTruncateVersion, "rg", "expected", true, generateNoRowsCommit);
 
             // Run the same test with aggressive partition split
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
 
-            runReplaceCase(tsStr, rangeStartStr, rangeEndStr, false, false, "rg_split", "expected_split", false);
+            runReplaceCase(tsStr, rangeStartStr, rangeEndStr, false, false, "rg_split", "expected_split", false, generateNoRowsCommit);
         });
     }
 
     private void testReplaceRangeCommit(String tsStr, String rangeStartStr, String rangeEndStr) throws Exception {
-        testReplaceRangeCommit(tsStr, rangeStartStr, rangeEndStr, true, true);
+        testReplaceRangeCommit(tsStr, rangeStartStr, rangeEndStr, true, true, false);
+    }
+
+    private void testReplaceRangeLastPartition(boolean compareTruncateVersion, boolean generateNoRowsCommit) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T00:31', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(20)");
+            drainWalQueue();
+
+            insertRowWithReplaceRange("2022-02-24T17", "2022-02-19T17", "2022-02-28T18", tableToken, false, compareTruncateVersion, "rg", "expected", true, generateNoRowsCommit);
+        });
+    }
+
+    private void testReplaceTruncatesAllData(boolean generateNoRowsCommit) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(200)");
+            drainWalQueue();
+
+            insertRowWithReplaceRange(null, "2022-02-20", "2022-02-27", tableToken, false, false, "rg", "expected", true, generateNoRowsCommit);
+        });
+    }
+
+    private void testReplaceTruncatesAllDataAndAddsNewBeforeExisting(boolean generateNoRowsCommit) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(200)");
+            drainWalQueue();
+
+            insertRowWithReplaceRange("2022-02-21,2022-02-21T01", "2022-02-21", "2022-02-27", tableToken, false, false, "rg", "expected", true, generateNoRowsCommit);
+        });
     }
 }

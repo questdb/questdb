@@ -39,10 +39,10 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
+import io.questdb.griffin.engine.functions.ArgSwappingFunctionFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
-import io.questdb.griffin.engine.functions.SwappingArgsFunctionFactory;
 import io.questdb.griffin.engine.functions.array.ArrayCreateFunctionFactory;
 import io.questdb.griffin.engine.functions.array.DoubleArrayAccessFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InCharFunctionFactory;
@@ -2663,7 +2663,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Assert.assertFalse("function " + factory.getSignature() +
                                         " should serialize to text properly. current text: " +
                                         planSink.getSink(), Chars.contains(planSink.getSink(), "io.questdb"));
-                                LOG.info().$(sink).$(planSink.getSink()).$();
+                                LOG.info().$safe(sink).$safe(planSink.getSink()).$();
 
                                 if (function instanceof NegatableBooleanFunction && !((NegatableBooleanFunction) function).isNegated()) {
                                     ((NegatableBooleanFunction) function).setNegated();
@@ -11747,13 +11747,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
         if (factory instanceof EqSymTimestampFunctionFactory) {
             return true;
         }
-        if (factory instanceof SwappingArgsFunctionFactory) {
-            return ((SwappingArgsFunctionFactory) factory).getDelegate() instanceof EqSymTimestampFunctionFactory;
+        if (factory instanceof ArgSwappingFunctionFactory) {
+            return ((ArgSwappingFunctionFactory) factory).getDelegate() instanceof EqSymTimestampFunctionFactory;
         }
 
         if (factory instanceof NegatingFunctionFactory) {
-            if (((NegatingFunctionFactory) factory).getDelegate() instanceof SwappingArgsFunctionFactory) {
-                return ((SwappingArgsFunctionFactory) ((NegatingFunctionFactory) factory).getDelegate()).getDelegate() instanceof EqSymTimestampFunctionFactory;
+            if (((NegatingFunctionFactory) factory).getDelegate() instanceof ArgSwappingFunctionFactory) {
+                return ((ArgSwappingFunctionFactory) ((NegatingFunctionFactory) factory).getDelegate()).getDelegate() instanceof EqSymTimestampFunctionFactory;
             }
             return ((NegatingFunctionFactory) factory).getDelegate() instanceof EqSymTimestampFunctionFactory;
         }
@@ -11762,8 +11762,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     private static boolean isIPv4StrFactory(FunctionFactory factory) {
-        if (factory instanceof SwappingArgsFunctionFactory) {
-            return isIPv4StrFactory(((SwappingArgsFunctionFactory) factory).getDelegate());
+        if (factory instanceof ArgSwappingFunctionFactory) {
+            return isIPv4StrFactory(((ArgSwappingFunctionFactory) factory).getDelegate());
         }
         if (factory instanceof NegatingFunctionFactory) {
             return isIPv4StrFactory(((NegatingFunctionFactory) factory).getDelegate());
@@ -11775,8 +11775,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     private static boolean isLong256StrFactory(FunctionFactory factory) {
-        if (factory instanceof SwappingArgsFunctionFactory) {
-            return isLong256StrFactory(((SwappingArgsFunctionFactory) factory).getDelegate());
+        if (factory instanceof ArgSwappingFunctionFactory) {
+            return isLong256StrFactory(((ArgSwappingFunctionFactory) factory).getDelegate());
         }
         if (factory instanceof NegatingFunctionFactory) {
             return isLong256StrFactory(((NegatingFunctionFactory) factory).getDelegate());

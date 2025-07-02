@@ -2319,9 +2319,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false
             );
 
+            assertSql("ts\ti\tj\td\ts\tc\n" +
+                    "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tk1\tk1\n" +
+                    "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tk2\tk2\n" +
+                    "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tk3\tk3\n" +
+                    "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tk4\tk4\n" +
+                    "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tk0\tk5\n" +
+                    "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tk1\tk6\n" +
+                    "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tk2\tk7\n", "tab");
+
             assertQueryNoLeakCheck(
                     "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\t0.0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1.0\t1.0\n" +
                             "1970-01-01T00:00:00.000003Z\t0\tnull\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2.0\t1.0\n" +
                             "1970-01-01T00:00:00.000004Z\t1\t4\t2.0\t6.0\t1.0\t1.0\tnull\t2.0\t3\t3\t3\t3\t3.0\t1.0\n" +
@@ -2349,8 +2358,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\t0.0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\t0.0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull\n" +
                             "1970-01-01T00:00:00.000003Z\t0\tnull\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1.0\t1.0\n" +
                             "1970-01-01T00:00:00.000004Z\t1\t4\t1.5\t3.0\t1.0\t1.0\t2.0\t2.0\t2\t2\t2\t2\t2.0\t1.0\n" +
                             "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t6.0\t1.0\t1.0\tnull\t2.0\t3\t3\t3\t3\t3.0\t1.0\n" +
@@ -2382,8 +2391,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000003Z\t0\tnull\t1.0\t3.0\t2.0\t2.0\t0.0\t0.0\t3\t3\t3\t3\t2.0\t0.0\n" +
                             "1970-01-01T00:00:00.000004Z\t1\t4\t1.5\t3.0\t2.0\t2.0\tnull\t2.0\t2\t2\t2\t2\t2.0\t1.0\n" +
                             "1970-01-01T00:00:00.000005Z\t1\t0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t1\t1\t1\t1\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\t4.0\t0\t0\t0\t0\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\t4.0\t0\t0\t0\t0\tnull\tnull\n",
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull\n",
                     "select ts, i, j, " +
                             "avg(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
                             "sum(d) over (order by ts desc rows between 4 preceding and 2 preceding), " +
@@ -2488,6 +2497,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false,
                     true
             );
+
             assertQueryNoLeakCheck(
                     rowsResult1,
                     "select ts, i, j, " +
@@ -2508,6 +2518,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false,
                     true
             );
+
             assertQueryNoLeakCheck(
                     rowsResult1,
                     "select ts, i, j, " +
@@ -2528,6 +2539,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false,
                     true
             );
+
             assertQueryNoLeakCheck(
                     rowsResult1,
                     "select ts, i, j, " +
@@ -2548,6 +2560,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false,
                     true
             );
+
             assertQueryNoLeakCheck(
                     rowsResult1,
                     "select ts, i, j, " +
@@ -2568,6 +2581,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false,
                     true
             );
+
             assertQueryNoLeakCheck(
                     rowsResult1,
                     "select ts, i, j, " +
@@ -2677,6 +2691,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false,
                     true
             );
+
             assertQueryNoLeakCheck(
                     result2,
                     "select ts, i, j, " +
@@ -2698,6 +2713,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false,
                     true
             );
+
             assertQueryNoLeakCheck(
                     result2,
                     "select ts, i, j, " +
@@ -6096,7 +6112,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
         }
     }
 
-    private void assertQueryAndPlan(String query, String plan, String expectedResult, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
+    private void assertWindowException(String query, int position, CharSequence errorMessage) throws Exception {
+        for (String frameType : FRAME_TYPES) {
+            assertExceptionNoLeakCheck(query.replace("#FRAME", frameType), position, errorMessage);
+        }
+    }
+
+    protected void assertQueryAndPlan(String query, String plan, String expectedResult, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
         assertPlanNoLeakCheck(query, plan);
 
         assertQueryNoLeakCheck(
@@ -6106,12 +6128,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 supportsRandomAccess,
                 expectSize
         );
-    }
-
-    private void assertWindowException(String query, int position, CharSequence errorMessage) throws Exception {
-        for (String frameType : FRAME_TYPES) {
-            assertExceptionNoLeakCheck(query.replace("#FRAME", frameType), position, errorMessage);
-        }
     }
 
     static {

@@ -118,28 +118,7 @@ public final class TableUtils {
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
-    public static final long META_OFFSET_MAT_VIEW_REFRESH_LIMIT_HOURS_OR_MONTHS = META_OFFSET_TTL_HOURS_OR_MONTHS + 4; // INT
-    public static final long META_OFFSET_MAT_VIEW_TIMER_START = META_OFFSET_MAT_VIEW_REFRESH_LIMIT_HOURS_OR_MONTHS + 4; // LONG
-    public static final long META_OFFSET_MAT_VIEW_TIMER_INTERVAL = META_OFFSET_MAT_VIEW_TIMER_START + 8; // INT
-    public static final long META_OFFSET_MAT_VIEW_TIMER_INTERVAL_UNIT = META_OFFSET_MAT_VIEW_TIMER_INTERVAL + 4; // CHAR
     public static final String META_PREV_FILE_NAME = "_meta.prev";
-    /**
-     * TXN file structure
-     * struct {
-     * long txn;
-     * long transient_row_count; // rows count in last partition
-     * long fixed_row_count; // row count in table excluding count in last partition
-     * long max_timestamp; // last timestamp written to table
-     * long struct_version; // data structure version; whenever columns added or removed this version changes.
-     * long partition_version; // version that increments whenever non-current partitions are modified/added/removed
-     * long txn_check; // same as txn - sanity check for concurrent reads and writes
-     * int  map_writer_count; // symbol writer count
-     * int  map_writer_position[map_writer_count]; // position of each of map writers
-     * }
-     * <p>
-     * TableUtils.resetTxn() writes to this file, it could be using different offsets, beware
-     */
-
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     // 24-byte header left empty for possible future use
@@ -157,6 +136,7 @@ public final class TableUtils {
     public static final int TABLE_TYPE_NON_WAL = 0;
     public static final int TABLE_TYPE_WAL = 1;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
+    public static final String TODO_FILE_NAME = "_todo_";
     /**
      * TXN file structure
      * struct {
@@ -173,8 +153,6 @@ public final class TableUtils {
      * <p>
      * TableUtils.resetTxn() writes to this file, it could be using different offsets, beware
      */
-
-    public static final String TODO_FILE_NAME = "_todo_";
     public static final String TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
     // transaction file structure
@@ -466,7 +444,7 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        LOG.debug().$("create table [name=").utf8(tableDir).I$();
+        LOG.debug().$("create table [name=").$safe(tableDir).I$();
         path.of(root).concat(tableDir).$();
         if (ff.isDirOrSoftLinkDir(path.$())) {
             throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(path).put(']');
@@ -757,13 +735,14 @@ public final class TableUtils {
             case ColumnType.SHORT:
                 return 0L;
             case ColumnType.SYMBOL:
-                return Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, 0);
+                return Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, SymbolTable.VALUE_IS_NULL);
             case ColumnType.FLOAT:
-                return Float.floatToIntBits(Float.NaN);
+                return Numbers.encodeLowHighInts(Float.floatToIntBits(Float.NaN), Float.floatToIntBits(Float.NaN));
             case ColumnType.DOUBLE:
                 return Double.doubleToLongBits(Double.NaN);
-            case ColumnType.LONG256:
             case ColumnType.INT:
+                return Numbers.encodeLowHighInts(Numbers.INT_NULL, Numbers.INT_NULL);
+            case ColumnType.LONG256:
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
@@ -785,6 +764,8 @@ public final class TableUtils {
                 return NULL_LEN;
             case ColumnType.STRING:
                 return Numbers.encodeLowHighInts(NULL_LEN, NULL_LEN);
+            case ColumnType.ARRAY:
+                return NULL_LEN;
             default:
                 assert false : "Invalid column type: " + columnType;
                 return 0;
@@ -876,8 +857,8 @@ public final class TableUtils {
         // This is temporary solution until we can get multiple version of metadata not overwriting each other
         if (ex.errnoFileCannotRead()) {
             if (millisecondClock.getTicks() < deadline) {
-                LOG.info().$("error reloading metadata [table=").utf8(tableName)
-                        .$(", msg=").utf8(ex.getFlyweightMessage())
+                LOG.info().$("error reloading metadata [table=").$safe(tableName)
+                        .$(", msg=").$safe(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 Os.pause();
@@ -1859,10 +1840,6 @@ public final class TableUtils {
         mem.putBool(tableStruct.isWalEnabled());
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
-        mem.putInt(tableStruct.getMatViewRefreshLimitHoursOrMonths());
-        mem.putLong(tableStruct.getMatViewTimerStart());
-        mem.putInt(tableStruct.getMatViewTimerInterval());
-        mem.putChar(tableStruct.getMatViewTimerIntervalUnit());
 
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;
@@ -2008,22 +1985,6 @@ public final class TableUtils {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
     }
 
-    static int getMatViewRefreshLimitHoursOrMonths(MemoryR metaMem) {
-        return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_MAT_VIEW_REFRESH_LIMIT_HOURS_OR_MONTHS) : 0;
-    }
-
-    static int getMatViewTimerInterval(MemoryR metaMem) {
-        return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_MAT_VIEW_TIMER_INTERVAL) : 0;
-    }
-
-    static char getMatViewTimerIntervalUnit(MemoryR metaMem) {
-        return isMetaFormatUpToDate(metaMem) ? metaMem.getChar(TableUtils.META_OFFSET_MAT_VIEW_TIMER_INTERVAL_UNIT) : 0;
-    }
-
-    static long getMatViewTimerStart(MemoryR metaMem) {
-        return isMetaFormatUpToDate(metaMem) ? metaMem.getLong(TableUtils.META_OFFSET_MAT_VIEW_TIMER_START) : 0;
-    }
-
     static int getTtlHoursOrMonths(MemoryR metaMem) {
         return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS) : 0;
     }
@@ -2056,7 +2017,7 @@ public final class TableUtils {
                         // right, cannot open file for some reason?
                         LOG.error()
                                 .$("could not open swap [file=").$(path)
-                                .$(", msg=").$(e.getFlyweightMessage())
+                                .$(", msg=").$safe(e.getFlyweightMessage())
                                 .$(", errno=").$(e.getErrno())
                                 .I$();
                     }

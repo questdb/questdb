@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Misc;
@@ -123,7 +124,11 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             if (indexArgsAreConstant) {
                 IntList indexArgs = new IntList(argsCopy.size() - 1);
                 for (int i = 1, n = argsCopy.size(); i < n; i++) {
-                    indexArgs.add(argsCopy.getQuick(i).getInt(null));
+                    int index = argsCopy.getQuick(i).getInt(null);
+                    if (index == Numbers.INT_NULL) {
+                        return DoubleConstant.NULL;
+                    }
+                    indexArgs.add(index);
                     Misc.free(argsCopy.getQuick(i));
                 }
                 argPositionsCopy.removeIndex(0); // remove arrayArg's position
@@ -170,12 +175,12 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 Interval range = arg.getInterval(null);
                 long lo = range.getLo();
                 long hi = range.getHi();
-                if (lo < 1) {
+                if (lo < 1 && lo != Numbers.INT_NULL) {
                     throw SqlException.position(argPositions.getQuick(i))
                             .put("array slice bounds must be positive [dim=").put(i)
                             .put(", lowerBound=").put(lo)
                             .put(']');
-                } else if (hi < 1 && hi != Numbers.LONG_NULL) {
+                } else if (hi < 1 && hi != Numbers.INT_NULL) {
                     throw SqlException.position(argPositions.getQuick(i))
                             .put("array slice bounds must be positive [dim=").put(i)
                             .put(", upperBound=").put(hi)
@@ -183,7 +188,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 }
             } else {
                 int index = arg.getInt(null);
-                if (index < 1) {
+                if (index < 1 && index != Numbers.INT_NULL) {
                     throw SqlException.position(argPositions.getQuick(i))
                             .put("array index must be positive [dim=").put(i)
                             .put(", index=").put(index)
@@ -264,8 +269,12 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             }
             int flatIndex = 0;
             for (int i = 1, n = allArgs.size(); i < n; i++) {
+                int pgIndexAtDim = allArgs.getQuick(i).getInt(rec);
+                if (pgIndexAtDim == Numbers.INT_NULL) {
+                    return Double.NaN;
+                }
                 // Decrement the index in the argument because Postgres uses 1-based array indexing
-                int indexAtDim = allArgs.getQuick(i).getInt(rec) - 1;
+                int indexAtDim = pgIndexAtDim - 1;
                 int indexDelta = flatIndexDelta(array, i - 1, indexAtDim, allArgPositions.get(i));
                 if (indexDelta == Numbers.INT_NULL) {
                     return Double.NaN;
@@ -320,9 +329,13 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                     Interval range = rangeFn.getInterval(rec);
                     long loLong = range.getLo();
                     long hiLong = range.getHi();
+                    if (loLong == Numbers.INT_NULL || hiLong == Numbers.INT_NULL) {
+                        derivedArray.ofNull();
+                        return derivedArray;
+                    }
                     int lo = (int) loLong;
                     int hi = (int) hiLong;
-                    if (hiLong == Numbers.LONG_NULL) {
+                    if (hiLong == Long.MAX_VALUE) {
                         hi = Integer.MAX_VALUE;
                     } else {
                         assert hi == hiLong : "int overflow on interval upper bound: " + hiLong;
@@ -336,8 +349,8 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 } else {
                     // Decrement the index in the argument because Postgres uses 1-based array indexing
                     int index = rangeFn.getInt(rec) - 1;
-                    int dimLen = derivedArray.getDimLen(dim);
                     if (index < 0) {
+                        int dimLen = derivedArray.getDimLen(dim);
                         throw CairoException.nonCritical()
                                 .position(argPos)
                                 .put("array index must be positive [dim=").put(dim + 1)
@@ -346,6 +359,9 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                                 .put(']');
                     }
                     derivedArray.subArray(dim, index, argPos);
+                    if (derivedArray.isNull()) {
+                        return derivedArray;
+                    }
                 }
             }
             return derivedArray;

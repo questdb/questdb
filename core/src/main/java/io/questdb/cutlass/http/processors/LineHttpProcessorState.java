@@ -284,7 +284,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
         errorRec.$('[').$(fd).$("] could not commit [table=").$(parser.getMeasurementName())
                 .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
-                .$(", ex=").$(ex.getMessage())
+                .$(", ex=").$safe(ex.getMessage())
                 .I$();
         return status;
     }
@@ -345,11 +345,11 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         errorId = ERROR_COUNT.incrementAndGet();
         final LogRecord errorRec = ex.isCritical() ? LOG.critical() : LOG.error();
         errorRec
-                .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
+                .$('[').$(fd).$("] could not process line data 4 [table=").$(parser.getMeasurementName())
                 .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
                 .$(", errno=").$(ex.getErrno());
         if (logMessageOnError) {
-            errorRec.$(", mangledLine=`").$utf8(recvBuffer.getBufStartOfMeasurement(), getErrorLogLineHi(parser)).$('`');
+            errorRec.$(", mangledLine=`").$safe(recvBuffer.getBufStartOfMeasurement(), getErrorLogLineHi(parser)).$('`');
         }
         errorRec.$(", ex=").$(ex.getFlyweightMessage()).I$();
 
@@ -363,12 +363,12 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private Status handleUnknownParseError(Throwable ex) {
         errorId = ERROR_COUNT.incrementAndGet();
         final LogRecord errorRec = LOG.critical()
-                .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
+                .$('[').$(fd).$("] could not process line data 3 [table=").$(parser.getMeasurementName())
                 .$(", errorId=").$(ERROR_ID).$('-').$(errorId);
         if (logMessageOnError) {
-            errorRec.$(", mangledLine=`").$utf8(recvBuffer.getBufStartOfMeasurement(), getErrorLogLineHi(parser)).$('`');
+            errorRec.$(", mangledLine=`").$safe(recvBuffer.getBufStartOfMeasurement(), getErrorLogLineHi(parser)).$('`');
         }
-        errorRec.$(", ex=").$(ex.getMessage()).I$();
+        errorRec.$(", ex=").$safe(ex.getMessage()).I$();
 
         error.put("write error: ").put(parser.getMeasurementName())
                 .put(", error: ").put(ex.getClass().getCanonicalName());
@@ -384,12 +384,12 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         errorId = ERROR_COUNT.incrementAndGet();
         final LogRecord errorRec = isError ? LOG.error() : LOG.info();
         errorRec.$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
-                .$(", table=").$(parser.getMeasurementName())
+                .$(", table=").$safe(parser.getMeasurementName())
                 .$(", line=").$(errorLine)
-                .$(", error=").$(error.subSequence(errorPos, error.length()))
+                .$(", error=").$safe(error.subSequence(errorPos, error.length()))
                 .$(", fd=").$(fd);
         if (logMessageOnError) {
-            errorRec.$(", mangledLine=`").$utf8(recvBuffer.getBufStartOfMeasurement(), parser.getBufferAddress()).$('`');
+            errorRec.$(", mangledLine=`").$safe(recvBuffer.getBufStartOfMeasurement(), parser.getBufferAddress()).$('`');
         }
         errorRec.I$();
     }
@@ -397,7 +397,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private void logError() {
         errorId = ERROR_COUNT.incrementAndGet();
         LOG.info().$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
-                .$(", error=").$(error)
+                .$(", error=").$safe(error)
                 .$(", fd=").$(fd)
                 .I$();
     }

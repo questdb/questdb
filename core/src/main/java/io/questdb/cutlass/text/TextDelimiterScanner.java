@@ -160,7 +160,7 @@ public class TextDelimiterScanner implements Closeable {
         byte delimiter = Byte.MIN_VALUE;
 
         if (lineCount < 2) {
-            LOG.info().$("not enough lines [table=").$(tableName).$(']').$();
+            LOG.info().$("not enough lines [table=").$safe(tableName).$(']').$();
             throw NotEnoughLinesException.$("not enough lines [table=").put(tableName).put(']');
         }
 
@@ -228,7 +228,7 @@ public class TextDelimiterScanner implements Closeable {
         // exclude '.' as delimiter
         if (delimiter != '.' && lastDelimiterStdDev < maxRequiredDelimiterStdDev) {
             LOG.info()
-                    .$("scan result [table=`").$(tableName)
+                    .$("scan result [table=`").$safe(tableName)
                     .$("`, delimiter='").$((char) delimiter)
                     .$("', priority=").$(lastDelimiterPriority)
                     .$(", mean=").$(lastDelimiterMean)

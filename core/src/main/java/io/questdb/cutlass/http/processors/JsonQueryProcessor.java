@@ -218,7 +218,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                     sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_JSON);
                     executeCachedSelect(state, factory);
                 } catch (TableReferenceOutOfDateException e) {
-                    LOG.info().$(e.getFlyweightMessage()).$();
+                    LOG.info().$safe(e.getFlyweightMessage()).$();
                     compileAndExecuteQuery(state);
                 }
             } else {
@@ -391,27 +391,27 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         if (e instanceof CairoException) {
             CairoException ce = (CairoException) e;
             if (ce.isInterruption()) {
-                state.info().$("query cancelled [reason=`").$(((CairoException) e).getFlyweightMessage())
-                        .$("`, q=`").utf8(state.getQueryOrHidden())
+                state.info().$("query cancelled [reason=`").$safe(((CairoException) e).getFlyweightMessage())
+                        .$("`, q=`").$safe(state.getQueryOrHidden())
                         .$("`]").$();
             } else if (ce.isCritical()) {
-                state.critical().$("error [msg=`").$(ce.getFlyweightMessage())
+                state.critical().$("error [msg=`").$safe(ce.getFlyweightMessage())
                         .$("`, errno=").$(ce.getErrno())
-                        .$(", q=`").utf8(state.getQueryOrHidden())
+                        .$(", q=`").$safe(state.getQueryOrHidden())
                         .$("`]").$();
             } else {
-                state.error().$("error [msg=`").$(ce.getFlyweightMessage())
+                state.error().$("error [msg=`").$safe(ce.getFlyweightMessage())
                         .$("`, errno=").$(ce.getErrno())
-                        .$(", q=`").utf8(state.getQueryOrHidden())
+                        .$(", q=`").$safe(state.getQueryOrHidden())
                         .$("`]").$();
             }
         } else if (e instanceof HttpException) {
-            state.error().$("internal HTTP server error [reason=`").$(((HttpException) e).getFlyweightMessage())
-                    .$("`, q=`").utf8(state.getQueryOrHidden())
+            state.error().$("internal HTTP server error [reason=`").$safe(((HttpException) e).getFlyweightMessage())
+                    .$("`, q=`").$safe(state.getQueryOrHidden())
                     .$("`]").$();
         } else {
             state.critical().$("internal error [ex=").$(e)
-                    .$(", q=`").utf8(state.getQueryOrHidden())
+                    .$(", q=`").$safe(state.getQueryOrHidden())
                     .$("`]").$();
             // This is a critical error, so we treat it as an unhandled one.
             metrics.healthMetrics().incrementUnhandledErrors();
@@ -531,7 +531,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                     if (retries == maxSqlRecompileAttempts) {
                         throw SqlException.$(0, e.getFlyweightMessage());
                     }
-                    LOG.info().$(e.getFlyweightMessage()).$();
+                    LOG.info().$safe(e.getFlyweightMessage()).$();
                     // will recompile
                 }
             }

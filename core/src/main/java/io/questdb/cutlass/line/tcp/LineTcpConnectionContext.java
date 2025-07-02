@@ -159,14 +159,14 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 } catch (CommitFailedException ex) {
                     if (ex.isTableDropped()) {
                         // table dropped, nothing to worry about
-                        LOG.info().$("closing writer because table has been dropped (2) [table=").$(tud.getTableNameUtf16()).I$();
+                        LOG.info().$("closing writer because table has been dropped (2) [table=").$safe(tud.getTableNameUtf16()).I$();
                         tud.setWriterInError();
                         tud.releaseWriter(false);
                     } else {
-                        LOG.critical().$("commit failed [table=").$(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
+                        LOG.critical().$("commit failed [table=").$safe(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
                     }
                 } catch (Throwable ex) {
-                    LOG.critical().$("commit failed [table=").$(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
+                    LOG.critical().$("commit failed [table=").$safe(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
                 }
             }
         }
@@ -280,7 +280,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                     try {
                         securityContext.checkEntityEnabled();
                     } catch (CairoException e) {
-                        LOG.error().$('[').$(getFd()).$("] ").$(e.getFlyweightMessage()).$();
+                        LOG.error().$('[').$(getFd()).$("] ").$safe(e.getFlyweightMessage()).$();
                         return IOContextResult.NEEDS_DISCONNECT;
                     }
 
@@ -311,7 +311,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 .$(" at ").$(position);
         if (logMessageOnError) {
             errorRec.$(", line (may be mangled due to partial parsing): '")
-                    .$(byteCharSequence.of(recvBuffer.getBufStartOfMeasurement(), parser.getBufferAddress(), false)).$("'");
+                    .$safe(byteCharSequence.of(recvBuffer.getBufStartOfMeasurement(), parser.getBufferAddress(), false))
+                    .$("'");
         }
         errorRec.$();
     }
@@ -377,8 +378,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             } catch (CairoException ex) {
                 LogRecord error = ex.isCritical() ? LOG.critical() : LOG.error();
                 error
-                        .$('[').$(getFd()).$("] could not process line data [table=").$(parser.getMeasurementName())
-                        .$(", msg=").$(ex.getFlyweightMessage())
+                        .$('[').$(getFd()).$("] could not process line data 1 [table=").$safe(parser.getMeasurementName())
+                        .$(", msg=").$safe(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 if (disconnectOnError) {
@@ -390,7 +391,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 goodMeasurement = false;
             } catch (Throwable ex) {
                 LOG.critical()
-                        .$('[').$(getFd()).$("] could not process line data [table=").$(parser.getMeasurementName())
+                        .$('[').$(getFd()).$("] could not process line data 2 [table=").$safe(parser.getMeasurementName())
                         .$(", ex=").$(ex)
                         .I$();
                 // This is a critical error, so we treat it as an unhandled one.

@@ -47,6 +47,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -283,7 +284,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     rowGroupBuffers
             );
         } catch (Throwable th) {
-            LOG.error().$("process partition error [table=").utf8(tableWriter.getTableToken().getTableName())
+            LOG.error().$("process partition error [table=").$safe(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(th)
                     .I$();
             // the file is re-opened here because PartitionUpdater owns the file descriptor
@@ -412,7 +413,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     TableUtils.setPathForNativePartition(path.trimTo(pathToTable.size()), partitionBy, partitionTimestamp, txn - 1);
                     createDirsOrFail(ff, path.slash(), tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
-                    LOG.error().$("process new partition error [table=").utf8(tableWriter.getTableToken().getTableName())
+                    LOG.error().$("process new partition error [table=").$safe(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
                             .I$();
                     tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
@@ -616,7 +617,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             assert mergeDataHi > -1;
 
                             if (mergeDataLo > mergeDataHi) {
-                                // the OO data implodes right between rows of existing data
+                                // the o3 data implodes right between rows of existing data
                                 // so we will have both data prefix and suffix and the middle bit
                                 // is the out of order
                                 mergeType = O3_BLOCK_O3;
@@ -641,7 +642,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             branch = 3;
                             // When deduplication is enabled, take in to the merge
-                            // all OOO rows that are equal to the last row in the data
+                            // all o3 rows that are equal to the last row in the data
                             mergeO3Hi = Vect.boundedBinarySearchIndexT(
                                     sortedTimestampsAddr,
                                     dataTimestampHi,
@@ -835,23 +836,92 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     if (srcOooLo <= srcOooHi) {
                         if (mergeType == O3_BLOCK_MERGE) {
 
+                            long removedDataRangeLo, removedDataRangeHi, o3RangeLo, o3RangeHi;
                             if (prefixType == O3_BLOCK_O3) {
+                                // O3 in prefix, partition data in the suffix.
                                 prefixHi = mergeO3Hi;
                                 mergeType = O3_BLOCK_NONE;
                                 mergeO3Hi = -1;
                                 mergeO3Lo = -1;
                                 mergeDataHi = -1;
                                 mergeDataLo = -1;
+
+                                removedDataRangeLo = 0;
+                                removedDataRangeHi = suffixLo - 1;
+                                o3RangeLo = prefixLo;
+                                o3RangeHi = prefixHi;
                             } else if (suffixType == O3_BLOCK_O3) {
+                                // Partition data in the prefix, O3 in suffix.
                                 suffixLo = mergeO3Lo;
                                 mergeType = O3_BLOCK_NONE;
                                 mergeO3Hi = -1;
                                 mergeO3Lo = -1;
                                 mergeDataHi = -1;
                                 mergeDataLo = -1;
+
+                                removedDataRangeLo = prefixHi + 1;
+                                removedDataRangeHi = srcDataMax - 1;
+                                o3RangeLo = suffixLo;
+                                o3RangeHi = suffixHi;
+                            } else {
+                                // Replacing partition data with new data in the middle of the partition.
+                                removedDataRangeLo = mergeDataLo;
+                                removedDataRangeHi = mergeDataHi;
+                                o3RangeLo = mergeO3Lo;
+                                o3RangeHi = mergeO3Hi;
+                            }
+
+                            if (removedDataRangeHi - removedDataRangeLo > 0 && removedDataRangeHi - removedDataRangeLo == o3RangeHi - o3RangeLo) {
+
+                                // Check that replace first timestamp matches exactly the first timestamp in the partition
+                                // and the last timestamp matches the last timestamp in the partition.
+                                if (Unsafe.getUnsafe().getLong(srcTimestampAddr + removedDataRangeLo * Long.BYTES)
+                                        == getTimestampIndexValue(sortedTimestampsAddr, o3RangeLo)
+                                        && Unsafe.getUnsafe().getLong(srcTimestampAddr + removedDataRangeHi * Long.BYTES)
+                                        == getTimestampIndexValue(sortedTimestampsAddr, o3RangeHi)) {
+
+                                    // We are replacing with exactly the same number of rows
+                                    // Maybe the rows are of the same data, then we don't need to rewrite the partition
+                                    if (tableWriter.checkReplaceCommitIdenticalToPartition(
+                                            partitionTimestamp,
+                                            srcNameTxn,
+                                            srcDataMax,
+                                            removedDataRangeLo,
+                                            removedDataRangeHi,
+                                            o3RangeLo,
+                                            o3RangeHi
+                                    )) {
+                                        LOG.info().$("replace commit resulted in identical data [table=").$safe(tableWriter.getTableToken().getTableName())
+                                                .$(", partitionTimestamp=").$ts(partitionTimestamp)
+                                                .$(", srcNameTxn=").$(srcNameTxn)
+                                                .I$();
+                                        // No need to update partition, it is identical to the existing one
+                                        updatePartition(ff, srcTimestampAddr, srcTimestampSize, srcTimestampFd, tableWriter, partitionUpdateSinkAddr, partitionTimestamp, newMinPartitionTimestamp, oldPartitionSize, oldPartitionSize, 0);
+                                        return;
+                                    }
+                                }
                             }
                         }
                     } else {
+                        // Replacing data with no O3 data, e.g. effectively deleting a part of the partition
+
+                        // O3 data is supposed to be merged into the middle of an existing partition
+                        // but there is no O3 data, it's a replacing commit with no new rows, just the range.
+                        // At the end we have existing column data prefix, suffix and nothing to insert in between.
+                        // We can finish here without modifying this partition.
+                        boolean noop = mergeType == O3_BLOCK_O3 && prefixType == O3_BLOCK_DATA && suffixType == O3_BLOCK_DATA;
+
+                        // No intersection with existing partition data, the whole replace range is before the existing partition
+                        noop |= suffixType == O3_BLOCK_DATA && suffixLo == 0 && suffixHi == srcDataMax - 1;
+
+                        // No intersection with existing partition data, the whole replace range is after the existing partition
+                        noop |= prefixType == O3_BLOCK_DATA && prefixLo == 0 && prefixHi == srcDataMax - 1;
+
+                        if (noop) {
+                            updatePartition(ff, srcTimestampAddr, srcTimestampSize, srcTimestampFd, tableWriter, partitionUpdateSinkAddr, partitionTimestamp, newMinPartitionTimestamp, oldPartitionSize, oldPartitionSize, 0);
+                            return;
+                        }
+
                         // srcOooLo > srcOooHi means that O3 data is empty
                         if (prefixType == O3_BLOCK_O3) {
                             prefixType = O3_BLOCK_NONE;
@@ -865,14 +935,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         if (prefixType == O3_BLOCK_NONE && suffixType == O3_BLOCK_NONE) {
                             // full partition removal
-                            updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, Long.MAX_VALUE, 0, oldPartitionSize, 1);
-
-                            O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-                            O3Utils.close(ff, srcTimestampFd);
-
-                            tableWriter.o3ClockDownPartitionUpdateCount();
-                            tableWriter.o3CountDownDoneLatch();
-
+                            updatePartition(ff, srcTimestampAddr, srcTimestampSize, srcTimestampFd, tableWriter, partitionUpdateSinkAddr, partitionTimestamp, Long.MAX_VALUE, 0, oldPartitionSize, 1);
                             return;
                         }
 
@@ -884,14 +947,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 // There is nothing to do
 
                                 // Nothing to do, use the existing partition to the prefix size
-                                updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, newMinPartitionTimestamp, prefixHi + 1, oldPartitionSize, 0);
-
-                                O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-                                O3Utils.close(ff, srcTimestampFd);
-
-                                tableWriter.o3ClockDownPartitionUpdateCount();
-                                tableWriter.o3CountDownDoneLatch();
-
+                                updatePartition(ff, srcTimestampAddr, srcTimestampSize, srcTimestampFd, tableWriter, partitionUpdateSinkAddr, partitionTimestamp, newMinPartitionTimestamp, prefixHi + 1, oldPartitionSize, 0);
                                 return;
                             }
 
@@ -1030,7 +1086,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
             } catch (Throwable e) {
-                LOG.error().$("process existing partition error [table=").utf8(tableWriter.getTableToken().getTableName())
+                LOG.error().$("process existing partition error [table=").$safe(tableWriter.getTableToken().getTableName())
                         .$(", e=").$(e)
                         .I$();
                 O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
@@ -1086,40 +1142,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     dedupColSinkAddr
             );
         }
-    }
-
-    private static long calculateMinDataTimestampAfterReplacement(
-            long srcDataTimestampAddr,
-            long o3TimestampsAddr,
-            int prefixType,
-            int suffixType,
-            long prefixLo,
-            long suffixLo,
-            long srcOooLo,
-            long srcOooHi
-    ) {
-        if (prefixType == O3_BLOCK_DATA) {
-            return Unsafe.getUnsafe().getLong(srcDataTimestampAddr + prefixLo * Long.BYTES);
-        }
-        if (srcOooLo <= srcOooHi) {
-            // If there is O3 data, it will replace the partition data in merge section
-            return getTimestampIndexValue(o3TimestampsAddr, srcOooLo);
-        }
-        if (suffixType == O3_BLOCK_DATA) {
-            // No prefix, no merge, just suffix from the partition data
-            return Unsafe.getUnsafe().getLong(srcDataTimestampAddr + suffixLo * Long.BYTES);
-        }
-        return Long.MAX_VALUE;
-    }
-
-    private static void updatePartitionSink(long partitionUpdateSinkAddr, long partitionTimestamp, long o3TimestampMin, long newPartitionSize, long oldPartitionSize, long partitionMutates) {
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize); // new partition size
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates); // partitionMutates
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1); // update parquet partition file size
     }
 
     public static void processPartition(
@@ -1185,6 +1207,30 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 o3TimestampLo,
                 o3TimestampHi
         );
+    }
+
+    private static long calculateMinDataTimestampAfterReplacement(
+            long srcDataTimestampAddr,
+            long o3TimestampsAddr,
+            int prefixType,
+            int suffixType,
+            long prefixLo,
+            long suffixLo,
+            long srcOooLo,
+            long srcOooHi
+    ) {
+        if (prefixType == O3_BLOCK_DATA) {
+            return Unsafe.getUnsafe().getLong(srcDataTimestampAddr + prefixLo * Long.BYTES);
+        }
+        if (srcOooLo <= srcOooHi) {
+            // If there is O3 data, it will replace the partition data in merge section
+            return getTimestampIndexValue(o3TimestampsAddr, srcOooLo);
+        }
+        if (suffixType == O3_BLOCK_DATA) {
+            // No prefix, no merge, just suffix from the partition data
+            return Unsafe.getUnsafe().getLong(srcDataTimestampAddr + suffixLo * Long.BYTES);
+        }
+        return Long.MAX_VALUE;
     }
 
     private static long createMergeIndex(
@@ -1772,6 +1818,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long columnNameTxn
     ) {
         while (cursor == -2) {
+            Os.pause();
             cursor = tableWriter.getO3OpenColumnPubSeq().next();
         }
 
@@ -2016,14 +2063,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // Number of rows to insert from the O3 segment into this partition.
         final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
 
-        tableWriter.addPhysicallyWrittenRows(
-                isOpenColumnModeForAppend(openColumnMode)
-                        ? srcOooBatchRowSize
-                        : o3SplitPartitionSize == 0 ? srcDataNewPartitionSize : o3SplitPartitionSize
-        );
-
-        final long timestampMergeIndexAddr;
-        final long timestampMergeIndexSize;
+        long timestampMergeIndexAddr = 0;
+        long timestampMergeIndexSize = 0;
         final TableRecordMetadata metadata = tableWriter.getMetadata();
         if (mergeType == O3_BLOCK_MERGE) {
             long mergeRowCount = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
@@ -2067,42 +2108,146 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     timestampMergeIndexSize = dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES;
                     timestampMergeIndexAddr = Unsafe.realloc(tempIndexAddr, tempIndexSize, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
                     final long duplicateCount = mergeRowCount - dedupRows;
+                    boolean appendOnly = false;
                     if (duplicateCount > 0) {
-                        // we could be de-duping a split partition
-                        // in which case only its size will be affected
-                        if (o3SplitPartitionSize > 0) {
-                            o3SplitPartitionSize -= duplicateCount;
-                        } else {
-                            srcDataNewPartitionSize -= duplicateCount;
+                        if (duplicateCount == mergeOOOHi - mergeOOOLo + 1 && prefixType != O3_BLOCK_O3) {
+
+                            // All the rows are duplicates, the commit does not add any new lines.
+                            // Check non-key columns if they are exactly the same as the rows they replace
+                            if (tableWriter.checkDedupCommitIdenticalToPartition(
+                                    oldPartitionTimestamp,
+                                    srcNameTxn,
+                                    srcDataOldPartitionSize,
+                                    mergeDataLo,
+                                    mergeDataHi,
+                                    mergeOOOLo,
+                                    mergeOOOHi,
+                                    timestampMergeIndexAddr,
+                                    dedupRows
+                            )) {
+
+                                if (suffixType != O3_BLOCK_O3) {
+                                    LOG.info().$("deduplication resulted in noop [table=").$(tableWriter.getTableToken())
+                                            .$(", partition=").$ts(partitionTimestamp)
+                                            .I$();
+
+                                    // nothing to do, skip the partition
+                                    updatePartition(
+                                            tableWriter.getFilesFacade(),
+                                            srcTimestampAddr,
+                                            srcTimestampSize,
+                                            srcTimestampFd,
+                                            tableWriter,
+                                            partitionUpdateSinkAddr,
+                                            oldPartitionTimestamp,
+                                            Long.MAX_VALUE,
+                                            -1,
+                                            srcDataOldPartitionSize,
+                                            0
+                                    );
+                                    timestampMergeIndexAddr = Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+
+                                    // Remove empty partition dir
+                                    Path path = Path.getThreadLocal(pathToTable);
+                                    setPathForNativePartition(path, tableWriter.getPartitionBy(), partitionTimestamp, txn);
+                                    tableWriter.getConfiguration().getFilesFacade().rmdir(path, false);
+
+                                    return;
+                                } else {
+                                    // suffixType == O3_BLOCK_O3
+                                    // we don't need to do the merge, but we need to append the suffix
+                                    appendOnly = true;
+                                }
+
+
+                            }
                         }
-                        LOG.info()
-                                .$("dedup row reduction [table=").utf8(tableWriter.getTableToken().getTableName())
-                                .$(", partition=").$ts(partitionTimestamp)
-                                .$(", duplicateCount=").$(duplicateCount)
-                                .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
-                                .$(", srcDataOldPartitionSize=").$(srcDataOldPartitionSize)
-                                .$(", o3SplitPartitionSize=").$(srcDataOldPartitionSize)
-                                .$(", mergeDataLo=").$(mergeDataLo)
-                                .$(", mergeDataHi=").$(mergeDataHi)
-                                .$(", mergeOOOLo=").$(mergeOOOLo)
-                                .$(", mergeOOOHi=").$(mergeOOOHi)
-                                .I$();
+                    } else if (suffixType != O3_BLOCK_DATA) {
+                        // No duplicates.
+                        // Maybe it's append only, if the OOO data "touches" the partition data then we
+                        // do not need to merge, append is good enough
+                        long dataMergeMaxTimestamp = Unsafe.getUnsafe().getLong(srcTimestampAddr + mergeDataHi * Long.BYTES);
+                        appendOnly = oooTimestampMin >= dataMergeMaxTimestamp;
                     }
+
+                    if (appendOnly) {
+                        mergeType = O3_BLOCK_NONE;
+                        mergeDataHi = -1;
+                        mergeDataLo = 0;
+                        mergeOOOHi = -1;
+                        mergeOOOLo = 0;
+
+                        if (duplicateCount > 0) {
+                            // Append procs may ignore suffixLo when appending using srcOooLo instead.
+                            // Adjust suffixLo to match the srcOooLo.
+                            srcOooLo = suffixLo;
+                        } else {
+                            suffixType = O3_BLOCK_O3;
+                            suffixLo = srcOooLo;
+                            suffixHi = srcOooHi;
+                        }
+
+                        if (o3SplitPartitionSize > 0) {
+                            LOG.info().$("dedup resulted in no merge, undo partition split [table=")
+                                    .$safe(tableWriter.getTableToken().getTableName())
+                                    .$(", partition=").$ts(oldPartitionTimestamp)
+                                    .$(", split=").$ts(partitionTimestamp)
+                                    .I$();
+                            partitionTimestamp = oldPartitionTimestamp;
+                            srcDataNewPartitionSize += o3SplitPartitionSize;
+                            o3SplitPartitionSize = 0;
+                        }
+
+                        // No merge anymore, free the merge index
+                        timestampMergeIndexAddr = Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+
+                        prefixType = O3_BLOCK_DATA;
+                        prefixLo = 0;
+                        prefixHi = srcDataMax - 1;
+
+                        if (openColumnMode == OPEN_LAST_PARTITION_FOR_MERGE) {
+                            openColumnMode = OPEN_LAST_PARTITION_FOR_APPEND;
+                        } else if (openColumnMode == OPEN_MID_PARTITION_FOR_MERGE) {
+                            openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
+                        } else {
+                            assert false : "unexpected open column mode: " + openColumnMode;
+                        }
+                    }
+
+                    // we could be de-duping a split partition
+                    // in which case only its size will be affected
+                    if (o3SplitPartitionSize > 0) {
+                        o3SplitPartitionSize -= duplicateCount;
+                    } else {
+                        srcDataNewPartitionSize -= duplicateCount;
+                    }
+                    LOG.info()
+                            .$("dedup row reduction [table=").$safe(tableWriter.getTableToken().getTableName())
+                            .$(", partition=").$ts(partitionTimestamp)
+                            .$(", duplicateCount=").$(duplicateCount)
+                            .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
+                            .$(", srcDataOldPartitionSize=").$(srcDataOldPartitionSize)
+                            .$(", o3SplitPartitionSize=").$(srcDataOldPartitionSize)
+                            .$(", mergeDataLo=").$(mergeDataLo)
+                            .$(", mergeDataHi=").$(mergeDataHi)
+                            .$(", mergeOOOLo=").$(mergeOOOLo)
+                            .$(", mergeOOOHi=").$(mergeOOOHi)
+                            .I$();
                 } else if (tableWriter.isCommitReplaceMode()) {
                     // merge range is replaced by new data.
                     // Merge row count is the count of the new rows, compensated by 1 row that is start of the range
                     // and 1 row that is in the end of the range.
-                    timestampMergeIndexAddr = 0;
-                    timestampMergeIndexSize = 0;
                     mergeType = O3_BLOCK_O3;
                 } else {
                     throw new IllegalStateException("commit mode not supported");
                 }
             } catch (Throwable e) {
                 tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
-                LOG.error().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
+                LOG.error().$("open column error [table=").$safe(tableWriter.getTableToken().getTableName())
                         .$(", e=").$(e)
                         .I$();
+
+                Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
                 O3CopyJob.closeColumnIdleQuick(
                         0,
                         0,
@@ -2113,10 +2258,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 );
                 throw e;
             }
-        } else {
-            timestampMergeIndexAddr = 0;
-            timestampMergeIndexSize = 0;
         }
+
+        tableWriter.addPhysicallyWrittenRows(
+                isOpenColumnModeForAppend(openColumnMode)
+                        ? srcOooBatchRowSize
+                        : o3SplitPartitionSize == 0 ? srcDataNewPartitionSize : o3SplitPartitionSize
+        );
 
         final int columnCount = metadata.getColumnCount();
         columnCounter.set(compressColumnCount(metadata));
@@ -2275,7 +2423,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 } catch (Throwable e) {
                     tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
-                    LOG.critical().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
+                    LOG.critical().$("open column error [table=").$safe(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
                             .I$();
                     columnsInFlight = i + 1;
@@ -2427,6 +2575,38 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         } finally {
             ff.munmap(parquetAddr, newParquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
         }
+    }
+
+    private static void updatePartition(
+            FilesFacade ff,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            long srcTimestampFd,
+            TableWriter tableWriter,
+            long partitionUpdateSinkAddr,
+            long partitionTimestamp,
+            long timestampMin,
+            long newPartitionSize,
+            long oldPartitionSize,
+            int partitionMutates
+    ) {
+        updatePartitionSink(partitionUpdateSinkAddr, partitionTimestamp, timestampMin, newPartitionSize, oldPartitionSize, partitionMutates);
+
+        O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
+        O3Utils.close(ff, srcTimestampFd);
+
+        tableWriter.o3ClockDownPartitionUpdateCount();
+        tableWriter.o3CountDownDoneLatch();
+    }
+
+    private static void updatePartitionSink(long partitionUpdateSinkAddr, long partitionTimestamp, long o3TimestampMin, long newPartitionSize, long oldPartitionSize, long partitionMutates) {
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize); // new partition size
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates); // partitionMutates
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
+        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1); // update parquet partition file size
     }
 
     @Override

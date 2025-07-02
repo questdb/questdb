@@ -24,19 +24,23 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.NoopArrayWriteState;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.line.tcp.ArrayBinaryFormatParser;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -56,6 +60,37 @@ public class ArrayTest extends AbstractCairoTest {
         int flatSize = array.borrowedFlatView().size();
         Vect.memcpy(addr + offset, array.ptr(), flatSize);
         return offset + flatSize;
+    }
+
+    public void assertBroadcastShape(IntList shapeLeft, IntList shapeRight, IntList shapeOutExpected) throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectArray left = new DirectArray();
+                 DirectArray right = new DirectArray()
+            ) {
+                left.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, shapeLeft.size()));
+                right.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, shapeRight.size()));
+
+                for (int i = 0; i < shapeLeft.size(); i++) {
+                    left.setDimLen(i, shapeLeft.get(i));
+                }
+                left.applyShape();
+                for (int i = 0; i < shapeRight.size(); i++) {
+                    right.setDimLen(i, shapeRight.get(i));
+                }
+                right.applyShape();
+                IntList shapeOut = new IntList();
+                DerivedArrayView.computeBroadcastShape(left, right, shapeOut, -1);
+                System.out.println(shapeOut);
+                Assert.assertEquals(shapeOutExpected, shapeOut);
+            }
+        });
+    }
+
+    @Override
+    @Before
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf("true"));
+        super.setUp();
     }
 
     @Test
@@ -195,6 +230,25 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAccessWithNullIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (n INT, arr DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES (null, ARRAY[1.0, 2], ARRAY[[1.0, 2], [3.0, 4]])");
+            assertSql("[]\nnull\n", "SELECT arr[null::int] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr[n] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr[1:null] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr[null:2] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr[1:n] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr[n:2] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr2[1, null::int] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr2[1, n] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr2[1, n:2] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr2[1, 1:n] FROM tango");
+            assertSql("[]\nnull\n", "SELECT arr2[1:2, 1:n] FROM tango");
+        });
+    }
+
+    @Test
     public void testAddColumnUnsupportedType() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (n LONG)");
@@ -218,11 +272,587 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayAddScalarValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[2.0, null], ARRAY[[2.0, 3], [4.0, 5]]), " +
+                    "(ARRAY[6.0, 7], ARRAY[[8.0, 9]])," +
+                    "(null, null)");
+            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
+                    "[7.0,NaN]\t[[5.0,7.0],[9.0,11.0]]\t[11.0,16.0]\t[[41.0,51.0]]\n" +
+                    "[19.0,22.0]\t[[17.0,19.0]]\t[41.0,46.0]\t[]\n" +
+                    "null\tnull\tnull\tnull\n", "SELECT a * 3.0 + 1.0, b * 2.0 + 1.0, b[1] * 5.0 + 1.0, b[2:] * 10.0 + 1.0 FROM tango");
+            assertSql("column\tcolumn1\n" +
+                    "[5.0,NaN]\t[[4.0,6.0],[5.0,7.0]]\n" +
+                    "[9.0,10.0]\t[[10.0],[11.0]]\n" +
+                    "null\tnull\n", "SELECT transpose(a) + 3.0, transpose(b) + 2.0 FROM tango");
+            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
+                    "[5.0,NaN]\t[[4.0,5.0],[6.0,7.0]]\t[7.0,8.0]\t[[14.0,15.0]]\n" +
+                    "[9.0,10.0]\t[[10.0,11.0]]\t[13.0,14.0]\t[]\n" +
+                    "null\tnull\tnull\tnull\n", "SELECT 3.0 + a, 2.0 + b, 5.0 + b[1], 10.0 + b[2:] FROM tango");
+        });
+    }
+
+    @Test
+    public void testArrayAvg() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[1.0, 9, 10, 12, 8, null, 20], ARRAY[[1.0, 9, 10, 12, 8, null, 20]]), " +
+                    "(ARRAY[], ARRAY[[null]])," +
+                    "(null, null)"
+            );
+            assertSql("array_avg\tarray_avg1\tarray_avg2\n" +
+                            "10.0\t11.8\t5.0\n" +
+                            "null\tnull\tnull\n" +
+                            "null\tnull\tnull\n",
+                    "SELECT array_avg(arr1), array_avg(arr1[2:]), array_avg(arr1[1:3]) FROM tango");
+            assertSql("array_avg\tarray_avg1\tarray_avg2\tarray_avg3\tarray_avg4\n" +
+                            "10.0\t10.0\t10.0\t10.0\tnull\n" +
+                            "null\tnull\tnull\tnull\tnull\n" +
+                            "null\tnull\tnull\tnull\tnull\n",
+                    "SELECT array_avg(arr2), array_avg(transpose(arr2)), array_avg(arr2[1]), array_avg(arr2[1:]), array_avg(arr2[2:]) FROM tango");
+        });
+    }
+
+    @Test
+    public void testArrayAvgNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]]);"
+            );
+            assertSql("array_avg\tarray_avg1\n" +
+                            "5.0\t5.0\n",
+                    "SELECT array_avg(arr), array_avg(transpose(arr)) FROM tango");
+        });
+    }
+
+    @Test
     public void testArrayCanBeClearedAfterInstantiation() throws Exception {
         assertMemoryLeak(() -> {
             try (DirectArray array = new DirectArray(configuration)) {
                 array.clear();
             }
+        });
+    }
+
+    @Test
+    public void testArrayCount() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[1.0, 9, 10, 12, 8, null, 20, 12], ARRAY[[1.0, 9, 10, 12, 8, null, 20, 12]]), " +
+                    "(ARRAY[], ARRAY[[null]])," +
+                    "(null, null)"
+            );
+            assertSql("array_count\tarray_count1\tarray_count2\n" +
+                            "7\t6\t2\n" +
+                            "0\t0\t0\n" +
+                            "0\t0\t0\n",
+                    "SELECT array_count(arr1), array_count(arr1[2:]), array_count(arr1[1:3]) FROM tango");
+
+            assertSql("array_count\tarray_count1\tarray_count2\tarray_count3\tarray_count4\n" +
+                            "7\t7\t7\t7\t0\n" +
+                            "0\t0\t0\t0\t0\n" +
+                            "0\t0\t0\t0\t0\n",
+                    "SELECT array_count(arr2), array_count(transpose(arr2)), array_count(arr2[1]), array_count(arr2[1:]), array_count(arr2[2:]) FROM tango");
+        });
+    }
+
+    @Test
+    public void testArrayCountNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]]);"
+            );
+            assertSql("array_count\tarray_count1\n" +
+                            "9\t9\n",
+                    "SELECT array_count(arr), array_count(transpose(arr)) FROM tango");
+        });
+    }
+
+    @Test
+    public void testArrayCumSum() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[1.0, 9, 10, 12, 8, null, 20, 12], ARRAY[[1.0, 9, 10, 12, 8, null, 20, 12]]), " +
+                    "(ARRAY[null], ARRAY[[null]])," +
+                    "(null, null)"
+            );
+            assertSql("array_cum_sum\tarray_cum_sum1\tarray_cum_sum2\n" +
+                            "[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[9.0,19.0,31.0,39.0,39.0,59.0,71.0]\t[1.0,10.0]\n" +
+                            "[0.0]\t[]\t[0.0]\n" +
+                            "null\tnull\tnull\n",
+                    "SELECT array_cum_sum(arr1), array_cum_sum(arr1[2:]), array_cum_sum(arr1[1:3]) FROM tango");
+
+            assertSql("array_cum_sum\tarray_cum_sum1\tarray_cum_sum2\tarray_cum_sum3\tarray_cum_sum4\n" +
+                            "[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[]\n" +
+                            "[0.0]\t[0.0]\t[0.0]\t[0.0]\t[]\n" +
+                            "null\tnull\tnull\tnull\tnull\n",
+                    "SELECT array_cum_sum(arr2), array_cum_sum(transpose(arr2)), array_cum_sum(arr2[1]), array_cum_sum(arr2[1:]), array_cum_sum(arr2[2:]) FROM tango");
+        });
+    }
+
+    @Test
+    public void testArrayDivScalarValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[2.0, null], ARRAY[[2.0, 3], [4.0, 5]]), " +
+                    "(ARRAY[6.0, 7], ARRAY[[8.0, 9]])," +
+                    "(null, null)");
+            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
+                    "[12.0,NaN]\t[[8.0,12.0],[16.0,20.0]]\t[20.0,30.0]\t[[80.0,100.0]]\n" +
+                    "[36.0,42.0]\t[[32.0,36.0]]\t[80.0,90.0]\t[]\n" +
+                    "null\tnull\tnull\tnull\n", "SELECT a * 3.0/0.5, b * 2.0/0.5, b[1] * 5.0 / 0.5, b[2:] * 10.0 / 0.5 FROM tango");
+            assertSql("column\tcolumn1\n" +
+                    "[4.0,NaN]\t[[4.0,8.0],[6.0,10.0]]\n" +
+                    "[12.0,14.0]\t[[16.0],[18.0]]\n" +
+                    "null\tnull\n", "SELECT transpose(a)/0.5, transpose(b)/0.5 FROM tango");
+            assertSql("column\tcolumn1\n" +
+                    "[Infinity,NaN]\t[NaN,NaN]\n" +
+                    "[Infinity,Infinity]\t[NaN,NaN]\n" +
+                    "null\tnull\n", "SELECT a/0.0, a/null::double FROM tango");
+        });
+    }
+
+    @Test
+    public void testArrayDotProduct() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (left DOUBLE[][], right DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0, 3], [2.0, 5.0]], ARRAY[[1.0, 5.0], [7.0, 2.0]]), " +
+                    "(ARRAY[[1.0, 1]], ARRAY[[5.0, null]])");
+            assertSql("product\n" +
+                    "40.0\n" +
+                    "5.0\n", "SELECT dot_product(left, right) AS product FROM tango");
+            assertSql("product\n" +
+                    "40.0\n" +
+                    "5.0\n", "SELECT dot_product(transpose(left), transpose(right)) AS product FROM tango");
+            assertExceptionNoLeakCheck("SELECT dot_product(Array[1.0], Array[[1.0]]) AS product FROM tango",
+                    24, "arrays have different number of dimensions [nDimsLeft=1, nDimsRight=2]");
+            assertExceptionNoLeakCheck("SELECT dot_product(Array[1.0], Array[1.0, 2.0]) AS product FROM tango",
+                    24, "arrays have different shapes [leftShape=[1], rightShape=[2]]");
+        });
+    }
+
+    @Test
+    public void testArrayDotProductScalarValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (left DOUBLE[][], right DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0, 3], [2.0, 5.0]], ARRAY[[1.0, 5.0], [7.0, 2.0]]), " +
+                    "(ARRAY[[1.0, 1]], ARRAY[[5.0, null]])");
+            assertSql("dot_product\tdot_product1\tdot_product2\n" +
+                    "11.0\t30.0\tnull\n" +
+                    "2.0\t10.0\tnull\n", "SELECT dot_product(left, 1.0), dot_product(right, 2.0), dot_product(left, null::double) FROM tango");
+            assertSql("dot_product\tdot_product1\tdot_product2\n" +
+                    "11.0\t30.0\t30.0\n" +
+                    "2.0\t10.0\t10.0\n", "SELECT dot_product(transpose(left), 1.0), dot_product(transpose(right), 2.0), dot_product(2.0, transpose(right)) FROM tango");
+        });
+    }
+
+    @Test
+    public void testArrayFirstFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (ts timestamp, x int, v double[]) timestamp(ts) partition by DAY");
+            execute("insert into test(ts,x,v) values ('2022-02-24', 1, ARRAY[1.0,1.0]), ('2022-02-24', 2, null), ('2022-02-24', 3, ARRAY[2.0,2.0])");
+
+            assertQuery(
+                    "ts\tx\tv\n" +
+                            "2022-02-24T00:00:00.000000Z\t1\t[1.0,1.0]\n" +
+                            "2022-02-24T00:00:00.000000Z\t2\tnull\n" +
+                            "2022-02-24T00:00:00.000000Z\t3\t[2.0,2.0]\n",
+                    "select ts, x, first(v) as v from test sample by 1s",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertPlanNoLeakCheck(
+                    "select ts, x, first(v) as v from test sample by 1s",
+                    "Radix sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts,x]\n" +
+                            "      values: [first(v)]\n" +
+                            "      filter: null\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test\n"
+            );
+        });
+    }
+
+    @Test
+    public void testArrayFunctionInAggregation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tango (ts timestamp, a double, arr double[]) timestamp(ts) partition by DAY");
+            execute("insert into tango values " +
+                    "('2025-06-26', 1.0, ARRAY[1.0,2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])," +
+                    "('2025-06-26', 10.0, null)," +
+                    "('2025-06-27', 18.0, ARRAY[11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0])," +
+                    "('2025-06-27', 25.0, ARRAY[21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0, 30.0])");
+            assertQueryAndPlan(
+                    "ts\tv\n" +
+                            "2025-06-26T00:00:00.000000Z\t1\n" +
+                            "2025-06-27T00:00:00.000000Z\t8\n",
+                    "Radix sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts]\n" +
+                            "      values: [max(array_position(arr, a))]\n" +
+                            "      filter: null\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tango\n",
+                    "select ts, max(array_position(arr, a)) as v from tango sample by 1d",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryAndPlan(
+                    "ts\tv\n" +
+                            "2025-06-26T00:00:00.000000Z\t2\n" +
+                            "2025-06-27T00:00:00.000000Z\t6\n",
+                    "Radix sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts]\n" +
+                            "      values: [min(insertion_point(arr,a))]\n" +
+                            "      filter: null\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tango\n",
+                    "select ts, min(insertion_point(arr, a)) as v from tango sample by 1d",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryAndPlan(
+                    "ts\tv\n" +
+                            "2025-06-26T00:00:00.000000Z\t10\n" +
+                            "2025-06-27T00:00:00.000000Z\t20\n",
+                    "Radix sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts]\n" +
+                            "      values: [sum(array_count(arr))]\n" +
+                            "      filter: null\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tango\n",
+                    "select ts, sum(array_count(arr)) as v from tango sample by 1d",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryAndPlan(
+                    "ts\tv\n" +
+                            "2025-06-26T00:00:00.000000Z\t5.5\n" +
+                            "2025-06-27T00:00:00.000000Z\t41.0\n",
+                    "Radix sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts]\n" +
+                            "      values: [sum(array_avg(arr))]\n" +
+                            "      filter: null\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tango\n",
+                    "select ts, sum(array_avg(arr)) as v from tango sample by 1d",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryAndPlan(
+                    "ts\tarray_sum\tsum\n" +
+                            "2025-06-26T00:00:00.000000Z\t220.0\t1.0\n" +
+                            "2025-06-26T00:00:00.000000Z\t0.0\t10.0\n" +
+                            "2025-06-27T00:00:00.000000Z\t770.0\t18.0\n" +
+                            "2025-06-27T00:00:00.000000Z\t1320.0\t25.0\n",
+                    "Radix sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts,array_sum]\n" +
+                            "      values: [sum(a)]\n" +
+                            "      filter: null\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tango\n",
+                    "select ts, array_sum(array_cum_sum(arr)), sum(a) from tango sample by 1d",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryAndPlan(
+                    "ts\tdot_product\tfirst\n" +
+                            "2025-06-26T00:00:00.000000Z\t110.0\t1.0\n" +
+                            "2025-06-26T00:00:00.000000Z\tnull\t10.0\n" +
+                            "2025-06-27T00:00:00.000000Z\t310.0\t18.0\n" +
+                            "2025-06-27T00:00:00.000000Z\t510.0\t25.0\n",
+                    "Radix sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts,dot_product]\n" +
+                            "      values: [first(a)]\n" +
+                            "      filter: null\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tango\n",
+                    "select ts, dot_product(arr, 2), first(a) from tango sample by 1d",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryAndPlan(
+                    "ts\tsum\n" +
+                            "2025-06-26T00:00:00.000000Z\t147.5\n" +
+                            "2025-06-27T00:00:00.000000Z\t1045.0\n",
+                    "Radix sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts]\n" +
+                            "      values: [sum(array_sum(arr*5+3-1/2))]\n" +
+                            "      filter: null\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tango\n",
+                    "select ts, sum(array_sum((arr * 5 + 3 - 1)/2)) from tango sample by 1d",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testArrayMultiplyScalarValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[2.0, null], ARRAY[[2.0, 3], [4.0, 5]]), " +
+                    "(ARRAY[6.0, 7], ARRAY[[8.0, 9]])," +
+                    "(null, null)");
+            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
+                    "[6.0,NaN]\t[[4.0,6.0],[8.0,10.0]]\t[10.0,15.0]\t[[40.0,50.0]]\n" +
+                    "[18.0,21.0]\t[[16.0,18.0]]\t[40.0,45.0]\t[]\n" +
+                    "null\tnull\tnull\tnull\n", "SELECT a * 3.0, b * 2.0, b[1] * 5.0, b[2:] * 10.0 FROM tango");
+            assertSql("column\tcolumn1\n" +
+                    "[6.0,NaN]\t[[4.0,8.0],[6.0,10.0]]\n" +
+                    "[18.0,21.0]\t[[16.0],[18.0]]\n" +
+                    "null\tnull\n", "SELECT transpose(a) * 3.0, transpose(b) * 2.0 FROM tango");
+            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
+                    "[6.0,NaN]\t[[4.0,6.0],[8.0,10.0]]\t[10.0,15.0]\t[[40.0,50.0]]\n" +
+                    "[18.0,21.0]\t[[16.0,18.0]]\t[40.0,45.0]\t[]\n" +
+                    "null\tnull\tnull\tnull\n", "SELECT 3.0 * a, 2.0 * b, 5.0 * b[1], 10.0 * b[2:] FROM tango");
+        });
+    }
+
+    @Test
+    public void testArrayPosition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[1.0, 9, 10, 12, 8, null, 20, 12], ARRAY[[1.0, 9, 10, 12, 8, null, 20, 12]]), " +
+                    "(ARRAY[null], ARRAY[[null]])," +
+                    "(null, null)"
+            );
+            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
+                            "5\t6\tnull\t1\n" +
+                            "null\t1\tnull\tnull\n" +
+                            "null\tnull\tnull\tnull\n",
+                    "SELECT " +
+                            "array_position(arr1, 8), " +
+                            "array_position(arr1, null), " +
+                            "array_position(arr1, 11), " +
+                            "array_position(arr1[2:], 9) " +
+                            "FROM tango");
+
+            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
+                            "5\t6\tnull\t1\n" +
+                            "null\t1\tnull\tnull\n" +
+                            "null\tnull\tnull\tnull\n",
+                    "SELECT " +
+                            "array_position(arr2[1], 8), " +
+                            "array_position(arr2[1], null), " +
+                            "array_position(arr2[1], 11), " +
+                            "array_position(arr2[1][2:], 9) " +
+                            "FROM tango");
+
+            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
+                            "1\t2\t3\t1\n" +
+                            "1\t1\t1\tnull\n" +
+                            "null\tnull\tnull\tnull\n",
+                    "SELECT " +
+                            "array_position(arr1, arr1[1]), " +
+                            "array_position(arr1, arr1[2]), " +
+                            "array_position(arr1, arr1[3]), " +
+                            "array_position(arr1[2:], arr1[2]) " +
+                            "FROM tango");
+            assertExceptionNoLeakCheck("SELECT array_position(arr2, 0) len FROM tango",
+                    22, "array is not one-dimensional");
+        });
+    }
+
+    @Test
+    public void testArrayPositionNanInfinity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[])");
+            execute("INSERT INTO tango VALUES (ARRAY[1.0/0.0, 0.0/0.0, -1.0/0.0])");
+            assertSql("array_position\n2\n", "SELECT array_position(arr, 0.0/0.0) FROM tango");
+            //TODO These two assertions document the current behavior, but it isn't the desired one.
+            // The function should find infinities as well.
+            assertSql("array_position\nnull\n", "SELECT array_position(arr, 1.0/0.0) FROM tango");
+            assertSql("array_position\nnull\n", "SELECT array_position(arr, -1.0/0.0) FROM tango");
+        });
+    }
+
+    @Test
+    public void testArrayPositionNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0], [9], [10], [12], [8], [null], [20], [12]]) "
+            );
+            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
+                            "5\t6\tnull\t1\n",
+                    "SELECT " +
+                            "array_position(transpose(arr)[1], 8), " +
+                            "array_position(transpose(arr)[1], null), " +
+                            "array_position(transpose(arr)[1], 11), " +
+                            "array_position(transpose(arr)[1, 2:], 9) " +
+                            "FROM tango");
+        });
+    }
+
+    @Test
+    public void testArrayShift() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[1.0, 9, 10, 12, 8, null, 20, 12], ARRAY[[1.0, 9, 10],[12, 8, null]]), " +
+                    "(ARRAY[], ARRAY[[],[]])," +
+                    "(null, null)"
+            );
+            assertSql("shift\tshift1\tshift2\tshift3\n" +
+                            "[999.0,999.0,999.0,1.0,9.0,10.0,12.0,8.0]\t[999.0,9.0,10.0,12.0,8.0,NaN,20.0]\t[999.0,999.0]\t[NaN,NaN,NaN,1.0,9.0,10.0,12.0,8.0]\n" +
+                            "[]\t[]\t[]\t[]\n" +
+                            "null\tnull\tnull\tnull\n",
+                    "SELECT shift(arr1, 3, 999.0), shift(arr1[2:], 1, 999.0), shift(arr1[1:3], 10, 999.0), shift(arr1, 3) FROM tango");
+            assertSql("shift\tshift1\tshift2\tshift3\n" +
+                            "[12.0,8.0,NaN,20.0,12.0,999.0,999.0,999.0]\t[10.0,12.0,8.0,NaN,20.0,12.0,999.0]\t[999.0,999.0]\t[12.0,8.0,NaN,20.0,12.0,NaN,NaN,NaN]\n" +
+                            "[]\t[]\t[]\t[]\n" +
+                            "null\tnull\tnull\tnull\n",
+                    "SELECT shift(arr1, -3, 999.0), shift(arr1[2:], -1, 999.0), shift(arr1[1:3], -10, 999.0), shift(arr1, -3) FROM tango");
+            assertSql("shift\tshift1\tshift2\tshift3\n" +
+                            "[[999.0,1.0,9.0],[999.0,12.0,8.0]]\t[[9.0,10.0,999.0],[8.0,NaN,999.0]]\t[[999.0,999.0,999.0],[999.0,999.0,999.0]]\t[[10.0,NaN,NaN],[NaN,NaN,NaN]]\n" +
+                            "[]\t[]\t[]\t[]\n" +
+                            "null\tnull\tnull\tnull\n",
+                    "SELECT shift(arr2, 1, 999.0), shift(arr2[1:], -1, 999.0), shift(arr2, 5, 999.0), shift(arr2, -2) FROM tango");
+        });
+    }
+
+    @Test
+    public void testArrayShiftNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0, 9], [10, 12], [8, null], [20, 12]]), " +
+                    "(ARRAY[[]])," +
+                    "(null)"
+            );
+            assertSql("transpose\n" +
+                            "[[1.0,10.0,8.0,20.0],[9.0,12.0,NaN,12.0]]\n" +
+                            "[]\n" +
+                            "null\n",
+                    "SELECT transpose(arr) FROM tango");
+
+            assertSql("shift\tshift1\tshift2\tshift3\n" +
+                            "[999.0,999.0,1.0,10.0]\t[999.0,10.0,8.0]\t[999.0,999.0]\t[NaN,NaN,NaN,1.0]\n" +
+                            "null\tnull\tnull\tnull\n" +
+                            "null\tnull\tnull\tnull\n",
+                    "SELECT shift(transpose(arr)[1], 2, 999.0), shift(transpose(arr)[1, 2:], 1, 999.0), shift(transpose(arr)[1, 1:3], 10, 999.0), shift(transpose(arr)[1], 3) FROM tango");
+
+            assertSql("shift\tshift1\tshift2\tshift3\n" +
+                            "[8.0,20.0,999.0,999.0]\t[8.0,20.0,999.0]\t[999.0,999.0]\t[20.0,NaN,NaN,NaN]\n" +
+                            "null\tnull\tnull\tnull\n" +
+                            "null\tnull\tnull\tnull\n",
+                    "SELECT shift(transpose(arr)[1], -2, 999.0), shift(transpose(arr)[1, 2:], -1, 999.0), shift(transpose(arr)[1, 1:3], -10, 999.0), shift(transpose(arr)[1], -3) FROM tango");
+            assertSql("shift\tshift1\tshift2\tshift3\n" +
+                            "[[999.0,1.0,10.0,8.0],[999.0,9.0,12.0,NaN]]\t[[10.0,8.0,20.0,999.0],[12.0,NaN,12.0,999.0]]\t[[999.0,999.0,999.0,999.0],[999.0,999.0,999.0,999.0]]\t[[8.0,20.0,NaN,NaN],[NaN,12.0,NaN,NaN]]\n" +
+                            "[]\t[]\t[]\t[]\n" +
+                            "null\tnull\tnull\tnull\n",
+                    "SELECT shift(transpose(arr), 1, 999.0), shift(transpose(arr)[1:], -1, 999.0), shift(transpose(arr), 5, 999.0), shift(transpose(arr), -2) FROM tango");
+        });
+    }
+
+    @Test
+    public void testArraySubtractScalarValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[2.0, null], ARRAY[[2.0, 3], [4.0, 5]]), " +
+                    "(ARRAY[6.0, 7], ARRAY[[8.0, 9]])," +
+                    "(null, null)");
+            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
+                    "[5.0,NaN]\t[[3.0,5.0],[7.0,9.0]]\t[9.0,14.0]\t[[39.0,49.0]]\n" +
+                    "[17.0,20.0]\t[[15.0,17.0]]\t[39.0,44.0]\t[]\n" +
+                    "null\tnull\tnull\tnull\n", "SELECT a * 3.0 - 1.0, b * 2.0 - 1.0, b[1] * 5.0 - 1.0, b[2:] * 10.0 - 1.0 FROM tango");
+            assertSql("column\tcolumn1\n" +
+                    "[-1.0,NaN]\t[[0.0,2.0],[1.0,3.0]]\n" +
+                    "[3.0,4.0]\t[[6.0],[7.0]]\n" +
+                    "null\tnull\n", "SELECT transpose(a) - 3.0, transpose(b) - 2.0 FROM tango");
+            assertSql("column\n" +
+                    "[NaN,NaN]\n" +
+                    "[NaN,NaN]\n" +
+                    "null\n", "SELECT a - null::double FROM tango");
+        });
+    }
+
+    @Test
+    public void testArraySum() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[1.0, 9, 10, 12, 8, null, 20, 12], ARRAY[[1.0, 9, 10, 12, 8, null, 20, 12]]), " +
+                    "(ARRAY[null], ARRAY[[null]])," +
+                    "(null, null)"
+            );
+            assertSql("array_sum\tarray_sum1\tarray_sum2\n" +
+                            "72.0\t71.0\t10.0\n" +
+                            "0.0\t0.0\t0.0\n" +
+                            "0.0\t0.0\t0.0\n",
+                    "SELECT array_sum(arr1), array_sum(arr1[2:]), array_sum(arr1[1:3]) FROM tango");
+
+            assertSql("array_sum\tarray_sum1\tarray_sum2\tarray_sum3\tarray_sum4\n" +
+                            "72.0\t72.0\t72.0\t72.0\t0.0\n" +
+                            "0.0\t0.0\t0.0\t0.0\t0.0\n" +
+                            "0.0\t0.0\t0.0\t0.0\t0.0\n",
+                    "SELECT array_sum(arr2), array_sum(transpose(arr2)), array_sum(arr2[1]), array_sum(arr2[1:]), array_sum(arr2[2:]) FROM tango");
+        });
+    }
+
+    @Test
+    public void testArraySumNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]]);"
+            );
+            assertSql("array_sum\tarray_sum1\n" +
+                            "45.0\t45.0\n",
+                    "SELECT array_sum(arr), array_sum(transpose(arr)) FROM tango");
         });
     }
 
@@ -265,15 +895,23 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBasicArithmeticInvalid() throws Exception {
+    public void testBasicArithmeticAutoBroadcast() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[], c DOUBLE[][])");
+            execute("CREATE TABLE tango (a DOUBLE[][], b DOUBLE[])");
             execute("INSERT INTO tango VALUES " +
-                    "(ARRAY[2.0, 3], ARRAY[4.0, 5, 6], ARRAY[ [1.0, 2], [3.0, 4] ])");
-            assertException("SELECT a + c from tango", 7,
-                    "arrays have different number of dimensions [nDimsLeft=1, nDimsRight=2]");
-            assertException("SELECT a + b from tango", 7,
-                    "arrays have different shapes [leftShape=[2], rightShape=[3]]");
+                    "(ARRAY[[0.0, 0, 0], [10, 10, 10], [20, 20, 20], [30, 30, 30]], ARRAY[0, 1, 2])");
+            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
+                            "[[0.0,1.0,2.0],[10.0,11.0,12.0],[20.0,21.0,22.0],[30.0,31.0,32.0]]\t[[0.0,-1.0,-2.0],[10.0,9.0,8.0],[20.0,19.0,18.0],[30.0,29.0,28.0]]\t[[0.0,0.0,0.0],[0.0,10.0,20.0],[0.0,20.0,40.0],[0.0,30.0,60.0]]\t[[NaN,0.0,0.0],[Infinity,10.0,5.0],[Infinity,20.0,10.0],[Infinity,30.0,15.0]]\n",
+                    "SELECT a + b, a - b, a * b, a / b FROM tango");
+            assertSql("column\n" +
+                            "[[0.0,-1.0,-4.0],[100.0,99.0,96.0],[400.0,399.0,396.0],[900.0,899.0,896.0]]\n",
+                    "SELECT (a + b) * (a - b) from tango");
+            execute("CREATE TABLE tango1 (a DOUBLE[][], b DOUBLE[])");
+            execute("INSERT INTO tango1 VALUES " +
+                    "(ARRAY[[1.0, 2.0]], ARRAY[0, 1, 2])");
+            assertException("select a + b from tango1",
+                    7,
+                    "arrays have incompatible shapes [leftShape=[1,2], rightShape=[3]]");
         });
     }
 
@@ -368,6 +1006,53 @@ public class ArrayTest extends AbstractCairoTest {
             assertException("ALTER TABLE tango ALTER COLUMN n TYPE LONG128[]", 38, "unsupported array element type [type=LONG128]");
             assertException("ALTER TABLE tango ALTER COLUMN n TYPE GEOHASH[]", 38, "unsupported array element type [type=GEOHASH]");
         });
+    }
+
+    @Test
+    public void testComputeBroadcastShape() throws Exception {
+        IntList shapeLeft = new IntList();
+        IntList shapeRight = new IntList();
+        IntList shapeOutExpected = new IntList();
+
+        fillIntList(shapeLeft, 1);
+        fillIntList(shapeRight, 2);
+        fillIntList(shapeOutExpected, 2);
+        assertBroadcastShape(shapeLeft, shapeRight, shapeOutExpected);
+
+        fillIntList(shapeLeft, 1, 1);
+        fillIntList(shapeRight, 2, 2);
+        fillIntList(shapeOutExpected, 2, 2);
+        assertBroadcastShape(shapeLeft, shapeRight, shapeOutExpected);
+
+        fillIntList(shapeLeft, 1, 2);
+        fillIntList(shapeRight, 2, 1);
+        fillIntList(shapeOutExpected, 2, 2);
+        assertBroadcastShape(shapeLeft, shapeRight, shapeOutExpected);
+
+        fillIntList(shapeLeft, 1);
+        fillIntList(shapeRight, 1, 1);
+        fillIntList(shapeOutExpected, 1, 1);
+        assertBroadcastShape(shapeLeft, shapeRight, shapeOutExpected);
+
+        fillIntList(shapeLeft, 1);
+        fillIntList(shapeRight, 1, 2);
+        fillIntList(shapeOutExpected, 1, 2);
+        assertBroadcastShape(shapeLeft, shapeRight, shapeOutExpected);
+
+        fillIntList(shapeLeft, 1);
+        fillIntList(shapeRight, 2, 2);
+        fillIntList(shapeOutExpected, 2, 2);
+        assertBroadcastShape(shapeLeft, shapeRight, shapeOutExpected);
+
+        fillIntList(shapeLeft, 1, 2);
+        fillIntList(shapeRight, 2, 1, 2);
+        fillIntList(shapeOutExpected, 2, 1, 2);
+        assertBroadcastShape(shapeLeft, shapeRight, shapeOutExpected);
+
+        fillIntList(shapeLeft, 1, 2);
+        fillIntList(shapeRight, 2, 2, 1);
+        fillIntList(shapeOutExpected, 2, 2, 2);
+        assertBroadcastShape(shapeLeft, shapeRight, shapeOutExpected);
     }
 
     @Test
@@ -522,6 +1207,36 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDiv() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[2.0, 3.0], ARRAY[4.0, 0]), " +
+                    "(ARRAY[6.0, null], ARRAY[8.0, 9])," +
+                    "(null, null)");
+            assertSql("div\n" +
+                    "[0.5,Infinity]\n" +
+                    "[0.75,NaN]\n" +
+                    "null\n", "SELECT a / b div FROM tango");
+        });
+    }
+
+    @Test
+    public void testDivSlice3d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[][][], b DOUBLE[][][])");
+            execute("INSERT INTO tango VALUES " +
+                    "( ARRAY[ [ [2.0, 3], [4.0, 5] ], [ [6.0, 7], [8.0, 9] ]  ], " +
+                    "  ARRAY[ [ [10.0, 11], [12.0, 13] ], [ [14.0, 15], [16.0, 20] ]  ] ), " +
+                    "( null, null )");
+            assertSql("div\n" +
+                            "[[[0.1]]]\n" +
+                            "null\n",
+                    "SELECT a[1:2, 1:2, 1:2] / b[2:, 2:, 2:] div FROM tango");
+        });
+    }
+
+    @Test
     public void testDudupArrayAsKey() throws Exception {
         // when an array is part of the dedup key
         // it fails gracefully and with an informative error message
@@ -542,7 +1257,7 @@ public class ArrayTest extends AbstractCairoTest {
             array.setDimLen(0, 0);
             array.applyShape();
             sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayWriteState.INSTANCE);
+            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayWriteState.INSTANCE, false);
             assertEquals("[]", sink.toString());
         }
     }
@@ -620,15 +1335,13 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testExplicitCastDimensionalityChange() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cast\n" +
-                            "[[1.0,2.0]]\n",
+            assertQuery("cast\n[[1.0,2.0]]\n",
                     "SELECT ARRAY[1.0, 2.0]::double[][]",
                     true
             );
 
             // no element arrays
-            assertQuery("cast\n" +
-                            "[]\n", // arrays with no elements are always printed as []
+            assertQuery("cast\n[]\n", // arrays with no elements are always printed as []
                     "SELECT ARRAY[]::double[][]",
                     true
             );
@@ -636,7 +1349,8 @@ public class ArrayTest extends AbstractCairoTest {
             // casting to fewer dimensions is not allowed
             assertException("SELECT ARRAY[[1.0], [2.0]]::double[]",
                     26,
-                    "cannot cast array to lower dimension [from=DOUBLE[][] (2D), to=DOUBLE[] (1D)]. Use array flattening operation (e.g. 'arr[:]' or 'flatten_array(arr)') instead"
+                    "cannot cast array to lower dimension [from=DOUBLE[][] (2D), to=DOUBLE[] (1D)]. " +
+                            "Use array flattening operation (e.g. 'flatten(arr)') instead"
             );
         });
     }
@@ -791,29 +1505,14 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testFlatten() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (arr DOUBLE[][][], flatten_dim INT)");
-            execute("INSERT INTO tango VALUES (ARRAY[[[1.0, 2], [3.0, 4]], [[5.0, 6], [7.0, 8]]], 1)");
-            assertSql("arr\n[[1.0,2.0],[3.0,4.0],[5.0,6.0],[7.0,8.0]]\n", "SELECT flatten(arr, 1) arr FROM tango");
-            assertSql("arr\n[[1.0,2.0],[3.0,4.0],[5.0,6.0],[7.0,8.0]]\n", "SELECT flatten(arr, flatten_dim) arr FROM tango");
-            assertSql("arr\n[[1.0,2.0,3.0,4.0],[5.0,6.0,7.0,8.0]]\n", "SELECT flatten(arr, 2) arr FROM tango");
-            assertSql("arr\n[1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0]\n", "SELECT flatten(flatten(arr, 1), 1) arr FROM tango");
-            assertSql("arr\n[[[2.0],[4.0]],[[6.0],[8.0]]]\n", "SELECT arr[1:, 1:, 2:3] arr FROM tango");
-            assertSql("arr\n[[2.0,4.0],[6.0,8.0]]\n", "SELECT arr[1:, 1:, 2] arr FROM tango");
-            assertSql("arr\n[[2.0,4.0],[6.0,8.0]]\n", "SELECT flatten(arr[1:, 1:, 2:3], 3) arr FROM tango");
-        });
-    }
-
-    @Test
-    public void testFlattenInvalid() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (arr DOUBLE[][][], flatten_dim INT)");
-            execute("INSERT INTO tango VALUES (ARRAY[[[1.0, 2], [3.0, 4]], [[5.0, 6], [7.0, 8]]], 4)");
-            assertException("SELECT flatten(arr, 3) FROM tango", 20,
-                    "cannot flatten dim with stride = 1 and length > 1 [dim=3, dimLen=2, nDims=3]");
-            assertException("SELECT flatten(arr, 4) FROM tango", 20,
-                    "dimension to flatten out of range [nDims=3, flattenDim=4]");
-            assertException("SELECT flatten(arr, flatten_dim) FROM tango", 20,
-                    "dimension to flatten out of range [nDims=3, flattenDim=4]");
+            execute("CREATE TABLE tango (arr DOUBLE[][][])");
+            execute("INSERT INTO tango VALUES (ARRAY[[[1.0, 2, 3], [4.0, 5, 6]], [[7.0, 8, 9], [10.0, 11, 12]]])");
+            assertSql("arr\n[1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0,11.0,12.0]\n",
+                    "SELECT flatten(arr) arr FROM tango");
+            assertSql("arr\n[[[2.0,3.0],[5.0,6.0]],[[8.0,9.0],[11.0,12.0]]]\n",
+                    "SELECT arr[1:, 1:, 2:4] arr FROM tango");
+            assertSql("arr\n[2.0,3.0,5.0,6.0,8.0,9.0,11.0,12.0]\n",
+                    "SELECT flatten(arr[1:, 1:, 2:4]) arr FROM tango");
         });
     }
 
@@ -860,21 +1559,21 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectDoubleNoWAL() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table blah (a double[][])");
-            execute("insert into blah select rnd_double_array(2, 1) from long_sequence(10)");
+            execute("CREATE TABLE blah (a DOUBLE[][])");
+            execute("INSERT INTO blah SELECT rnd_double_array(2, 1) FROM long_sequence(10)");
 
             assertQuery(
                     "a\n" +
-                            "[[null,null,null,null,0.0843832076262595,0.6508594025855301,0.7905675319675964,0.22452340856088226,null,0.6254021542412018,0.4621835429127854,0.5599161804800813,null,0.2390529010846525,0.6693837147631712]]\n" +
-                            "[[0.38539947865244994,0.0035983672154330515,0.3288176907679504,null,0.9771103146051203,0.24808812376657652,0.6381607531178513,null],[null,0.38179758047769774,0.12026122412833129,0.6700476391801052,0.3435685332942956,null,null,0.810161274171258]]\n" +
-                            "[[null,null],[null,null],[null,0.29313719347837397],[null,null],[null,null],[0.931192737286751,null],[0.8001121139739173,null],[0.92050039469858,null]]\n" +
-                            "[[null,null,0.40455469747939254,null,0.5659429139861241,0.8828228366697741,null,null,null,null,0.9566236549439661,null,null,null],[0.8164182592467494,null,0.5449155021518948,null,null,null,0.9640289041849747,0.7133910271555843,null,0.5891216483879789,null,null,0.48558682958070665,null],[0.44804689668613573,null,null,0.14830552335848957,null,null,0.6806873134626418,0.625966045857722,0.8733293804420821,null,0.17833722747266334,null,null,0.026836863013701473]]\n" +
-                            "[[null,null,null,null,0.07246172621937097],[0.4892743433711657,0.8231249461985348,null,0.4295631643526773,null],[0.7632615004324503,0.8816905018995145,null,0.5357010561860446,null],[null,null,null,0.7458169804091256,null],[0.4274704286353759,null,null,null,0.7777024823107295],[null,0.7445998836567925,0.2825582712777682,0.2711532808184136,null],[null,null,null,0.029080850168636263,0.10459352312331183],[null,0.20585069039325443,null,0.9884011094887449,0.9457212646911386],[0.05024615679069011,0.9946372046359034,0.6940904779678791,0.5391626621794673,null],[0.4416432347777828,null,null,null,0.2445295612285482],[null,0.043606408996349044,null,null,0.7260468106076399]]\n" +
-                            "[[null,null,0.06381657870188628,null,0.35731092171284307,0.9583687530177664,null,null,null,null,null,0.6069927532469744,null,null,null,null],[0.062027497477155635,0.6901976778065181,0.7586254118589676,null,null,null,null,null,0.5677191487344088,0.2677326840703891,null,0.23507754029460548,0.20727557301543031,null,0.9292491654871197,null],[0.49154607371672154,0.4167781163798937,0.3454148777596554,null,null,null,0.9423671624137644,null,null,0.7873229912811514,null,null,0.5859332388599638,null,0.3460851141092931,null],[null,null,null,null,null,0.6226001464598434,0.4346135812930124,0.8786111112537701,0.996637725831904,null,0.30028279396280155,null,0.8196554745841765,0.9130151105125102,null,null],[null,null,null,null,null,0.007985454958725269,0.5090837921075583,null,null,null,null,0.8775452659546193,0.8379891991223047,null,null,null],[null,null,null,0.5626370294064983,null,0.49199001716312474,0.6292086569587337,null,null,0.5779007672652298,0.5692090442741059,null,null,null,null,null],[0.7732229848518976,0.587752738240427,0.4667778758533798,null,0.7202789791127316,null,0.7407842990690816,0.9790787740413469,null,0.7527907209539796,null,0.9546417330809595,0.848083900630095,0.4698648140712085,0.8911615631017953,null],[null,0.7431472218131966,0.5889504900909748,null,null,null,0.798471808479839,null,null,null,null,null,0.8574212636138532,0.8280460741052847,0.7842455970681089,null],[null,null,0.3889200123396954,0.933609514582851,null,0.17202485647400034,null,0.4610963091405301,0.5673376522667354,0.48782086416459025,null,0.13312214396754163,0.9435138098640453,null,0.17094358360735395,null],[null,null,0.5449970817079417,null,null,null,null,0.3058008320091107,null,null,0.6479617440673516,0.5900836401674938,0.12217702189166091,0.7717552767944976,null,null]]\n" +
-                            "[[null,0.4627885105398635,0.4028291715584078,null,null,null,null,null,null,0.5501133139397699,0.7134500775259477,null,0.734728770956117,null,null],[0.8531407145325477,null,0.009302399817494589,null,null,0.32824342042623134,null,0.4086323159337839,null,null,null,null,null,null,0.04404000858917945],[0.14295673988709012,null,null,0.36078878996232167,null,null,null,0.7397816490927717,null,0.8386104714017393,0.9561778292078881,0.11048000399634927,null,null,0.11947100943679911],[null,null,null,null,null,0.5335953576307257,null,0.8504099903010793,null,null,null,null,0.15274858078119136,null,0.7468602267994937],[0.55200903114214,null,0.12483505553793961,0.024056391028085766,null,null,0.3663509090570607,null,null,0.6940917925148332,null,null,0.4564667537900823,null,0.4412051102084278],[null,0.43159834345466475,null,null,0.97613283653158,null,0.7707892345682454,0.8782062052833822,null,null,0.8376372223926546,0.365427022047211,null,null,null],[null,null,0.31861843394057765,null,0.9370193388878216,0.39201296350741366,null,0.28813952005117305,0.65372393289891,null,0.9375691350784857,null,0.4913342104187668,null,null],[null,null,null,null,null,0.38881940598288367,0.4444125234732249,null,null,null,null,0.5261234649527643,0.030750139424332357,0.20921704056371593,0.681606585145203],[0.11134244333117826,null,0.5863937813368164,0.2103287968720018,0.3242526975448907,0.42558021324800144,null,0.6068565916347403,null,0.004918542726028763,null,0.008134052047644613,0.1339704489137793,0.4950615235019964,0.04558283749364911],[0.3595576962747611,null,null,0.0966240354078981,null,null,null,null,0.9694731343686098,0.24584615213823513,null,0.5965069739835686,null,0.16979644136429572,0.28122627418701307],[null,null,0.8545896910200949,null,0.40609845936584743,0.041230021906704994,null,0.6852762111021103,0.08039440728458325,0.7600550885615773,0.05890936334115593,0.023600615130049185,null,0.7630648900646654,null]]\n" +
-                            "[[0.48573429889865705,null,null,null,0.6198590038961462],[null,0.7280036952357564,0.6404197786416339,0.828928908465152,null],[null,0.38000152873098747,0.5157225592346661,null,0.16320835762949149],[0.6952925744703682,null,null,null,null],[null,null,0.535993442770838,0.5725722946886976,null],[null,null,null,0.38392106356809774,null]]\n" +
-                            "[[null],[null],[0.5320636725174561],[0.13226561658653546]]\n" +
-                            "[[0.22371932699681862,null,0.38656452532530694,null,0.4019292440508081,null,null,null,0.6367746812001958],[null,null,0.7910659228440695,0.9578716688144072,null,null,0.7861254708288083,0.1319044042993568,0.45862629276476996],[0.3812506482325819,null,0.4104855595304533,null,0.7587860024773928,0.48422909268940273,0.9176263114713273,null,0.6281252905002019],[null,0.2824076895992761,0.9109198044456538,null,0.858967821197869,0.1900488162112337,null,null,0.736755875734414],[0.12465120312903266,0.04734223739255916,0.10424082472921137,null,0.9266929571641075,0.19823647700531244,null,0.265224199619046,null],[0.8306929906890365,null,null,null,null,0.4613501223216129,0.056099346819408535,null,null],[null,0.6355534187114189,0.19073234832401043,null,0.4246651384043666,0.3031376204022046,0.08533575092925538,0.6266142259812271,0.8925004728084927],[null,null,0.8645117110218422,0.7298540433653912,0.588707402066503,null,0.9891642698247116,null,null],[null,null,0.761296424148768,null,0.43990342764801993,0.6130518815428464,0.9755586311085417,0.5522442336842381,0.9385037871004874],[0.16227550791363532,null,null,0.9154548873622441,0.8470755372946043,0.8061988461374605,0.6343133564417237,null,null],[0.9213721848053825,0.30394683981054627,null,0.4510483042269017,null,null,null,null,0.38106875419134767],[0.3838483044911978,null,0.6224023788514188,null,0.3836027299974998,null,0.8151906661765794,null,0.3197593740177185],[null,null,0.4176571781712538,null,null,null,0.5191884769160172,null,null],[0.7200031730502818,null,0.11919556761688443,0.7183071061096172,null,null,0.6391251028594114,null,null],[0.1790475858715116,0.7504512900310369,0.9583685768295167,null,null,null,null,null,0.018689012580364706],[0.8940422626709261,null,0.7536836395346167,0.04727174057972261,null,null,null,0.28598292472656794,null]]\n",
+                            "[[NaN,NaN,NaN,NaN,0.0843832076262595,0.6508594025855301,0.7905675319675964,0.22452340856088226,NaN,0.6254021542412018,0.4621835429127854,0.5599161804800813,NaN,0.2390529010846525,0.6693837147631712]]\n" +
+                            "[[0.38539947865244994,0.0035983672154330515,0.3288176907679504,NaN,0.9771103146051203,0.24808812376657652,0.6381607531178513,NaN],[NaN,0.38179758047769774,0.12026122412833129,0.6700476391801052,0.3435685332942956,NaN,NaN,0.810161274171258]]\n" +
+                            "[[NaN,NaN],[NaN,NaN],[NaN,0.29313719347837397],[NaN,NaN],[NaN,NaN],[0.931192737286751,NaN],[0.8001121139739173,NaN],[0.92050039469858,NaN]]\n" +
+                            "[[NaN,NaN,0.40455469747939254,NaN,0.5659429139861241,0.8828228366697741,NaN,NaN,NaN,NaN,0.9566236549439661,NaN,NaN,NaN],[0.8164182592467494,NaN,0.5449155021518948,NaN,NaN,NaN,0.9640289041849747,0.7133910271555843,NaN,0.5891216483879789,NaN,NaN,0.48558682958070665,NaN],[0.44804689668613573,NaN,NaN,0.14830552335848957,NaN,NaN,0.6806873134626418,0.625966045857722,0.8733293804420821,NaN,0.17833722747266334,NaN,NaN,0.026836863013701473]]\n" +
+                            "[[NaN,NaN,NaN,NaN,0.07246172621937097],[0.4892743433711657,0.8231249461985348,NaN,0.4295631643526773,NaN],[0.7632615004324503,0.8816905018995145,NaN,0.5357010561860446,NaN],[NaN,NaN,NaN,0.7458169804091256,NaN],[0.4274704286353759,NaN,NaN,NaN,0.7777024823107295],[NaN,0.7445998836567925,0.2825582712777682,0.2711532808184136,NaN],[NaN,NaN,NaN,0.029080850168636263,0.10459352312331183],[NaN,0.20585069039325443,NaN,0.9884011094887449,0.9457212646911386],[0.05024615679069011,0.9946372046359034,0.6940904779678791,0.5391626621794673,NaN],[0.4416432347777828,NaN,NaN,NaN,0.2445295612285482],[NaN,0.043606408996349044,NaN,NaN,0.7260468106076399]]\n" +
+                            "[[NaN,NaN,0.06381657870188628,NaN,0.35731092171284307,0.9583687530177664,NaN,NaN,NaN,NaN,NaN,0.6069927532469744,NaN,NaN,NaN,NaN],[0.062027497477155635,0.6901976778065181,0.7586254118589676,NaN,NaN,NaN,NaN,NaN,0.5677191487344088,0.2677326840703891,NaN,0.23507754029460548,0.20727557301543031,NaN,0.9292491654871197,NaN],[0.49154607371672154,0.4167781163798937,0.3454148777596554,NaN,NaN,NaN,0.9423671624137644,NaN,NaN,0.7873229912811514,NaN,NaN,0.5859332388599638,NaN,0.3460851141092931,NaN],[NaN,NaN,NaN,NaN,NaN,0.6226001464598434,0.4346135812930124,0.8786111112537701,0.996637725831904,NaN,0.30028279396280155,NaN,0.8196554745841765,0.9130151105125102,NaN,NaN],[NaN,NaN,NaN,NaN,NaN,0.007985454958725269,0.5090837921075583,NaN,NaN,NaN,NaN,0.8775452659546193,0.8379891991223047,NaN,NaN,NaN],[NaN,NaN,NaN,0.5626370294064983,NaN,0.49199001716312474,0.6292086569587337,NaN,NaN,0.5779007672652298,0.5692090442741059,NaN,NaN,NaN,NaN,NaN],[0.7732229848518976,0.587752738240427,0.4667778758533798,NaN,0.7202789791127316,NaN,0.7407842990690816,0.9790787740413469,NaN,0.7527907209539796,NaN,0.9546417330809595,0.848083900630095,0.4698648140712085,0.8911615631017953,NaN],[NaN,0.7431472218131966,0.5889504900909748,NaN,NaN,NaN,0.798471808479839,NaN,NaN,NaN,NaN,NaN,0.8574212636138532,0.8280460741052847,0.7842455970681089,NaN],[NaN,NaN,0.3889200123396954,0.933609514582851,NaN,0.17202485647400034,NaN,0.4610963091405301,0.5673376522667354,0.48782086416459025,NaN,0.13312214396754163,0.9435138098640453,NaN,0.17094358360735395,NaN],[NaN,NaN,0.5449970817079417,NaN,NaN,NaN,NaN,0.3058008320091107,NaN,NaN,0.6479617440673516,0.5900836401674938,0.12217702189166091,0.7717552767944976,NaN,NaN]]\n" +
+                            "[[NaN,0.4627885105398635,0.4028291715584078,NaN,NaN,NaN,NaN,NaN,NaN,0.5501133139397699,0.7134500775259477,NaN,0.734728770956117,NaN,NaN],[0.8531407145325477,NaN,0.009302399817494589,NaN,NaN,0.32824342042623134,NaN,0.4086323159337839,NaN,NaN,NaN,NaN,NaN,NaN,0.04404000858917945],[0.14295673988709012,NaN,NaN,0.36078878996232167,NaN,NaN,NaN,0.7397816490927717,NaN,0.8386104714017393,0.9561778292078881,0.11048000399634927,NaN,NaN,0.11947100943679911],[NaN,NaN,NaN,NaN,NaN,0.5335953576307257,NaN,0.8504099903010793,NaN,NaN,NaN,NaN,0.15274858078119136,NaN,0.7468602267994937],[0.55200903114214,NaN,0.12483505553793961,0.024056391028085766,NaN,NaN,0.3663509090570607,NaN,NaN,0.6940917925148332,NaN,NaN,0.4564667537900823,NaN,0.4412051102084278],[NaN,0.43159834345466475,NaN,NaN,0.97613283653158,NaN,0.7707892345682454,0.8782062052833822,NaN,NaN,0.8376372223926546,0.365427022047211,NaN,NaN,NaN],[NaN,NaN,0.31861843394057765,NaN,0.9370193388878216,0.39201296350741366,NaN,0.28813952005117305,0.65372393289891,NaN,0.9375691350784857,NaN,0.4913342104187668,NaN,NaN],[NaN,NaN,NaN,NaN,NaN,0.38881940598288367,0.4444125234732249,NaN,NaN,NaN,NaN,0.5261234649527643,0.030750139424332357,0.20921704056371593,0.681606585145203],[0.11134244333117826,NaN,0.5863937813368164,0.2103287968720018,0.3242526975448907,0.42558021324800144,NaN,0.6068565916347403,NaN,0.004918542726028763,NaN,0.008134052047644613,0.1339704489137793,0.4950615235019964,0.04558283749364911],[0.3595576962747611,NaN,NaN,0.0966240354078981,NaN,NaN,NaN,NaN,0.9694731343686098,0.24584615213823513,NaN,0.5965069739835686,NaN,0.16979644136429572,0.28122627418701307],[NaN,NaN,0.8545896910200949,NaN,0.40609845936584743,0.041230021906704994,NaN,0.6852762111021103,0.08039440728458325,0.7600550885615773,0.05890936334115593,0.023600615130049185,NaN,0.7630648900646654,NaN]]\n" +
+                            "[[0.48573429889865705,NaN,NaN,NaN,0.6198590038961462],[NaN,0.7280036952357564,0.6404197786416339,0.828928908465152,NaN],[NaN,0.38000152873098747,0.5157225592346661,NaN,0.16320835762949149],[0.6952925744703682,NaN,NaN,NaN,NaN],[NaN,NaN,0.535993442770838,0.5725722946886976,NaN],[NaN,NaN,NaN,0.38392106356809774,NaN]]\n" +
+                            "[[NaN],[NaN],[0.5320636725174561],[0.13226561658653546]]\n" +
+                            "[[0.22371932699681862,NaN,0.38656452532530694,NaN,0.4019292440508081,NaN,NaN,NaN,0.6367746812001958],[NaN,NaN,0.7910659228440695,0.9578716688144072,NaN,NaN,0.7861254708288083,0.1319044042993568,0.45862629276476996],[0.3812506482325819,NaN,0.4104855595304533,NaN,0.7587860024773928,0.48422909268940273,0.9176263114713273,NaN,0.6281252905002019],[NaN,0.2824076895992761,0.9109198044456538,NaN,0.858967821197869,0.1900488162112337,NaN,NaN,0.736755875734414],[0.12465120312903266,0.04734223739255916,0.10424082472921137,NaN,0.9266929571641075,0.19823647700531244,NaN,0.265224199619046,NaN],[0.8306929906890365,NaN,NaN,NaN,NaN,0.4613501223216129,0.056099346819408535,NaN,NaN],[NaN,0.6355534187114189,0.19073234832401043,NaN,0.4246651384043666,0.3031376204022046,0.08533575092925538,0.6266142259812271,0.8925004728084927],[NaN,NaN,0.8645117110218422,0.7298540433653912,0.588707402066503,NaN,0.9891642698247116,NaN,NaN],[NaN,NaN,0.761296424148768,NaN,0.43990342764801993,0.6130518815428464,0.9755586311085417,0.5522442336842381,0.9385037871004874],[0.16227550791363532,NaN,NaN,0.9154548873622441,0.8470755372946043,0.8061988461374605,0.6343133564417237,NaN,NaN],[0.9213721848053825,0.30394683981054627,NaN,0.4510483042269017,NaN,NaN,NaN,NaN,0.38106875419134767],[0.3838483044911978,NaN,0.6224023788514188,NaN,0.3836027299974998,NaN,0.8151906661765794,NaN,0.3197593740177185],[NaN,NaN,0.4176571781712538,NaN,NaN,NaN,0.5191884769160172,NaN,NaN],[0.7200031730502818,NaN,0.11919556761688443,0.7183071061096172,NaN,NaN,0.6391251028594114,NaN,NaN],[0.1790475858715116,0.7504512900310369,0.9583685768295167,NaN,NaN,NaN,NaN,NaN,0.018689012580364706],[0.8940422626709261,NaN,0.7536836395346167,0.04727174057972261,NaN,NaN,NaN,0.28598292472656794,NaN]]\n",
                     "select * from blah",
                     true
             );
@@ -931,6 +1630,120 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES (ARRAY[[[]],[[]]])");
             execute("INSERT INTO tango VALUES (ARRAY[[[],[]]])");
             assertSql("arr\n[]\n[]\n[]\n", "tango");
+        });
+    }
+
+    @Test
+    public void testInsertNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[])");
+            execute("INSERT INTO tango VALUES (ARRAY[1.0, 2, 3][2:])");
+            assertSql("arr\n[2.0,3.0]\n", "tango");
+        });
+    }
+
+    @Test
+    public void testInsertPoint() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[9.0, 10, 12, 20, 22, 22, 22, 100, 1000, 1001], ARRAY[[9.0, 10, 12, 20, 22, 22, 22, 100, 1000, 1001]]), " +
+                    "(ARRAY[1001.0, 1000, 100, 22, 22, 22, 20, 12, 10, 9], ARRAY[[1001.0, 1000, 100, 22, 22, 22, 20, 12, 10, 9]])," +
+                    "(null, null)"
+            );
+            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
+                            "1\t11\t2\t11\t4\t8\t10\n" +
+                            "11\t1\t11\t2\t8\t7\t3\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
+                    "SELECT " +
+                            "insertion_point(arr1, 8, false) i1, " +
+                            "insertion_point(arr1, 2000, false) i2, " +
+                            "insertion_point(arr1, 9, false) i3, " +
+                            "insertion_point(arr1, 1001, false) i4, " +
+                            "insertion_point(arr1, 18, false) i5, " +
+                            "insertion_point(arr1, 22, false) i6, " +
+                            "insertion_point(arr1[1:], 1000, false) i7, " +
+                            "FROM tango");
+            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
+                            "1\t11\t1\t10\t4\t5\t9\n" +
+                            "11\t1\t10\t1\t8\t4\t2\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
+                    "SELECT " +
+                            "insertion_point(arr1, 8, true) i1, " +
+                            "insertion_point(arr1, 2000, true) i2, " +
+                            "insertion_point(arr1, 9, true) i3, " +
+                            "insertion_point(arr1, 1001, true) i4, " +
+                            "insertion_point(arr1, 18, true) i5, " +
+                            "insertion_point(arr1, 22, true) i6, " +
+                            "insertion_point(arr1[1:], 1000, true) i7, " +
+                            "FROM tango");
+            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
+                            "1\t11\t2\t11\t4\t8\t10\n" +
+                            "11\t1\t11\t2\t8\t7\t3\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
+                    "SELECT " +
+                            "insertion_point(arr2[1], 8) i1, " +
+                            "insertion_point(arr2[1], 2000) i2, " +
+                            "insertion_point(arr2[1], 9) i3, " +
+                            "insertion_point(arr2[1], 1001) i4, " +
+                            "insertion_point(arr2[1], 18) i5, " +
+                            "insertion_point(arr2[1], 22) i6, " +
+                            "insertion_point(arr2[1, 1:], 1000) i7, " +
+                            "FROM tango");
+
+            assertExceptionNoLeakCheck("SELECT insertion_point(arr2, 0) len FROM tango",
+                    23, "array is not one-dimensional");
+        });
+    }
+
+    @Test
+    public void testInsertPointNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[9.0], [10], [12], [20], [22], [22], [22], [100], [1000], [1001]]), " +
+                    "(ARRAY[[1001.0], [1000], [100], [22], [22], [22], [20], [12], [10], [9]])," +
+                    "(null)"
+            );
+            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
+                            "1\t11\t2\t11\t4\t8\t10\n" +
+                            "11\t1\t11\t2\t8\t7\t3\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
+                    "SELECT " +
+                            "insertion_point(transpose(arr)[1], 8, false) i1, " +
+                            "insertion_point(transpose(arr)[1], 2000, false) i2, " +
+                            "insertion_point(transpose(arr)[1], 9, false) i3, " +
+                            "insertion_point(transpose(arr)[1], 1001, false) i4, " +
+                            "insertion_point(transpose(arr)[1], 18, false) i5, " +
+                            "insertion_point(transpose(arr)[1], 22, false) i6, " +
+                            "insertion_point(transpose(arr)[1, 1:], 1000, false) i7, " +
+                            "FROM tango");
+            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
+                            "1\t11\t1\t10\t4\t5\t9\n" +
+                            "11\t1\t10\t1\t8\t4\t2\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
+                    "SELECT " +
+                            "insertion_point(transpose(arr)[1], 8, true) i1, " +
+                            "insertion_point(transpose(arr)[1], 2000, true) i2, " +
+                            "insertion_point(transpose(arr)[1], 9, true) i3, " +
+                            "insertion_point(transpose(arr)[1], 1001, true) i4, " +
+                            "insertion_point(transpose(arr)[1], 18, true) i5, " +
+                            "insertion_point(transpose(arr)[1], 22, true) i6, " +
+                            "insertion_point(transpose(arr)[1][1:], 1000, true) i7, " +
+                            "FROM tango");
+            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
+                            "1\t11\t2\t11\t4\t8\t10\n" +
+                            "11\t1\t11\t2\t8\t7\t3\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
+                    "SELECT " +
+                            "insertion_point(transpose(arr)[1], 8) i1, " +
+                            "insertion_point(transpose(arr)[1], 2000) i2, " +
+                            "insertion_point(transpose(arr)[1], 9) i3, " +
+                            "insertion_point(transpose(arr)[1], 1001) i4, " +
+                            "insertion_point(transpose(arr)[1], 18) i5, " +
+                            "insertion_point(transpose(arr)[1], 22) i6, " +
+                            "insertion_point(transpose(arr)[1, 1:], 1000) i7, " +
+                            "FROM tango");
         });
     }
 
@@ -994,6 +1807,25 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (ts timestamp, x int, v double[]) timestamp(ts) partition by DAY WAL dedup upsert keys (ts, x) ");
+            execute("create materialized view test_mv as select ts, x, first(v) as v from test sample by 1s");
+            execute("insert into test(ts,x,v) values ('2022-02-24', 1, ARRAY[1.0,1.0]), ('2022-02-24', 2, null), ('2022-02-24', 3, ARRAY[2.0,2.0])");
+
+            drainWalAndMatViewQueues();
+
+            assertSql(
+                    "ts\tx\tv\n" +
+                            "2022-02-24T00:00:00.000000Z\t1\t[1.0,1.0]\n" +
+                            "2022-02-24T00:00:00.000000Z\t2\tnull\n" +
+                            "2022-02-24T00:00:00.000000Z\t3\t[2.0,2.0]\n",
+                    "test"
+            );
+        });
+    }
+
+    @Test
     public void testMatrixMultiply() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (left DOUBLE[][], right DOUBLE[][])");
@@ -1005,18 +1837,29 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMatrixMultiplyAutoBroadcasting() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT " +
+                    "ARRAY[[2.0, 3.0],[4.0, 5.0], [6.0, 7.0]] left, ARRAY[1.0, 2.0] right " +
+                    "FROM long_sequence(1))");
+            assertSql("product\n" +
+                    "[[8.0],[14.0],[20.0]]\n", "SELECT matmul(left, right) AS product FROM tango");
+        });
+    }
+
+    @Test
     public void testMatrixMultiplyInvalid() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT " +
-                    "ARRAY[[1.0, 2.0]] left2d, ARRAY[1.0] left1d, " +
-                    "ARRAY[[1.0]] right2d, ARRAY[1.0] right1d "
+                    "ARRAY[[[1.0, 2.0]]] left3d, ARRAY[1.0] left1d, " +
+                    "ARRAY[[[1.0]]] right3d, ARRAY[1.0, 2.0] right1d "
                     + "FROM long_sequence(1))");
             assertExceptionNoLeakCheck("SELECT matmul(left1d, right1d) FROM tango",
-                    14, "left array is not two-dimensional");
-            assertExceptionNoLeakCheck("SELECT matmul(left2d, right1d) FROM tango",
-                    22, "right array is not two-dimensional");
-            assertExceptionNoLeakCheck("SELECT matmul(left2d, right2d) FROM tango",
-                    14, "left array row length doesn't match right array column length");
+                    14, "left array row length doesn't match right array column length [leftRowLen=1, rightColLen=2]");
+            assertExceptionNoLeakCheck("SELECT matmul(left3d, right1d) FROM tango",
+                    22, "left array is not one or two-dimensional");
+            assertExceptionNoLeakCheck("SELECT matmul(left1d, right3d) FROM tango",
+                    22, "right array is not one or two-dimensional");
         });
     }
 
@@ -1075,7 +1918,7 @@ public class ArrayTest extends AbstractCairoTest {
             memA.putDouble(5);
             memA.putDouble(6);
             sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayWriteState.INSTANCE);
+            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayWriteState.INSTANCE, false);
             String textViewStr = sink.toString();
 
             long start = mem;
@@ -1089,13 +1932,37 @@ public class ArrayTest extends AbstractCairoTest {
                 start += size;
             } while (!finish);
 
-            ArrayTypeDriver.arrayToJson(parserNative.getArray(), sink, NoopArrayWriteState.INSTANCE);
+            ArrayTypeDriver.arrayToJson(parserNative.getArray(), sink, NoopArrayWriteState.INSTANCE, false);
             assertEquals(textViewStr, sink.toString());
         } catch (ArrayBinaryFormatParser.ParseException e) {
             throw new RuntimeException(e);
         } finally {
             Unsafe.free(mem, allocSize, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    @Test
+    public void testNegArrayValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[2.0, null], ARRAY[[2.0, 4], [4.0, 8]]), " +
+                    "(ARRAY[16.0, 0], ARRAY[[8.0, 4]])," +
+                    "(null, null)");
+
+            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
+                    "[6.0,NaN]\t[[4.0,0.0],[0.0,-8.0]]\t[0.0,-2.0]\t[[-2.0,-6.0]]\n" +
+                    "[-8.0,8.0]\t[[-8.0,0.0]]\t[-6.0,-2.0]\t[]\n" +
+                    "null\tnull\tnull\tnull\n", "SELECT - a + 8, (- b + 4.0) * 2.0, - b[1] + 2.0, - b[2:] + 2.0 FROM tango");
+            assertSql("column\tcolumn1\n" +
+                    "[14.0,NaN]\t[[14.0,12.0],[12.0,8.0]]\n" +
+                    "[0.0,16.0]\t[[8.0],[12.0]]\n" +
+                    "null\tnull\n", "SELECT - transpose(a) + 16.0, - transpose(b) + 16.0 FROM tango");
+            assertSql("column\tcolumn1\n" +
+                    "[-2.0,NaN]\t[NaN,NaN]\n" +
+                    "[-16.0,0.0]\t[NaN,NaN]\n" +
+                    "null\tnull\n", "SELECT - a + 0.0, - a + null::double FROM tango");
+        });
     }
 
     @Test
@@ -1265,7 +2132,7 @@ public class ArrayTest extends AbstractCairoTest {
 
             assertSql(
                     "rnd_double_array\n" +
-                            "[[0.13123360041292131,null],[null,0.22452340856088226]]\n",
+                            "[[0.13123360041292131,NaN],[NaN,0.22452340856088226]]\n",
                     "select rnd_double_array(2, 1, 0, 2, 2)"
             );
 
@@ -1284,6 +2151,52 @@ public class ArrayTest extends AbstractCairoTest {
                             "    long_sequence count: 1\n",
                     "explain select rnd_double_array(3, 1, 4)"
             );
+        });
+    }
+
+    @Test
+    public void testScalarDivArrayValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[2.0, null], ARRAY[[2.0, 4], [4.0, 8]]), " +
+                    "(ARRAY[16.0, 0], ARRAY[[8.0, 4]])," +
+                    "(null, null)");
+            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
+                    "[4.0,NaN]\t[[4.0,2.0],[2.0,1.0]]\t[0.5,0.25]\t[[5.0,2.5]]\n" +
+                    "[0.5,Infinity]\t[[1.0,2.0]]\t[0.125,0.25]\t[]\n" +
+                    "null\tnull\tnull\tnull\n", "SELECT 8.0 / a, 4.0 / b * 2.0, 2.0 / b[1] * 0.5, 2 / b[2:] * 10 FROM tango");
+            assertSql("column\tcolumn1\n" +
+                    "[8.0,NaN]\t[[8.0,4.0],[4.0,2.0]]\n" +
+                    "[1.0,Infinity]\t[[2.0],[4.0]]\n" +
+                    "null\tnull\n", "SELECT 16.0 / transpose(a), 16.0 / transpose(b)FROM tango");
+            assertSql("column\tcolumn1\n" +
+                    "[0.0,NaN]\t[NaN,NaN]\n" +
+                    "[0.0,NaN]\t[NaN,NaN]\n" +
+                    "null\tnull\n", "SELECT 0.0 / a, null::double / a FROM tango");
+        });
+    }
+
+    @Test
+    public void testScalarMinusArrayValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[2.0, null], ARRAY[[2.0, 4], [4.0, 8]]), " +
+                    "(ARRAY[16.0, 0], ARRAY[[8.0, 4]])," +
+                    "(null, null)");
+            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
+                    "[6.0,NaN]\t[[4.0,0.0],[0.0,-8.0]]\t[0.0,-2.0]\t[[-2.0,-6.0]]\n" +
+                    "[-8.0,8.0]\t[[-8.0,0.0]]\t[-6.0,-2.0]\t[]\n" +
+                    "null\tnull\tnull\tnull\n", "SELECT 8.0 - a, (4.0 - b)* 2.0, 2.0 - b[1], 2 - b[2:] FROM tango");
+            assertSql("column\tcolumn1\n" +
+                    "[14.0,NaN]\t[[14.0,12.0],[12.0,8.0]]\n" +
+                    "[0.0,16.0]\t[[8.0],[12.0]]\n" +
+                    "null\tnull\n", "SELECT 16.0 - transpose(a), 16.0 - transpose(b)FROM tango");
+            assertSql("column\tcolumn1\n" +
+                    "[-2.0,NaN]\t[NaN,NaN]\n" +
+                    "[-16.0,0.0]\t[NaN,NaN]\n" +
+                    "null\tnull\n", "SELECT 0.0 - a, null::double - a FROM tango");
         });
     }
 
@@ -1438,8 +2351,8 @@ public class ArrayTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[[1.0, 2], [3.0, 4]], [[5.0, 6], [7.0, 8]]] arr FROM long_sequence(1))");
 
-            assertSql("x\n[]\n", "SELECT arr[3] x FROM tango");
-            assertSql("x\n[]\n", "SELECT arr[2, 3] x FROM tango");
+            assertSql("x\nnull\n", "SELECT arr[3] x FROM tango");
+            assertSql("x\nnull\n", "SELECT arr[2, 3] x FROM tango");
         });
     }
 
@@ -1458,7 +2371,7 @@ public class ArrayTest extends AbstractCairoTest {
             memA.putDouble(3.0);
             memA.putDouble(4.0);
             sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayWriteState.INSTANCE);
+            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayWriteState.INSTANCE, false);
             assertEquals("[[1.0,2.0],[3.0,4.0]]", sink.toString());
         }
     }
@@ -1595,26 +2508,26 @@ public class ArrayTest extends AbstractCairoTest {
 
             assertSql(
                     "ts\tarr\n" +
-                            "1970-01-06T18:53:20.000000Z\t[[null,null,null,null,0.0843832076262595,0.6508594025855301,0.7905675319675964,0.22452340856088226,null,0.6254021542412018,0.4621835429127854,0.5599161804800813,null,0.2390529010846525,0.6693837147631712]]\n" +
-                            "1970-01-06T18:53:21.000000Z\t[[0.38539947865244994,0.0035983672154330515,0.3288176907679504,null,0.9771103146051203,0.24808812376657652,0.6381607531178513,null],[null,0.38179758047769774,0.12026122412833129,0.6700476391801052,0.3435685332942956,null,null,0.810161274171258]]\n" +
-                            "1970-01-06T18:53:22.000000Z\t[[null,null],[null,null],[null,0.29313719347837397],[null,null],[null,null],[0.931192737286751,null],[0.8001121139739173,null],[0.92050039469858,null]]\n" +
-                            "1970-01-06T18:53:23.000000Z\t[[null,null,0.40455469747939254,null,0.5659429139861241,0.8828228366697741,null,null,null,null,0.9566236549439661,null,null,null],[0.8164182592467494,null,0.5449155021518948,null,null,null,0.9640289041849747,0.7133910271555843,null,0.5891216483879789,null,null,0.48558682958070665,null],[0.44804689668613573,null,null,0.14830552335848957,null,null,0.6806873134626418,0.625966045857722,0.8733293804420821,null,0.17833722747266334,null,null,0.026836863013701473]]\n" +
-                            "1970-01-06T18:53:24.000000Z\t[[null,null,null,null,0.07246172621937097],[0.4892743433711657,0.8231249461985348,null,0.4295631643526773,null],[0.7632615004324503,0.8816905018995145,null,0.5357010561860446,null],[null,null,null,0.7458169804091256,null],[0.4274704286353759,null,null,null,0.7777024823107295],[null,0.7445998836567925,0.2825582712777682,0.2711532808184136,null],[null,null,null,0.029080850168636263,0.10459352312331183],[null,0.20585069039325443,null,0.9884011094887449,0.9457212646911386],[0.05024615679069011,0.9946372046359034,0.6940904779678791,0.5391626621794673,null],[0.4416432347777828,null,null,null,0.2445295612285482],[null,0.043606408996349044,null,null,0.7260468106076399]]\n" +
-                            "1970-01-06T18:53:25.000000Z\t[[null,null,0.06381657870188628,null,0.35731092171284307,0.9583687530177664,null,null,null,null,null,0.6069927532469744,null,null,null,null],[0.062027497477155635,0.6901976778065181,0.7586254118589676,null,null,null,null,null,0.5677191487344088,0.2677326840703891,null,0.23507754029460548,0.20727557301543031,null,0.9292491654871197,null],[0.49154607371672154,0.4167781163798937,0.3454148777596554,null,null,null,0.9423671624137644,null,null,0.7873229912811514,null,null,0.5859332388599638,null,0.3460851141092931,null],[null,null,null,null,null,0.6226001464598434,0.4346135812930124,0.8786111112537701,0.996637725831904,null,0.30028279396280155,null,0.8196554745841765,0.9130151105125102,null,null],[null,null,null,null,null,0.007985454958725269,0.5090837921075583,null,null,null,null,0.8775452659546193,0.8379891991223047,null,null,null],[null,null,null,0.5626370294064983,null,0.49199001716312474,0.6292086569587337,null,null,0.5779007672652298,0.5692090442741059,null,null,null,null,null],[0.7732229848518976,0.587752738240427,0.4667778758533798,null,0.7202789791127316,null,0.7407842990690816,0.9790787740413469,null,0.7527907209539796,null,0.9546417330809595,0.848083900630095,0.4698648140712085,0.8911615631017953,null],[null,0.7431472218131966,0.5889504900909748,null,null,null,0.798471808479839,null,null,null,null,null,0.8574212636138532,0.8280460741052847,0.7842455970681089,null],[null,null,0.3889200123396954,0.933609514582851,null,0.17202485647400034,null,0.4610963091405301,0.5673376522667354,0.48782086416459025,null,0.13312214396754163,0.9435138098640453,null,0.17094358360735395,null],[null,null,0.5449970817079417,null,null,null,null,0.3058008320091107,null,null,0.6479617440673516,0.5900836401674938,0.12217702189166091,0.7717552767944976,null,null]]\n" +
-                            "1970-01-06T18:53:26.000000Z\t[[null,0.4627885105398635,0.4028291715584078,null,null,null,null,null,null,0.5501133139397699,0.7134500775259477,null,0.734728770956117,null,null],[0.8531407145325477,null,0.009302399817494589,null,null,0.32824342042623134,null,0.4086323159337839,null,null,null,null,null,null,0.04404000858917945],[0.14295673988709012,null,null,0.36078878996232167,null,null,null,0.7397816490927717,null,0.8386104714017393,0.9561778292078881,0.11048000399634927,null,null,0.11947100943679911],[null,null,null,null,null,0.5335953576307257,null,0.8504099903010793,null,null,null,null,0.15274858078119136,null,0.7468602267994937],[0.55200903114214,null,0.12483505553793961,0.024056391028085766,null,null,0.3663509090570607,null,null,0.6940917925148332,null,null,0.4564667537900823,null,0.4412051102084278],[null,0.43159834345466475,null,null,0.97613283653158,null,0.7707892345682454,0.8782062052833822,null,null,0.8376372223926546,0.365427022047211,null,null,null],[null,null,0.31861843394057765,null,0.9370193388878216,0.39201296350741366,null,0.28813952005117305,0.65372393289891,null,0.9375691350784857,null,0.4913342104187668,null,null],[null,null,null,null,null,0.38881940598288367,0.4444125234732249,null,null,null,null,0.5261234649527643,0.030750139424332357,0.20921704056371593,0.681606585145203],[0.11134244333117826,null,0.5863937813368164,0.2103287968720018,0.3242526975448907,0.42558021324800144,null,0.6068565916347403,null,0.004918542726028763,null,0.008134052047644613,0.1339704489137793,0.4950615235019964,0.04558283749364911],[0.3595576962747611,null,null,0.0966240354078981,null,null,null,null,0.9694731343686098,0.24584615213823513,null,0.5965069739835686,null,0.16979644136429572,0.28122627418701307],[null,null,0.8545896910200949,null,0.40609845936584743,0.041230021906704994,null,0.6852762111021103,0.08039440728458325,0.7600550885615773,0.05890936334115593,0.023600615130049185,null,0.7630648900646654,null]]\n" +
-                            "1970-01-06T18:53:27.000000Z\t[[0.48573429889865705,null,null,null,0.6198590038961462],[null,0.7280036952357564,0.6404197786416339,0.828928908465152,null],[null,0.38000152873098747,0.5157225592346661,null,0.16320835762949149],[0.6952925744703682,null,null,null,null],[null,null,0.535993442770838,0.5725722946886976,null],[null,null,null,0.38392106356809774,null]]\n" +
-                            "1970-01-06T18:53:28.000000Z\t[[null],[null],[0.5320636725174561],[0.13226561658653546]]\n" +
-                            "1970-01-06T18:53:29.000000Z\t[[0.22371932699681862,null,0.38656452532530694,null,0.4019292440508081,null,null,null,0.6367746812001958],[null,null,0.7910659228440695,0.9578716688144072,null,null,0.7861254708288083,0.1319044042993568,0.45862629276476996],[0.3812506482325819,null,0.4104855595304533,null,0.7587860024773928,0.48422909268940273,0.9176263114713273,null,0.6281252905002019],[null,0.2824076895992761,0.9109198044456538,null,0.858967821197869,0.1900488162112337,null,null,0.736755875734414],[0.12465120312903266,0.04734223739255916,0.10424082472921137,null,0.9266929571641075,0.19823647700531244,null,0.265224199619046,null],[0.8306929906890365,null,null,null,null,0.4613501223216129,0.056099346819408535,null,null],[null,0.6355534187114189,0.19073234832401043,null,0.4246651384043666,0.3031376204022046,0.08533575092925538,0.6266142259812271,0.8925004728084927],[null,null,0.8645117110218422,0.7298540433653912,0.588707402066503,null,0.9891642698247116,null,null],[null,null,0.761296424148768,null,0.43990342764801993,0.6130518815428464,0.9755586311085417,0.5522442336842381,0.9385037871004874],[0.16227550791363532,null,null,0.9154548873622441,0.8470755372946043,0.8061988461374605,0.6343133564417237,null,null],[0.9213721848053825,0.30394683981054627,null,0.4510483042269017,null,null,null,null,0.38106875419134767],[0.3838483044911978,null,0.6224023788514188,null,0.3836027299974998,null,0.8151906661765794,null,0.3197593740177185],[null,null,0.4176571781712538,null,null,null,0.5191884769160172,null,null],[0.7200031730502818,null,0.11919556761688443,0.7183071061096172,null,null,0.6391251028594114,null,null],[0.1790475858715116,0.7504512900310369,0.9583685768295167,null,null,null,null,null,0.018689012580364706],[0.8940422626709261,null,0.7536836395346167,0.04727174057972261,null,null,null,0.28598292472656794,null]]\n" +
-                            "1970-01-01T00:00:00.000000Z\t[[0.16638148883943538,0.42955172504398687,null,null,null,null,0.5455175324785665,0.8248550185892197,null,0.8669667625804924]]\n" +
-                            "1970-01-01T00:01:40.000000Z\t[[0.8542659024913913,null,0.13027802162685043,null,null,0.7820780604033565,0.11594908641822632,0.865090011761414,null,null,0.3669999679163578,0.7116036820921031]]\n" +
-                            "1970-01-01T00:03:20.000000Z\t[[null,null,0.7995154334778554,null,0.04653410879629005]]\n" +
-                            "1970-01-01T00:05:00.000000Z\t[[null,null,null,null]]\n" +
-                            "1970-01-01T00:06:40.000000Z\t[[0.32317345869453706,0.9632550816669818,null,null,null,null,0.7436419445622273,null,null,null,null,0.9700250276928207,0.9251043257912728,null,null,null]]\n" +
-                            "1970-01-01T00:08:20.000000Z\t[[null,null]]\n" +
-                            "1970-01-01T00:10:00.000000Z\t[[0.04229155272030727,null,0.11500943478849246,null,0.23290767295012593,0.5892857157920004,0.0983023224719013,null,0.04969674919093636,0.9615445349922865]]\n" +
-                            "1970-01-01T00:11:40.000000Z\t[[null,null]]\n" +
-                            "1970-01-01T00:13:20.000000Z\t[[0.8503316000896455,0.8671405978559277,null,null,null,null,null,null,null,null,null,null]]\n" +
-                            "1970-01-01T00:15:00.000000Z\t[[0.543578943048389,0.2524690658195553,null,null,0.8503583964852268,null,0.9236914780318218,0.9759588687260482,null,0.39303711474170466,0.10999942140960017,null,0.8267002457663516,null,null]]\n",
+                            "1970-01-06T18:53:20.000000Z\t[[NaN,NaN,NaN,NaN,0.0843832076262595,0.6508594025855301,0.7905675319675964,0.22452340856088226,NaN,0.6254021542412018,0.4621835429127854,0.5599161804800813,NaN,0.2390529010846525,0.6693837147631712]]\n" +
+                            "1970-01-06T18:53:21.000000Z\t[[0.38539947865244994,0.0035983672154330515,0.3288176907679504,NaN,0.9771103146051203,0.24808812376657652,0.6381607531178513,NaN],[NaN,0.38179758047769774,0.12026122412833129,0.6700476391801052,0.3435685332942956,NaN,NaN,0.810161274171258]]\n" +
+                            "1970-01-06T18:53:22.000000Z\t[[NaN,NaN],[NaN,NaN],[NaN,0.29313719347837397],[NaN,NaN],[NaN,NaN],[0.931192737286751,NaN],[0.8001121139739173,NaN],[0.92050039469858,NaN]]\n" +
+                            "1970-01-06T18:53:23.000000Z\t[[NaN,NaN,0.40455469747939254,NaN,0.5659429139861241,0.8828228366697741,NaN,NaN,NaN,NaN,0.9566236549439661,NaN,NaN,NaN],[0.8164182592467494,NaN,0.5449155021518948,NaN,NaN,NaN,0.9640289041849747,0.7133910271555843,NaN,0.5891216483879789,NaN,NaN,0.48558682958070665,NaN],[0.44804689668613573,NaN,NaN,0.14830552335848957,NaN,NaN,0.6806873134626418,0.625966045857722,0.8733293804420821,NaN,0.17833722747266334,NaN,NaN,0.026836863013701473]]\n" +
+                            "1970-01-06T18:53:24.000000Z\t[[NaN,NaN,NaN,NaN,0.07246172621937097],[0.4892743433711657,0.8231249461985348,NaN,0.4295631643526773,NaN],[0.7632615004324503,0.8816905018995145,NaN,0.5357010561860446,NaN],[NaN,NaN,NaN,0.7458169804091256,NaN],[0.4274704286353759,NaN,NaN,NaN,0.7777024823107295],[NaN,0.7445998836567925,0.2825582712777682,0.2711532808184136,NaN],[NaN,NaN,NaN,0.029080850168636263,0.10459352312331183],[NaN,0.20585069039325443,NaN,0.9884011094887449,0.9457212646911386],[0.05024615679069011,0.9946372046359034,0.6940904779678791,0.5391626621794673,NaN],[0.4416432347777828,NaN,NaN,NaN,0.2445295612285482],[NaN,0.043606408996349044,NaN,NaN,0.7260468106076399]]\n" +
+                            "1970-01-06T18:53:25.000000Z\t[[NaN,NaN,0.06381657870188628,NaN,0.35731092171284307,0.9583687530177664,NaN,NaN,NaN,NaN,NaN,0.6069927532469744,NaN,NaN,NaN,NaN],[0.062027497477155635,0.6901976778065181,0.7586254118589676,NaN,NaN,NaN,NaN,NaN,0.5677191487344088,0.2677326840703891,NaN,0.23507754029460548,0.20727557301543031,NaN,0.9292491654871197,NaN],[0.49154607371672154,0.4167781163798937,0.3454148777596554,NaN,NaN,NaN,0.9423671624137644,NaN,NaN,0.7873229912811514,NaN,NaN,0.5859332388599638,NaN,0.3460851141092931,NaN],[NaN,NaN,NaN,NaN,NaN,0.6226001464598434,0.4346135812930124,0.8786111112537701,0.996637725831904,NaN,0.30028279396280155,NaN,0.8196554745841765,0.9130151105125102,NaN,NaN],[NaN,NaN,NaN,NaN,NaN,0.007985454958725269,0.5090837921075583,NaN,NaN,NaN,NaN,0.8775452659546193,0.8379891991223047,NaN,NaN,NaN],[NaN,NaN,NaN,0.5626370294064983,NaN,0.49199001716312474,0.6292086569587337,NaN,NaN,0.5779007672652298,0.5692090442741059,NaN,NaN,NaN,NaN,NaN],[0.7732229848518976,0.587752738240427,0.4667778758533798,NaN,0.7202789791127316,NaN,0.7407842990690816,0.9790787740413469,NaN,0.7527907209539796,NaN,0.9546417330809595,0.848083900630095,0.4698648140712085,0.8911615631017953,NaN],[NaN,0.7431472218131966,0.5889504900909748,NaN,NaN,NaN,0.798471808479839,NaN,NaN,NaN,NaN,NaN,0.8574212636138532,0.8280460741052847,0.7842455970681089,NaN],[NaN,NaN,0.3889200123396954,0.933609514582851,NaN,0.17202485647400034,NaN,0.4610963091405301,0.5673376522667354,0.48782086416459025,NaN,0.13312214396754163,0.9435138098640453,NaN,0.17094358360735395,NaN],[NaN,NaN,0.5449970817079417,NaN,NaN,NaN,NaN,0.3058008320091107,NaN,NaN,0.6479617440673516,0.5900836401674938,0.12217702189166091,0.7717552767944976,NaN,NaN]]\n" +
+                            "1970-01-06T18:53:26.000000Z\t[[NaN,0.4627885105398635,0.4028291715584078,NaN,NaN,NaN,NaN,NaN,NaN,0.5501133139397699,0.7134500775259477,NaN,0.734728770956117,NaN,NaN],[0.8531407145325477,NaN,0.009302399817494589,NaN,NaN,0.32824342042623134,NaN,0.4086323159337839,NaN,NaN,NaN,NaN,NaN,NaN,0.04404000858917945],[0.14295673988709012,NaN,NaN,0.36078878996232167,NaN,NaN,NaN,0.7397816490927717,NaN,0.8386104714017393,0.9561778292078881,0.11048000399634927,NaN,NaN,0.11947100943679911],[NaN,NaN,NaN,NaN,NaN,0.5335953576307257,NaN,0.8504099903010793,NaN,NaN,NaN,NaN,0.15274858078119136,NaN,0.7468602267994937],[0.55200903114214,NaN,0.12483505553793961,0.024056391028085766,NaN,NaN,0.3663509090570607,NaN,NaN,0.6940917925148332,NaN,NaN,0.4564667537900823,NaN,0.4412051102084278],[NaN,0.43159834345466475,NaN,NaN,0.97613283653158,NaN,0.7707892345682454,0.8782062052833822,NaN,NaN,0.8376372223926546,0.365427022047211,NaN,NaN,NaN],[NaN,NaN,0.31861843394057765,NaN,0.9370193388878216,0.39201296350741366,NaN,0.28813952005117305,0.65372393289891,NaN,0.9375691350784857,NaN,0.4913342104187668,NaN,NaN],[NaN,NaN,NaN,NaN,NaN,0.38881940598288367,0.4444125234732249,NaN,NaN,NaN,NaN,0.5261234649527643,0.030750139424332357,0.20921704056371593,0.681606585145203],[0.11134244333117826,NaN,0.5863937813368164,0.2103287968720018,0.3242526975448907,0.42558021324800144,NaN,0.6068565916347403,NaN,0.004918542726028763,NaN,0.008134052047644613,0.1339704489137793,0.4950615235019964,0.04558283749364911],[0.3595576962747611,NaN,NaN,0.0966240354078981,NaN,NaN,NaN,NaN,0.9694731343686098,0.24584615213823513,NaN,0.5965069739835686,NaN,0.16979644136429572,0.28122627418701307],[NaN,NaN,0.8545896910200949,NaN,0.40609845936584743,0.041230021906704994,NaN,0.6852762111021103,0.08039440728458325,0.7600550885615773,0.05890936334115593,0.023600615130049185,NaN,0.7630648900646654,NaN]]\n" +
+                            "1970-01-06T18:53:27.000000Z\t[[0.48573429889865705,NaN,NaN,NaN,0.6198590038961462],[NaN,0.7280036952357564,0.6404197786416339,0.828928908465152,NaN],[NaN,0.38000152873098747,0.5157225592346661,NaN,0.16320835762949149],[0.6952925744703682,NaN,NaN,NaN,NaN],[NaN,NaN,0.535993442770838,0.5725722946886976,NaN],[NaN,NaN,NaN,0.38392106356809774,NaN]]\n" +
+                            "1970-01-06T18:53:28.000000Z\t[[NaN],[NaN],[0.5320636725174561],[0.13226561658653546]]\n" +
+                            "1970-01-06T18:53:29.000000Z\t[[0.22371932699681862,NaN,0.38656452532530694,NaN,0.4019292440508081,NaN,NaN,NaN,0.6367746812001958],[NaN,NaN,0.7910659228440695,0.9578716688144072,NaN,NaN,0.7861254708288083,0.1319044042993568,0.45862629276476996],[0.3812506482325819,NaN,0.4104855595304533,NaN,0.7587860024773928,0.48422909268940273,0.9176263114713273,NaN,0.6281252905002019],[NaN,0.2824076895992761,0.9109198044456538,NaN,0.858967821197869,0.1900488162112337,NaN,NaN,0.736755875734414],[0.12465120312903266,0.04734223739255916,0.10424082472921137,NaN,0.9266929571641075,0.19823647700531244,NaN,0.265224199619046,NaN],[0.8306929906890365,NaN,NaN,NaN,NaN,0.4613501223216129,0.056099346819408535,NaN,NaN],[NaN,0.6355534187114189,0.19073234832401043,NaN,0.4246651384043666,0.3031376204022046,0.08533575092925538,0.6266142259812271,0.8925004728084927],[NaN,NaN,0.8645117110218422,0.7298540433653912,0.588707402066503,NaN,0.9891642698247116,NaN,NaN],[NaN,NaN,0.761296424148768,NaN,0.43990342764801993,0.6130518815428464,0.9755586311085417,0.5522442336842381,0.9385037871004874],[0.16227550791363532,NaN,NaN,0.9154548873622441,0.8470755372946043,0.8061988461374605,0.6343133564417237,NaN,NaN],[0.9213721848053825,0.30394683981054627,NaN,0.4510483042269017,NaN,NaN,NaN,NaN,0.38106875419134767],[0.3838483044911978,NaN,0.6224023788514188,NaN,0.3836027299974998,NaN,0.8151906661765794,NaN,0.3197593740177185],[NaN,NaN,0.4176571781712538,NaN,NaN,NaN,0.5191884769160172,NaN,NaN],[0.7200031730502818,NaN,0.11919556761688443,0.7183071061096172,NaN,NaN,0.6391251028594114,NaN,NaN],[0.1790475858715116,0.7504512900310369,0.9583685768295167,NaN,NaN,NaN,NaN,NaN,0.018689012580364706],[0.8940422626709261,NaN,0.7536836395346167,0.04727174057972261,NaN,NaN,NaN,0.28598292472656794,NaN]]\n" +
+                            "1970-01-01T00:00:00.000000Z\t[[0.16638148883943538,0.42955172504398687,NaN,NaN,NaN,NaN,0.5455175324785665,0.8248550185892197,NaN,0.8669667625804924]]\n" +
+                            "1970-01-01T00:01:40.000000Z\t[[0.8542659024913913,NaN,0.13027802162685043,NaN,NaN,0.7820780604033565,0.11594908641822632,0.865090011761414,NaN,NaN,0.3669999679163578,0.7116036820921031]]\n" +
+                            "1970-01-01T00:03:20.000000Z\t[[NaN,NaN,0.7995154334778554,NaN,0.04653410879629005]]\n" +
+                            "1970-01-01T00:05:00.000000Z\t[[NaN,NaN,NaN,NaN]]\n" +
+                            "1970-01-01T00:06:40.000000Z\t[[0.32317345869453706,0.9632550816669818,NaN,NaN,NaN,NaN,0.7436419445622273,NaN,NaN,NaN,NaN,0.9700250276928207,0.9251043257912728,NaN,NaN,NaN]]\n" +
+                            "1970-01-01T00:08:20.000000Z\t[[NaN,NaN]]\n" +
+                            "1970-01-01T00:10:00.000000Z\t[[0.04229155272030727,NaN,0.11500943478849246,NaN,0.23290767295012593,0.5892857157920004,0.0983023224719013,NaN,0.04969674919093636,0.9615445349922865]]\n" +
+                            "1970-01-01T00:11:40.000000Z\t[[NaN,NaN]]\n" +
+                            "1970-01-01T00:13:20.000000Z\t[[0.8503316000896455,0.8671405978559277,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]]\n" +
+                            "1970-01-01T00:15:00.000000Z\t[[0.543578943048389,0.2524690658195553,NaN,NaN,0.8503583964852268,NaN,0.9236914780318218,0.9759588687260482,NaN,0.39303711474170466,0.10999942140960017,NaN,0.8267002457663516,NaN,NaN]]\n",
                     "z"
             );
         });
@@ -1720,5 +2633,12 @@ public class ArrayTest extends AbstractCairoTest {
                     "too many array dimensions [nDims=33, maxNDims=32]"
             );
         });
+    }
+
+    private static void fillIntList(IntList list, int... values) {
+        list.clear();
+        for (int i : values) {
+            list.add(i);
+        }
     }
 }

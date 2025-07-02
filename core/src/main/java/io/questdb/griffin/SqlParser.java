@@ -31,6 +31,8 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
@@ -60,6 +62,8 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -244,21 +248,84 @@ public class SqlParser {
         return visitor.visit(node);
     }
 
-    public static void validateMatViewIntervalUnit(char unit, int pos) throws SqlException {
+    public static void validateMatViewDelay(int lengthInterval, char lengthUnit, int delayInterval, char delayUnit, int pos) throws SqlException {
+        int lengthMinutes;
+        switch (lengthUnit) {
+            case 'm':
+                lengthMinutes = lengthInterval;
+                break;
+            case 'h':
+                lengthMinutes = lengthInterval * 60;
+                break;
+            case 'd':
+                lengthMinutes = lengthInterval * 24 * 60;
+                break;
+            default:
+                throw SqlException.position(pos).put("unsupported length unit: ").put(lengthInterval).put(lengthUnit)
+                        .put(", supported units are 'm', 'h', 'd'");
+        }
+
+        int delayMinutes;
+        switch (delayUnit) {
+            case 'm':
+                delayMinutes = delayInterval;
+                break;
+            case 'h':
+                delayMinutes = delayInterval * 60;
+                break;
+            case 'd':
+                delayMinutes = delayInterval * 24 * 60;
+                break;
+            default:
+                throw SqlException.position(pos).put("unsupported delay unit: ").put(delayInterval).put(delayUnit)
+                        .put(", supported units are 'm', 'h', 'd'");
+        }
+
+        if (delayMinutes >= lengthMinutes) {
+            throw SqlException.position(pos).put("delay cannot be equal to or greater than length");
+        }
+    }
+
+    public static void validateMatViewEveryUnit(char unit, int pos) throws SqlException {
         if (unit != 'M' && unit != 'y' && unit != 'w' && unit != 'd' && unit != 'h' && unit != 'm') {
             throw SqlException.position(pos).put("unsupported interval unit: ").put(unit)
                     .put(", supported units are 'm', 'h', 'd', 'w', 'y', 'M'");
         }
     }
 
+    public static void validateMatViewLength(int interval, char unit, int pos) throws SqlException {
+        switch (unit) {
+            case 'm':
+                if (interval > 24 * 60) {
+                    throw SqlException.position(pos).put("maximum supported length interval is 24 hours: ").put(interval).put(unit);
+                }
+                break;
+            case 'h':
+                if (interval > 24) {
+                    throw SqlException.position(pos).put("maximum supported length interval is 24 hours: ").put(interval).put(unit);
+                }
+                break;
+            case 'd':
+                if (interval > 1) {
+                    throw SqlException.position(pos).put("maximum supported length interval is 24 hours: ").put(interval).put(unit);
+                }
+                break;
+            default:
+                throw SqlException.position(pos).put("unsupported length unit: ").put(interval).put(unit)
+                        .put(", supported units are 'm', 'h', 'd'");
+        }
+    }
+
     private static void collectAllTableNames(
-            QueryModel model, LowerCaseCharSequenceHashSet outTableNames, IntList outTableNamePositions
+            @NotNull QueryModel model,
+            @NotNull LowerCaseCharSequenceHashSet outTableNames,
+            @Nullable IntList outTableNamePositions
     ) {
         QueryModel m = model;
         do {
             final ExpressionNode tableNameExpr = m.getTableNameExpr();
             if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
-                if (outTableNames.add(unquote(tableNameExpr.token))) {
+                if (outTableNames.add(unquote(tableNameExpr.token)) && outTableNamePositions != null) {
                     outTableNamePositions.add(tableNameExpr.position);
                 }
             }
@@ -291,36 +358,6 @@ public class SqlParser {
 
     private static SqlException errUnexpected(GenericLexer lexer, CharSequence token, @NotNull CharSequence extraMessage) {
         return SqlException.unexpectedToken(lexer.lastTokenPosition(), token, extraMessage);
-    }
-
-    private static boolean isTableQueried(QueryModel model, String tableName) {
-        for (QueryModel m = model; m != null; m = m.getNestedModel()) {
-            final ExpressionNode tableNameExpr = m.getTableNameExpr();
-            if (tableNameExpr != null
-                    && tableNameExpr.type == ExpressionNode.LITERAL
-                    && Chars.equalsIgnoreCase(tableName, unquote(tableNameExpr.token))
-            ) {
-                return true;
-            }
-
-            final ObjList<QueryModel> joinModels = m.getJoinModels();
-            for (int i = 0, n = joinModels.size(); i < n; i++) {
-                final QueryModel joinModel = joinModels.getQuick(i);
-                if (joinModel == m) {
-                    continue;
-                }
-                if (isTableQueried(joinModel, tableName)) {
-                    return true;
-                }
-            }
-
-            final QueryModel unionModel = m.getUnionModel();
-            if (unionModel != null && isTableQueried(unionModel, tableName)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private static boolean isValidSampleByPeriodLetter(CharSequence token) {
@@ -371,7 +408,11 @@ public class SqlParser {
 
     private static void validateMatViewQuery(QueryModel model, String baseTableName) throws SqlException {
         for (QueryModel m = model; m != null; m = m.getNestedModel()) {
-            final boolean baseTableQueried = isTableQueried(m, baseTableName);
+            tableNames.clear();
+            tableNamePositions.clear();
+            collectAllTableNames(m, tableNames, null);
+            final boolean baseTableQueried = tableNames.contains(baseTableName);
+            final int queriedTableCount = tableNames.size();
             if (baseTableQueried) {
                 if (m.getSampleBy() != null && m.getSampleByOffset() == null) {
                     throw SqlException.position(m.getSampleBy().position + m.getSampleBy().token.length() + 1)
@@ -415,7 +456,8 @@ public class SqlParser {
 
             final QueryModel unionModel = m.getUnionModel();
             if (unionModel != null) {
-                if (baseTableQueried) {
+                // allow self-UNION on base table, but disallow UNION on base table with any other tables
+                if (baseTableQueried && queriedTableCount > 1) {
                     throw SqlException.position(m.getUnionModel().getModelPosition())
                             .put("union on base table is not supported for materialized views: ").put(baseTableName);
                 }
@@ -878,7 +920,7 @@ public class SqlParser {
         int baseTableNamePos = 0;
         if (isWithKeyword(tok)) {
             expectTok(lexer, "base");
-            tok = tok(lexer, "base table expected");
+            tok = tok(lexer, "base table");
             baseTableName = sansPublicSchema(tok, lexer);
             assertNameIsQuotedOrNotAKeyword(baseTableName, lexer.lastTokenPosition());
             baseTableName = unquote(baseTableName);
@@ -886,43 +928,127 @@ public class SqlParser {
             tok = tok(lexer, "'as' or 'refresh'");
         }
 
-        int refreshType = MatViewDefinition.INCREMENTAL_REFRESH_TYPE;
+        boolean refreshDefined = false;
+        int refreshType = MatViewDefinition.REFRESH_TYPE_IMMEDIATE;
+        boolean deferred = false;
         if (isRefreshKeyword(tok)) {
-            tok = tok(lexer, "'incremental' or 'start' or 'every' or 'as' expected");
+            refreshDefined = true;
+            tok = tok(lexer, "'immediate' or 'manual' or 'period' or 'start' or 'every' or 'as'");
+            int every = 0;
+            char everyUnit = 0;
+            // 'incremental' is obsolete, replaced with 'immediate'
             if (isIncrementalKeyword(tok)) {
-                tok = tok(lexer, "'start' or 'every' or 'as'");
-            } else if (!isStartKeyword(tok) && !isEveryKeyword(tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "'incremental' or 'start' or 'every' or 'as' expected");
-            }
-
-            long start = Numbers.LONG_NULL;
-            if (isStartKeyword(tok)) {
-                tok = tok(lexer, "START timestamp");
-                try {
-                    start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
-                } catch (NumericException e) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
-                }
-                tok = tok(lexer, "'every'");
-            }
-
-            if (isEveryKeyword(tok)) {
-                if (start == Numbers.LONG_NULL) {
-                    // Use the current time as the start timestamp if it wasn't specified.
-                    start = configuration.getMicrosecondClock().getTicks();
-                }
-                tok = tok(lexer, "interval");
-                final int interval = Timestamps.getStrideMultiple(tok);
-                final char unit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
-                validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
-                refreshType = MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE;
-                tableOpBuilder.setMatViewTimer(start, interval, unit);
                 tok = tok(lexer, "'as'");
-            } else if (start != Numbers.LONG_NULL) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("'every' expected");
+            } else if (isImmediateKeyword(tok)) {
+                tok = tok(lexer, "'deferred' or 'period' or 'as'");
+            } else if (isManualKeyword(tok)) {
+                if (!configuration.isMatViewDebugEnabled()) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put("manual refresh is in beta and disabled by default");
+                }
+                refreshType = MatViewDefinition.REFRESH_TYPE_MANUAL;
+                tok = tok(lexer, "'deferred' or 'period' or 'as'");
+            } else if (isEveryKeyword(tok)) {
+                tok = tok(lexer, "interval");
+                every = Timestamps.getStrideMultiple(tok);
+                everyUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                validateMatViewEveryUnit(everyUnit, lexer.lastTokenPosition());
+                refreshType = MatViewDefinition.REFRESH_TYPE_TIMER;
+                tok = tok(lexer, "'deferred' or 'start' or 'period' or 'as'");
+            }
+
+            if (isDeferredKeyword(tok)) {
+                deferred = true;
+                if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
+                    tok = tok(lexer, "'start' or 'period' or 'as'");
+                } else {
+                    tok = tok(lexer, "'period' or 'as'");
+                }
+            }
+
+            if (isPeriodKeyword(tok)) {
+                // REFRESH [IMMEDIATE | MANUAL | EVERY <interval>] PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
+                expectTok(lexer, "(");
+                expectTok(lexer, "length");
+                tok = tok(lexer, "LENGTH interval");
+                final int length = Timestamps.getStrideMultiple(tok);
+                final char lengthUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
+                final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(length, lengthUnit, lexer.lastTokenPosition());
+                tok = tok(lexer, "'time zone' or 'delay' or ')'");
+
+                TimeZoneRules tzRules = null;
+                String tz = null;
+                if (isTimeKeyword(tok)) {
+                    expectTok(lexer, "zone");
+                    tok = tok(lexer, "TIME ZONE name");
+                    if (Chars.equals(tok, ')') || isDelayKeyword(tok)) {
+                        throw SqlException.position(lexer.lastTokenPosition()).put("TIME ZONE name expected");
+                    }
+                    tz = unquote(tok).toString();
+                    try {
+                        tzRules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, tz);
+                    } catch (NumericException e) {
+                        throw SqlException.position(lexer.lastTokenPosition()).put("invalid timezone: ").put(tz);
+                    }
+                    tok = tok(lexer, "'delay' or ')'");
+                }
+
+                int delay = 0;
+                char delayUnit = 0;
+                if (isDelayKeyword(tok)) {
+                    tok = tok(lexer, "DELAY interval");
+                    delay = Timestamps.getStrideMultiple(tok);
+                    delayUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                    validateMatViewDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
+                    tok = tok(lexer, "')'");
+                }
+
+                if (!Chars.equals(tok, ')')) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
+                }
+
+                // Period timer start is at the boundary of the current period.
+                final long now = configuration.getMicrosecondClock().getTicks();
+                final long nowLocal = tzRules != null ? now + tzRules.getOffset(now) : now;
+                final long start = periodSampler.round(nowLocal);
+
+                mvOpBuilder.setTimer(tz, start, every, everyUnit);
+                mvOpBuilder.setPeriodLength(length, lengthUnit, delay, delayUnit);
+                tok = tok(lexer, "'as'");
+            } else if (!isAsKeyword(tok)) {
+                // REFRESH EVERY <interval> [START '<datetime>' [TIME ZONE '<timezone>']]
+                if (refreshType != MatViewDefinition.REFRESH_TYPE_TIMER) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'as' expected");
+                }
+                // Use the current time as the start timestamp if it wasn't specified.
+                long start = configuration.getMicrosecondClock().getTicks();
+                String timeZone = null;
+                if (isStartKeyword(tok)) {
+                    tok = tok(lexer, "START timestamp");
+                    try {
+                        start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                    } catch (NumericException e) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
+                    }
+                    tok = tok(lexer, "'time zone' or 'as'");
+
+                    if (isTimeKeyword(tok)) {
+                        expectTok(lexer, "zone");
+                        tok = tok(lexer, "TIME ZONE name");
+                        timeZone = unquote(tok).toString();
+                        tok = tok(lexer, "'as'");
+                    }
+                }
+                mvOpBuilder.setTimer(timeZone, start, every, everyUnit);
+            } else if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
+                // REFRESH EVERY <interval> AS
+                // Don't forget to set timer params.
+                final long start = configuration.getMicrosecondClock().getTicks();
+                mvOpBuilder.setTimer(null, start, every, everyUnit);
             }
         }
         mvOpBuilder.setRefreshType(refreshType);
+        mvOpBuilder.setDeferred(deferred);
 
         boolean enclosedInParentheses;
         if (isAsKeyword(tok)) {
@@ -945,11 +1071,12 @@ public class SqlParser {
             final QueryModel queryModel = parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback, null);
             final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
 
+            tableNames.clear();
+            tableNamePositions.clear();
+            collectAllTableNames(queryModel, tableNames, tableNamePositions);
+
             // Find base table name if not set explicitly.
             if (baseTableName == null) {
-                tableNames.clear();
-                tableNamePositions.clear();
-                collectAllTableNames(queryModel, tableNames, tableNamePositions);
                 if (tableNames.size() < 1) {
                     throw SqlException.$(startOfQuery, "missing base table, materialized views have to be based on a table");
                 }
@@ -965,7 +1092,7 @@ public class SqlParser {
             mvOpBuilder.setBaseTableName(baseTableNameStr);
 
             // Basic validation - check all nested models that read from the base table for window functions, unions, FROM-TO, or FILL.
-            if (!isTableQueried(queryModel, baseTableNameStr)) {
+            if (!tableNames.contains(baseTableNameStr)) {
                 throw SqlException.position(queryModel.getModelPosition())
                         .put("base table is not referenced in materialized view query: ").put(baseTableName);
             }
@@ -996,6 +1123,9 @@ public class SqlParser {
                 return mvOpBuilder;
             }
         } else {
+            if (refreshDefined) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
+            }
             throw SqlException.position(lexer.lastTokenPosition()).put("'refresh' or 'as' expected");
         }
 
@@ -2520,6 +2650,7 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "Cross joins cannot have join clauses");
         }
 
+        boolean onClauseObserved = false;
         switch (joinType) {
             case QueryModel.JOIN_ASOF:
             case QueryModel.JOIN_LT:
@@ -2532,6 +2663,7 @@ public class SqlParser {
             case QueryModel.JOIN_INNER:
             case QueryModel.JOIN_OUTER:
                 expectTok(lexer, tok, "on");
+                onClauseObserved = true;
                 try {
                     expressionParser.parseExpr(lexer, expressionTreeBuilder, sqlParserCallback, decls);
                     ExpressionNode expr;
@@ -2569,6 +2701,37 @@ public class SqlParser {
                 break;
         }
 
+        tok = optTok(lexer);
+        if (tok == null || !SqlKeywords.isToleranceKeyword(tok)) {
+            lexer.unparseLast();
+            return joinModel;
+        }
+        if (joinType != QueryModel.JOIN_ASOF && joinType != QueryModel.JOIN_LT) {
+            throw SqlException.$(lexer.lastTokenPosition(), "TOLERANCE is only supported for ASOF and LT joins");
+        }
+
+        final ExpressionNode n = expr(lexer, null, sqlParserCallback, decls);
+        if (n == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "ASOF JOIN TOLERANCE period expected");
+        }
+        if (n.type == ExpressionNode.OPERATION && n.token != null && Chars.equals(n.token, "-")) {
+            throw SqlException.$(lexer.lastTokenPosition(), "ASOF JOIN TOLERANCE must be positive");
+        }
+        if (n.type != ExpressionNode.CONSTANT) {
+            throw SqlException.$(lexer.lastTokenPosition(), "ASOF JOIN TOLERANCE must be a constant");
+        }
+        joinModel.setAsOfJoinTolerance(n);
+
+        if (!onClauseObserved) {
+            // no join clauses yet
+            tok = optTok(lexer);
+            if (tok != null && SqlKeywords.isOnKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'ON' clause must precede 'TOLERANCE' clause. " +
+                        "Hint: put the ON condition right after the JOIN, then add TOLERANCE, " +
+                        "e.g. … ASOF JOIN t2 ON t1.ts = t2.ts TOLERANCE 1h");
+            }
+            lexer.unparseLast();
+        }
         return joinModel;
     }
 
@@ -4006,6 +4169,7 @@ public class SqlParser {
         tableAliasStop.add("except");
         tableAliasStop.add("intersect");
         tableAliasStop.add("from");
+        tableAliasStop.add("tolerance");
         //
         columnAliasStop.add("from");
         columnAliasStop.add(",");

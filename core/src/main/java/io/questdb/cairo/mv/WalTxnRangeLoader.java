@@ -39,7 +39,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
@@ -85,44 +84,30 @@ public class WalTxnRangeLoader implements QuietCloseable {
         }
     }
 
-    private void loadTransactionDetailsFromWalE(Path tempPath, int rootLen, TransactionLogCursor transactionLogCursor, LongList intervals, long txnLo, long txnHi) {
+    private void loadTransactionDetailsFromWalE(
+            Path tempPath,
+            int rootLen,
+            TransactionLogCursor transactionLogCursor,
+            LongList intervals,
+            long txnLo,
+            long txnHi
+    ) {
         txnDetails.clear();
+
+        minTimestamp = Long.MAX_VALUE;
+        maxTimestamp = Long.MIN_VALUE;
 
         try (WalEventReader eventReader = walEventReader) {
             final int maxLoadTxnCount = (int) (txnHi - txnLo);
             int txnsToLoad = (int) Math.min(maxLoadTxnCount, transactionLogCursor.getMaxTxn() - txnLo + 1);
             if (txnsToLoad > 0) {
-                txnDetails.setCapacity(txnsToLoad * 4L);
-
-                // Load the map of outstanding WAL transactions to load necessary details from WAL-E files efficiently.
-                long max = Long.MIN_VALUE, min = Long.MAX_VALUE;
-                int txn;
-                for (txn = 0; txn < txnsToLoad && transactionLogCursor.hasNext(); txn++) {
-                    long long1 = Numbers.encodeLowHighInts(transactionLogCursor.getSegmentId(), transactionLogCursor.getWalId() - MIN_WAL_ID);
-                    max = Math.max(max, long1);
-                    min = Math.min(min, long1);
-                    txnDetails.add(long1);
-                    txnDetails.add(Numbers.encodeLowHighInts(transactionLogCursor.getSegmentTxn(), txn));
-                }
-                txnsToLoad = txn;
-
-                // We specify min as 0, so we expect the highest bit to be 0
-                Vect.radixSortLongIndexAscChecked(
-                        txnDetails.getAddress(),
-                        txnsToLoad,
-                        txnDetails.getAddress() + txnsToLoad * 2L * Long.BYTES,
-                        min,
-                        max
-                );
+                txnsToLoad = WalTxnDetails.loadTxns(transactionLogCursor, txnsToLoad, txnDetails);
 
                 int lastWalId = -1;
                 int lastSegmentId = -1;
                 int lastSegmentTxn = -2;
 
                 WalEventCursor walEventCursor = null;
-                minTimestamp = Long.MAX_VALUE;
-                maxTimestamp = Long.MIN_VALUE;
-
                 for (int i = 0; i < txnsToLoad; i++) {
                     long long1 = txnDetails.get(2L * i);
                     long long2 = txnDetails.get(2L * i + 1);

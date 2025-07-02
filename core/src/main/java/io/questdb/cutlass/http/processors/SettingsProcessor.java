@@ -152,7 +152,7 @@ public class SettingsProcessor implements HttpRequestHandler {
                 settingsStore.save(transientState.utf8Sink, mode, version);
                 sendOk();
             } catch (CairoException e) {
-                LOG.error().$("could not save preferences [msg=").$(e.getFlyweightMessage()).I$();
+                LOG.error().$("could not save preferences [msg=").$safe(e.getFlyweightMessage()).I$();
                 sendErr(e);
             } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
                 throw e;

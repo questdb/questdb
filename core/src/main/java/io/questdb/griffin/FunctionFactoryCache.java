@@ -25,8 +25,8 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.griffin.engine.functions.ArgSwappingFunctionFactory;
 import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
-import io.questdb.griffin.engine.functions.SwappingArgsFunctionFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -99,11 +99,16 @@ public class FunctionFactoryCache {
                         cursorFunctionNames.add(name);
                     } else if (factory.isRuntimeConstant()) {
                         runtimeConstantFunctionNames.add(name);
+                    } else if (factory.shouldSwapArgs() && descriptor.getSigArgCount() == 2 &&
+                            descriptor.getArgTypeWithFlags(0) != descriptor.getArgTypeWithFlags(1)
+                    ) {
+                        FunctionFactory swappingFactory = createSwappingFactory(name, factory);
+                        addFactoryToList(factories, swappingFactory);
                     }
                 } catch (SqlException e) {
                     LOG.error().$((Sinkable) e)
-                            .$(" [signature=").$(factory.getSignature())
-                            .$(", class=").$(factory.getClass().getName())
+                            .$(" [signature=").$safe(factory.getSignature())
+                            .$(", class=").$safe(factory.getClass().getName())
                             .I$();
                 }
             }
@@ -177,6 +182,6 @@ public class FunctionFactoryCache {
     }
 
     private FunctionFactory createSwappingFactory(String name, FunctionFactory factory) throws SqlException {
-        return new SwappingArgsFunctionFactory(name, factory);
+        return new ArgSwappingFunctionFactory(name, factory);
     }
 }

@@ -40,6 +40,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.HashMap;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -75,20 +76,25 @@ public class ServerMainQueryTimeoutTest extends AbstractBootstrapTest {
 
     @Test
     public void testQueryTimeout() throws Exception {
-        try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+            put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
+        }})) {
             serverMain.start();
 
+            final long rowCount = 10_000_000;
             try (
                     Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
                     Statement stmt = conn.createStatement()
             ) {
                 stmt.execute(
                         "CREATE TABLE tab as (" +
-                                "  select (x * 864000000)::timestamp ts, ('k' || (x % 5))::symbol key, x:: double price, x::long quantity " +
-                                "  from long_sequence(10000000)" +
+                                "select (x * 864_000_000)::timestamp ts, ('k' || (x % 5))::symbol key, x::double price, x::long quantity" +
+                                " from long_sequence(" + rowCount + ")" +
                                 ") timestamp (ts) PARTITION BY MONTH WAL;"
                 );
             }
+
+            TestUtils.drainWalQueue(serverMain.getEngine());
 
             final int nThreads = 4;
             final int nIterations = 100;
@@ -106,7 +112,7 @@ public class ServerMainQueryTimeoutTest extends AbstractBootstrapTest {
 
                         try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
                             for (int i = 0; i < nIterations; i++) {
-                                final String query = "SELECT * FROM tab WHERE key = 'k0' or key = 'k3' LIMIT 1999990, 2000000";
+                                final String query = "SELECT * FROM tab WHERE key = 'k0' or key = 'k3' LIMIT 1_999_990, 2_000_000";
                                 final StringBuilder sb = new StringBuilder(query);
                                 if (!useQueryCache) {
                                     // append a random trailing comment, so that the query cache doesn't kick in

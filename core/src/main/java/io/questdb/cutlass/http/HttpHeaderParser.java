@@ -587,7 +587,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             }
         }
         if (cookie == null) {
-            LOG.error().$("malformed cookie [value=").$(csPool.next().of(lo, hi)).I$();
+            LOG.error().$("malformed cookie [value=").$safe(csPool.next().of(lo, hi)).I$();
             return;
         }
         if (cookie.cookieName != null && cookie.value == null) {

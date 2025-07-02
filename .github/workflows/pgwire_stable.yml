@@ -4,7 +4,7 @@ name: PGWire - Stable clients
 
 on:
   pull_request:
-    types: [ synchronize, opened, reopened, edited ]
+    types: [ synchronize, opened, reopened ]
   workflow_dispatch:
 
 jobs:

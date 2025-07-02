@@ -38,10 +38,20 @@ public interface DirectUtf8Sequence extends Utf8Sequence, DirectByteSequence {
     }
 
     @Override
+    default int intAt(int offset) {
+        return Unsafe.getUnsafe().getInt(ptr() + offset);
+    }
+
+    @Override
     default long longAt(int offset) {
         return Unsafe.getUnsafe().getLong(ptr() + offset);
     }
 
     @Override
     long ptr();
+
+    @Override
+    default short shortAt(int offset) {
+        return Unsafe.getUnsafe().getShort(ptr() + offset);
+    }
 }

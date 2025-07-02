@@ -118,7 +118,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                                         "WITH maxUncommittedRows=1000, o3MaxLag=200000us" // 200 millis
                         )
                 ) {
-                    LOG.info().$("creating table: ").utf8(tableName).$();
+                    LOG.info().$("creating table: ").$safe(tableName).$();
                     stmt.execute();
                 }
 

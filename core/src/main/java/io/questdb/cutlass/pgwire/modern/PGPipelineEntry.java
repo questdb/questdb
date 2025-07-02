@@ -34,7 +34,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -397,6 +396,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             }
             validatePgResultSetColumnTypesAndNames();
         } catch (Throwable th) {
+            if (th instanceof BadProtocolException) {
+                throw (BadProtocolException) th;
+            }
             throw kaput().put(th);
         }
     }
@@ -1665,19 +1667,18 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
         try {
             if (array.isVanilla()) {
-                FlatArrayView flatView = array.flatView();
-                int len = flatView.length();
+                int len = array.getFlatViewLength();
                 // Note that we rely on a HotSpot optimization: Loop-invariant code motion.
                 // It moves the switch outside the loop.
                 for (int i = outResendArrayFlatIndex; i < len; i++) {
                     switch (elemType) {
                         case ColumnType.LONG:
                             utf8Sink.putNetworkInt(Long.BYTES);
-                            utf8Sink.putNetworkLong(flatView.getLongAtAbsIndex(i));
+                            utf8Sink.putNetworkLong(array.getLong(i));
                             break;
                         case ColumnType.DOUBLE:
                             utf8Sink.putNetworkInt(Double.BYTES);
-                            utf8Sink.putNetworkDouble(flatView.getDoubleAtAbsIndex(i));
+                            utf8Sink.putNetworkDouble(array.getDouble(i));
                             break;
                     }
                     utf8Sink.bookmark();

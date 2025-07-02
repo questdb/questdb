@@ -406,7 +406,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         SqlException ex = SqlException.position(node.position);
         if (descriptor != null) {
             if (args != null) {
-                if (args.size() != descriptor.getNotVarArgsSigCount()) {
+                if (args.size() != descriptor.getSigArgCount()) {
                     ex.put("wrong number of arguments for function `").put(node.token)
                             .put("`; expected: ").put(descriptor.getSigArgCount())
                             .put(", provided: ").put(args.size());
@@ -566,7 +566,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         final int position = node.position;
         Function function;
         try {
-            LOG.debug().$("call ").$(node).$(" -> ").$(factory.getSignature()).$("[factory=").$(factory).I$();
+            LOG.debug().$("call ").$(node)
+                    .$(" -> ").$safe(factory.getSignature())
+                    .$("[factory=").$(factory)
+                    .I$();
             function = factory.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
         } catch (SqlException | ImplicitCastException e) {
             Misc.freeObjList(args);
@@ -579,8 +582,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         if (function == null) {
             LOG.error().$("NULL function")
-                    .$(" [signature=").$(factory.getSignature())
-                    .$(", class=").$(factory.getClass().getName())
+                    .$(" [signature=").$safe(factory.getSignature())
+                    .$(", class=").$safe(factory.getClass().getName())
                     .I$();
             Misc.freeObjList(args);
             throw SqlException.position(position).put("bad function factory (NULL), check log");
