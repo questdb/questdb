@@ -254,6 +254,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long instanceHashHi;
     private final long instanceHashLo;
     private final boolean interruptOnClosedConnection;
+    private final PropWorkerPoolConfiguration ioSharedWorkerPoolConfiguration = new PropWorkerPoolConfiguration("shared-io");
     private final boolean ioURingEnabled;
     private final boolean isQueryTracingEnabled;
     private final boolean isReadOnlyInstance;
@@ -352,6 +353,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String publicDirectory;
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
+    private final PropWorkerPoolConfiguration querySharedWorkerPoolConfiguration = new PropWorkerPoolConfiguration("shared-query");
     private final boolean queryWithinLatestByOptimisationEnabled;
     private final int readerPoolMaxSegments;
     private final Utf8SequenceObjHashMap<Utf8Sequence> redirectMap;
@@ -364,14 +366,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rollBufferLimit;
     private final int rollBufferSize;
     private final long sequencerCheckInterval;
-    private final int[] sharedWorkerAffinity;
-    private final int sharedWorkerCount;
-    private final boolean sharedWorkerHaltOnError;
-    private final long sharedWorkerNapThreshold;
-    private final WorkerPoolConfiguration sharedWorkerPoolConfiguration = new PropWorkerPoolConfiguration();
-    private final long sharedWorkerSleepThreshold;
-    private final long sharedWorkerSleepTimeout;
-    private final long sharedWorkerYieldThreshold;
     private final String snapshotInstanceId;
     private final long spinLockTimeout;
     private final int sqlAsOfJoinEvacuationThreshold;
@@ -508,6 +502,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long walWriterEventAppendPageSize;
     private final int walWriterPoolMaxSegments;
     private final long workStealTimeoutNanos;
+    private final PropWorkerPoolConfiguration writeSharedWorkerPoolConfiguration = new PropWorkerPoolConfiguration("shared-write");
     private final long writerAsyncCommandBusyWaitTimeout;
     private final long writerAsyncCommandMaxWaitTimeout;
     private final int writerAsyncCommandQueueCapacity;
@@ -870,23 +865,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.devModeEnabled = getBoolean(properties, env, PropertyKey.DEV_MODE_ENABLED, false);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
-        int cpuUsed = 0;
         int cpuSpare = 0;
-        int cpuIoWorkers = 0;
-        int cpuWalApplyWorkers = 2;
 
-        if (cpuAvailable > 8) {
-            cpuWalApplyWorkers = 3;
-        } else if (cpuAvailable > 16) {
-            cpuWalApplyWorkers = 3;
+        if (cpuAvailable > 16) {
             cpuSpare = 1;
-            // tested on 4/32/48 core servers
-            cpuIoWorkers = cpuAvailable / 2;
         } else if (cpuAvailable > 32) {
-            cpuWalApplyWorkers = 4;
             cpuSpare = 2;
-            // tested on 4/32/48 core servers
-            cpuIoWorkers = cpuAvailable / 2;
         }
 
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
@@ -964,7 +948,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             final int forceSendFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE, Integer.MAX_VALUE);
             final int forceRecvFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE, Integer.MAX_VALUE);
             this.httpWorkerCount = getInt(properties, env, PropertyKey.HTTP_WORKER_COUNT, 0);
-            cpuUsed += this.httpWorkerCount;
             this.httpWorkerAffinity = getAffinity(properties, env, PropertyKey.HTTP_WORKER_AFFINITY, httpWorkerCount);
             this.httpWorkerHaltOnError = getBoolean(properties, env, PropertyKey.HTTP_WORKER_HALT_ON_ERROR, false);
             this.httpWorkerYieldThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_YIELD_THRESHOLD, 10);
@@ -1253,7 +1236,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                     throw ServerConfigurationException.forInvalidKey(PropertyKey.PG_DATE_LOCALE.getPropertyPath(), dateLocale);
                 }
                 this.pgWorkerCount = getInt(properties, env, PropertyKey.PG_WORKER_COUNT, 0);
-                cpuUsed += this.pgWorkerCount;
                 this.pgWorkerAffinity = getAffinity(properties, env, PropertyKey.PG_WORKER_AFFINITY, pgWorkerCount);
                 this.pgHaltOnError = getBoolean(properties, env, PropertyKey.PG_HALT_ON_ERROR, false);
                 this.pgWorkerYieldThreshold = getLong(properties, env, PropertyKey.PG_WORKER_YIELD_THRESHOLD, 10);
@@ -1274,7 +1256,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgPipelineCapacity = getInt(properties, env, PropertyKey.PG_PIPELINE_CAPACITY, 64);
             }
 
-            this.walApplyWorkerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, cpuWalApplyWorkers);
+            this.walApplyWorkerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, 0); // Use shared write pool by default;
             this.walApplyWorkerAffinity = getAffinity(properties, env, PropertyKey.WAL_APPLY_WORKER_AFFINITY, walApplyWorkerCount);
             this.walApplyWorkerHaltOnError = getBoolean(properties, env, PropertyKey.WAL_APPLY_WORKER_HALT_ON_ERROR, false);
             this.walApplyWorkerNapThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_NAP_THRESHOLD, 7_000);
@@ -1287,7 +1269,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
             this.matViewRefreshOomRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 200);
             this.matViewMinRefreshInterval = getMicros(properties, env, PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL, Timestamps.MINUTE_MICROS);
-            this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
+            this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, 0); // Use shared write pool by default
             this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
             this.matViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
             this.matViewRefreshWorkerNapThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD, 7_000);
@@ -1561,15 +1543,14 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
 
                 this.lineTcpWriterQueueCapacity = getQueueCapacity(properties, env, PropertyKey.LINE_TCP_WRITER_QUEUE_CAPACITY, 128);
-                this.lineTcpWriterWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_COUNT, 0);
-                cpuUsed += this.lineTcpWriterWorkerCount;
+                this.lineTcpWriterWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_COUNT, 0); // Use writer IO pool by default
                 this.lineTcpWriterWorkerAffinity = getAffinity(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_AFFINITY, lineTcpWriterWorkerCount);
                 this.lineTcpWriterWorkerPoolHaltOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_WRITER_HALT_ON_ERROR, false);
                 this.lineTcpWriterWorkerYieldThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_YIELD_THRESHOLD, 10);
                 this.lineTcpWriterWorkerNapThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_NAP_THRESHOLD, 7_000);
                 this.lineTcpWriterWorkerSleepThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_SLEEP_THRESHOLD, 10_000);
                 this.symbolCacheWaitBeforeReload = getMicros(properties, env, PropertyKey.LINE_TCP_SYMBOL_CACHE_WAIT_BEFORE_RELOAD, 500_000);
-                this.lineTcpIOWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_IO_WORKER_COUNT, cpuIoWorkers);
+                this.lineTcpIOWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_IO_WORKER_COUNT, 0); // Use shared IO pool by default
                 this.lineTcpIOWorkerAffinity = getAffinity(properties, env, PropertyKey.LINE_TCP_IO_WORKER_AFFINITY, lineTcpIOWorkerCount);
                 this.lineTcpIOWorkerPoolHaltOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_IO_HALT_ON_ERROR, false);
                 this.lineTcpIOWorkerYieldThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_YIELD_THRESHOLD, 10);
@@ -1625,13 +1606,47 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.ilpAutoCreateNewColumns = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS, true);
             this.ilpAutoCreateNewTables = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_TABLES, true);
-            this.sharedWorkerCount = getInt(properties, env, PropertyKey.SHARED_WORKER_COUNT, Math.max(4, cpuAvailable - cpuSpare - cpuUsed));
-            this.sharedWorkerAffinity = getAffinity(properties, env, PropertyKey.SHARED_WORKER_AFFINITY, sharedWorkerCount);
-            this.sharedWorkerHaltOnError = getBoolean(properties, env, PropertyKey.SHARED_WORKER_HALT_ON_ERROR, false);
-            this.sharedWorkerYieldThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_YIELD_THRESHOLD, 10);
-            this.sharedWorkerNapThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_NAP_THRESHOLD, 7_000);
-            this.sharedWorkerSleepThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_SLEEP_THRESHOLD, 10_000);
-            this.sharedWorkerSleepTimeout = getMillis(properties, env, PropertyKey.SHARED_WORKER_SLEEP_TIMEOUT, 10);
+
+            int sharedWorkerCount = getInt(properties, env, PropertyKey.SHARED_WORKER_COUNT, cpuAvailable - cpuSpare);
+            int[] sharedWorkerAffinity = getAffinity(properties, env, PropertyKey.SHARED_WORKER_AFFINITY, sharedWorkerCount);
+            boolean sharedWorkerHaltOnError = getBoolean(properties, env, PropertyKey.SHARED_WORKER_HALT_ON_ERROR, false);
+            long sharedWorkerYieldThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_YIELD_THRESHOLD, 10);
+            long sharedWorkerNapThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_NAP_THRESHOLD, 7_000);
+            long sharedWorkerSleepThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_SLEEP_THRESHOLD, 10_000);
+            long sharedWorkerSleepTimeout = getMillis(properties, env, PropertyKey.SHARED_WORKER_SLEEP_TIMEOUT, 10);
+
+            this.ioSharedWorkerPoolConfiguration.sharedWorkerCount = getInt(properties, env, PropertyKey.IO_SHARED_WORKER_COUNT, sharedWorkerCount);
+            this.ioSharedWorkerPoolConfiguration.sharedWorkerAffinity = getAffinity(properties, env, PropertyKey.IO_SHARED_WORKER_AFFINITY, this.ioSharedWorkerPoolConfiguration.sharedWorkerCount);
+            this.ioSharedWorkerPoolConfiguration.sharedWorkerHaltOnError = sharedWorkerHaltOnError;
+            this.ioSharedWorkerPoolConfiguration.sharedWorkerYieldThreshold = sharedWorkerYieldThreshold;
+            this.ioSharedWorkerPoolConfiguration.sharedWorkerNapThreshold = sharedWorkerNapThreshold;
+            this.ioSharedWorkerPoolConfiguration.sharedWorkerSleepThreshold = sharedWorkerSleepThreshold;
+            this.ioSharedWorkerPoolConfiguration.sharedWorkerSleepTimeout = sharedWorkerSleepTimeout;
+            this.ioSharedWorkerPoolConfiguration.metrics = this.metrics;
+            // IO will be slightly higher priority than query and write pools to make the server more responsive
+            this.ioSharedWorkerPoolConfiguration.workerPoolPriority = Thread.NORM_PRIORITY + 1;
+
+            this.querySharedWorkerPoolConfiguration.sharedWorkerCount = getInt(properties, env, PropertyKey.QUERY_SHARED_WORKER_COUNT, sharedWorkerCount);
+            this.querySharedWorkerPoolConfiguration.sharedWorkerAffinity = getAffinity(properties, env, PropertyKey.QUERY_SHARED_WORKER_AFFINITY, this.querySharedWorkerPoolConfiguration.sharedWorkerCount);
+            this.querySharedWorkerPoolConfiguration.sharedWorkerHaltOnError = sharedWorkerHaltOnError;
+            this.querySharedWorkerPoolConfiguration.sharedWorkerYieldThreshold = sharedWorkerYieldThreshold;
+            this.querySharedWorkerPoolConfiguration.sharedWorkerNapThreshold = sharedWorkerNapThreshold;
+            this.querySharedWorkerPoolConfiguration.sharedWorkerSleepThreshold = sharedWorkerSleepThreshold;
+            this.querySharedWorkerPoolConfiguration.sharedWorkerSleepTimeout = sharedWorkerSleepTimeout;
+            this.querySharedWorkerPoolConfiguration.metrics = this.metrics;
+            this.ioSharedWorkerPoolConfiguration.workerPoolPriority = Thread.NORM_PRIORITY;
+
+            // Write pool supposed to be mostly IO constrained, not that CPU constrained
+            // Allocate 50% the shared worker count by default.
+            this.writeSharedWorkerPoolConfiguration.sharedWorkerCount = getInt(properties, env, PropertyKey.WRITE_SHARED_WORKER_COUNT, (int) (1.5 * sharedWorkerCount));
+            this.writeSharedWorkerPoolConfiguration.sharedWorkerAffinity = getAffinity(properties, env, PropertyKey.WRITE_SHARED_WORKER_AFFINITY, this.writeSharedWorkerPoolConfiguration.sharedWorkerCount);
+            this.writeSharedWorkerPoolConfiguration.sharedWorkerHaltOnError = sharedWorkerHaltOnError;
+            this.writeSharedWorkerPoolConfiguration.sharedWorkerYieldThreshold = sharedWorkerYieldThreshold;
+            this.writeSharedWorkerPoolConfiguration.sharedWorkerNapThreshold = sharedWorkerNapThreshold;
+            this.writeSharedWorkerPoolConfiguration.sharedWorkerSleepThreshold = sharedWorkerSleepThreshold;
+            this.writeSharedWorkerPoolConfiguration.sharedWorkerSleepTimeout = sharedWorkerSleepTimeout;
+            this.writeSharedWorkerPoolConfiguration.metrics = this.metrics;
+            this.ioSharedWorkerPoolConfiguration.workerPoolPriority = Thread.NORM_PRIORITY;
 
             // Now all worker counts are known, so we can set select cache capacity props.
             if (pgEnabled) {
@@ -1751,6 +1766,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
+        return ioSharedWorkerPoolConfiguration;
+    }
+
+    @Override
     public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
         return lineTcpReceiverConfiguration;
     }
@@ -1791,13 +1811,18 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public WorkerPoolConfiguration getQueryWorkerPoolConfiguration() {
+        return querySharedWorkerPoolConfiguration;
+    }
+
+    @Override
     public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
         return walApplyPoolConfiguration;
     }
 
     @Override
-    public WorkerPoolConfiguration getWorkerPoolConfiguration() {
-        return sharedWorkerPoolConfiguration;
+    public WorkerPoolConfiguration getWriteWorkerPoolConfiguration() {
+        return writeSharedWorkerPoolConfiguration;
     }
 
     @Override
@@ -2255,6 +2280,73 @@ public class PropServerConfiguration implements ServerConfiguration {
                 sink.put("null");
             }
             sink.putAscii(',');
+        }
+    }
+
+    private static class PropWorkerPoolConfiguration implements WorkerPoolConfiguration {
+        private final String name;
+        public Metrics metrics;
+        public int[] sharedWorkerAffinity;
+        public int sharedWorkerCount;
+        public boolean sharedWorkerHaltOnError;
+        public long sharedWorkerNapThreshold;
+        public long sharedWorkerSleepThreshold;
+        public long sharedWorkerSleepTimeout;
+        public long sharedWorkerYieldThreshold;
+        public int workerPoolPriority = Thread.NORM_PRIORITY;
+
+        private PropWorkerPoolConfiguration(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
+        public long getNapThreshold() {
+            return sharedWorkerNapThreshold;
+        }
+
+        @Override
+        public String getPoolName() {
+            return name;
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return sharedWorkerSleepThreshold;
+        }
+
+        @Override
+        public long getSleepTimeout() {
+            return sharedWorkerSleepTimeout;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return sharedWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return sharedWorkerCount;
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return sharedWorkerYieldThreshold;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return sharedWorkerHaltOnError;
+        }
+
+        @Override
+        public int workerPoolPriority() {
+            return workerPoolPriority;
         }
     }
 
@@ -5619,53 +5711,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isEnabled() {
             return walApplyWorkerCount > 0;
-        }
-    }
-
-    private class PropWorkerPoolConfiguration implements WorkerPoolConfiguration {
-        @Override
-        public Metrics getMetrics() {
-            return metrics;
-        }
-
-        @Override
-        public long getNapThreshold() {
-            return sharedWorkerNapThreshold;
-        }
-
-        @Override
-        public String getPoolName() {
-            return "shared";
-        }
-
-        @Override
-        public long getSleepThreshold() {
-            return sharedWorkerSleepThreshold;
-        }
-
-        @Override
-        public long getSleepTimeout() {
-            return sharedWorkerSleepTimeout;
-        }
-
-        @Override
-        public int[] getWorkerAffinity() {
-            return sharedWorkerAffinity;
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return sharedWorkerCount;
-        }
-
-        @Override
-        public long getYieldThreshold() {
-            return sharedWorkerYieldThreshold;
-        }
-
-        @Override
-        public boolean haltOnError() {
-            return sharedWorkerHaltOnError;
         }
     }
 

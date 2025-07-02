@@ -74,7 +74,6 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
-import org.checkerframework.checker.units.qual.A;
 import org.jetbrains.annotations.NotNull;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -136,12 +135,12 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getHttpServerConfiguration().isQueryCacheEnabled());
         Assert.assertFalse(configuration.getHttpServerConfiguration().isSettingsReadOnly());
         Assert.assertEquals(32, configuration.getHttpServerConfiguration().getConcurrentCacheConfiguration().getBlocks());
-        Assert.assertEquals(Math.max(configuration.getWorkerPoolConfiguration().getWorkerCount(), 4), configuration.getHttpServerConfiguration().getConcurrentCacheConfiguration().getRows());
+        Assert.assertEquals(Math.max(configuration.getIOWorkerPoolConfiguration().getWorkerCount(), 4), configuration.getHttpServerConfiguration().getConcurrentCacheConfiguration().getRows());
 
-        Assert.assertEquals(10, configuration.getWorkerPoolConfiguration().getYieldThreshold());
-        Assert.assertEquals(10000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
-        Assert.assertEquals(7000, configuration.getWorkerPoolConfiguration().getNapThreshold());
-        Assert.assertEquals(10, configuration.getWorkerPoolConfiguration().getSleepTimeout());
+        Assert.assertEquals(10, configuration.getIOWorkerPoolConfiguration().getYieldThreshold());
+        Assert.assertEquals(10000, configuration.getIOWorkerPoolConfiguration().getSleepThreshold());
+        Assert.assertEquals(7000, configuration.getIOWorkerPoolConfiguration().getNapThreshold());
+        Assert.assertEquals(10, configuration.getIOWorkerPoolConfiguration().getSleepTimeout());
 
         Assert.assertEquals(10, configuration.getHttpMinServerConfiguration().getYieldThreshold());
         Assert.assertEquals(100, configuration.getHttpMinServerConfiguration().getNapThreshold());
@@ -440,7 +439,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(2, configuration.getPGWireConfiguration().getBinParamCountCapacity());
         Assert.assertTrue(configuration.getPGWireConfiguration().isSelectCacheEnabled());
         Assert.assertEquals(32, configuration.getPGWireConfiguration().getConcurrentCacheConfiguration().getBlocks());
-        Assert.assertEquals(Math.max(configuration.getWorkerPoolConfiguration().getWorkerCount(), 4), configuration.getPGWireConfiguration().getConcurrentCacheConfiguration().getRows());
+        Assert.assertEquals(Math.max(configuration.getIOWorkerPoolConfiguration().getWorkerCount(), 4), configuration.getPGWireConfiguration().getConcurrentCacheConfiguration().getRows());
         Assert.assertTrue(configuration.getPGWireConfiguration().isInsertCacheEnabled());
         Assert.assertEquals(4, configuration.getPGWireConfiguration().getInsertCacheBlockCount());
         Assert.assertEquals(4, configuration.getPGWireConfiguration().getInsertCacheRowCount());
@@ -743,8 +742,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1.5, configuration.getCairoConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000001);
         Assert.assertEquals(3000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionStringPoolCapacity());
         Assert.assertEquals("2.0 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
-        Assert.assertEquals(3, configuration.getWorkerPoolConfiguration().getWorkerCount());
-        Assert.assertArrayEquals(new int[]{5, 6, 7}, configuration.getWorkerPoolConfiguration().getWorkerAffinity());
+        Assert.assertEquals(3, configuration.getIOWorkerPoolConfiguration().getWorkerCount());
+        Assert.assertArrayEquals(new int[]{5, 6, 7}, configuration.getIOWorkerPoolConfiguration().getWorkerAffinity());
         Assert.assertEquals(12288, configuration.getHttpServerConfiguration().getSendBufferSize());
         Assert.assertEquals(12, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getJsonQueryConnectionLimit());
         Assert.assertEquals(8, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getIlpConnectionLimit());
@@ -1066,8 +1065,8 @@ public class PropServerConfigurationTest {
     public void testMinimum4SharedWorkers() throws Exception {
         final Properties properties = new Properties();
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals("shared", configuration.getWorkerPoolConfiguration().getPoolName());
-        Assert.assertTrue("must be minimum of 4 shared workers", configuration.getWorkerPoolConfiguration().getWorkerCount() >= 4);
+        Assert.assertEquals("shared", configuration.getIOWorkerPoolConfiguration().getPoolName());
+        Assert.assertTrue("must be minimum of 4 shared workers", configuration.getIOWorkerPoolConfiguration().getWorkerCount() >= 4);
     }
 
     @Test
@@ -1211,10 +1210,10 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
             Assert.assertEquals(50000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
 
-            Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getYieldThreshold());
-            Assert.assertEquals(90000, configuration.getWorkerPoolConfiguration().getNapThreshold());
-            Assert.assertEquals(100000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
-            Assert.assertEquals(1000, configuration.getWorkerPoolConfiguration().getSleepTimeout());
+            Assert.assertEquals(100, configuration.getIOWorkerPoolConfiguration().getYieldThreshold());
+            Assert.assertEquals(90000, configuration.getIOWorkerPoolConfiguration().getNapThreshold());
+            Assert.assertEquals(100000, configuration.getIOWorkerPoolConfiguration().getSleepThreshold());
+            Assert.assertEquals(1000, configuration.getIOWorkerPoolConfiguration().getSleepTimeout());
 
             Assert.assertEquals(101, configuration.getHttpServerConfiguration().getYieldThreshold());
             Assert.assertEquals(90001, configuration.getHttpServerConfiguration().getNapThreshold());

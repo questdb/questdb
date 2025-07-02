@@ -40,18 +40,105 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public abstract class WorkerPoolManager implements Target {
 
     private static final Log LOG = LogFactory.getLog(WorkerPoolManager.class);
-    protected final WorkerPool sharedPool;
+    protected final WorkerPool sharedPoolIO;
+    protected final WorkerPool sharedPoolQuery;
+    protected final WorkerPool sharedPoolWrite;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final CharSequenceObjHashMap<WorkerPool> dedicatedPools = new CharSequenceObjHashMap<>(4);
     private final AtomicBoolean running = new AtomicBoolean();
 
     public WorkerPoolManager(ServerConfiguration config) {
-        sharedPool = new WorkerPool(config.getWorkerPoolConfiguration());
-        configureSharedPool(sharedPool); // abstract method giving callers the chance to assign jobs
+        sharedPoolIO = new WorkerPool(config.getIOWorkerPoolConfiguration(), "shared_io");
+        sharedPoolQuery = new WorkerPool(config.getQueryWorkerPoolConfiguration(), "shared_query");
+        sharedPoolWrite = new WorkerPool(config.getWriteWorkerPoolConfiguration(), "shared_write");
+
+        configureSharedPool(sharedPoolIO, sharedPoolQuery, sharedPoolWrite); // abstract method giving callers the chance to assign jobs
         config.getMetrics().addScrapable(this);
     }
 
-    public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
+    public WorkerPool getInstanceIO(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
+        return getWorkerPool(config, requester, sharedPoolIO);
+    }
+
+    public WorkerPool getInstanceQuery(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
+        return getWorkerPool(config, requester, sharedPoolQuery);
+    }
+
+    public WorkerPool getInstanceWrite(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
+        return getWorkerPool(config, requester, sharedPoolWrite);
+    }
+
+    public WorkerPool getSharedPoolIO() {
+        return sharedPoolIO;
+    }
+
+    public int getSharedWorkerCount() {
+        return sharedPoolIO.getWorkerCount();
+    }
+
+    public void halt() {
+        // halt is idempotent, and start may have not been called, still
+        // we want to free pool resources, so we do not check the closed
+        // flag, but we ensure it is true at the end.
+        ObjList<CharSequence> poolNames = dedicatedPools.keys();
+        for (int i = 0, limit = poolNames.size(); i < limit; i++) {
+            CharSequence name = poolNames.getQuick(i);
+            WorkerPool pool = dedicatedPools.get(name);
+            closePool(pool, "closing dedicated pool [name=");
+        }
+        dedicatedPools.clear();
+
+        closePool(sharedPoolIO, "closing shared IO pool [name=");
+        closePool(sharedPoolQuery, "closing shared Read pool [name=");
+        closePool(sharedPoolWrite, "closing shared Write pool [name=");
+
+        closed.set(true);
+    }
+
+    @Override
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
+        long now = Worker.CLOCK_MICROS.getTicks();
+        sharedPoolIO.updateWorkerMetrics(now);
+        sharedPoolQuery.updateWorkerMetrics(now);
+        sharedPoolWrite.updateWorkerMetrics(now);
+        ObjList<CharSequence> poolNames = dedicatedPools.keys();
+        for (int i = 0, limit = poolNames.size(); i < limit; i++) {
+            dedicatedPools.get(poolNames.getQuick(i)).updateWorkerMetrics(now);
+        }
+    }
+
+    public void start(Log sharedPoolLog) {
+        if (running.compareAndSet(false, true)) {
+            startWorkerPool(sharedPoolLog, sharedPoolIO, "started shared pool [name=");
+            startWorkerPool(sharedPoolLog, sharedPoolQuery, "started shared pool [name=");
+            startWorkerPool(sharedPoolLog, sharedPoolWrite, "started shared pool [name=");
+
+            ObjList<CharSequence> poolNames = dedicatedPools.keys();
+            for (int i = 0, limit = poolNames.size(); i < limit; i++) {
+                CharSequence name = poolNames.get(i);
+                WorkerPool pool = dedicatedPools.get(name);
+
+                startWorkerPool(sharedPoolLog, pool, "started dedicated pool [name=");
+            }
+        }
+    }
+
+    private static void startWorkerPool(Log sharedPoolLog, WorkerPool p, String msg) {
+        p.start(sharedPoolLog);
+        LOG.info().$(msg).$(p.getPoolName())
+                .$(", workers=").$(p.getWorkerCount())
+                .I$();
+    }
+
+    private void closePool(WorkerPool p, String message) {
+        LOG.info().$(message).$(p.getPoolName())
+                .$(", workers=").$(p.getWorkerCount())
+                .I$();
+        p.halt();
+    }
+
+    @NotNull
+    private WorkerPool getWorkerPool(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester, WorkerPool sharedPool) {
         if (running.get() || closed.get()) {
             throw new IllegalStateException("can only get instance before start");
         }
@@ -77,69 +164,12 @@ public abstract class WorkerPoolManager implements Target {
         return pool;
     }
 
-    public WorkerPool getSharedPool() {
-        return sharedPool;
-    }
-
-    public int getSharedWorkerCount() {
-        return sharedPool.getWorkerCount();
-    }
-
-    public void halt() {
-        // halt is idempotent, and start may have not been called, still
-        // we want to free pool resources, so we do not check the closed
-        // flag, but we ensure it is true at the end.
-        ObjList<CharSequence> poolNames = dedicatedPools.keys();
-        for (int i = 0, limit = poolNames.size(); i < limit; i++) {
-            CharSequence name = poolNames.getQuick(i);
-            WorkerPool pool = dedicatedPools.get(name);
-            LOG.info().$("closing dedicated pool [name=").$(name)
-                    .$(", workers=").$(pool.getWorkerCount())
-                    .I$();
-            pool.halt();
-        }
-        dedicatedPools.clear();
-
-        LOG.info().$("closing shared pool [name=").$(sharedPool.getPoolName())
-                .$(", workers=").$(sharedPool.getWorkerCount())
-                .I$();
-        sharedPool.halt();
-        closed.set(true);
-    }
-
-    @Override
-    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
-        long now = Worker.CLOCK_MICROS.getTicks();
-        sharedPool.updateWorkerMetrics(now);
-        ObjList<CharSequence> poolNames = dedicatedPools.keys();
-        for (int i = 0, limit = poolNames.size(); i < limit; i++) {
-            dedicatedPools.get(poolNames.getQuick(i)).updateWorkerMetrics(now);
-        }
-    }
-
-    public void start(Log sharedPoolLog) {
-        if (running.compareAndSet(false, true)) {
-            sharedPool.start(sharedPoolLog);
-            LOG.info().$("started shared pool [name=").$(sharedPool.getPoolName())
-                    .$(", workers=").$(sharedPool.getWorkerCount())
-                    .I$();
-
-            ObjList<CharSequence> poolNames = dedicatedPools.keys();
-            for (int i = 0, limit = poolNames.size(); i < limit; i++) {
-                CharSequence name = poolNames.get(i);
-                WorkerPool pool = dedicatedPools.get(name);
-                pool.start(sharedPoolLog);
-                LOG.info().$("started dedicated pool [name=").$(name)
-                        .$(", workers=").$(pool.getWorkerCount())
-                        .I$();
-            }
-        }
-    }
-
     /**
-     * @param sharedPool A reference to the SHARED pool
+     * @param sharedPoolIo A reference to the IO SHARED pool
+     * @param sharedPoolR  A reference to the READ SHARED pool
+     * @param sharedPoolW  A reference to the WRITE SHARED pool
      */
-    protected abstract void configureSharedPool(final WorkerPool sharedPool);
+    protected abstract void configureSharedPool(final WorkerPool sharedPoolIo, final WorkerPool sharedPoolR, final WorkerPool sharedPoolW);
 
     public enum Requester {
 

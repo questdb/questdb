@@ -328,47 +328,47 @@ public class ServerMain implements Closeable {
 
         workerPoolManager = new WorkerPoolManager(config) {
             @Override
-            protected void configureSharedPool(WorkerPool sharedPool) {
+            protected void configureSharedPool(final WorkerPool sharedPoolIO, final WorkerPool sharedPoolQuery, final WorkerPool sharedPoolWrite) {
                 try {
-                    sharedPool.assign(engine.getEngineMaintenanceJob());
+                    sharedPoolWrite.assign(engine.getEngineMaintenanceJob());
 
-                    WorkerPoolUtils.setupQueryJobs(sharedPool, engine);
+                    WorkerPoolUtils.setupQueryJobs(sharedPoolQuery, engine);
 
                     QueryTracingJob queryTracingJob = new QueryTracingJob(engine);
-                    sharedPool.assign(queryTracingJob);
+                    sharedPoolQuery.assign(queryTracingJob);
                     freeOnExit.register(queryTracingJob);
 
                     if (!isReadOnly) {
-                        WorkerPoolUtils.setupWriterJobs(sharedPool, engine);
+                        WorkerPoolUtils.setupWriterJobs(sharedPoolWrite, engine);
 
                         if (walSupported) {
-                            sharedPool.assign(config.getFactoryProvider().getWalJobFactory().createCheckWalTransactionsJob(engine));
+                            sharedPoolWrite.assign(config.getFactoryProvider().getWalJobFactory().createCheckWalTransactionsJob(engine));
                             final WalPurgeJob walPurgeJob = config.getFactoryProvider().getWalJobFactory().createWalPurgeJob(engine);
                             engine.setWalPurgeJobRunLock(walPurgeJob.getRunLock());
                             walPurgeJob.delayByHalfInterval();
-                            sharedPool.assign(walPurgeJob);
-                            sharedPool.freeOnExit(walPurgeJob);
+                            sharedPoolWrite.assign(walPurgeJob);
+                            sharedPoolWrite.freeOnExit(walPurgeJob);
 
                             // wal apply job in the shared pool when there is no dedicated pool
                             if (walApplyEnabled && !config.getWalApplyPoolConfiguration().isEnabled()) {
-                                setupWalApplyJob(sharedPool, engine, sharedPool.getWorkerCount());
+                                setupWalApplyJob(sharedPoolWrite, engine, sharedPoolWrite.getWorkerCount());
                             }
                         }
 
                         // text import
-                        CopyJob.assignToPool(engine.getMessageBus(), sharedPool);
+                        CopyJob.assignToPool(engine.getMessageBus(), sharedPoolWrite);
                         if (!Chars.empty(cairoConfig.getSqlCopyInputRoot())) {
                             final CopyRequestJob copyRequestJob = new CopyRequestJob(
                                     engine,
                                     // save CPU resources for collecting and processing jobs
-                                    Math.max(1, sharedPool.getWorkerCount() - 2)
+                                    Math.max(1, sharedPoolWrite.getWorkerCount() - 2)
                             );
-                            sharedPool.assign(copyRequestJob);
-                            sharedPool.freeOnExit(copyRequestJob);
+                            sharedPoolWrite.assign(copyRequestJob);
+                            sharedPoolWrite.freeOnExit(copyRequestJob);
                         }
 
                         if (matViewEnabled && !config.getMatViewRefreshPoolConfiguration().isEnabled()) {
-                            setupMatViewJobs(sharedPool, engine, sharedPool.getWorkerCount());
+                            setupMatViewJobs(sharedPoolWrite, engine, sharedPoolWrite.getWorkerCount());
                         }
                     }
 
@@ -377,7 +377,7 @@ public class ServerMain implements Closeable {
                         final TelemetryJob telemetryJob = new TelemetryJob(engine);
                         freeOnExit.register(telemetryJob);
                         if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
-                            sharedPool.assign(telemetryJob);
+                            sharedPoolWrite.assign(telemetryJob);
                         }
                     }
 
@@ -391,7 +391,7 @@ public class ServerMain implements Closeable {
 
         if (matViewEnabled && !isReadOnly && config.getMatViewRefreshPoolConfiguration().isEnabled()) {
             // create dedicated worker pool for materialized view refresh
-            WorkerPool matViewRefreshWorkerPool = workerPoolManager.getInstance(
+            WorkerPool matViewRefreshWorkerPool = workerPoolManager.getInstanceWrite(
                     config.getMatViewRefreshPoolConfiguration(),
                     WorkerPoolManager.Requester.MAT_VIEW_REFRESH
             );
@@ -399,7 +399,7 @@ public class ServerMain implements Closeable {
         }
 
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
-            WorkerPool walApplyWorkerPool = workerPoolManager.getInstance(
+            WorkerPool walApplyWorkerPool = workerPoolManager.getInstanceWrite(
                     config.getWalApplyPoolConfiguration(),
                     WorkerPoolManager.Requester.WAL_APPLY
             );
@@ -426,7 +426,7 @@ public class ServerMain implements Closeable {
                 workerPoolManager
         ));
 
-        workerPoolManager.getSharedPool().assign(new FlushQueryCacheJob(
+        workerPoolManager.getSharedPoolIO().assign(new FlushQueryCacheJob(
                 engine.getMessageBus(),
                 httpServer,
                 pgWireServer

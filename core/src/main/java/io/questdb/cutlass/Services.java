@@ -80,7 +80,7 @@ public class Services {
         return createHttpServer(
                 serverConfiguration,
                 cairoEngine,
-                workerPoolManager.getInstance(httpServerConfiguration, Requester.HTTP_SERVER),
+                workerPoolManager.getInstanceIO(httpServerConfiguration, Requester.HTTP_SERVER),
                 workerPoolManager.getSharedWorkerCount()
         );
     }
@@ -153,11 +153,11 @@ public class Services {
         // - DEDICATED (1 worker) when ^ ^ is not set
         // - SHARED otherwise
 
-        final WorkerPool ioPool = workerPoolManager.getInstance(
+        final WorkerPool ioPool = workerPoolManager.getInstanceIO(
                 config.getIOWorkerPoolConfiguration(),
                 Requester.LINE_TCP_IO
         );
-        final WorkerPool writerPool = workerPoolManager.getInstance(
+        final WorkerPool writerPool = workerPoolManager.getInstanceWrite(
                 config.getWriterWorkerPoolConfiguration(),
                 Requester.LINE_TCP_WRITER
         );
@@ -176,9 +176,9 @@ public class Services {
 
         // The pool is always the SHARED pool
         if (Os.isLinux()) {
-            return new LinuxMMLineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPool());
+            return new LinuxMMLineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolIO());
         }
-        return new LineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPool());
+        return new LineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolIO());
     }
 
     @Nullable
@@ -193,7 +193,7 @@ public class Services {
         // The pool is:
         // - SHARED if PropertyKey.HTTP_MIN_WORKER_COUNT (http.min.worker.count) <= 0
         // - DEDICATED (1 worker) otherwise
-        final WorkerPool workerPool = workerPoolManager.getInstance(
+        final WorkerPool workerPool = workerPoolManager.getInstanceIO(
                 configuration,
                 Requester.HTTP_MIN_SERVER
         );
@@ -258,7 +258,7 @@ public class Services {
         // The pool is:
         // - DEDICATED when PropertyKey.PG_WORKER_COUNT is > 0
         // - SHARED otherwise
-        final WorkerPool workerPool = workerPoolManager.getInstance(
+        final WorkerPool workerPool = workerPoolManager.getInstanceIO(
                 configuration,
                 Requester.PG_WIRE_SERVER
         );

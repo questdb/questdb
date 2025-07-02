@@ -253,7 +253,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getWorkerPoolConfiguration() {
+    public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
         return confSharedPool;
     }
 }
