@@ -70,7 +70,7 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
                 memoizedFunctions.add(function);
             }
         }
-        this.supportsRandomAccess = supportsRandomAccess;
+        this.supportsRandomAccess = supportsRandomAccess && memoizedFunctions.size() == 0;
         this.cursor = new VirtualFunctionRecordCursor(functions, memoizedFunctions, supportsRandomAccess, virtualColumnReservedSlots);
         this.internalSymbolTableSource = new VirtualRecordCursorFactorySymbolTableSource(cursor, virtualColumnReservedSlots);
         this.priorityMetadata = priorityMetadata;

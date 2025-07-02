@@ -31,6 +31,18 @@ import org.junit.Test;
 public class RndMemoizationTest extends AbstractCairoTest {
 
     @Test
+    public void testMemoizedFunctionsTriggerFullMaterialization() throws Exception {
+        allowFunctionMemoization();
+        assertSql(
+                "x1\tx12\n" +
+                        "-1148479919\t-1148479918\n" +
+                        "315515119\t315515120\n" +
+                        "1548800834\t1548800835\n",
+                "select rnd_int()+1 x1, x1+1 x12 from long_sequence(3) order by x12;"
+        );
+    }
+
+    @Test
     public void testRndDouble() throws SqlException {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
