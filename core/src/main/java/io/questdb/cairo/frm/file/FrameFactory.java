@@ -27,31 +27,56 @@ package io.questdb.cairo.frm.file;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
+import io.questdb.cairo.TableWriterMetadata;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameColumnPool;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.mp.ConcurrentPool;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
 public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     private final FrameColumnPool columnPool;
-    private final ObjList<FrameImpl> framePool = new ObjList<>();
+    private final ConcurrentPool<FrameImpl> framePool = new ConcurrentPool<>();
     private boolean closed;
 
     public FrameFactory(CairoConfiguration configuration) {
         this.columnPool = new ContiguousFileColumnPool(configuration);
     }
 
+    // This method is used to clear the frame pool and release all frames.
+    // It is NOT thread safe.
+    public void clear() {
+        FrameImpl t;
+        closed = true;
+        while ((t = framePool.pop()) != null) {
+            Misc.free(t);
+        }
+        closed = false;
+    }
+
     @Override
     public void close() {
         closed = true;
-        Misc.freeObjList(framePool);
         Misc.free(columnPool);
+        clear();
     }
 
+    /**
+     * Creates a new frame for writing. This method is thread safe.
+     *
+     * @param partitionPath      the path to the partition directory
+     * @param partitionTimestamp the timestamp of the partition
+     * @param metadata           the metadata for the frame
+     * @param cvw                the column version writer
+     * @param size               the size of the frame, in row count
+     * @return a new frame ready for writing
+     */
     public Frame createRW(
             Path partitionPath,
             long partitionTimestamp,
@@ -69,6 +94,17 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
         return closed;
     }
 
+    /**
+     * Opens a frame for reading or writing. This method is thread safe.
+     *
+     * @param rw              true for read-write, false for read-only
+     * @param path            the path to the partition directory
+     * @param targetPartition the target partition timestamp
+     * @param metadata        the metadata for the frame
+     * @param cvr             the column version reader or writer, depending on rw
+     * @param size            the size of the frame, in row count
+     * @return a frame ready for reading or writing
+     */
     public Frame open(boolean rw, Path path, long targetPartition, RecordMetadata metadata, ColumnVersionWriter cvr, long size) {
         if (rw) {
             return openRW(path, targetPartition, metadata, cvr, size);
@@ -77,8 +113,58 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
         }
     }
 
+    /**
+     * Opens a frame from memory columns, used to create frames from the data to be committed. This method is thread safe.
+     *
+     * @param columns  the memory columns to create the frame from
+     * @param metadata the metadata for the frame
+     * @param rowCount the number of rows in the frame
+     * @return a new frame created from the memory columns
+     */
+    public Frame openROFromMemoryColumns(ReadOnlyObjList<? extends MemoryCR> columns, TableWriterMetadata metadata, long rowCount) {
+        FrameImpl frame = getOrCreate();
+        frame.createROFromMemoryColumns(columns, metadata, rowCount);
+        return frame;
+    }
+
+    /**
+     * Opens a frame for reading. This method is thread safe.
+     *
+     * @param tablePath          the path to the table directory
+     * @param partitionTimestamp the timestamp of the partition
+     * @param partitionNameTxn   the transaction ID of the partition name
+     * @param partitionBy        the partition by value
+     * @param metadata           the metadata for the frame
+     * @param cvr                the column version reader
+     * @param partitionRowCount  the number of rows in the partition
+     * @return a new frame ready for reading
+     */
     public Frame openRO(
-            Path partitionPath,
+            @Transient Path tablePath,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            int partitionBy,
+            RecordMetadata metadata,
+            ColumnVersionReader cvr,
+            long partitionRowCount
+    ) {
+        FrameImpl frame = getOrCreate();
+        frame.openRO(tablePath, partitionTimestamp, partitionNameTxn, partitionBy, metadata, cvr, partitionRowCount);
+        return frame;
+    }
+
+    /**
+     * Opens a frame for reading. This method is thread safe.
+     *
+     * @param partitionPath      the path to the partition directory
+     * @param partitionTimestamp the timestamp of the partition
+     * @param metadata           the metadata for the frame
+     * @param cvr                the column version reader
+     * @param partitionRowCount  the number of rows in the partition
+     * @return a new frame ready for reading
+     */
+    public Frame openRO(
+            @Transient Path partitionPath,
             long partitionTimestamp,
             RecordMetadata metadata,
             ColumnVersionReader cvr,
@@ -89,6 +175,16 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
         return frame;
     }
 
+    /**
+     * Opens a frame for reading and writing. This method is thread safe.
+     *
+     * @param partitionPath      the path to the partition directory
+     * @param partitionTimestamp the timestamp of the partition
+     * @param metadata           the metadata for the frame
+     * @param cvw                the column version writer
+     * @param size               the size of the frame, in row count
+     * @return a new frame ready for reading and writing
+     */
     public Frame openRW(
             Path partitionPath,
             long partitionTimestamp,
@@ -101,16 +197,18 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
         return frame;
     }
 
+    /**
+     * Returns the frame to the pool used by this factory. This method is thread safe.
+     */
     @Override
     public void put(FrameImpl frame) {
         assert !isClosed();
-        framePool.add(frame);
+        framePool.push(frame);
     }
 
     private FrameImpl getOrCreate() {
-        if (framePool.size() > 0) {
-            FrameImpl frm = framePool.getLast();
-            framePool.setPos(framePool.size() - 1);
+        FrameImpl frm = framePool.pop();
+        if (frm != null) {
             return frm;
         }
         FrameImpl frame = new FrameImpl(columnPool);
