@@ -33,7 +33,7 @@ stages:
       - template: templates/start-self-hosted-job.yml
       - template: templates/self-hosted-jobs.yml
     variables:
-      includeTests: "**/griffin/**,**/cairo/fuzz/**"
+      includeTests: "**/griffin/**,**/cairo/**"
 
   - stage: SelfHostedRunOther
     displayName: "SelfHosted Other tests"
@@ -44,7 +44,7 @@ stages:
       - template: templates/start-self-hosted-job.yml
       - template: templates/self-hosted-jobs.yml
     variables:
-      excludeTests: "**/griffin/**,**/cairo/fuzz/**"
+      excludeTests: "**/griffin/**,**/cairo/**"
 
   - stage: HostedRunTestsBranches
     displayName: "Hosted Running tests"
