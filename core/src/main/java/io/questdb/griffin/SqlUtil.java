@@ -79,6 +79,65 @@ public class SqlUtil {
         model.setArtificialStar(true);
     }
 
+    public static CharSequence createExprColumnAlias(
+            CharacterStore store,
+            CharSequence base,
+            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
+            int maxLength
+    ) {
+        return createExprColumnAlias(store, base, aliasToColumnMap, maxLength, false);
+    }
+
+    public static CharSequence createExprColumnAlias(
+            CharacterStore store,
+            CharSequence base,
+            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
+            int maxLength,
+            boolean nonLiteral
+    ) {
+        if (nonLiteral && disallowedAliases.contains(base)) {
+            base = "_" + base;
+        }
+
+        int len = base.length();
+        // early exit for simple cases
+        if (aliasToColumnMap.excludes(base) && len <= maxLength && base.charAt(len - 1) != ' ') {
+            return base;
+        }
+
+        final CharacterStoreEntry entry = store.newEntry();
+        final int entryLen = entry.length();
+        entry.put(base);
+
+        int sequence = 1;
+        int seqSize = 0;
+        while (true) {
+            if (sequence > 1) {
+                seqSize = (int) Math.log10(sequence) + 2; // Remember the _
+            }
+            len = Math.min(len, maxLength - seqSize);
+
+            // We don't want the alias to finish with a space.
+            if (base.charAt(len - 1) == ' ') {
+                final int lastSpace = Chars.lastIndexOfDifferent(base, 0, len, ' ');
+                if (lastSpace > 0) {
+                    len = lastSpace + 1;
+                }
+            }
+
+            entry.trimTo(entryLen + len);
+            if (sequence > 1) {
+                entry.put('_');
+                entry.put(sequence);
+            }
+            CharSequence alias = entry.toImmutable();
+            if (aliasToColumnMap.excludes(alias)) {
+                return alias;
+            }
+            sequence++;
+        }
+    }
+
     // used by Copier assembler
     @SuppressWarnings("unused")
     public static long dateToTimestamp(long millis) {
@@ -1034,65 +1093,6 @@ public class SqlUtil {
             if (aliasToColumnMap.excludes(alias)) {
                 return alias;
             }
-        }
-    }
-
-    public static CharSequence createExprColumnAlias(
-            CharacterStore store,
-            CharSequence base,
-            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
-            int maxLength
-    ) {
-        return createExprColumnAlias(store, base, aliasToColumnMap, maxLength, false);
-    }
-
-    public static CharSequence createExprColumnAlias(
-            CharacterStore store,
-            CharSequence base,
-            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
-            int maxLength,
-            boolean nonLiteral
-    ) {
-        if (nonLiteral && disallowedAliases.contains(base)) {
-            base = "_" + base;
-        }
-
-        int len = base.length();
-        // early exit for simple cases
-        if (aliasToColumnMap.excludes(base) && len <= maxLength && base.charAt(len - 1) != ' ') {
-            return base;
-        }
-
-        final CharacterStoreEntry entry = store.newEntry();
-        final int entryLen = entry.length();
-        entry.put(base);
-
-        int sequence = 1;
-        int seqSize = 0;
-        while (true) {
-            if (sequence > 1) {
-                seqSize = (int) Math.log10(sequence) + 2; // Remember the _
-            }
-            len = Math.min(len, maxLength - seqSize);
-
-            // We don't want the alias to finish with a space.
-            if (base.charAt(len - 1) == ' ') {
-                final int lastSpace = Chars.lastIndexOfDifferent(base, 0, len, ' ');
-                if (lastSpace > 0) {
-                    len = lastSpace + 1;
-                }
-            }
-
-            entry.trimTo(entryLen+len);
-            if (sequence > 1) {
-                entry.put('_');
-                entry.put(sequence);
-            }
-            CharSequence alias = entry.toImmutable();
-            if (aliasToColumnMap.excludes(alias)) {
-                return alias;
-            }
-            sequence++;
         }
     }
 

@@ -818,10 +818,11 @@ public final class Chars {
 
     /**
      * Returns the index of the last character that isn't c between sequenceLo and sequenceHi.
-     * @param sequence the sequence to find the last index of.
+     *
+     * @param sequence   the sequence to find the last index of.
      * @param sequenceLo the low limit to start searching through the sequence.
      * @param sequenceHi the hi limit to end searching through the sequence.
-     * @param c the character to stop matching.
+     * @param c          the character to stop matching.
      * @return the index of the last character that isn't c or -1 if there aren't any.
      */
     public static int lastIndexOfDifferent(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, char c) {
