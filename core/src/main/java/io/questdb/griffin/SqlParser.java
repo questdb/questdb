@@ -3079,23 +3079,7 @@ public class SqlParser {
             for (int i = 0, n = accumulatedColumns.size(); i < n; i++) {
                 QueryColumn qc = accumulatedColumns.getQuick(i);
                 if (qc.getAlias() == null) {
-                    CharSequence token = qc.getAst().token;
-                    if (qc.getAst().isWildcard() && !hasFrom) {
-                        throw err(lexer, null, "'from' expected");
-                    }
-                    CharSequence alias;
-
-                    if (qc.getAst().type == ExpressionNode.CONSTANT && Chars.indexOfLastUnquoted(token, '.') != -1) {
-                        alias = createConstColumnAlias(aliasMap);
-                    } else {
-                        CharSequence tokenAlias = qc.getAst().token;
-                        if (qc.isWindowColumn() && ((WindowColumn) qc).isIgnoreNulls()) {
-                            tokenAlias += "_ignore_nulls";
-                        }
-                        alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
-                    }
-                    qc.setAlias(alias);
-                    aliasMap.put(alias, qc);
+                    generateColumnAlias(lexer, qc, hasFrom);
                 }
                 model.addBottomUpColumn(accumulatedColumnPositions.getQuick(i), qc, false);
             }
@@ -3104,6 +3088,37 @@ public class SqlParser {
             accumulatedColumnPositions.clear();
             aliasMap.clear();
         }
+    }
+
+    private void generateColumnAlias(GenericLexer lexer, QueryColumn qc, boolean hasFrom) throws SqlException {
+        CharSequence token = qc.getAst().token;
+        if (qc.getAst().isWildcard() && !hasFrom) {
+            throw err(lexer, null, "'from' expected");
+        }
+
+        CharSequence alias;
+        if (configuration.isColumnAliasExpressionEnabled()) {
+            CharacterStoreEntry entry = characterStore.newEntry();
+            qc.getAst().toSink(entry);
+            alias = SqlUtil.createExprColumnAlias(
+                    characterStore,
+                    entry.toImmutable(),
+                    aliasMap,
+                    configuration.getColumnAliasGeneratedMaxSize()
+            );
+        } else {
+            if (qc.getAst().type == ExpressionNode.CONSTANT && Chars.indexOfLastUnquoted(token, '.') != -1) {
+                alias = createConstColumnAlias(aliasMap);
+            } else {
+                CharSequence tokenAlias = qc.getAst().token;
+                if (qc.isWindowColumn() && ((WindowColumn) qc).isIgnoreNulls()) {
+                    tokenAlias += "_ignore_nulls";
+                }
+                alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
+            }
+        }
+        qc.setAlias(alias);
+        aliasMap.put(alias, qc);
     }
 
     private void parseSelectFrom(

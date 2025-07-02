@@ -1315,15 +1315,29 @@ public class SqlOptimiser implements Mutable {
     }
 
     private CharSequence createColumnAlias(CharSequence name, QueryModel model, boolean nonLiteral) {
-        return SqlUtil.createColumnAlias(characterStore, name, Chars.indexOfLastUnquoted(name, '.'), model.getAliasToColumnMap(), nonLiteral);
+        if (configuration.isColumnAliasExpressionEnabled()) {
+            return SqlUtil.createExprColumnAlias(characterStore, name, model.getAliasToColumnMap(), configuration.getColumnAliasGeneratedMaxSize(), nonLiteral);
+        } else {
+            return SqlUtil.createColumnAlias(characterStore, name, Chars.indexOfLastUnquoted(name, '.'), model.getAliasToColumnMap(), nonLiteral);
+        }
     }
 
     private CharSequence createColumnAlias(CharSequence name, QueryModel model) {
-        return SqlUtil.createColumnAlias(characterStore, name, Chars.indexOfLastUnquoted(name, '.'), model.getAliasToColumnMap());
+        if (configuration.isColumnAliasExpressionEnabled()) {
+            return SqlUtil.createExprColumnAlias(characterStore, name, model.getAliasToColumnMap(), configuration.getColumnAliasGeneratedMaxSize());
+        } else {
+            return SqlUtil.createColumnAlias(characterStore, name, Chars.indexOfLastUnquoted(name, '.'), model.getAliasToColumnMap());
+        }
     }
 
     private CharSequence createColumnAlias(ExpressionNode node, QueryModel model) {
-        return SqlUtil.createColumnAlias(characterStore, node.token, Chars.indexOfLastUnquoted(node.token, '.'), model.getAliasToColumnMap());
+        if (configuration.isColumnAliasExpressionEnabled()) {
+            CharacterStoreEntry entry = characterStore.newEntry();
+            node.toSink(entry);
+            return SqlUtil.createExprColumnAlias(characterStore, entry.toImmutable(), model.getAliasToColumnMap(), configuration.getColumnAliasGeneratedMaxSize());
+        } else {
+            return SqlUtil.createColumnAlias(characterStore, node.token, Chars.indexOfLastUnquoted(node.token, '.'), model.getAliasToColumnMap());
+        }
     }
 
     // use only if input is a column literal!

@@ -1037,6 +1037,55 @@ public class SqlUtil {
         }
     }
 
+    static CharSequence createExprColumnAlias(
+            CharacterStore store,
+            CharSequence base,
+            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
+            int maxLength
+    ) {
+        return createExprColumnAlias(store, base, aliasToColumnMap, maxLength, false);
+    }
+
+    static CharSequence createExprColumnAlias(
+            CharacterStore store,
+            CharSequence base,
+            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
+            int maxLength,
+            boolean nonLiteral
+    ) {
+        if (nonLiteral && disallowedAliases.contains(base)) {
+            base = "_" + base;
+        }
+
+        if (base.length() > maxLength) {
+            base = base.subSequence(0, maxLength);
+        }
+
+        if (aliasToColumnMap.excludes(base)) {
+            return base;
+        }
+
+        final CharacterStoreEntry characterStoreEntry = store.newEntry();
+        characterStoreEntry.put(base);
+
+        int len = Math.min(characterStoreEntry.length(), maxLength-2);
+        int sequence = 2;
+        while (true) {
+            if (sequence%10 == 0) {
+                final int seqSize = (int) Math.log10(sequence) + 2;
+                len = Math.min(characterStoreEntry.length(), maxLength-seqSize);
+            }
+            characterStoreEntry.trimTo(len);
+            characterStoreEntry.put('_');
+            characterStoreEntry.put(sequence);
+            sequence++;
+            CharSequence alias = characterStoreEntry.toImmutable();
+            if (aliasToColumnMap.excludes(alias)) {
+                return alias;
+            }
+        }
+    }
+
     static QueryColumn nextColumn(
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<ExpressionNode> sqlNodePool,
