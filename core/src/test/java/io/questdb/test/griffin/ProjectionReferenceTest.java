@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class ProjectionReferenceTest extends AbstractCairoTest {
@@ -46,20 +46,6 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                 "select e.symbol, e.value, q.quote, e.value + q.quote as sum " +
                         "from events e asof join quotes q on e.symbol = q.symbol",
                 false,
-                true
-        );
-    }
-
-    @Test
-    public void testOrderBy() throws Exception {
-        // note: ordering prioritises projected columns over base columns, this is intentional and is consistent with DuckDB
-        execute("create table trades (symbol string, price double, ts timestamp) timestamp(ts)");
-        execute("insert into trades values ('A', 1, '2025-01-01T10:00:00.000Z'), ('B', 2, '2025-01-01T10:05:00.000Z')");
-        assertQuery(
-                "symbol\torig_price\tprice\n" +
-                        "B\t2.0\t-2.0\n" +
-                        "A\t1.0\t-1.0\n",
-                "select symbol, price as orig_price, -price as price from trades order by price limit 10",
                 true
         );
     }
@@ -228,6 +214,20 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderBy() throws Exception {
+        // note: ordering prioritises projected columns over base columns, this is intentional and is consistent with DuckDB
+        execute("create table trades (symbol string, price double, ts timestamp) timestamp(ts)");
+        execute("insert into trades values ('A', 1, '2025-01-01T10:00:00.000Z'), ('B', 2, '2025-01-01T10:05:00.000Z')");
+        assertQuery(
+                "symbol\torig_price\tprice\n" +
+                        "B\t2.0\t-2.0\n" +
+                        "A\t1.0\t-1.0\n",
+                "select symbol, price as orig_price, -price as price from trades order by price limit 10",
+                true
+        );
+    }
+
+    @Test
     public void testPreferBaseColumnOverProjectionVanilla() throws Exception {
         execute("create table temp (x int)");
         execute("insert into temp values (1), (2), (3)");
@@ -286,6 +286,24 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         "44\n",
                 "select x + y as x from data where x > 1",
                 false
+        );
+    }
+
+    @Test
+    public void testProjectionSymbolAccess() throws SqlException {
+        assertSql(
+                "a\tconcat\tp\tb\n" +
+                        "abc\tabc--\t1\t3.0\n" +
+                        "fgk\tfgk--\t2\t4.0\n" +
+                        "fgk\tfgk--\t3\t5.0\n" +
+                        "abc\tfgk--\t4\t6.0\n" +
+                        "abc\tabc--\t5\t7.0\n" +
+                        "abc\tabc--\t6\t8.0\n" +
+                        "abc\tfgk--\t7\t9.0\n" +
+                        "fgk\tabc--\t8\t10.0\n" +
+                        "abc\tfgk--\t9\t11.0\n" +
+                        "fgk\tabc--\t10\t12.0\n",
+                "select rnd_symbol('abc', 'fgk') a, a || '--', x p, p + 2.0 b from long_sequence(10);"
         );
     }
 
