@@ -46,6 +46,7 @@ import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.LongList;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -58,6 +59,7 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -3055,6 +3057,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testManualRefreshFailsWhenCachingTxnIntervals() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price ( " +
@@ -3082,7 +3085,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            // delete _txn files, so that table reader can't reload
+            // delete _txn file, so that table reader can't reload
             final TableToken baseTableToken = engine.getTableTokenIfExists("base_price");
             Assert.assertNotNull(baseTableToken);
             try (Path path = new Path()) {
