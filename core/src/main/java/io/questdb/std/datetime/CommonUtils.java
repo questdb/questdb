@@ -26,6 +26,7 @@ package io.questdb.std.datetime;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.Utf8Sequence;
@@ -145,6 +146,25 @@ public class CommonUtils {
             }
         }
         return 1;
+    }
+
+    public static char getStrideUnit(CharSequence str, int position) throws SqlException {
+        assert str.length() > 0;
+        final char unit = str.charAt(str.length() - 1);
+        switch (unit) {
+            case 'M':
+            case 'y':
+            case 'w':
+            case 'd':
+            case 'h':
+            case 'm':
+            case 's':
+            case 'T':
+            case 'U':
+                return unit;
+            default:
+                throw SqlException.position(position).put("Invalid unit: ").put(str);
+        }
     }
 
     /**

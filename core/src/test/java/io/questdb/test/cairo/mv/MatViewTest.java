@@ -45,7 +45,10 @@ import io.questdb.griffin.engine.functions.catalogue.MatViewsFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
+import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -4926,6 +4929,14 @@ public class MatViewTest extends AbstractCairoTest {
         execute("drop materialized view if exists price_1h_" + n + ";");
     }
 
+    private static long parseFloorPartialTimestamp(String toTs) {
+        try {
+            return MicrosTimestampDriver.floor(toTs);
+        } catch (NumericException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private String copySql(int from, int count) {
         return "select * from tmp where n >= " + from + " and n < " + (from + count);
     }
@@ -5340,7 +5351,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     private void testTimerMatViewBigJumps(String timeZone, String start, String initialClock, long clockJump) throws Exception {
         assertMemoryLeak(() -> {
-            final TimeZoneRules tzRules = timeZone != null ? Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, timeZone) : null;
+            final TimeZoneRules tzRules = timeZone != null ? Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone) : null;
 
             execute(
                     "create table base_price (" +
@@ -5416,9 +5427,9 @@ public class MatViewTest extends AbstractCairoTest {
 
     private void testTimerMatViewSmallJumps(String timeZone, String start, String every, String initialClock, long clockJump, int ticksBeforeRefresh) throws Exception {
         assertMemoryLeak(() -> {
-            final TimeZoneRules tzRules = timeZone != null ? Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, timeZone) : null;
-            final int interval = Timestamps.getStrideMultiple(every);
-            final char unit = Timestamps.getStrideUnit(every, -1);
+            final TimeZoneRules tzRules = timeZone != null ? Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone) : null;
+            final int interval = CommonUtils.getStrideMultiple(every);
+            final char unit = CommonUtils.getStrideUnit(every, -1);
             final String unitStr = MatViewsFunctionFactory.getIntervalUnit(unit);
 
             execute(

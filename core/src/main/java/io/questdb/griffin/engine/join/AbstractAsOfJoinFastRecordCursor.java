@@ -155,7 +155,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
     private long binarySearchScanDown(long v, long low, long high, long totalRowLo) {
         for (long i = high - 1; i >= low; i--) {
             slaveTimeFrameCursor.recordAtRowIndex(slaveRecA, i);
-            long that = scaleTimestamp(slaveRecA.getTimestamp(slaveTimestampIndex));
+            long that = scaleTimestamp(slaveRecA.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
             // Here the code differs from the original C code:
             // We want to find the last row with value less *or equal* to v
             // while the original code find the first row with value greater than v.
@@ -176,7 +176,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                 return low;
             }
             slaveTimeFrameCursor.recordAtRowIndex(slaveRecA, low);
-            data = scaleTimestamp(slaveRecA.getTimestamp(slaveTimestampIndex));
+            data = scaleTimestamp(slaveRecA.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
         } while (data == value);
         return low - 1;
     }
@@ -192,7 +192,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         final long scanHi = Math.min(slaveFrameRow + lookahead, slaveTimeFrame.getRowHi());
         while (slaveFrameRow < scanHi || (lookaheadTimestamp == masterTimestamp && slaveFrameRow < slaveTimeFrame.getRowHi())) {
             slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
-            lookaheadTimestamp = scaleTimestamp(slaveRecA.getTimestamp(slaveTimestampIndex));
+            lookaheadTimestamp = scaleTimestamp(slaveRecA.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
             if (lookaheadTimestamp > masterTimestamp) {
                 return true;
             }

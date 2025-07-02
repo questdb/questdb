@@ -164,11 +164,9 @@ public final class Nanos {
         int y = getYear(nanos);
         boolean l = isLeapYear(y);
         int m = getMonthOfYear(nanos, y, l);
-        long n = yearNanos(y, l)
+        return yearNanos(y, l)
                 + monthOfYearNanos(m, l)
                 + (getDayOfMonth(nanos, y, m, l)) * DAY_NANOS;
-        // todo consider maxvalue overflow, need to Math.multiplyExact replace.
-        return n >= 0 || n == Numbers.LONG_NULL ? n : Long.MAX_VALUE;
     }
 
     public static long ceilHH(long nanos) {

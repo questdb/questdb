@@ -754,25 +754,6 @@ public final class Timestamps {
         return Math.abs(a - b) / SECOND_MICROS;
     }
 
-    public static char getStrideUnit(CharSequence str, int position) throws SqlException {
-        assert str.length() > 0;
-        final char unit = str.charAt(str.length() - 1);
-        switch (unit) {
-            case 'M':
-            case 'y':
-            case 'w':
-            case 'd':
-            case 'h':
-            case 'm':
-            case 's':
-            case 'T':
-            case 'U':
-                return unit;
-            default:
-                throw SqlException.position(position).put("Invalid unit: ").put(str);
-        }
-    }
-
     public static TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException {
         return getTimezoneRules(locale, timezone, 0, timezone.length());
     }

@@ -106,6 +106,8 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 slaveTimestampIndex,
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
+                masterFactory.getMetadata().getTimestampType(),
+                slaveFactory.getMetadata().getTimestampType(),
                 configuration.getSqlAsOfJoinLookAhead()
         );
         if (slaveColumnCrossIndex != null && SelectedRecordCursorFactory.isCrossedIndex(slaveColumnCrossIndex)) {
@@ -180,9 +182,11 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
                 SingleRecordSink masterSinkTarget,
                 int slaveTimestampIndex,
                 SingleRecordSink slaveSinkTarget,
+                int masterTimestampType,
+                int slaveTimestampType,
                 int lookahead
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, masterTimestampType, slaveTimestampType, lookahead);
             this.masterSinkTarget = masterSinkTarget;
             this.slaveSinkTarget = slaveSinkTarget;
         }

@@ -594,7 +594,7 @@ public class MatViewDefinition implements Mutable {
 
         if (timerTimeZone != null) {
             try {
-                this.timerRules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, timerTimeZone);
+                this.timerRules = Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);
             } catch (NumericException e) {
                 throw CairoException.critical(0).put("invalid timer timezone: ").put(timerTimeZone);
             }

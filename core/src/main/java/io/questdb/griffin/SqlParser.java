@@ -63,6 +63,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -948,8 +950,8 @@ public class SqlParser {
                 tok = tok(lexer, "'deferred' or 'period' or 'as'");
             } else if (isEveryKeyword(tok)) {
                 tok = tok(lexer, "interval");
-                every = Timestamps.getStrideMultiple(tok);
-                everyUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                every = CommonUtils.getStrideMultiple(tok);
+                everyUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewEveryUnit(everyUnit, lexer.lastTokenPosition());
                 refreshType = MatViewDefinition.REFRESH_TYPE_TIMER;
                 tok = tok(lexer, "'deferred' or 'start' or 'period' or 'as'");
@@ -969,8 +971,8 @@ public class SqlParser {
                 expectTok(lexer, "(");
                 expectTok(lexer, "length");
                 tok = tok(lexer, "LENGTH interval");
-                final int length = Timestamps.getStrideMultiple(tok);
-                final char lengthUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                final int length = CommonUtils.getStrideMultiple(tok);
+                final char lengthUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
                 final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(length, lengthUnit, lexer.lastTokenPosition());
                 tok = tok(lexer, "'time zone' or 'delay' or ')'");
@@ -985,7 +987,7 @@ public class SqlParser {
                     }
                     tz = unquote(tok).toString();
                     try {
-                        tzRules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, tz);
+                        tzRules = Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
                     } catch (NumericException e) {
                         throw SqlException.position(lexer.lastTokenPosition()).put("invalid timezone: ").put(tz);
                     }
@@ -996,8 +998,8 @@ public class SqlParser {
                 char delayUnit = 0;
                 if (isDelayKeyword(tok)) {
                     tok = tok(lexer, "DELAY interval");
-                    delay = Timestamps.getStrideMultiple(tok);
-                    delayUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                    delay = CommonUtils.getStrideMultiple(tok);
+                    delayUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                     validateMatViewDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
                     tok = tok(lexer, "')'");
                 }

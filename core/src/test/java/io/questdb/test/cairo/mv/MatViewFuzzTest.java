@@ -32,7 +32,6 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -50,8 +49,6 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 
 public class MatViewFuzzTest extends AbstractFuzzTest {
     private static final int SPIN_LOCK_TIMEOUT = 100_000_000;
@@ -321,7 +318,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, SPIN_LOCK_TIMEOUT);
         spinLockTimeout = 100_000_000;
 
-        final TestMicrosecondClock testClock = new TestMicrosecondClock(parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z"));
+        final TestMicrosecondClock testClock = new TestMicrosecondClock(MicrosTimestampDriver.floor("2000-01-01T00:00:00.000000Z"));
         testMicrosClock = testClock;
 
         assertMemoryLeak(() -> {
@@ -611,7 +608,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 throw new IllegalStateException("unexpected unit: " + lengthUnit);
         }
 
-        final long start = IntervalUtils.parseFloorPartialTimestamp("2022-01-02T03");
+        final long start = MicrosTimestampDriver.floor("2022-01-02T03");
         currentMicros = start;
         final long clockJumpLimit = start + (SPIN_LOCK_TIMEOUT / clockJump);
 

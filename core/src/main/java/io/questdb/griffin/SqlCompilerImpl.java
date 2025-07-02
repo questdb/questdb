@@ -130,7 +130,6 @@ import io.questdb.std.Transient;
 import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -1733,8 +1732,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         long start = configuration.getMicrosecondClock().getTicks();
 
                         tok = expectToken(lexer, "interval");
-                        final int interval = Timestamps.getStrideMultiple(tok);
-                        final char unit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                        final int interval = CommonUtils.getStrideMultiple(tok);
+                        final char unit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                         SqlParser.validateMatViewEveryUnit(unit, lexer.lastTokenPosition());
                         tok = SqlUtil.fetchNext(lexer);
 
