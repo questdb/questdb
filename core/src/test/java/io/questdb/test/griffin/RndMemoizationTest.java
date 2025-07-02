@@ -31,6 +31,83 @@ import org.junit.Test;
 public class RndMemoizationTest extends AbstractCairoTest {
 
     @Test
+    public void testRndByte() throws SqlException {
+        allowFunctionMemoization();
+        assertSql(
+                "b\tk\n" +
+                        "76\t86\n" +
+                        "102\t112\n" +
+                        "27\t37\n" +
+                        "87\t97\n" +
+                        "79\t89\n" +
+                        "79\t89\n" +
+                        "122\t132\n" +
+                        "83\t93\n" +
+                        "90\t100\n" +
+                        "76\t86\n",
+                "select rnd_byte() b, b + 10 k from long_sequence(10)"
+        );
+    }
+
+    @Test
+    public void testRndChar() throws SqlException {
+        allowFunctionMemoization();
+        assertSql(
+                "c\tk\n" +
+                        "V\tv\n" +
+                        "T\tt\n" +
+                        "J\tj\n" +
+                        "W\tw\n" +
+                        "C\tc\n" +
+                        "P\tp\n" +
+                        "S\ts\n" +
+                        "W\tw\n" +
+                        "H\th\n" +
+                        "Y\ty\n",
+                "select rnd_char() c, to_lowercase(c::string) k from long_sequence(10)"
+        );
+    }
+
+    @Test
+    public void testRndDate() throws SqlException {
+        allowFunctionMemoization();
+        // assertQuery does not reset rnd between SQL executions - using assertSql
+        assertSql(
+                "d\tk\n" +
+                        "1970-01-01T02:07:23.856Z\t1970-01-01T02:07:23.856001Z\n" +
+                        "1970-01-01T02:29:52.366Z\t1970-01-01T02:29:52.366001Z\n" +
+                        "1970-01-01T01:45:29.025Z\t1970-01-01T01:45:29.025001Z\n" +
+                        "1970-01-01T01:15:01.475Z\t1970-01-01T01:15:01.475001Z\n" +
+                        "1970-01-01T00:43:07.029Z\t1970-01-01T00:43:07.029001Z\n" +
+                        "1970-01-01T02:07:40.373Z\t1970-01-01T02:07:40.373001Z\n" +
+                        "1970-01-01T00:18:02.998Z\t1970-01-01T00:18:02.998001Z\n" +
+                        "1970-01-01T02:14:51.881Z\t1970-01-01T02:14:51.881001Z\n" +
+                        "1970-01-01T00:14:24.006Z\t1970-01-01T00:14:24.006001Z\n" +
+                        "1970-01-01T00:10:02.536Z\t1970-01-01T00:10:02.536001Z\n",
+                "select rnd_date() d, d + 1 k from long_sequence(10)"
+        );
+    }
+
+    @Test
+    public void testIPv4() throws SqlException {
+        allowFunctionMemoization();
+        assertSql(
+                "i\tcast\n" +
+                        "187.139.150.80\t187.139.150.80\n" +
+                        "18.206.96.238\t18.206.96.238\n" +
+                        "92.80.211.65\t92.80.211.65\n" +
+                        "212.159.205.29\t212.159.205.29\n" +
+                        "4.98.173.21\t4.98.173.21\n" +
+                        "199.122.166.85\t199.122.166.85\n" +
+                        "79.15.250.138\t79.15.250.138\n" +
+                        "35.86.82.23\t35.86.82.23\n" +
+                        "111.98.117.250\t111.98.117.250\n" +
+                        "205.123.179.216\t205.123.179.216\n",
+                "select rnd_ipv4() i, i::string from long_sequence(10)"
+        );
+    }
+
+    @Test
     public void testRndDouble() throws SqlException {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
@@ -47,6 +124,26 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         "0.22452340856088226\t10.224523408560882\n" +
                         "0.5093827001617407\t10.50938270016174\n",
                 "select rnd_double() d, d + 10 k from long_sequence(10)"
+        );
+    }
+
+    @Test
+    public void testRndFloat() throws SqlException {
+        allowFunctionMemoization();
+        // assertQuery does not reset rnd between SQL executions - using assertSql
+        assertSql(
+                "d\tk\n" +
+                        "0.66077775\t10.660778\n" +
+                        "0.80432236\t10.804322\n" +
+                        "0.22463012\t10.22463\n" +
+                        "0.12966657\t10.129666\n" +
+                        "0.08486962\t10.084869\n" +
+                        "0.28455776\t10.284557\n" +
+                        "0.29919904\t10.299199\n" +
+                        "0.08438319\t10.084383\n" +
+                        "0.20447439\t10.204474\n" +
+                        "0.93446046\t10.934461\n",
+                "select rnd_float() d, d + 10 k from long_sequence(10)"
         );
     }
 

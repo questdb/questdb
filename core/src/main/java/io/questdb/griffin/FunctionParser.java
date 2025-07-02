@@ -35,7 +35,13 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.memoization.BooleanFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.ByteFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.CharFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.DateFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.DoubleFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.FloatFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.IPv4FunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.IntFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.LongFunctionMemoizer;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
@@ -357,6 +363,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         return new DoubleFunctionMemoizer(function);
                     case ColumnType.SHORT:
                         return new ShortFunctionMemoizer(function);
+                    case ColumnType.BOOLEAN:
+                        return new BooleanFunctionMemoizer(function);
+                    case ColumnType.BYTE:
+                        return new ByteFunctionMemoizer(function);
+                    case ColumnType.CHAR:
+                        return new CharFunctionMemoizer(function);
+                    case ColumnType.DATE:
+                        return new DateFunctionMemoizer(function);
+                    case ColumnType.FLOAT:
+                        return new FloatFunctionMemoizer(function);
+                    case ColumnType.IPv4:
+                        return new IPv4FunctionMemoizer(function);
                     // other types do not have memoization yet
                 }
             }

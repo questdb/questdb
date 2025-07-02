@@ -58,6 +58,11 @@ public class RndDateFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean shouldMemoize() {
+            return true;
+        }
+
+        @Override
         public long getDate(Record rec) {
             return lo + rnd.nextPositiveLong() % range;
         }

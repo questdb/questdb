@@ -65,6 +65,11 @@ public class RndFloatFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean shouldMemoize() {
+            return true;
+        }
+
+        @Override
         public boolean isNonDeterministic() {
             return true;
         }
