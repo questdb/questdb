@@ -51,12 +51,13 @@ jobs:
       javadoc_profile: ""
       jdk: "1.17"
       os: Linux
-      JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-amazon-corretto/x86_64"
+      JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-amazon-corretto.x86_64"
+      JAVA_HOME: "/usr/lib/jvm/java-17-amazon-corretto.x86_64"
     steps:
       - script: |
           sudo alternatives --install /usr/bin/java java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java 1
           sudo alternatives --set java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java
-          sudo echo "##vso[task.setvariable variable=JAVA_HOME_17_X64;]$JAVA_HOME"
+          sudo echo "##vso[task.setvariable variable=JAVA_HOME_17_X64;]/usr/lib/jvm/java-17-amazon-corretto.x86_64"
           sudo echo "JAVA_HOME: $JAVA_HOME"
           sudo echo "JAVA_HOME_17_X64: $JAVA_HOME_17_X64"
       - template: steps.yml
