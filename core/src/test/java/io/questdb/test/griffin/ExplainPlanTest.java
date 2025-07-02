@@ -9369,7 +9369,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertPlanNoLeakCheck(
                 "select rnd_boolean()",
                 "VirtualRecord\n" +
-                        "  functions: [rnd_boolean()]\n" +
+                        "  functions: [memoize(rnd_boolean())]\n" +
                         "    long_sequence count: 1\n"
         ));
     }
