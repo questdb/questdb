@@ -1068,12 +1068,12 @@ public class SqlUtil {
         final CharacterStoreEntry characterStoreEntry = store.newEntry();
         characterStoreEntry.put(base);
 
-        int len = Math.min(characterStoreEntry.length(), maxLength-2);
+        int len = Math.min(characterStoreEntry.length(), maxLength - 2);
         int sequence = 2;
         while (true) {
-            if (sequence%10 == 0) {
+            if (sequence % 10 == 0) {
                 final int seqSize = (int) Math.log10(sequence) + 2;
-                len = Math.min(characterStoreEntry.length(), maxLength-seqSize);
+                len = Math.min(characterStoreEntry.length(), maxLength - seqSize);
             }
             characterStoreEntry.trimTo(len);
             characterStoreEntry.put('_');
