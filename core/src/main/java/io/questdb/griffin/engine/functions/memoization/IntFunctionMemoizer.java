@@ -43,11 +43,6 @@ public final class IntFunctionMemoizer extends IntFunction implements UnaryFunct
     }
 
     @Override
-    public boolean shouldMemoize() {
-        return true;
-    }
-
-    @Override
     public Function getArg() {
         return fn;
     }
@@ -64,9 +59,19 @@ public final class IntFunctionMemoizer extends IntFunction implements UnaryFunct
     }
 
     @Override
+    public boolean isThreadSafe() {
+        return false;
+    }
+
+    @Override
     public void memoize(Record record) {
         value = fn.getInt(record);
         memoized = true;
+    }
+
+    @Override
+    public boolean shouldMemoize() {
+        return true;
     }
 
     @Override
