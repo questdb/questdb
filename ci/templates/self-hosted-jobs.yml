@@ -23,11 +23,10 @@ jobs:
       os: Linux
     steps:
       - script: |
-          sudo alternatives --install /usr/bin/java java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java 1
-          sudo alternatives --set java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java
-          sudo echo "##vso[task.setvariable variable=JAVA_HOME_17_X64;]$JAVA_HOME"
-          sudo echo "JAVA_HOME: $JAVA_HOME"
-          sudo echo "JAVA_HOME_17_X64: $JAVA_HOME_17_X64"
+          echo "##vso[task.setvariable variable=JAVA_HOME_17_X64;]$(JAVA_HOME_17_X64)"
+          echo "##vso[task.setvariable variable=JAVA_HOME;]$(JAVA_HOME)"
+          echo "JAVA_HOME_17_X64: $(JAVA_HOME_17_X64)"
+          echo "JAVA_HOME: $(JAVA_HOME)"
       - template: steps.yml
 
   - job: linux_x64_zfs_jdk17
@@ -55,9 +54,8 @@ jobs:
       JAVA_HOME: "/usr/lib/jvm/java-17-amazon-corretto.x86_64"
     steps:
       - script: |
-          sudo alternatives --install /usr/bin/java java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java 1
-          sudo alternatives --set java /usr/lib/jvm/java-17-amazon-corretto.x86_64/bin/java
-          sudo echo "##vso[task.setvariable variable=JAVA_HOME_17_X64;]/usr/lib/jvm/java-17-amazon-corretto.x86_64"
-          sudo echo "JAVA_HOME: $JAVA_HOME"
-          sudo echo "JAVA_HOME_17_X64: $JAVA_HOME_17_X64"
+          echo "##vso[task.setvariable variable=JAVA_HOME_17_X64;]$(JAVA_HOME_17_X64)"
+          echo "##vso[task.setvariable variable=JAVA_HOME;]$(JAVA_HOME)"
+          echo "JAVA_HOME_17_X64: $(JAVA_HOME_17_X64)"
+          echo "JAVA_HOME: $(JAVA_HOME)"
       - template: steps.yml
