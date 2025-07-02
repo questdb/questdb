@@ -127,7 +127,7 @@ public class GroupByUtils {
                             executionContext
                     );
 
-                    // functions added to the outer projections will later be replaced by column refences
+                    // functions added to the outer projections will later be replaced by column references
                     outerProjectionFunctions.add(func);
                     innerProjectionFunctions.add(func);
 
