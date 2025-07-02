@@ -817,59 +817,60 @@ public final class TestUtils {
      * This method expects for the char sequences to end up with a newline character.
      */
     public static void assertReverseLinesEqual(@Nullable String message, CharSequence expected, CharSequence actual) {
+        String cleanMessage = message == null ? "" : message;
         if (expected == null && actual == null) {
             return;
         }
 
         if (expected != null && actual == null) {
-            Assert.fail("Expected: \n`" + expected + "`but have NULL");
+            Assert.fail(cleanMessage + "expected:<" + expected + "> but was: NULL");
         }
 
         if (expected == null) {
-            Assert.fail("Expected: NULL but have \n`" + actual + "`\n");
+            Assert.fail(cleanMessage + "expected: NULL but was:<" + actual + ">");
         }
 
         if (expected.length() != actual.length()) {
-            Assert.assertEquals(message, reverseLines(expected), actual);
+            Assert.fail(cleanMessage + "expected:<" + reverseLines(expected) + "> but was:<" + actual + ">");
         }
 
         if (expected.length() == 0) {
+            // If expected is empty, so is actual here (otherwise it would have failed the last condition).
             return;
         }
 
-        assert expected.charAt(expected.length() - 1) == '\n' : "Expected lines must end with a newline character.";
-        assert actual.charAt(actual.length() - 1) == '\n' : "Actual lines must end with a newline character.";
+        if (expected.charAt(expected.length() - 1) != '\n') {
+            Assert.fail(cleanMessage + "expected must end up with a newline character");
+        }
+
+        if (actual.charAt(actual.length() - 1) != '\n') {
+            Assert.fail(cleanMessage + "actual must end up with a newline character");
+        }
 
         int expLo = expected.length();
         int actHi = -1;
         final int actLen = actual.length();
         while (expLo != 0) {
-            int idx = Chars.lastIndexOf(expected, 0, expLo - 1, "\n");
-            int len;
-            if (idx == -1) {
-                len = expLo;
-                expLo = 0;
-            } else {
-                len = expLo - idx - 1;
-                expLo = idx + 1;
-            }
+            int idx = Chars.lastIndexOf(expected, 0, expLo - 1, '\n');
+            final int len = expLo - idx - 1;
+            expLo = idx + 1;
 
             final int actLo = actHi + 1;
-            idx = Chars.indexOf(actual, actLo, actLen, "\n");
+            idx = Chars.indexOf(actual, actLo, actLen, '\n');
             if (idx == -1 || idx - actHi != len) {
-                Assert.assertEquals(message, reverseLines(expected), actual);
+                Assert.fail(cleanMessage + "expected:<" + reverseLines(expected) + "> but was:<" + actual + ">");
             }
             actHi = idx;
 
             for (int j = 0; j < len; j++) {
                 if (expected.charAt(expLo + j) != actual.charAt(actLo + j)) {
-                    Assert.assertEquals(message, reverseLines(expected), actual);
+                    Assert.fail(cleanMessage + "expected:<" + reverseLines(expected) + "> but was:<" + actual + ">");
                 }
             }
         }
 
         if (actHi != actLen - 1) {
-            Assert.assertEquals(message, reverseLines(expected), actual);
+            Assert.fail(cleanMessage + "expected:<" + reverseLines(expected) + "> but was:<" + actual + ">");
         }
     }
 
