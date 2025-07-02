@@ -279,6 +279,8 @@ public interface CairoConfiguration {
 
     int getMatViewRowsPerQueryEstimate();
 
+    int getMatViewTxnIntervalsCacheCapacity();
+
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();

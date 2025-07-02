@@ -80,13 +80,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final StringSink errorMsgSink = new StringSink();
     private final FixedOffsetIntervalIterator fixedOffsetIterator = new FixedOffsetIntervalIterator();
     private final MatViewGraph graph;
-    private final LongList intervals = new LongList();
     private final MicrosecondClock microsecondClock;
     private final RefreshContext refreshContext = new RefreshContext();
     private final MatViewRefreshSqlExecutionContext refreshSqlExecutionContext;
     private final MatViewRefreshTask refreshTask = new MatViewRefreshTask();
     private final MatViewStateStore stateStore;
     private final TimeZoneIntervalIterator timeZoneIterator = new TimeZoneIntervalIterator();
+    private final LongList txnIntervals = new LongList();
     private final WalTxnRangeLoader txnRangeLoader;
     private final int workerId;
 
@@ -225,16 +225,28 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long lastRefreshTxn = Math.max(viewState.getLastRefreshBaseTxn(), viewState.getCachedIntervalsBaseTxn());
 
         if (lastRefreshTxn > -1) {
+            if (lastRefreshTxn == lastTxn) {
+                return viewState.getCachedTxnIntervals();
+            }
+
             try {
-                intervals.clear();
-                txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, intervals, lastRefreshTxn, lastTxn);
-                if (intervals.size() > 0) {
-                    final int dividerIndex = viewState.getCachedTxnIntervals().size();
-                    viewState.getCachedTxnIntervals().addAll(intervals);
-                    // TODO(puzpuzpuz): put an upper cap to intervals size
-                    IntervalUtils.unionInPlace(viewState.getCachedTxnIntervals(), dividerIndex);
-                    viewState.setCachedIntervalsBaseTxn(lastTxn);
+                final LongList stateTxnIntervals = viewState.getCachedTxnIntervals();
+
+                txnIntervals.clear();
+                txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, txnIntervals, lastRefreshTxn, lastTxn);
+                if (txnIntervals.size() > 0) {
+                    final int dividerIndex = stateTxnIntervals.size();
+                    stateTxnIntervals.addAll(txnIntervals);
+                    IntervalUtils.unionInPlace(stateTxnIntervals, dividerIndex);
+
+                    final int cacheCapacity = configuration.getMatViewTxnIntervalsCacheCapacity() << 1;
+                    if (stateTxnIntervals.size() > cacheCapacity) {
+                        // Squash the latest intervals into a single one.
+                        stateTxnIntervals.setQuick(cacheCapacity - 1, stateTxnIntervals.getQuick(stateTxnIntervals.size() - 1));
+                        stateTxnIntervals.setPos(cacheCapacity);
+                    }
                 }
+                viewState.setCachedIntervalsBaseTxn(lastTxn);
 
                 walWriter.resetMatViewState(
                         viewState.getLastRefreshBaseTxn(),
@@ -242,11 +254,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         false,
                         null,
                         viewState.getLastPeriodHi(),
-                        viewState.getCachedTxnIntervals(),
-                        viewState.getCachedIntervalsBaseTxn()
+                        stateTxnIntervals,
+                        lastTxn
                 );
 
-                return viewState.getCachedTxnIntervals();
+                return stateTxnIntervals;
             } catch (CairoException ex) {
                 LOG.error().$("could not read WAL transactions, falling back to full refresh [view=").$(viewToken)
                         .$(", ex=").$safe(ex.getFlyweightMessage())
