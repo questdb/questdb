@@ -3706,7 +3706,7 @@ public class SqlParser {
         }
         return recursiveReplace(
                 expr,
-                rewriteDeclaredVariablesInExpressionVisitor.of(decls, exprTargetVariableName)
+                rewriteDeclaredVariablesInExpressionVisitor.of(decls, exprTargetVariableName, expressionNodePool)
         );
     }
 
@@ -4115,6 +4115,7 @@ public class SqlParser {
     private static class RewriteDeclaredVariablesInExpressionVisitor implements ReplacingVisitor {
         public LowerCaseCharSequenceObjHashMap<ExpressionNode> decls;
         public CharSequence exprTargetVariableName;
+        public ObjectPool<ExpressionNode> pool;
         public boolean hasAtChar;
 
         @Override
@@ -4128,7 +4129,7 @@ public class SqlParser {
             }
 
             if (node.token != null && node.type == ExpressionNode.LITERAL && decls.contains(node.token)) {
-                return decls.get(node.token).rhs;
+                return ExpressionNode.deepClone(pool, decls.get(node.token).rhs);
             } else if (hasAtChar) {
                 throw SqlException.$(node.position, "tried to use undeclared variable `" + node.token + '`');
             }
@@ -4138,10 +4139,12 @@ public class SqlParser {
 
         ReplacingVisitor of(
                 @NotNull LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
-                @Nullable CharSequence exprTargetVariableName
+                @Nullable CharSequence exprTargetVariableName,
+                @NotNull ObjectPool<ExpressionNode> pool
         ) {
             this.decls = decls;
             this.exprTargetVariableName = exprTargetVariableName;
+            this.pool = pool;
             return this;
         }
     }
