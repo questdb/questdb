@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -113,8 +114,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "  and bid > price\n" +
                     ");";
 
-            // the same query with hint
-            String queryWithHint = "select /*+ use_asof_binary_search(orders md) */ * from (\n" +
+            // the same query with Use hint
+            String queryWithUseHint = "select /*+ use_asof_binary_search(orders md) */ * from (\n" +
                     "  select orders.ts, bid, md.market_data_symbol, orders.order_symbol, md.md_ts as order_ts, price from oRdERS\n" +
                     "  asof join (\n" +
                     "    select ts as md_ts, market_Data_symbol, bid from market_data\n" +
@@ -124,8 +125,19 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "  and bid > price\n" +
                     ");";
 
-            // plan without the hint should not use the FAST ASOF
-            assertQuery("QUERY PLAN\n" +
+            // the same query with Avoid hint
+            String queryWithAvoidHint = "select /*+ avoid_asof_binary_search(orders md) */ * from (\n" +
+                    "  select orders.ts, bid, md.market_data_symbol, orders.order_symbol, md.md_ts as order_ts, price from oRdERS\n" +
+                    "  asof join (\n" +
+                    "    select ts as md_ts, market_Data_symbol, bid from market_data\n" +
+                    "    where market_data_symbol = 'sym_1' \n" +
+                    "  ) MD  \n" +
+                    "  where orders.ts > '2025-01-01T00:00:00.000000000Z' \n" +
+                    "  and bid > price\n" +
+                    ");";
+
+            // plan with the avoid hint should NOT use the FAST ASOF
+            assertQueryNoLeakCheck("QUERY PLAN\n" +
                             "SelectedRecord\n" +
                             "    Filter filter: oRdERS.price<MD.bid\n" +
                             "        AsOf Join\n" +
@@ -139,14 +151,14 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: market_data\n",
-                    "EXPLAIN " + queryWithoutHint, null, false, true);
+                    "EXPLAIN " + queryWithAvoidHint, null, false, true);
 
-            // with hint it generates a plan with the fast asof join
-            assertQuery("QUERY PLAN\n" +
+            // with Use hint it generates a plan with the fast asof join
+            assertQueryNoLeakCheck("QUERY PLAN\n" +
                             "SelectedRecord\n" +
                             "    Filter filter: oRdERS.price<MD.bid\n" +
                             "        Filtered AsOf Join Fast Scan\n" +
-                            "          filter: oRdERS.order_symbol='sym_1'\n" +
+                            "          filter: market_Data_symbol='sym_1'\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Interval forward scan on: orders\n" +
@@ -154,16 +166,32 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: market_data\n",
-                    "EXPLAIN " + queryWithHint, null, false, true);
+                    "EXPLAIN " + queryWithUseHint, null, false, true);
 
-            // both queries must return the same result
+            // and query without hint should also use the fast asof join
+            assertQueryNoLeakCheck("QUERY PLAN\n" +
+                            "SelectedRecord\n" +
+                            "    Filter filter: oRdERS.price<MD.bid\n" +
+                            "        Filtered AsOf Join Fast Scan\n" +
+                            "          filter: market_Data_symbol='sym_1'\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Interval forward scan on: orders\n" +
+                            "                  intervals: [(\"2025-01-01T00:00:00.000001Z\",\"MAX\")]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: market_data\n",
+                    "EXPLAIN " + queryWithoutHint, null, false, true);
+
+            // all three queries must return the same result
             String expectedResult = "ts\tbid\tmarket_data_symbol\torder_symbol\torder_ts\tprice\n" +
                     "2025-01-01T00:03:20.003570Z\t0.18646912884414946\tsym_1\tsym_4\t2025-01-01T00:03:19.407091Z\t0.08486964232560668\n" +
                     "2025-01-01T00:06:40.006304Z\t0.9130994629783138\tsym_1\tsym_2\t2025-01-01T00:06:37.303610Z\t0.8423410920883345\n" +
                     "2025-01-01T00:13:20.002056Z\t0.24872951622414008\tsym_1\tsym_4\t2025-01-01T00:13:19.909382Z\t0.0367581207471136\n" +
                     "2025-01-01T00:16:40.009947Z\t0.5071618579762882\tsym_1\tsym_6\t2025-01-01T00:16:39.800653Z\t0.3100545983862456\n";
-            assertQuery(expectedResult, queryWithHint, "ts", false, false);
-            assertQuery(expectedResult, queryWithoutHint, "ts", false, false);
+            assertQueryNoLeakCheck(expectedResult, queryWithUseHint, "ts", false, false);
+            assertQueryNoLeakCheck(expectedResult, queryWithAvoidHint, "ts", false, false);
+            assertQueryNoLeakCheck(expectedResult, queryWithoutHint, "ts", false, false);
         });
     }
 
@@ -354,6 +382,44 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinHighCardinalityKeysAndTolerance() throws Exception {
+        // this tests set low threshold for evacuation of full fat ASOF join map
+        // and compares that Fast and FullFat results are the same
+
+        setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD, "10");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (vch VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (vch VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute(
+                    "INSERT INTO master SELECT " +
+                            "rnd_int()::varchar as vch, " +
+                            "timestamp_sequence(0, 1000000) + x * 1000000 as ts " +
+                            "FROM long_sequence(1_000)"
+            );
+
+            execute(
+                    "INSERT INTO slave SELECT " +
+                            "rnd_int()::varchar as vch, " +
+                            "timestamp_sequence(0, 1000000) + x * 1000000 as ts " +
+                            "FROM long_sequence(1_000)"
+            );
+
+            String query = "SELECT * FROM master ASOF JOIN slave y ON(vch) TOLERANCE 1s";
+            printSql("EXPLAIN " + query, true);
+            TestUtils.assertNotContains(sink, "AsOf Join Fast Scan");
+            printSql(query, true);
+            String fullFatResult = sink.toString();
+
+            printSql("EXPLAIN " + query, false);
+            TestUtils.assertContains(sink, "AsOf Join Fast Scan");
+            printSql(query, false);
+            String lightResult = sink.toString();
+            TestUtils.assertEquals(fullFatResult, lightResult);
+        });
+    }
+
+    @Test
     public void testAsOfJoinNoAliasDuplication() throws Exception {
         assertMemoryLeak(() -> {
             // ASKS
@@ -407,6 +473,320 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOnNullSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = "tag\thi\tlo\n" +
+                    "AA\t315515118\t315515118\n" +
+                    "BB\t-727724771\t-727724771\n" +
+                    "\t-948263339\t-948263339\n" +
+                    "\t592859671\t592859671\n" +
+                    "AA\t-847531048\t-847531048\n" +
+                    "BB\t-2041844972\t-2041844972\n" +
+                    "BB\t-1575378703\t-1575378703\n" +
+                    "BB\t1545253512\t1545253512\n" +
+                    "AA\t1573662097\t1573662097\n" +
+                    "AA\t339631474\t339631474\n";
+
+            assertQueryNoLeakCheck(
+                    "tag\thi\tlo\n",
+                    "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)",
+                    "create table tab (\n" +
+                            "    tag symbol index,\n" +
+                            "    seq int,\n" +
+                            "    ts timestamp\n" +
+                            ") timestamp(ts) partition by DAY",
+                    null,
+                    "insert into tab select * from (select rnd_symbol('AA', 'BB', null) tag, \n" +
+                            "        rnd_int() seq, \n" +
+                            "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                            "    from long_sequence(10)) timestamp (ts)",
+                    expected,
+                    false,
+                    true,
+                    false
+            );
+
+            execute("create table tab2 as (select * from tab where tag is not null)");
+            assertQueryNoLeakCheck("tag\thi\tlo\n" +
+                            "AA\t315515118\t315515118\n" +
+                            "BB\t-727724771\t-727724771\n" +
+                            "\t-948263339\tnull\n" +
+                            "\t592859671\tnull\n" +
+                            "AA\t-847531048\t-847531048\n" +
+                            "BB\t-2041844972\t-2041844972\n" +
+                            "BB\t-1575378703\t-1575378703\n" +
+                            "BB\t1545253512\t1545253512\n" +
+                            "AA\t1573662097\t1573662097\n" +
+                            "AA\t339631474\t339631474\n",
+                    "select a.tag, a.seq hi, b.seq lo from tab a asof join tab2 b on (tag)", null, null, false, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnTripleSymbolKey() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                execute("CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, market SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("CREATE TABLE asks (stock SYMBOL, exchange SYMBOL, market SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+
+                execute("INSERT INTO bids VALUES " +
+                        "('AAPL', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
+                        "('AAPL', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 2, 'GOOD')," +
+                        "('AAPL', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 3, 'SCAM')," +
+                        "('AAPL', 'NASDAQ', 'EU', '2000-01-01T00:00:00.000000Z', 4, 'SCAM')," +
+                        "('AAPL', 'NASDAQ', 'EU', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
+                        "('AAPL', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 6, 'SCAM')," +
+                        "('AAPL', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 7, 'GOOD')," +
+                        "('AAPL', 'LSE', 'UK', '2002-01-01T00:00:00.000000Z', 8, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 9, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 10, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 11, 'SCAM')," +
+                        "('MSFT', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 12, 'UNKNOWN')," +
+                        "('MSFT', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 13, 'GOOD')"
+                );
+
+                execute("INSERT INTO asks VALUES " +
+                        "('AAPL', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
+                        "('AAPL', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 2, 'EXCELLENT')," +
+                        "('AAPL', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 3, 'EXCELLENT')," +
+                        "('AAPL', 'NASDAQ', 'EU', '2000-01-01T00:00:00.000000Z', 4, 'EXCELLENT')," +
+                        "('AAPL', 'NASDAQ', 'EU', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
+                        "('AAPL', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 6, 'SCAM')," +
+                        "('AAPL', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 7, 'EXCELLENT')," +
+                        "('AAPL', 'LSE', 'UK', '2002-01-01T00:00:00.000000Z', 8, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 9, 'EXCELLENT')," +
+                        "('MSFT', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 10, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 11, 'EXCELLENT')," +
+                        "('MSFT', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 12, 'GOOD')," +
+                        "('MSFT', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 13, 'SCAM')"
+                );
+
+                String query = "SELECT * FROM bids ASOF JOIN asks ON (stock, exchange, market)";
+                String expected = "stock\texchange\tmarket\tts\ti\trating\tstock1\texchange1\tmarket1\tts1\ti1\trating1\n" +
+                        "AAPL\tNASDAQ\tUS\t2000-01-01T00:00:00.000000Z\t1\tGOOD\tAAPL\tNASDAQ\tUS\t2000-01-01T00:00:00.000000Z\t1\tGOOD\n" +
+                        "AAPL\tNASDAQ\tEU\t2000-01-01T00:00:00.000000Z\t4\tSCAM\tAAPL\tNASDAQ\tEU\t2000-01-01T00:00:00.000000Z\t4\tEXCELLENT\n" +
+                        "AAPL\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t6\tSCAM\tAAPL\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t6\tSCAM\n" +
+                        "MSFT\tNASDAQ\tUS\t2000-01-01T00:00:00.000000Z\t9\tGOOD\tMSFT\tNASDAQ\tUS\t2000-01-01T00:00:00.000000Z\t9\tEXCELLENT\n" +
+                        "MSFT\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t12\tUNKNOWN\tMSFT\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t12\tGOOD\n" +
+                        "AAPL\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t2\tGOOD\tAAPL\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t2\tEXCELLENT\n" +
+                        "AAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\tAAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\n" +
+                        "AAPL\tLSE\tUK\t2001-01-01T00:00:00.000000Z\t7\tGOOD\tAAPL\tLSE\tUK\t2001-01-01T00:00:00.000000Z\t7\tEXCELLENT\n" +
+                        "MSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t10\tGOOD\tMSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t10\tGOOD\n" +
+                        "MSFT\tLSE\tUK\t2001-01-01T00:00:00.000000Z\t13\tGOOD\tMSFT\tLSE\tUK\t2001-01-01T00:00:00.000000Z\t13\tSCAM\n" +
+                        "AAPL\tLSE\tUK\t2002-01-01T00:00:00.000000Z\t8\tGOOD\tAAPL\tLSE\tUK\t2002-01-01T00:00:00.000000Z\t8\tGOOD\n" +
+                        "MSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000Z\t11\tSCAM\tMSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000Z\t11\tEXCELLENT\n" +
+                        "AAPL\tNASDAQ\tUS\t2002-01-01T00:00:00.000000Z\t3\tSCAM\tAAPL\tNASDAQ\tUS\t2002-01-01T00:00:00.000000Z\t3\tEXCELLENT\n";
+                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnTripleSymbolKeyLastKeyMissing() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                execute("CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, market SYMBOL, ts TIMESTAMP, i INT, rating STRING) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("CREATE TABLE asks (stock SYMBOL, exchange SYMBOL, market SYMBOL, ts TIMESTAMP, i INT, rating STRING) TIMESTAMP(ts) PARTITION BY DAY");
+
+                execute("INSERT INTO bids VALUES " +
+                        "('AAPL', 'NASDAQ', 'ASIA', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
+                        "('AAPL', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 2, 'GOOD')," +
+                        "(null, 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 3, 'SCAM')," +
+                        "('AAPL', 'NASDAQ', 'EU', '2000-01-01T00:00:00.000000Z', 4, 'SCAM')," +
+                        "('AAPL', 'NASDAQ', 'EU', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
+                        "('AAPL', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 6, 'SCAM')," +
+                        "('AAPL', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 7, 'GOOD')," +
+                        "('AAPL', 'LSE', 'UK', '2002-01-01T00:00:00.000000Z', 8, 'GOOD')," +
+                        "('MSFT', 'FRA', 'US', '2000-01-01T00:00:00.000000Z', 9, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 10, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 11, 'SCAM')," +
+                        "('QDB', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 12, 'UNKNOWN')," +
+                        "('MSFT', 'LSE', null, '2001-01-01T00:00:00.000000Z', 13, 'GOOD')"
+                );
+
+                execute("INSERT INTO asks VALUES " +
+                        "('AAPL', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
+                        "('AAPL', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 2, 'EXCELLENT')," +
+                        "('AAPL', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 3, 'EXCELLENT')," +
+                        "('AAPL', 'NASDAQ', 'EU', '2000-01-01T00:00:00.000000Z', 4, 'EXCELLENT')," +
+                        "('AAPL', 'NASDAQ', 'EU', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
+                        "('AAPL', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 6, 'SCAM')," +
+                        "('AAPL', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 7, 'EXCELLENT')," +
+                        "('AAPL', 'LSE', 'UK', '2002-01-01T00:00:00.000000Z', 8, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', 'US', '2000-01-01T00:00:00.000000Z', 9, 'EXCELLENT')," +
+                        "('MSFT', 'NASDAQ', 'US', '2001-01-01T00:00:00.000000Z', 10, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', 'US', '2002-01-01T00:00:00.000000Z', 11, 'EXCELLENT')," +
+                        "('MSFT', 'LSE', 'UK', '2000-01-01T00:00:00.000000Z', 12, 'GOOD')," +
+                        "('MSFT', 'LSE', 'UK', '2001-01-01T00:00:00.000000Z', 13, 'SCAM')"
+                );
+
+                String query = "SELECT * FROM bids ASOF JOIN asks ON (stock, rating, exchange, market)";
+                String expected = "stock\texchange\tmarket\tts\ti\trating\tstock1\texchange1\tmarket1\tts1\ti1\trating1\n" +
+                        "AAPL\tNASDAQ\tASIA\t2000-01-01T00:00:00.000000Z\t1\tGOOD\t\t\t\t\tnull\t\n" +
+                        "AAPL\tNASDAQ\tEU\t2000-01-01T00:00:00.000000Z\t4\tSCAM\t\t\t\t\tnull\t\n" +
+                        "AAPL\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t6\tSCAM\tAAPL\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t6\tSCAM\n" +
+                        "MSFT\tFRA\tUS\t2000-01-01T00:00:00.000000Z\t9\tGOOD\t\t\t\t\tnull\t\n" +
+                        "QDB\tLSE\tUK\t2000-01-01T00:00:00.000000Z\t12\tUNKNOWN\t\t\t\t\tnull\t\n" +
+                        "AAPL\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t2\tGOOD\tAAPL\tNASDAQ\tUS\t2000-01-01T00:00:00.000000Z\t1\tGOOD\n" +
+                        "AAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\tAAPL\tNASDAQ\tEU\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\n" +
+                        "AAPL\tLSE\tUK\t2001-01-01T00:00:00.000000Z\t7\tGOOD\t\t\t\t\tnull\t\n" +
+                        "MSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t10\tGOOD\tMSFT\tNASDAQ\tUS\t2001-01-01T00:00:00.000000Z\t10\tGOOD\n" +
+                        "MSFT\tLSE\t\t2001-01-01T00:00:00.000000Z\t13\tGOOD\t\t\t\t\tnull\t\n" +
+                        "AAPL\tLSE\tUK\t2002-01-01T00:00:00.000000Z\t8\tGOOD\tAAPL\tLSE\tUK\t2002-01-01T00:00:00.000000Z\t8\tGOOD\n" +
+                        "MSFT\tNASDAQ\tUS\t2002-01-01T00:00:00.000000Z\t11\tSCAM\t\t\t\t\tnull\t\n" +
+                        "\tNASDAQ\tUS\t2002-01-01T00:00:00.000000Z\t3\tSCAM\t\t\t\t\tnull\t\n";
+                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTolerance() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 as (select x as id, (x + x*1_000_000)::timestamp ts from long_sequence(10)) timestamp(ts) partition by day;");
+            execute("create table t2 as (select x as id, (x)::timestamp ts from long_sequence(5)) timestamp(ts) partition by day;");
+
+
+            // keyed join and slave supports timeframe -> plan should use AsOfJoinFastRecordCursorFactory
+            String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 2s;";
+            // sanity check: uses AsOfJoinFastRecordCursorFactory
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "AsOf Join Fast Scan");
+            String expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001Z\t1\t1970-01-01T00:00:00.000001Z\n" +
+                    "2\t1970-01-01T00:00:02.000002Z\t2\t1970-01-01T00:00:00.000002Z\n" +
+                    "3\t1970-01-01T00:00:03.000003Z\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004Z\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005Z\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006Z\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007Z\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008Z\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009Z\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010Z\tnull\t\n";
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            // keyed join and slave has a stealable filter -> should use FilteredAsOfJoinFastRecordCursorFactory
+            query = "SELECT * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) ON id TOLERANCE 2s;";
+            // sanity check: uses FilteredAsOfJoinFastRecordCursorFactory
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            assertQueryFullFatNoLeakCheck(expected, query, "ts", false, true, true);
+
+
+            // non-keyed join and slave supports timeframe -> should use AsOfJoinNoKeyFastRecordCursorFactory
+            query = "SELECT * FROM t1 ASOF JOIN t2 TOLERANCE 2s;";
+            expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001Z\t5\t1970-01-01T00:00:00.000005Z\n" +
+                    "2\t1970-01-01T00:00:02.000002Z\t5\t1970-01-01T00:00:00.000005Z\n" +
+                    "3\t1970-01-01T00:00:03.000003Z\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004Z\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005Z\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006Z\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007Z\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008Z\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009Z\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010Z\tnull\t\n";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "AsOf Join Fast Scan");
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            // non-keyed join and slave has a filter + use hint -> should use FilteredAsOfJoinNoKeyFastRecordCursorFactory
+            query = "SELECT /*+ use_asof_binary_search(t1 t2) */ * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            // non-keyed join, slave has a filter, no hint -> should also use FilteredAsOfJoinNoKeyFastRecordCursorFactory
+            query = "SELECT * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            // non-keyed join, slave has a filter, avoid hint -> should also use AsOfJoinNoKeyRecordCursorFactory
+            query = "SELECT /*+ avoid_asof_binary_search(t1 t2) */ * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "AsOf Join");
+            TestUtils.assertNotContains(sink, "Filtered");
+            TestUtils.assertNotContains(sink, "Fast");
+        });
+    }
+
+    @Test
+    public void testAsOfJoinToleranceNegative() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 as (select x as id, (x + x*1_000_000)::timestamp ts from long_sequence(10)) timestamp(ts) partition by day;");
+            execute("create table t2 as (select x as id, (x)::timestamp ts from long_sequence(5)) timestamp(ts) partition by day;");
+
+            String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE -2s;";
+            assertExceptionNoLeakCheck(query, 49, "ASOF JOIN TOLERANCE must be positive");
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 0s;";
+            assertExceptionNoLeakCheck(query, 46, "zero is not a valid tolerance value");
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 0;";
+            assertExceptionNoLeakCheck(query, 46, "zero is not a valid tolerance value");
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1Q;";
+            assertExceptionNoLeakCheck(query, 46, "unsupported TOLERANCE unit [unit=Q]");
+        });
+    }
+
+    @Test
+    public void testAsOfJoinToleranceSupportedUnits() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 as (select x as id, (x + x*1_000_000)::timestamp ts from long_sequence(10)) timestamp(ts) partition by day;");
+            execute("create table t2 as (select x as id, (x)::timestamp ts from long_sequence(5)) timestamp(ts) partition by day;");
+
+
+            String expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001Z\t1\t1970-01-01T00:00:00.000001Z\n" +
+                    "2\t1970-01-01T00:00:02.000002Z\tnull\t\n" +
+                    "3\t1970-01-01T00:00:03.000003Z\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004Z\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005Z\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006Z\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007Z\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008Z\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009Z\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010Z\tnull\t\n";
+
+            String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000000U;";
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000T;";
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1s;";
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1m;";
+            expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001Z\t1\t1970-01-01T00:00:00.000001Z\n" +
+                    "2\t1970-01-01T00:00:02.000002Z\t2\t1970-01-01T00:00:00.000002Z\n" +
+                    "3\t1970-01-01T00:00:03.000003Z\t3\t1970-01-01T00:00:00.000003Z\n" +
+                    "4\t1970-01-01T00:00:04.000004Z\t4\t1970-01-01T00:00:00.000004Z\n" +
+                    "5\t1970-01-01T00:00:05.000005Z\t5\t1970-01-01T00:00:00.000005Z\n" +
+                    "6\t1970-01-01T00:00:06.000006Z\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007Z\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008Z\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009Z\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010Z\tnull\t\n";
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1h;";
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1d;";
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1w;";
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+        });
+    }
+
+    @Test
     public void testExplicitTimestampIsNotNecessaryWhenAsofJoiningExplicitlyOrderedTables() throws Exception {
         testExplicitTimestampIsNotNecessaryWhenJoining("asof join", "ts");
     }
@@ -429,6 +809,29 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testFullLtJoinDoesNotConvertSymbolKeyToString() throws Exception {
         testFullJoinDoesNotConvertSymbolKeyToString("lt join");
+    }
+
+    @Test
+    public void testImplicitTimestampPropagationWontCauseAmbiguity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 (x int, ts timestamp) timestamp(ts) partition by day");
+
+            execute("insert into t1 values (1, '2022-10-05T08:15:00.000000Z')");
+            execute("insert into t1 values (2, '2022-10-05T08:17:00.000000Z')");
+            execute("insert into t1 values (3, '2022-10-05T08:21:00.000000Z')");
+
+            execute("create table t2 (x int, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t2 values (4, '2022-10-05T08:18:00.000000Z')");
+            execute("insert into t2 values (5, '2022-10-05T08:19:00.000000Z')");
+            execute("insert into t2 values (6, '2023-10-05T09:00:00.000000Z')");
+
+            assertQuery("ts\n" +
+                            "2022-10-05T08:15:00.000000Z\n" +
+                            "2022-10-05T08:17:00.000000Z\n" +
+                            "2022-10-05T08:21:00.000000Z\n",
+                    "select ts from t1 asof join (select x from t2)",
+                    null, "ts", false, true);
+        });
     }
 
     @Test
@@ -578,6 +981,108 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:03.000000Z\n" +
                     "4\t2000-01-01T00:00:04.000000Z\t\t\n";
             assertQueryNoLeakCheck(expected, query, null, false, false);
+        });
+    }
+
+    @Test
+    public void testJoinStringOnSymbolKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE y (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute(
+                    "INSERT INTO x VALUES " +
+                            "('1', '2000-01-01T00:00:00.000000Z')," +
+                            "('3', '2000-01-01T00:00:01.000000Z')," +
+                            "('1', '2000-01-01T00:00:02.000000Z')," +
+                            "('2', '2000-01-01T00:00:03.000000Z')," +
+                            "('4', '2000-01-01T00:00:04.000000Z')," +
+                            "(null, '2000-01-01T00:00:03.000000Z')," +
+                            "('не-ASCII', '2000-01-01T00:00:03.000000Z')"
+            );
+            execute(
+                    "INSERT INTO y VALUES " +
+                            "('2', '2000-01-01T00:00:00.000000Z')," +
+                            "('4', '2000-01-01T00:00:01.000000Z')," +
+                            "('1', '2000-01-01T00:00:02.000000Z')," +
+                            "('2', '2000-01-01T00:00:03.000000Z')," +
+                            "('3', '2000-01-01T00:00:04.000000Z')"
+            );
+
+            // ASOF JOIN
+            String query = "SELECT * FROM x ASOF JOIN y ON(sym)";
+            String expected = "sym\tts\tsym1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000Z\t\t\n" +
+                    "1\t2000-01-01T00:00:02.000000Z\t1\t2000-01-01T00:00:02.000000Z\n" +
+                    "\t2000-01-01T00:00:03.000000Z\t\t\n" +
+                    "не-ASCII\t2000-01-01T00:00:03.000000Z\t\t\n" +
+                    "2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:03.000000Z\n" +
+                    "4\t2000-01-01T00:00:04.000000Z\t4\t2000-01-01T00:00:01.000000Z\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            // LT JOIN
+            query = "SELECT * FROM x LT JOIN y ON(sym)";
+            expected = "sym\tts\tsym1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000Z\t\t\n" +
+                    "1\t2000-01-01T00:00:02.000000Z\t\t\n" +
+                    "\t2000-01-01T00:00:03.000000Z\t\t\n" +
+                    "не-ASCII\t2000-01-01T00:00:03.000000Z\t\t\n" +
+                    "2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:00.000000Z\n" +
+                    "4\t2000-01-01T00:00:04.000000Z\t4\t2000-01-01T00:00:01.000000Z\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testJoinVarcharOnSymbolKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE y (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute(
+                    "INSERT INTO x VALUES " +
+                            "('😊', '2000-01-01T00:00:00.000000Z')," +
+                            "('3', '2000-01-01T00:00:01.000000Z')," +
+                            "('😊', '2000-01-01T00:00:02.000000Z')," +
+                            "('2', '2000-01-01T00:00:03.000000Z')," +
+                            "('4', '2000-01-01T00:00:04.000000Z')," +
+                            "(null, '2000-01-01T00:00:03.000000Z')," +
+                            "('не-ASCII', '2000-01-01T00:00:03.000000Z')"
+            );
+            execute(
+                    "INSERT INTO y VALUES " +
+                            "('2', '2000-01-01T00:00:00.000000Z')," +
+                            "('4', '2000-01-01T00:00:01.000000Z')," +
+                            "('😊', '2000-01-01T00:00:02.000000Z')," +
+                            "('2', '2000-01-01T00:00:03.000000Z')," +
+                            "('3', '2000-01-01T00:00:04.000000Z')"
+            );
+
+            // ASOF JOIN
+            String query = "SELECT * FROM x ASOF JOIN y ON(sym)";
+            String expected = "sym\tts\tsym1\tts1\n" +
+                    "😊\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000Z\t\t\n" +
+                    "😊\t2000-01-01T00:00:02.000000Z\t😊\t2000-01-01T00:00:02.000000Z\n" +
+                    "\t2000-01-01T00:00:03.000000Z\t\t\n" +
+                    "не-ASCII\t2000-01-01T00:00:03.000000Z\t\t\n" +
+                    "2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:03.000000Z\n" +
+                    "4\t2000-01-01T00:00:04.000000Z\t4\t2000-01-01T00:00:01.000000Z\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            // LT JOIN
+            query = "SELECT * FROM x LT JOIN y ON(sym)";
+            expected = "sym\tts\tsym1\tts1\n" +
+                    "😊\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000Z\t\t\n" +
+                    "😊\t2000-01-01T00:00:02.000000Z\t\t\n" +
+                    "\t2000-01-01T00:00:03.000000Z\t\t\n" +
+                    "не-ASCII\t2000-01-01T00:00:03.000000Z\t\t\n" +
+                    "2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:00.000000Z\n" +
+                    "4\t2000-01-01T00:00:04.000000Z\t4\t2000-01-01T00:00:01.000000Z\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
         });
     }
 
@@ -769,6 +1274,44 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     true,
                     true
             );
+        });
+    }
+
+    @Test
+    public void testLtJoinHighCardinalityKeysAndTolerance() throws Exception {
+        // this tests set low threshold for evacuation of full fat ASOF join map
+        // and compares that Fast and FullFat results are the same
+
+        setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD, "10");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (vch VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (vch VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute(
+                    "INSERT INTO master SELECT " +
+                            "rnd_int()::varchar as vch, " +
+                            "timestamp_sequence(0, 1000000) + x * 1500000 as ts " +
+                            "FROM long_sequence(1_000)"
+            );
+
+            execute(
+                    "INSERT INTO slave SELECT " +
+                            "rnd_int()::varchar as vch, " +
+                            "timestamp_sequence(0, 1000000) + x * 1000000 as ts " +
+                            "FROM long_sequence(1_000)"
+            );
+
+            String query = "SELECT * FROM master LT JOIN slave y ON(vch) TOLERANCE 1s";
+            printSql("EXPLAIN " + query, true);
+            TestUtils.assertNotContains(sink, "Lt Join Light");
+            printSql(query, true);
+            String fullFatResult = sink.toString();
+
+            printSql("EXPLAIN " + query, false);
+            TestUtils.assertContains(sink, "Lt Join Light");
+            printSql(query, false);
+            String lightResult = sink.toString();
+            TestUtils.assertEquals(fullFatResult, lightResult);
         });
     }
 
@@ -1261,6 +1804,64 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "AA\t20\t17\n";
             query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b on (tag)  where a.x > b.x + 1";
             printSqlResult(ex, query, null, false, false);
+        });
+    }
+
+    @Test
+    public void testLtJoinTolerance() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 as (select x as id, (x + x*1_000_000)::timestamp ts from long_sequence(10)) timestamp(ts) partition by day;");
+            execute("create table t2 as (select x as id, (x)::timestamp ts from long_sequence(5)) timestamp(ts) partition by day;");
+
+
+            // keyed join and slave has no timeframe support -> should use Lt Join Light
+            String expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001Z\t1\t1970-01-01T00:00:00.000001Z\n" +
+                    "2\t1970-01-01T00:00:02.000002Z\t2\t1970-01-01T00:00:00.000002Z\n" +
+                    "3\t1970-01-01T00:00:03.000003Z\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004Z\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005Z\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006Z\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007Z\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008Z\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009Z\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010Z\tnull\t\n";
+            String query = "SELECT * FROM t1 LT JOIN (select * from t2 where t2.id != 1000) ON id TOLERANCE 2s;";
+            // sanity check: uses Lt Join Light
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Lt Join Light");
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+            assertQueryFullFatNoLeakCheck(expected, query, "ts", false, true, true);
+
+
+            // non-keyed join and slave supports timeframe -> should use Lt Join Fast Scan
+            query = "SELECT * FROM t1 LT JOIN t2 TOLERANCE 2s;";
+            expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001Z\t5\t1970-01-01T00:00:00.000005Z\n" +
+                    "2\t1970-01-01T00:00:02.000002Z\t5\t1970-01-01T00:00:00.000005Z\n" +
+                    "3\t1970-01-01T00:00:03.000003Z\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004Z\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005Z\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006Z\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007Z\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008Z\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009Z\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010Z\tnull\t\n";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Lt Join Fast Scan");
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            // non-keyed join, slave supports timeframe but avoid BINARY_SEARCH hint -> should use Lt Join (full fat)
+            query = "SELECT /*+ avoid_lt_binary_search(orders md) */ * FROM t1 LT JOIN t2 TOLERANCE 2s;";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Lt Join");
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            // non-keyed join, slave has a filter -> should also use Lt Join
+            query = "SELECT * FROM t1 LT JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Lt Join");
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
         });
     }
 

@@ -329,10 +329,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 // Check that the originally open reader does not see these changes
                 println(cursorFactory, cursor);
                 String expected = "i\tj\tstr\tvarc1\tvarc2\tarr\tts\n" +
-                        "34\t-34\tMIMYSPTX\t{?_j5kz#BD5QYH(%i]?W;(CaZ?$Z:\tƪ\t[null,0.46024072785165726,0.9718081383618143,null,0.5469257570499296,0.20869523440218085,0.47046214502342254]\t2020-02-03T17:00:00.000000Z\n" +
-                        "35\t-35\t\tnF0q;i`\\[\"&!~8!GQhuDo*i5W\t\uDA6C\uDFCD\t[0.19751729781600535,null]\t2020-02-03T17:00:00.000000Z\n" +
-                        "36\t-36\tDVBWZRJWEYD\tVqQprKh`~.\tK\t[0.8248328494453144,null,0.8333148314271164,0.6354790267464765,0.526469565507781]\t2020-02-03T18:00:00.000000Z\n" +
-                        "37\t-37\tNZVHXQBMKECS\tBhڱʢ\uEF54Պ츼Ꭵ\t\u05CC\t[null,0.6933103859471981,0.41876634576982885,0.7437656766929067,0.32010882429399834,0.4288965848487438,null,null,null,null,null,0.08320499697553518,0.15721123459015562,null,null]\t2020-02-03T18:00:00.000000Z\n";
+                        "34\t-34\tMIMYSPTX\t{?_j5kz#BD5QYH(%i]?W;(CaZ?$Z:\tƪ\t[NaN,0.46024072785165726,0.9718081383618143,NaN,0.5469257570499296,0.20869523440218085,0.47046214502342254]\t2020-02-03T17:00:00.000000Z\n" +
+                        "35\t-35\t\tnF0q;i`\\[\"&!~8!GQhuDo*i5W\t\uDA6C\uDFCD\t[0.19751729781600535,NaN]\t2020-02-03T17:00:00.000000Z\n" +
+                        "36\t-36\tDVBWZRJWEYD\tVqQprKh`~.\tK\t[0.8248328494453144,NaN,0.8333148314271164,0.6354790267464765,0.526469565507781]\t2020-02-03T18:00:00.000000Z\n" +
+                        "37\t-37\tNZVHXQBMKECS\tBhڱʢ\uEF54Պ츼Ꭵ\t\u05CC\t[NaN,0.6933103859471981,0.41876634576982885,0.7437656766929067,0.32010882429399834,0.4288965848487438,NaN,NaN,NaN,NaN,NaN,0.08320499697553518,0.15721123459015562,NaN,NaN]\t2020-02-03T18:00:00.000000Z\n";
                 TestUtils.assertEquals(expected, sink);
 
                 // Split at 17:30
@@ -374,12 +374,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 TestUtils.assertEquals(expected, sink);
             }
             assertSql("i\tj\tstr\tvarc1\tvarc2\tarr\tts\n" +
-                            "34\t-34\tMIMYSPTX\t{?_j5kz#BD5QYH(%i]?W;(CaZ?$Z:\tƪ\t[null,0.46024072785165726,0.9718081383618143,null,0.5469257570499296,0.20869523440218085,0.47046214502342254]\t2020-02-03T17:00:00.000000Z\n" +
-                            "35\t-35\t\tnF0q;i`\\[\"&!~8!GQhuDo*i5W\t\uDA6C\uDFCD\t[0.19751729781600535,null]\t2020-02-03T17:00:00.000000Z\n" +
-                            "1000000\t-1000001\t\tktW'1VR1]fJyeg}\\oi}MQuNNI0>\tS\t[null,0.3325188127890215,0.09516627780136833,0.1123646581158636,0.4176259531501725,null]\t2020-02-03T17:00:00.000000Z\n" +
+                            "34\t-34\tMIMYSPTX\t{?_j5kz#BD5QYH(%i]?W;(CaZ?$Z:\tƪ\t[NaN,0.46024072785165726,0.9718081383618143,NaN,0.5469257570499296,0.20869523440218085,0.47046214502342254]\t2020-02-03T17:00:00.000000Z\n" +
+                            "35\t-35\t\tnF0q;i`\\[\"&!~8!GQhuDo*i5W\t\uDA6C\uDFCD\t[0.19751729781600535,NaN]\t2020-02-03T17:00:00.000000Z\n" +
+                            "1000000\t-1000001\t\tktW'1VR1]fJyeg}\\oi}MQuNNI0>\tS\t[NaN,0.3325188127890215,0.09516627780136833,0.1123646581158636,0.4176259531501725,NaN]\t2020-02-03T17:00:00.000000Z\n" +
                             "1000000\t-1000001\tDUQCOUZBRTJQZFHP\tGfꤤ#J遦҇Cn>z欳\uE6D5^\uDA18\uDD8Ei\uD956\uDEE0㥒 l˪H\uD9CF\uDC53⢷뤺m~剴R\uDAE3\uDF065Gh\uDA1D\uDC84\uD9AA\uDC85*uﳠ\t\t[0.051315826073391246,0.6647261895217424]\t2020-02-03T17:00:00.000000Z\n" +
-                            "36\t-36\tDVBWZRJWEYD\tVqQprKh`~.\tK\t[0.8248328494453144,null,0.8333148314271164,0.6354790267464765,0.526469565507781]\t2020-02-03T18:00:00.000000Z\n" +
-                            "37\t-37\tNZVHXQBMKECS\tBhڱʢ\uEF54Պ츼Ꭵ\t\u05CC\t[null,0.6933103859471981,0.41876634576982885,0.7437656766929067,0.32010882429399834,0.4288965848487438,null,null,null,null,null,0.08320499697553518,0.15721123459015562,null,null]\t2020-02-03T18:00:00.000000Z\n",
+                            "36\t-36\tDVBWZRJWEYD\tVqQprKh`~.\tK\t[0.8248328494453144,NaN,0.8333148314271164,0.6354790267464765,0.526469565507781]\t2020-02-03T18:00:00.000000Z\n" +
+                            "37\t-37\tNZVHXQBMKECS\tBhڱʢ\uEF54Պ츼Ꭵ\t\u05CC\t[NaN,0.6933103859471981,0.41876634576982885,0.7437656766929067,0.32010882429399834,0.4288965848487438,NaN,NaN,NaN,NaN,NaN,0.08320499697553518,0.15721123459015562,NaN,NaN]\t2020-02-03T18:00:00.000000Z\n",
                     "select * from x where ts between '2020-02-03T17' and '2020-02-03T18'");
         });
     }
@@ -417,10 +417,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 sink.clear();
                 println(cursorFactory, cursor);
                 String expected = "i\tj\tstr\tvarc1\tvarc2\tarr\tts\n" +
-                        "34\t-34\tMIMYSPTX\t{?_j5kz#BD5QYH(%i]?W;(CaZ?$Z:\tƪ\t[null,0.46024072785165726,0.9718081383618143,null,0.5469257570499296,0.20869523440218085,0.47046214502342254]\t2020-02-03T17:00:00.000000Z\n" +
-                        "35\t-35\t\tnF0q;i`\\[\"&!~8!GQhuDo*i5W\t\uDA6C\uDFCD\t[0.19751729781600535,null]\t2020-02-03T17:00:00.000000Z\n" +
-                        "36\t-36\tDVBWZRJWEYD\tVqQprKh`~.\tK\t[0.8248328494453144,null,0.8333148314271164,0.6354790267464765,0.526469565507781]\t2020-02-03T18:00:00.000000Z\n" +
-                        "37\t-37\tNZVHXQBMKECS\tBhڱʢ\uEF54Պ츼Ꭵ\t\u05CC\t[null,0.6933103859471981,0.41876634576982885,0.7437656766929067,0.32010882429399834,0.4288965848487438,null,null,null,null,null,0.08320499697553518,0.15721123459015562,null,null]\t2020-02-03T18:00:00.000000Z\n";
+                        "34\t-34\tMIMYSPTX\t{?_j5kz#BD5QYH(%i]?W;(CaZ?$Z:\tƪ\t[NaN,0.46024072785165726,0.9718081383618143,NaN,0.5469257570499296,0.20869523440218085,0.47046214502342254]\t2020-02-03T17:00:00.000000Z\n" +
+                        "35\t-35\t\tnF0q;i`\\[\"&!~8!GQhuDo*i5W\t\uDA6C\uDFCD\t[0.19751729781600535,NaN]\t2020-02-03T17:00:00.000000Z\n" +
+                        "36\t-36\tDVBWZRJWEYD\tVqQprKh`~.\tK\t[0.8248328494453144,NaN,0.8333148314271164,0.6354790267464765,0.526469565507781]\t2020-02-03T18:00:00.000000Z\n" +
+                        "37\t-37\tNZVHXQBMKECS\tBhڱʢ\uEF54Պ츼Ꭵ\t\u05CC\t[NaN,0.6933103859471981,0.41876634576982885,0.7437656766929067,0.32010882429399834,0.4288965848487438,NaN,NaN,NaN,NaN,NaN,0.08320499697553518,0.15721123459015562,NaN,NaN]\t2020-02-03T18:00:00.000000Z\n";
                 TestUtils.assertEquals(expected, sink);
 
                 // Split at 17:30
@@ -538,6 +538,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             // 4kb prefix split threshold
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
+            engine.resetFrameFactory();
 
             execute(
                     "create table x as (" +

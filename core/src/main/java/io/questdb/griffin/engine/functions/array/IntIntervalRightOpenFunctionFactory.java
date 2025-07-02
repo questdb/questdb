@@ -85,6 +85,11 @@ public class IntIntervalRightOpenFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(arg).val(':');
         }

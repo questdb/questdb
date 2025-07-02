@@ -24,10 +24,19 @@
 
 package io.questdb.cairo.frm;
 
+import io.questdb.cairo.frm.file.RecycleBin;
+
 import java.io.Closeable;
 
 public interface FrameColumn extends Closeable {
+    /**
+     * Column type for contiguous file columns, usually it means it's a partition or a WAL segment stored on disk
+     */
     int COLUMN_CONTIGUOUS_FILE = 0;
+    /**
+     * Column type for memory columns, usually it comes from uncommitted, sorted data stored in memory or mapped WAL files
+     */
+    int COLUMN_MEMORY = 1;
 
     void addTop(long value);
 
@@ -52,9 +61,15 @@ public interface FrameColumn extends Closeable {
 
     int getColumnType();
 
+    long getContiguousAuxAddr(long rowHi);
+
+    long getContiguousDataAddr(long rowHi);
+
     long getPrimaryFd();
 
     long getSecondaryFd();
 
     int getStorageType();
+
+    void setRecycleBin(RecycleBin<FrameColumn> pool);
 }
