@@ -258,19 +258,71 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testProjectionInOrderBy() throws Exception {
-        execute("create table items (name string, value int)");
-        execute("insert into items values ('C', 30), ('A', 10), ('B', 20)");
+    public void testProjectionInOrderByWithByte() throws Exception {
+        testProjectionInOrderByWithInt("byte");
+    }
 
-        // Test ORDER BY with base columns
-        assertQuery(
+    @Test
+    public void testProjectionInOrderByWithDate() throws Exception {
+        testProjectionInOrderByWith0(
                 "name\tvalue\tdoubled\n" +
-                        "A\t10\t20\n" +
-                        "B\t20\t40\n" +
-                        "C\t30\t60\n",
-                "select name, value, value * 2 as doubled from items order by value",
-                true
+                        "B\t1970-01-01T00:00:00.020Z\t1.6973928465121335\n" +
+                        "A\t1970-01-01T00:00:00.010Z\t2.246301342497259\n" +
+                        "C\t1970-01-01T00:00:00.030Z\t19.823333682561998\n",
+                "date"
         );
+    }
+
+    @Test
+    public void testProjectionInOrderByWithBoolean() throws Exception {
+        execute("create table items (name string, value boolean)");
+        execute("insert into items values ('C', true), ('A', false), ('B', false)");
+
+        allowFunctionMemoization();
+
+        assertSql(
+                "name\tv\tvalue\tvv\n" +
+                        "A\tfalse\ttrue\tfalse\n" +
+                        "B\tfalse\ttrue\tfalse\n" +
+                        "C\ttrue\ttrue\ttrue\n",
+                "select name, value v, true value, (rnd_boolean() or value) vv from items order by 4"
+        );
+    }
+
+    @Test
+    public void testProjectionInOrderByWithTimestamp() throws Exception {
+        testProjectionInOrderByWith0(
+                "name\tvalue\tdoubled\n" +
+                        "B\t1970-01-01T00:00:00.000020Z\t1.6973928465121335\n" +
+                        "A\t1970-01-01T00:00:00.000010Z\t2.246301342497259\n" +
+                        "C\t1970-01-01T00:00:00.000030Z\t19.823333682561998\n",
+                "timestamp"
+        );
+    }
+
+    @Test
+    public void testProjectionInOrderByWithDouble() throws Exception {
+        testProjectionInOrderByWithF("double");
+    }
+
+    @Test
+    public void testProjectionInOrderByWithFloat() throws Exception {
+        testProjectionInOrderByWithF("float");
+    }
+
+    @Test
+    public void testProjectionInOrderByWithInt() throws Exception {
+        testProjectionInOrderByWithInt("int");
+    }
+
+    @Test
+    public void testProjectionInOrderByWithLong() throws Exception {
+        testProjectionInOrderByWithInt("long");
+    }
+
+    @Test
+    public void testProjectionInOrderByWithShort() throws Exception {
+        testProjectionInOrderByWithInt("short");
     }
 
     @Test
@@ -559,6 +611,34 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                 "select sym, -price price, lag(price) over (partition by sym) prev from tmp",
                 false,
                 true
+        );
+    }
+
+    private void testProjectionInOrderByWith0(String expected, String type) throws SqlException {
+        execute("create table items (name string, value " + type + ")");
+        execute("insert into items values ('C', 30), ('A', 10), ('B', 20)");
+
+        allowFunctionMemoization();
+        assertSql(expected, "select name, value, value * rnd_double() as doubled from items order by doubled");
+    }
+
+    private void testProjectionInOrderByWithF(String type) throws SqlException {
+        testProjectionInOrderByWith0(
+                "name\tvalue\tdoubled\n" +
+                        "B\t20.0\t1.6973928465121335\n" +
+                        "A\t10.0\t2.246301342497259\n" +
+                        "C\t30.0\t19.823333682561998\n",
+                type
+        );
+    }
+
+    private void testProjectionInOrderByWithInt(String type) throws SqlException {
+        testProjectionInOrderByWith0(
+                "name\tvalue\tdoubled\n" +
+                        "B\t20\t1.6973928465121335\n" +
+                        "A\t10\t2.246301342497259\n" +
+                        "C\t30\t19.823333682561998\n",
+                type
         );
     }
 }

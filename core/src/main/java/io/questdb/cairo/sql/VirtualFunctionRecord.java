@@ -145,6 +145,10 @@ public class VirtualFunctionRecord implements ColumnTypes, Record, QuietCloseabl
         return getFunction(col).getInt(internalJoinRecord);
     }
 
+    public JoinRecord getInternalJoinRecord() {
+        return internalJoinRecord;
+    }
+
     @Override
     public Interval getInterval(int col) {
         return getFunction(col).getInterval(internalJoinRecord);

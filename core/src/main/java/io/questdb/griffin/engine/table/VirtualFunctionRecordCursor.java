@@ -150,8 +150,9 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     }
 
     private void memoizeFunctions() {
+        Record joinRecord = recordA.getInternalJoinRecord();
         for (int i = 0; i < memoizerCount; i++) {
-            memoizers.getQuick(i).memoize(recordA);
+            memoizers.getQuick(i).memoize(joinRecord);
         }
     }
 }

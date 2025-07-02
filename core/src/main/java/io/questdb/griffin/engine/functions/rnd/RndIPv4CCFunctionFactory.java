@@ -33,7 +33,11 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IPv4Function;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 
 public class RndIPv4CCFunctionFactory implements FunctionFactory {
 
@@ -85,6 +89,11 @@ public class RndIPv4CCFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean shouldMemoize() {
             return true;
         }
 

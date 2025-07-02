@@ -65,6 +65,11 @@ public class RndBooleanFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean shouldMemoize() {
+            return true;
+        }
+
+        @Override
         public boolean isNonDeterministic() {
             return true;
         }
