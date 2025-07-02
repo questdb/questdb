@@ -1606,7 +1606,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "where d < 100.0d and ts > dateadd('d', 1, now()  );",
                 "Update table: a\n" +
                         "    VirtualRecord\n" +
-                        "      functions: [20,io.questdb.griffin.engine.functions.memoization.DoubleFunctionMemoizer(d+rnd_double())]\n" +
+                        "      functions: [20,memoize(d+rnd_double())]\n" +
                         "        Async Filter workers: 1\n" +
                         "          filter: d<100.0 [pre-touch]\n" +
                         "            PageFrame\n" +
