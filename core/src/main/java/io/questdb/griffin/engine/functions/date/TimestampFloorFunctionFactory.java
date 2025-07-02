@@ -73,23 +73,41 @@ public class TimestampFloorFunctionFactory implements FunctionFactory {
         }
         switch (c) {
             case 'M':
-                return new TimestampFloorFunctions.TimestampFloorWithStrideFunction(args.getQuick(1), "month", stride, ColumnType.TIMESTAMP_MICRO);
+                return stride > 1 ?
+                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(args.getQuick(1), "month", stride, ColumnType.TIMESTAMP_MICRO) :
+                        new TimestampFloorFunctions.TimestampFloorFunction(args.getQuick(1), "month", ColumnType.TIMESTAMP_MICRO);
             case 'y':
-                return new TimestampFloorFunctions.TimestampFloorWithStrideFunction(args.getQuick(1), "year", stride, ColumnType.TIMESTAMP_MICRO);
+                return stride > 1 ?
+                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(args.getQuick(1), "year", stride, ColumnType.TIMESTAMP_MICRO) :
+                        new TimestampFloorFunctions.TimestampFloorFunction(args.getQuick(1), "year", ColumnType.TIMESTAMP_MICRO);
             case 'w':
-                return new TimestampFloorFunctions.TimestampFloorWithStrideFunction(args.getQuick(1), "week", stride, ColumnType.TIMESTAMP_MICRO);
+                return stride > 1 ?
+                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(args.getQuick(1), "week", stride, ColumnType.TIMESTAMP_MICRO) :
+                        new TimestampFloorFunctions.TimestampFloorFunction(args.getQuick(1), "week", ColumnType.TIMESTAMP_MICRO);
             case 'd':
-                return new TimestampFloorFunctions.TimestampFloorWithStrideFunction(args.getQuick(1), "day", stride, ColumnType.TIMESTAMP_MICRO);
+                return stride > 1 ?
+                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(args.getQuick(1), "day", stride, ColumnType.TIMESTAMP_MICRO) :
+                        new TimestampFloorFunctions.TimestampFloorFunction(args.getQuick(1), "day", ColumnType.TIMESTAMP_MICRO);
             case 'h':
-                return new TimestampFloorFunctions.TimestampFloorWithStrideFunction(args.getQuick(1), "hour", stride, ColumnType.TIMESTAMP_MICRO);
+                return stride > 1 ?
+                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(args.getQuick(1), "hour", stride, ColumnType.TIMESTAMP_MICRO) :
+                        new TimestampFloorFunctions.TimestampFloorFunction(args.getQuick(1), "hour", ColumnType.TIMESTAMP_MICRO);
             case 'm':
-                return new TimestampFloorFunctions.TimestampFloorWithStrideFunction(args.getQuick(1), "minute", stride, ColumnType.TIMESTAMP_MICRO);
+                return stride > 1 ?
+                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(args.getQuick(1), "minute", stride, ColumnType.TIMESTAMP_MICRO) :
+                        new TimestampFloorFunctions.TimestampFloorFunction(args.getQuick(1), "minute", ColumnType.TIMESTAMP_MICRO);
             case 's':
-                return new TimestampFloorFunctions.TimestampFloorWithStrideFunction(args.getQuick(1), "second", stride, ColumnType.TIMESTAMP_MICRO);
+                return stride > 1 ?
+                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(args.getQuick(1), "second", stride, ColumnType.TIMESTAMP_MICRO) :
+                        new TimestampFloorFunctions.TimestampFloorFunction(args.getQuick(1), "second", ColumnType.TIMESTAMP_MICRO);
             case 'T':
-                return new TimestampFloorFunctions.TimestampFloorWithStrideFunction(args.getQuick(1), "millisecond", stride, ColumnType.TIMESTAMP_MICRO);
+                return stride > 1 ?
+                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(args.getQuick(1), "millisecond", stride, ColumnType.TIMESTAMP_MICRO) :
+                        new TimestampFloorFunctions.TimestampFloorFunction(args.getQuick(1), "millisecond", ColumnType.TIMESTAMP_MICRO);
             case 'U':
-                return new TimestampFloorFunctions.TimestampFloorWithStrideFunction(args.getQuick(1), "microsecond", stride, ColumnType.TIMESTAMP_MICRO);
+                return stride > 1 ?
+                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(args.getQuick(1), "microsecond", stride, ColumnType.TIMESTAMP_MICRO) :
+                        new TimestampFloorFunctions.TimestampFloorFunction(args.getQuick(1), "microsecond", ColumnType.TIMESTAMP_MICRO);
             case 0:
                 throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
             default:
