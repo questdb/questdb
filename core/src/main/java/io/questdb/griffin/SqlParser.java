@@ -4115,8 +4115,8 @@ public class SqlParser {
     private static class RewriteDeclaredVariablesInExpressionVisitor implements ReplacingVisitor {
         public LowerCaseCharSequenceObjHashMap<ExpressionNode> decls;
         public CharSequence exprTargetVariableName;
-        public ObjectPool<ExpressionNode> pool;
         public boolean hasAtChar;
+        public ObjectPool<ExpressionNode> pool;
 
         @Override
         public ExpressionNode visit(ExpressionNode node) throws SqlException {
