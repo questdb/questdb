@@ -24,13 +24,6 @@ stages:
     jobs:
       - template: templates/check-changes-job.yml
 
-  - stage: RustTestAndLint
-    displayName: "Rust Test and Lint"
-    dependsOn:
-      - CheckChanges
-    jobs:
-      - template: rust-test-and-lint.yaml
-
   - stage: SelfHostedRunGriffin
     displayName: "SelfHosted Griffin And Fuzz tests"
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
@@ -67,12 +60,12 @@ stages:
     jobs:
       - template: templates/hosted-cover-jobs.yml
 
-  - stage: JavaCodeFormatting
-    displayName: "Check Java Code Formatting with IntelliJ"
+  - stage: JavaAndRustLint
+    displayName: "Lint"
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/java-code-formatting-intellij.yml
+      - template: templates/lint.yml
 
   - stage: HostedRunCompatTestsBranches
     displayName: "Hosted Running CLI util and compat tests"
