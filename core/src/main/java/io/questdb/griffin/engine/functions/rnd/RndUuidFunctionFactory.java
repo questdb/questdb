@@ -54,6 +54,11 @@ public class RndUuidFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean shouldMemoize() {
+            return true;
+        }
+
+        @Override
         public long getLong128Hi(Record rec) {
             long hi = rnd.nextLong();
             // set version to 4

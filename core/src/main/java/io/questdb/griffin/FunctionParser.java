@@ -111,6 +111,7 @@ import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.engine.functions.memoization.ShortFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.TimestampFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.UuidFunctionMemoizer;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
@@ -375,6 +376,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         return new FloatFunctionMemoizer(function);
                     case ColumnType.IPv4:
                         return new IPv4FunctionMemoizer(function);
+                    case ColumnType.UUID:
+                        return new UuidFunctionMemoizer(function);
                     // other types do not have memoization yet
                 }
             }

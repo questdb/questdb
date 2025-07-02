@@ -43,6 +43,19 @@ public class RndMemoizationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRndUuid() throws Exception {
+        allowFunctionMemoization();
+        assertSql(
+                "u\tcast\n" +
+                        "0010cde8-12ce-40ee-8010-a928bb8b9650\t0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                        "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n",
+                "select rnd_uuid4() u, u::string from long_sequence(3)"
+        );
+    }
+
+
+    @Test
     public void testRndByte() throws SqlException {
         allowFunctionMemoization();
         assertSql(
