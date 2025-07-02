@@ -33,12 +33,14 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.MetadataCacheWriter;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.BindVariableService;
@@ -547,13 +549,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         engine.getMatViewStateStore().clear();
     }
 
-    @After
-    public void tearDown() throws Exception {
-        tearDown(true);
-        super.tearDown();
-        spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
-    }
-
     public void tearDown(boolean removeDir) {
         LOG.info().$("Tearing down test ").$safe(getClass().getSimpleName()).$('#').$safe(testName.getMethodName()).$();
         forEachNode(node -> node.tearDownCairo(removeDir));
@@ -570,6 +565,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 }
             }
         }
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        tearDown(true);
+        super.tearDown();
+        spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
     }
 
     private static void assertCalculateSize(RecordCursorFactory factory) throws SqlException {
@@ -657,6 +659,26 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     private static TestCairoEngineFactory getEngineFactory() {
         return engineFactory != null ? engineFactory : CairoEngine::new;
+    }
+
+    public static String readTxnToString(TableToken tt, boolean compareTxns, boolean compareTruncateVersion) {
+        try (TxReader rdr = new TxReader(engine.getConfiguration().getFilesFacade())) {
+            Path tempPath = Path.getThreadLocal(root);
+            rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+            rdr.unsafeLoadAll();
+
+            return txnToString(rdr, compareTxns, compareTruncateVersion, false);
+        }
+    }
+
+    public static String readTxnToString(TableToken tt, boolean compareTxns, boolean compareTruncateVersion, boolean comparePartitionTxns) {
+        try (TxReader rdr = new TxReader(engine.getConfiguration().getFilesFacade())) {
+            Path tempPath = Path.getThreadLocal(root);
+            rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+            rdr.unsafeLoadAll();
+
+            return txnToString(rdr, compareTxns, compareTruncateVersion, comparePartitionTxns);
+        }
     }
 
     private static void testStringsLong256AndBinary(RecordMetadata metadata, RecordCursor cursor) {
@@ -834,6 +856,73 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 Misc.freeObjListIfCloseable(clonedSymbolTables);
             }
         }
+    }
+
+    private static String txnToString(TxReader txReader, boolean compareTxns, boolean compareTruncateVersion, boolean comparePartitionTxns) {
+        // Used for debugging, don't use Misc.getThreadLocalSink() to not mess with other debugging values
+        StringSink sink = Misc.getThreadLocalSink();
+        sink.put("{");
+        if (compareTxns) {
+            sink.put("txn: ").put(txReader.getTxn());
+        }
+        sink.put(", attachedPartitions: [");
+        for (int i = 0; i < txReader.getPartitionCount(); i++) {
+            long timestamp = txReader.getPartitionTimestampByIndex(i);
+            long rowCount = txReader.getPartitionRowCountByTimestamp(timestamp);
+
+            if (i - 1 == txReader.getPartitionCount()) {
+                rowCount = txReader.getTransientRowCount();
+            }
+
+            long parquetSize = txReader.getPartitionParquetFileSize(i);
+
+            if (i > 0) {
+                sink.put(",");
+            }
+            sink.put("\n{ts: '");
+            TimestampFormatUtils.appendDateTime(sink, timestamp);
+            sink.put("', rowCount: ").put(rowCount);
+            // Do not print name txn, it can be different in expected and actual table
+            if (comparePartitionTxns) {
+                sink.put(", txn: ").put(txReader.getPartitionNameTxn(i));
+            }
+
+            if (txReader.isPartitionParquet(i)) {
+                sink.put(", parquetSize: ").put(parquetSize);
+            }
+            if (txReader.isPartitionReadOnly(i)) {
+                sink.put(", readOnly=true");
+            }
+            sink.put("}");
+        }
+        sink.put("\n], transientRowCount: ").put(txReader.getTransientRowCount());
+        sink.put(", fixedRowCount: ").put(txReader.getFixedRowCount());
+        sink.put(", minTimestamp: '");
+        TimestampFormatUtils.appendDateTime(sink, txReader.getMinTimestamp());
+        sink.put("', maxTimestamp: '");
+        TimestampFormatUtils.appendDateTime(sink, txReader.getMaxTimestamp());
+        if (compareTruncateVersion) {
+            sink.put("', dataVersion: ").put(txReader.getDataVersion());
+        }
+        sink.put(", structureVersion: ").put(txReader.getColumnStructureVersion());
+        sink.put(", columnVersion: ").put(txReader.getColumnVersion());
+        if (compareTruncateVersion) {
+            sink.put(", truncateVersion: ").put(txReader.getTruncateVersion());
+        }
+
+        if (compareTxns) {
+            sink.put(", seqTxn: ").put(txReader.getSeqTxn());
+        }
+        sink.put(", symbolColumnCount: ").put(txReader.getSymbolColumnCount());
+        sink.put(", lagRowCount: ").put(txReader.getLagRowCount());
+        sink.put(", lagMinTimestamp: '");
+        TimestampFormatUtils.appendDateTime(sink, txReader.getLagMinTimestamp());
+        sink.put("', lagMaxTimestamp: '");
+        TimestampFormatUtils.appendDateTime(sink, txReader.getLagMaxTimestamp());
+        sink.put("', lagTxnCount: ").put(txReader.getLagRowCount());
+        sink.put(", lagOrdered: ").put(txReader.isLagOrdered());
+        sink.put("}");
+        return sink.toString();
     }
 
     protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) {
@@ -1746,6 +1835,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     false
             );
         }
+    }
+
+    protected void assertQueryAndPlan(String expected, String expectedPlan, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
+        assertMemoryLeak(() -> {
+            assertPlanNoLeakCheck(query, expectedPlan);
+            assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false);
+        });
     }
 
     protected void assertQueryAndPlan(

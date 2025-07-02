@@ -30,16 +30,12 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -490,80 +486,6 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         }
     }
 
-    private static String readTxnToString(TableToken tt, boolean compareTxns, boolean compareTruncateVersion) {
-        try (TxReader rdr = new TxReader(engine.getConfiguration().getFilesFacade())) {
-            Path tempPath = Path.getThreadLocal(root);
-            rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
-            rdr.unsafeLoadAll();
-
-            return txnToString(rdr, compareTxns, compareTruncateVersion);
-        }
-    }
-
-    private static String txnToString(TxReader txReader, boolean compareTxns, boolean compareTruncateVersion) {
-        // Used for debugging, don't use Misc.getThreadLocalSink() to not mess with other debugging values
-        StringSink sink = Misc.getThreadLocalSink();
-        sink.put("{");
-        if (compareTxns) {
-            sink.put("txn: ").put(txReader.getTxn());
-        }
-        sink.put(", attachedPartitions: [");
-        for (int i = 0; i < txReader.getPartitionCount(); i++) {
-            long timestamp = txReader.getPartitionTimestampByIndex(i);
-            long rowCount = txReader.getPartitionRowCountByTimestamp(timestamp);
-
-            if (i - 1 == txReader.getPartitionCount()) {
-                rowCount = txReader.getTransientRowCount();
-            }
-
-            long parquetSize = txReader.getPartitionParquetFileSize(i);
-
-            if (i > 0) {
-                sink.put(",");
-            }
-            sink.put("\n{ts: '");
-            TimestampFormatUtils.appendDateTime(sink, timestamp);
-            sink.put("', rowCount: ").put(rowCount);
-            // Do not print name txn, it can be different in expected and actual table
-
-            if (txReader.isPartitionParquet(i)) {
-                sink.put(", parquetSize: ").put(parquetSize);
-            }
-            if (txReader.isPartitionReadOnly(i)) {
-                sink.put(", readOnly=true");
-            }
-            sink.put("}");
-        }
-        sink.put("\n], transientRowCount: ").put(txReader.getTransientRowCount());
-        sink.put(", fixedRowCount: ").put(txReader.getFixedRowCount());
-        sink.put(", minTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getMinTimestamp());
-        sink.put("', maxTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getMaxTimestamp());
-        if (compareTruncateVersion) {
-            sink.put("', dataVersion: ").put(txReader.getDataVersion());
-        }
-        sink.put(", structureVersion: ").put(txReader.getColumnStructureVersion());
-        sink.put(", columnVersion: ").put(txReader.getColumnVersion());
-        if (compareTruncateVersion) {
-            sink.put(", truncateVersion: ").put(txReader.getTruncateVersion());
-        }
-
-        if (compareTxns) {
-            sink.put(", seqTxn: ").put(txReader.getSeqTxn());
-        }
-        sink.put(", symbolColumnCount: ").put(txReader.getSymbolColumnCount());
-        sink.put(", lagRowCount: ").put(txReader.getLagRowCount());
-        sink.put(", lagMinTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getLagMinTimestamp());
-        sink.put("', lagMaxTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getLagMaxTimestamp());
-        sink.put("', lagTxnCount: ").put(txReader.getLagRowCount());
-        sink.put(", lagOrdered: ").put(txReader.isLagOrdered());
-        sink.put("}");
-        return sink.toString();
-    }
-
     private void insertRowWithReplaceRange(
             String tsStr,
             String rangeStartStr,
@@ -728,7 +650,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(20)");
             drainWalQueue();
 
-            insertRowWithReplaceRange("2022-02-24T17", "2022-02-19T17", "2022-02-28T18", tableToken, false, false, "rg", "expected", true, false);
+            insertRowWithReplaceRange("2022-02-24T17", "2022-02-19T17", "2022-02-28T18", tableToken, false, compareTruncateVersion, "rg", "expected", true, generateNoRowsCommit);
         });
     }
 
