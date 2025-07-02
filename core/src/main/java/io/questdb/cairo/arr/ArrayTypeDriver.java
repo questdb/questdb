@@ -162,15 +162,12 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         }
         if (value.isVanilla()) {
             short elemType = value.getElemType();
-            for (int i = 0, n = value.getFlatViewLength(); i < n; i++) {
-                switch (elemType) {
-                    case ColumnType.DOUBLE:
-                        Unsafe.getUnsafe().putDouble(appendAddress, value.getDouble(i));
-                        appendAddress += Double.BYTES;
-                        break;
-                    default:
-                        throw new UnsupportedOperationException("Unsupported array element type: " + elemType);
-                }
+            switch (elemType) {
+                case ColumnType.DOUBLE:
+                    appendAddress = value.flatView().appendPlainDoubleValue(appendAddress, value.getFlatViewOffset(), value.getFlatViewLength());
+                    break;
+                default:
+                    throw new UnsupportedOperationException("Unsupported array element type: " + elemType);
             }
         } else {
             appendAddress = appendToMemRecursive(value, 0, 0, appendAddress);
