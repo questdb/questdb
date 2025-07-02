@@ -1037,7 +1037,7 @@ public class SqlUtil {
         }
     }
 
-    static CharSequence createExprColumnAlias(
+    public static CharSequence createExprColumnAlias(
             CharacterStore store,
             CharSequence base,
             LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
@@ -1046,7 +1046,7 @@ public class SqlUtil {
         return createExprColumnAlias(store, base, aliasToColumnMap, maxLength, false);
     }
 
-    static CharSequence createExprColumnAlias(
+    public static CharSequence createExprColumnAlias(
             CharacterStore store,
             CharSequence base,
             LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
@@ -1057,32 +1057,42 @@ public class SqlUtil {
             base = "_" + base;
         }
 
-        if (base.length() > maxLength) {
-            base = base.subSequence(0, maxLength);
-        }
-
-        if (aliasToColumnMap.excludes(base)) {
+        int len = base.length();
+        // early exit for simple cases
+        if (aliasToColumnMap.excludes(base) && len <= maxLength && base.charAt(len - 1) != ' ') {
             return base;
         }
 
-        final CharacterStoreEntry characterStoreEntry = store.newEntry();
-        characterStoreEntry.put(base);
+        final CharacterStoreEntry entry = store.newEntry();
+        final int entryLen = entry.length();
+        entry.put(base);
 
-        int len = Math.min(characterStoreEntry.length(), maxLength - 2);
-        int sequence = 2;
+        int sequence = 1;
+        int seqSize = 0;
         while (true) {
-            if (sequence % 10 == 0) {
-                final int seqSize = (int) Math.log10(sequence) + 2;
-                len = Math.min(characterStoreEntry.length(), maxLength - seqSize);
+            if (sequence > 1) {
+                seqSize = (int) Math.log10(sequence) + 2; // Remember the _
             }
-            characterStoreEntry.trimTo(len);
-            characterStoreEntry.put('_');
-            characterStoreEntry.put(sequence);
-            sequence++;
-            CharSequence alias = characterStoreEntry.toImmutable();
+            len = Math.min(len, maxLength - seqSize);
+
+            // We don't want the alias to finish with a space.
+            if (base.charAt(len - 1) == ' ') {
+                final int lastSpace = Chars.lastIndexOfDifferent(base, 0, len, ' ');
+                if (lastSpace > 0) {
+                    len = lastSpace + 1;
+                }
+            }
+
+            entry.trimTo(entryLen+len);
+            if (sequence > 1) {
+                entry.put('_');
+                entry.put(sequence);
+            }
+            CharSequence alias = entry.toImmutable();
             if (aliasToColumnMap.excludes(alias)) {
                 return alias;
             }
+            sequence++;
         }
     }
 

@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -1399,7 +1400,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("ts").col("ts", ColumnType.TIMESTAMP)
         );
         assertQuery(
-                "select-virtual cast(500000000000L + case(x > 400,x - 1 / 4 * 1000L + 4 - x - 1 % 4 * 89,x),timestamp) ts from (select [x] from long_sequence(1000))",
+                "select-virtual cast(500000000000L + case(x > 400,(x - 1) / 4 * 1000L + (4 - (x - 1) % 4) * 89,x),timestamp) ts from (select [x] from long_sequence(1000))",
                 "select cast(" +
                         "(500000000000L + " +
                         "  case when x > 400 " +
@@ -1409,7 +1410,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("ts").col("ts", ColumnType.TIMESTAMP)
         );
         assertQuery(
-                "select-virtual x - 1 - x t1 from (select [x] from long_sequence(1000))",
+                "select-virtual x - (1 - x) t1 from (select [x] from long_sequence(1000))",
                 "select (x - (1 - x)) as t1 from long_sequence(1000)",
                 modelOf("t1").col("t1", ColumnType.LONG)
         );
@@ -7070,7 +7071,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testNestedCast() throws SqlException {
         assertQuery(
-                "select-virtual cast(cast(1 + x / 2,int),timestamp) ts from (select [x] from long_sequence(1000))",
+                "select-virtual cast(cast((1 + x) / 2,int),timestamp) ts from (select [x] from long_sequence(1000))",
                 "select cast(cast((1 + x) / 2 as int) as timestamp) ts from long_sequence(1000)",
                 modelOf("ts").col("ts", ColumnType.TIMESTAMP)
         );
@@ -11577,5 +11578,42 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @FunctionalInterface
     public interface CairoAware {
         void run() throws SqlException;
+    }
+
+    @Test
+    public void testExpressionAliasOperators() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertQuery(
+                "select-virtual a * 2 + b / (d - c) 'a * 2 + b / (d - c)' from (select [a, b, c, d] from xyz timestamp (ts))",
+                "select a*2+b/(d-c) from xyz",
+                modelOf("xyz")
+                        .col("d", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("a", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testExpressionAliasDots() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertQuery(
+                "select-virtual floor(1.2) floor(1.2), 'Hello there.' ''Hello there.'' from (long_sequence(1))",
+                "select floor(1.2), 'Hello there.'"
+        );
+    }
+
+    @Test
+    public void testExpressionAliasFunctions() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertQuery(
+                "select-virtual trim(a) trim(a), floor(b) floor(b) from (select [a, b] from xyz timestamp (ts))",
+                "select trim(a), floor(b) from xyz",
+                modelOf("xyz")
+                        .col("b", ColumnType.DOUBLE)
+                        .col("a", ColumnType.STRING)
+                        .timestamp("ts")
+        );
     }
 }

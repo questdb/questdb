@@ -817,6 +817,23 @@ public final class Chars {
     }
 
     /**
+     * Returns the index of the last character that isn't c between sequenceLo and sequenceHi.
+     * @param sequence the sequence to find the last index of.
+     * @param sequenceLo the low limit to start searching through the sequence.
+     * @param sequenceHi the hi limit to end searching through the sequence.
+     * @param c the character to stop matching.
+     * @return the index of the last character that isn't c or -1 if there aren't any.
+     */
+    public static int lastIndexOfDifferent(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, char c) {
+        for (int i = sequenceHi - 1; i >= sequenceLo; i--) {
+            if (sequence.charAt(i) != c) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * Strictly greater than (&lt;) comparison of two UTF16 sequences in lexicographical
      * order. For example, for:
      * l = aaaaa

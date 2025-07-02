@@ -27,12 +27,18 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.griffin.CharacterStore;
+import io.questdb.griffin.OperatorExpression;
+import io.questdb.griffin.OperatorRegistry;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
+import io.questdb.griffin.model.QueryColumn;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -49,6 +55,66 @@ import org.junit.Test;
 import java.util.concurrent.TimeUnit;
 
 public class SqlUtilTest {
+
+    @Test
+    public void testExprColumnAliasDisallowedAlias() {
+        OperatorRegistry registry = OperatorExpression.getRegistry();
+        CharacterStore store = new CharacterStore(32, 1);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);
+        for (int i = 0, n = registry.operators.size(); i < n; i++) {
+            String token = registry.operators.getQuick(i).getToken();
+            Assert.assertEquals(
+                    "_" + token,
+                    SqlUtil.createExprColumnAlias(store, token, aliasMap, 64, true)
+            );
+        }
+    }
+
+    @Test
+    public void testExprColumnAliasTrimmed() {
+        CharacterStore store = new CharacterStore(32, 1);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);
+        Assert.assertEquals(
+                "longstr",
+                SqlUtil.createExprColumnAlias(store, "longstring", aliasMap, 7).toString()
+        );
+    }
+
+    @Test
+    public void testExprColumnAliasSimpleCase() {
+        CharacterStore store = new CharacterStore(32, 1);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);
+        Assert.assertEquals(
+                "basic",
+                SqlUtil.createExprColumnAlias(store, "basic", aliasMap, 64).toString()
+        );
+    }
+
+    @Test
+    public void testExprColumnAliasDuplicates() {
+        CharacterStore store = new CharacterStore(32, 1);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
+        aliasMap.put("same", null);
+        Assert.assertEquals(
+                "same_2",
+                SqlUtil.createExprColumnAlias(store, "same", aliasMap, 64).toString()
+        );
+        aliasMap.put("same_2", null);
+        Assert.assertEquals(
+                "same_3",
+                SqlUtil.createExprColumnAlias(store, "same", aliasMap, 64).toString()
+        );
+    }
+
+    @Test
+    public void testExprColumnAliasTrimEnd() {
+        CharacterStore store = new CharacterStore(32, 1);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);
+        Assert.assertEquals(
+                "  space",
+                SqlUtil.createExprColumnAlias(store, "  space    ", aliasMap, 64).toString()
+        );
+    }
 
     @Test
     public void testImplicitCastCharAsGeoHash() {
