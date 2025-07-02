@@ -35,11 +35,6 @@ import io.questdb.std.Misc;
 public interface BinaryFunction extends Function {
 
     @Override
-    default boolean shouldMemoize() {
-        return getLeft().shouldMemoize() && getRight().shouldMemoize();
-    }
-
-    @Override
     default void close() {
         Misc.free(getLeft());
         Misc.free(getRight());
@@ -89,6 +84,12 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
+    default void memoize(Record recordA) {
+        getLeft().memoize(recordA);
+        getRight().memoize(recordA);
+    }
+
+    @Override
     default void offerStateTo(Function that) {
         if (that instanceof BinaryFunction) {
             getLeft().offerStateTo(((BinaryFunction) that).getLeft());
@@ -97,14 +98,18 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
-    default void memoize(Record recordA) {
-        getLeft().memoize(recordA);
-        getRight().memoize(recordA);
+    default boolean shouldMemoize() {
+        return getLeft().shouldMemoize() || getRight().shouldMemoize();
     }
 
     @Override
     default boolean supportsParallelism() {
         return getLeft().supportsParallelism() && getRight().supportsParallelism();
+    }
+
+    @Override
+    default boolean supportsRandomAccess() {
+        return getLeft().supportsRandomAccess() && getRight().supportsRandomAccess();
     }
 
     @Override

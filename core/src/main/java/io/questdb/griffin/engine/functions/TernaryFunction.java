@@ -34,11 +34,6 @@ import io.questdb.griffin.SqlExecutionContext;
 public interface TernaryFunction extends Function {
 
     @Override
-    default boolean shouldMemoize() {
-        return getLeft().shouldMemoize() && getCenter().shouldMemoize() && getRight().shouldMemoize();
-    }
-
-    @Override
     default void close() {
         getLeft().close();
         getCenter().close();
@@ -94,6 +89,13 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
+    default void memoize(Record record) {
+        getLeft().memoize(record);
+        getCenter().memoize(record);
+        getRight().memoize(record);
+    }
+
+    @Override
     default void offerStateTo(Function that) {
         if (that instanceof TernaryFunction) {
             getLeft().offerStateTo(((TernaryFunction) that).getLeft());
@@ -103,15 +105,18 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
-    default void memoize(Record record) {
-        getLeft().memoize(record);
-        getCenter().memoize(record);
-        getRight().memoize(record);
+    default boolean shouldMemoize() {
+        return getLeft().shouldMemoize() || getCenter().shouldMemoize() || getRight().shouldMemoize();
     }
 
     @Override
     default boolean supportsParallelism() {
         return getLeft().supportsParallelism() && getCenter().supportsParallelism() && getRight().supportsParallelism();
+    }
+
+    @Override
+    default boolean supportsRandomAccess() {
+        return getLeft().supportsRandomAccess() && getRight().supportsRandomAccess() && getCenter().supportsRandomAccess();
     }
 
     @Override

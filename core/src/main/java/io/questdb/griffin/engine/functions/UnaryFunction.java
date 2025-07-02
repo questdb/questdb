@@ -34,11 +34,6 @@ import io.questdb.griffin.SqlExecutionContext;
 public interface UnaryFunction extends Function {
 
     @Override
-    default boolean shouldMemoize() {
-        return getArg().shouldMemoize();
-    }
-
-    @Override
     default void close() {
         getArg().close();
     }
@@ -76,6 +71,11 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
+    default void memoize(Record record) {
+        getArg().memoize(record);
+    }
+
+    @Override
     default void offerStateTo(Function that) {
         if (that instanceof UnaryFunction) {
             getArg().offerStateTo(((UnaryFunction) that).getArg());
@@ -83,13 +83,18 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
-    default void memoize(Record record) {
-        getArg().memoize(record);
+    default boolean shouldMemoize() {
+        return getArg().shouldMemoize();
     }
 
     @Override
     default boolean supportsParallelism() {
         return getArg().supportsParallelism();
+    }
+
+    @Override
+    default boolean supportsRandomAccess() {
+        return getArg().supportsRandomAccess();
     }
 
     @Override

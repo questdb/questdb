@@ -71,9 +71,7 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
         private final long lo;
         private final int nanRate;
         private final long range;
-        private boolean prefetched;
         private Rnd rnd;
-        private long values;
 
         public Func(long lo, long hi, int nanRate) {
             this.lo = lo;
@@ -82,18 +80,15 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean shouldMemoize() {
-            return true;
-        }
-
-        @Override
         public long getLong(Record rec) {
-            return prefetched ? values : compute();
+            if ((rnd.nextInt() % nanRate) == 1) {
+                return Numbers.LONG_NULL;
+            }
+            return lo + rnd.nextPositiveLong() % range;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            prefetched = false;
             this.rnd = executionContext.getRandom();
         }
 
@@ -103,9 +98,8 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void memoize(Record record) {
-            this.values = compute();
-            this.prefetched = true;
+        public boolean shouldMemoize() {
+            return true;
         }
 
         @Override
@@ -113,11 +107,5 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
             sink.val("rnd_long(").val(lo).val(',').val(range + lo - 1).val(',').val(nanRate - 1).val(')');
         }
 
-        private long compute() {
-            if ((rnd.nextInt() % nanRate) == 1) {
-                return Numbers.LONG_NULL;
-            }
-            return lo + rnd.nextPositiveLong() % range;
-        }
     }
 }

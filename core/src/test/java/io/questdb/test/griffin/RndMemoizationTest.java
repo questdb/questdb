@@ -28,46 +28,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class RowStableRndTest extends AbstractCairoTest {
-    @Test
-    public void testRndInt() throws SqlException {
-        allowFunctionMemoization();
-        // assertQuery does not reset rnd between SQL executions - using assertSql
-        assertSql(
-                "i\tk\n" +
-                        "-1148479920\t-1148479910\n" +
-                        "315515118\t315515128\n" +
-                        "1548800833\t1548800843\n" +
-                        "-727724771\t-727724761\n" +
-                        "73575701\t73575711\n" +
-                        "-948263339\t-948263329\n" +
-                        "1326447242\t1326447252\n" +
-                        "592859671\t592859681\n" +
-                        "1868723706\t1868723716\n" +
-                        "-847531048\t-847531038\n",
-                "select rnd_int() i, i + 10 k from long_sequence(10)"
-        );
-    }
-
-    @Test
-    public void testRndShort() throws SqlException {
-        allowFunctionMemoization();
-        // assertQuery does not reset rnd between SQL executions - using assertSql
-        assertSql(
-                "s\tk\n" +
-                        "-27056\t-27046\n" +
-                        "24814\t24824\n" +
-                        "-11455\t-11445\n" +
-                        "-13027\t-13017\n" +
-                        "-21227\t-21217\n" +
-                        "-22955\t-22945\n" +
-                        "-1398\t-1388\n" +
-                        "21015\t21025\n" +
-                        "30202\t30212\n" +
-                        "-19496\t-19486\n",
-                "select rnd_short() s, s + 10 k from long_sequence(10)"
-        );
-    }
+public class RndMemoizationTest extends AbstractCairoTest {
 
     @Test
     public void testRndDouble() throws SqlException {
@@ -86,6 +47,66 @@ public class RowStableRndTest extends AbstractCairoTest {
                         "0.22452340856088226\t10.224523408560882\n" +
                         "0.5093827001617407\t10.50938270016174\n",
                 "select rnd_double() d, d + 10 k from long_sequence(10)"
+        );
+    }
+
+    @Test
+    public void testRndDoubleBinary() throws SqlException {
+        allowFunctionMemoization();
+        // assertQuery does not reset rnd between SQL executions - using assertSql
+        assertSql(
+                "d\tk\n" +
+                        "1.3215555788374664\t11.321555578837467\n" +
+                        "0.4492602684994518\t10.44926026849945\n" +
+                        "0.16973928465121335\t10.169739284651213\n" +
+                        "0.59839809192369\t10.59839809192369\n" +
+                        "0.4089488367575551\t10.408948836757554\n" +
+                        "1.3017188051710602\t11.30171880517106\n" +
+                        "1.684682184176669\t11.684682184176669\n" +
+                        "1.9712581691748525\t11.971258169174853\n" +
+                        "0.44904681712176453\t10.449046817121765\n" +
+                        "1.0187654003234814\t11.018765400323481\n",
+                "select rnd_double() * 2 d, d + 10 k from long_sequence(10)"
+        );
+    }
+
+    @Test
+    public void testRndDoubleUnary() throws SqlException {
+        allowFunctionMemoization();
+        // assertQuery does not reset rnd between SQL executions - using assertSql
+        assertSql(
+                "d\tk\n" +
+                        "-0.6607777894187332\t9.339222210581267\n" +
+                        "-0.2246301342497259\t9.775369865750275\n" +
+                        "-0.08486964232560668\t9.915130357674393\n" +
+                        "-0.299199045961845\t9.700800954038154\n" +
+                        "-0.20447441837877756\t9.795525581621222\n" +
+                        "-0.6508594025855301\t9.34914059741447\n" +
+                        "-0.8423410920883345\t9.157658907911665\n" +
+                        "-0.9856290845874263\t9.014370915412574\n" +
+                        "-0.22452340856088226\t9.775476591439118\n" +
+                        "-0.5093827001617407\t9.49061729983826\n",
+                "select -rnd_double() d, d + 10 k from long_sequence(10)"
+        );
+    }
+
+    @Test
+    public void testRndInt() throws SqlException {
+        allowFunctionMemoization();
+        // assertQuery does not reset rnd between SQL executions - using assertSql
+        assertSql(
+                "i\tk\n" +
+                        "-1148479920\t-1148479910\n" +
+                        "315515118\t315515128\n" +
+                        "1548800833\t1548800843\n" +
+                        "-727724771\t-727724761\n" +
+                        "73575701\t73575711\n" +
+                        "-948263339\t-948263329\n" +
+                        "1326447242\t1326447252\n" +
+                        "592859671\t592859681\n" +
+                        "1868723706\t1868723716\n" +
+                        "-847531048\t-847531038\n",
+                "select rnd_int() i, i + 10 k from long_sequence(10)"
         );
     }
 
@@ -110,27 +131,6 @@ public class RowStableRndTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRndDoubleBinary() throws SqlException {
-        allowFunctionMemoization();
-        // assertQuery does not reset rnd between SQL executions - using assertSql
-        assertSql(
-                "d\tk\n" +
-                        "1.3215555788374664\t11.321555578837467\n" +
-                        "0.4492602684994518\t10.44926026849945\n" +
-                        "0.16973928465121335\t10.169739284651213\n" +
-                        "0.59839809192369\t10.59839809192369\n" +
-                        "0.4089488367575551\t10.408948836757554\n" +
-                        "1.3017188051710602\t11.30171880517106\n" +
-                        "1.684682184176669\t11.684682184176669\n" +
-                        "1.9712581691748525\t11.971258169174853\n" +
-                        "0.44904681712176453\t10.449046817121765\n" +
-                        "1.0187654003234814\t11.018765400323481\n",
-                "select rnd_double() * 2 d, d + 10 k from long_sequence(10)"
-        );
-    }
-
-
-    @Test
     public void testRndIntUnary() throws SqlException {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
@@ -149,27 +149,6 @@ public class RowStableRndTest extends AbstractCairoTest {
                 "select -rnd_int() i, i + 10 k from long_sequence(10)"
         );
     }
-
-    @Test
-    public void testRndDoubleUnary() throws SqlException {
-        allowFunctionMemoization();
-        // assertQuery does not reset rnd between SQL executions - using assertSql
-        assertSql(
-                "d\tk\n" +
-                        "-0.6607777894187332\t9.339222210581267\n" +
-                        "-0.2246301342497259\t9.775369865750275\n" +
-                        "-0.08486964232560668\t9.915130357674393\n" +
-                        "-0.299199045961845\t9.700800954038154\n" +
-                        "-0.20447441837877756\t9.795525581621222\n" +
-                        "-0.6508594025855301\t9.34914059741447\n" +
-                        "-0.8423410920883345\t9.157658907911665\n" +
-                        "-0.9856290845874263\t9.014370915412574\n" +
-                        "-0.22452340856088226\t9.775476591439118\n" +
-                        "-0.5093827001617407\t9.49061729983826\n",
-                "select -rnd_double() d, d + 10 k from long_sequence(10)"
-        );
-    }
-
 
     @Test
     public void testRndLong() throws SqlException {
@@ -231,4 +210,37 @@ public class RowStableRndTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testRndShort() throws SqlException {
+        allowFunctionMemoization();
+        // assertQuery does not reset rnd between SQL executions - using assertSql
+        assertSql(
+                "s\tk\n" +
+                        "-27056\t-27046\n" +
+                        "24814\t24824\n" +
+                        "-11455\t-11445\n" +
+                        "-13027\t-13017\n" +
+                        "-21227\t-21217\n" +
+                        "-22955\t-22945\n" +
+                        "-1398\t-1388\n" +
+                        "21015\t21025\n" +
+                        "30202\t30212\n" +
+                        "-19496\t-19486\n",
+                "select rnd_short() s, s + 10 k from long_sequence(10)"
+        );
+    }
+
+    @Test
+    public void testTimestampSequenceNoRandomAccess() throws Exception {
+        assertQuery(
+                "ts\tcolumn\n" +
+                        "1970-01-01T00:00:00.000042Z\t1970-01-01T00:16:40.000043Z\n" +
+                        "1970-01-01T00:33:20.000042Z\t1970-01-01T00:50:00.000043Z\n" +
+                        "1970-01-01T01:06:40.000042Z\t1970-01-01T01:23:20.000043Z\n",
+                "select timestamp_sequence(0, 1000000000) + 42 ts, ts + 1 from long_sequence(3);",
+                null,
+                false,
+                true
+        );
+    }
 }

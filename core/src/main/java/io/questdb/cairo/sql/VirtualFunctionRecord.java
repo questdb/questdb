@@ -114,11 +114,6 @@ public class VirtualFunctionRecord implements ColumnTypes, Record, QuietCloseabl
     public float getFloat(int col) {
         return getFunction(col).getFloat(internalJoinRecord);
     }
-
-    public ObjList<? extends Function> getFunctions() {
-        return functions;
-    }
-
     @Override
     public byte getGeoByte(int col) {
         return getFunction(col).getGeoByte(internalJoinRecord);

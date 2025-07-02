@@ -47,10 +47,10 @@ public class RndDoubleFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new RndFunction();
+        return new RndDoubleFunction();
     }
 
-    private static class RndFunction extends DoubleFunction implements Function {
+    private static class RndDoubleFunction extends DoubleFunction implements Function {
 
         private Rnd rnd;
 
@@ -65,12 +65,12 @@ public class RndDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean shouldMemoize() {
+        public boolean isNonDeterministic() {
             return true;
         }
 
         @Override
-        public boolean isNonDeterministic() {
+        public boolean shouldMemoize() {
             return true;
         }
 

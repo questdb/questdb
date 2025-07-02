@@ -34,11 +34,6 @@ import io.questdb.griffin.SqlExecutionContext;
 public interface QuaternaryFunction extends Function {
 
     @Override
-    default boolean shouldMemoize() {
-        return getFunc0().shouldMemoize() && getFunc1().shouldMemoize() && getFunc2().shouldMemoize() && getFunc3().shouldMemoize();
-    }
-
-    @Override
     default void close() {
         getFunc0().close();
         getFunc1().close();
@@ -110,6 +105,14 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
+    default void memoize(Record record) {
+        getFunc0().memoize(record);
+        getFunc1().memoize(record);
+        getFunc2().memoize(record);
+        getFunc3().memoize(record);
+    }
+
+    @Override
     default void offerStateTo(Function that) {
         if (that instanceof QuaternaryFunction) {
             getFunc0().offerStateTo(((QuaternaryFunction) that).getFunc0());
@@ -120,11 +123,11 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
-    default void memoize(Record record) {
-        getFunc0().memoize(record);
-        getFunc1().memoize(record);
-        getFunc2().memoize(record);
-        getFunc3().memoize(record);
+    default boolean shouldMemoize() {
+        return getFunc0().shouldMemoize()
+                || getFunc1().shouldMemoize()
+                || getFunc2().shouldMemoize()
+                || getFunc3().shouldMemoize();
     }
 
     @Override
@@ -133,6 +136,14 @@ public interface QuaternaryFunction extends Function {
                 && getFunc1().supportsParallelism()
                 && getFunc2().supportsParallelism()
                 && getFunc3().supportsParallelism();
+    }
+
+    @Override
+    default boolean supportsRandomAccess() {
+        return getFunc0().supportsRandomAccess()
+                && getFunc1().supportsRandomAccess()
+                && getFunc2().supportsRandomAccess()
+                && getFunc3().supportsRandomAccess();
     }
 
     @Override
