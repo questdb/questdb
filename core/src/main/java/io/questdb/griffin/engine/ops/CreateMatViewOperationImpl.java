@@ -54,6 +54,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
@@ -83,14 +84,23 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final String baseTableName;
     private final int baseTableNamePosition;
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
-    private final MatViewDefinition matViewDefinition = new MatViewDefinition();
+    private final boolean deferred;
+    private final int periodDelay;
+    private final char periodDelayUnit;
+    private final int periodLength;
+    private final char periodLengthUnit;
     private final int refreshType;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final String sqlText;
     private final String timeZone;
     private final String timeZoneOffset;
+    private final int timerInterval;
+    private final long timerStart;
+    private final String timerTimeZone;
+    private final char timerUnit;
     private final IntList tmpColumnIndexes = new IntList();
     private final LowerCaseCharSequenceHashSet tmpLiterals = new LowerCaseCharSequenceHashSet();
+    private final MatViewDefinition viewDefinition = new MatViewDefinition();
     private CreateTableOperationImpl createTableOperation;
     private long samplingInterval;
     private char samplingIntervalUnit;
@@ -99,18 +109,36 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             @NotNull String sqlText,
             @NotNull CreateTableOperationImpl createTableOperation,
             int refreshType,
+            boolean deferred,
             @NotNull String baseTableName,
             int baseTableNamePosition,
             @Nullable String timeZone,
-            @Nullable String timeZoneOffset
+            @Nullable String timeZoneOffset,
+            int timerInterval,
+            char timerUnit,
+            long timerStart,
+            @Nullable String timerTimeZone,
+            int periodLength,
+            char periodLengthUnit,
+            int periodDelay,
+            char periodDelayUnit
     ) {
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
         this.refreshType = refreshType;
+        this.deferred = deferred;
         this.baseTableName = baseTableName;
         this.baseTableNamePosition = baseTableNamePosition;
         this.timeZone = timeZone;
         this.timeZoneOffset = timeZoneOffset;
+        this.timerInterval = timerInterval;
+        this.timerUnit = timerUnit;
+        this.timerStart = timerStart;
+        this.timerTimeZone = timerTimeZone;
+        this.periodLength = periodLength;
+        this.periodLengthUnit = periodLengthUnit;
+        this.periodDelay = periodDelay;
+        this.periodDelayUnit = periodDelayUnit;
     }
 
     @Override
@@ -158,22 +186,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     @Override
     public MatViewDefinition getMatViewDefinition() {
-        return matViewDefinition;
-    }
-
-    @Override
-    public int getMatViewTimerInterval() {
-        return createTableOperation.getMatViewTimerInterval();
-    }
-
-    @Override
-    public char getMatViewTimerIntervalUnit() {
-        return createTableOperation.getMatViewTimerIntervalUnit();
-    }
-
-    @Override
-    public long getMatViewTimerStart() {
-        return createTableOperation.getMatViewTimerStart();
+        return viewDefinition;
     }
 
     @Override
@@ -258,21 +271,36 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     @Override
     public void init(TableToken matViewToken) {
-        matViewDefinition.init(
+        viewDefinition.init(
                 refreshType,
+                deferred,
                 matViewToken,
                 Chars.toString(createTableOperation.getSelectText()),
                 baseTableName,
                 samplingInterval,
                 samplingIntervalUnit,
                 timeZone,
-                timeZoneOffset
+                timeZoneOffset,
+                0, // refreshLimitHoursOrMonths can only be set via ALTER
+                timerInterval,
+                timerUnit,
+                timerStart,
+                timerTimeZone,
+                periodLength,
+                periodLengthUnit,
+                periodDelay,
+                periodDelayUnit
         );
     }
 
     @Override
     public boolean isDedupKey(int index) {
         return createTableOperation.isDedupKey(index);
+    }
+
+    @Override
+    public boolean isDeferred() {
+        return deferred;
     }
 
     @Override
@@ -303,9 +331,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     @Override
     public void validateAndUpdateMetadataFromModel(
-            SqlExecutionContext sqlExecutionContext,
-            FunctionFactoryCache functionFactoryCache,
-            QueryModel queryModel
+            @NotNull SqlExecutionContext sqlExecutionContext,
+            @NotNull FunctionFactoryCache functionFactoryCache,
+            @NotNull QueryModel queryModel
     ) throws SqlException {
         // Create view columns based on query.
         final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
@@ -402,9 +430,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
         // Parse sampling interval expression.
         final CharSequence interval = GenericLexer.unquote(intervalExpr);
-        final int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(interval, intervalPos);
+        final int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(interval, intervalPos, "sample");
         assert samplingIntervalEnd < interval.length();
-        samplingInterval = TimestampSamplerFactory.parseInterval(interval, samplingIntervalEnd, intervalPos);
+        samplingInterval = TimestampSamplerFactory.parseInterval(interval, samplingIntervalEnd, intervalPos, "sample", Numbers.INT_NULL, ' ');
         assert samplingInterval > 0;
         samplingIntervalUnit = interval.charAt(samplingIntervalEnd);
 
@@ -448,8 +476,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     @Override
     public void validateAndUpdateMetadataFromSelect(
-            RecordMetadata selectMetadata,
-            TableReaderMetadata baseTableMetadata
+            @NotNull RecordMetadata selectMetadata,
+            @NotNull TableReaderMetadata baseTableMetadata
     ) throws SqlException {
         final int selectTextPosition = createTableOperation.getSelectTextPosition();
         // SELECT validation
@@ -463,8 +491,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     private static void copyBaseTableSymbolColumnCapacity(
-            ExpressionNode columnNode,
-            QueryModel queryModel,
+            @Nullable ExpressionNode columnNode,
+            @Nullable QueryModel queryModel,
             @NotNull CreateTableColumnModel columnModel,
             @NotNull CharSequence baseTableName,
             @NotNull TableMetadata baseTableMetadata
