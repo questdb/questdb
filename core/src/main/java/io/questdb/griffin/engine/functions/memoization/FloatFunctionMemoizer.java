@@ -43,6 +43,11 @@ public final class FloatFunctionMemoizer extends FloatFunction implements UnaryF
     }
 
     @Override
+    public String getName() {
+        return "memoize";
+    }
+
+    @Override
     public Function getArg() {
         return fn;
     }

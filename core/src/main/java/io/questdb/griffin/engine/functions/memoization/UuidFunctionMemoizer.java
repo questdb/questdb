@@ -49,6 +49,11 @@ public final class UuidFunctionMemoizer extends UuidFunction implements UnaryFun
     }
 
     @Override
+    public String getName() {
+        return "memoize";
+    }
+
+    @Override
     public long getLong128Hi(Record rec) {
         return memoized ? hi : fn.getLong128Hi(rec);
     }

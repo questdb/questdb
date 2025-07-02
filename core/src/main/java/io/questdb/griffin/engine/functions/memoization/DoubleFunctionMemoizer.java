@@ -43,6 +43,11 @@ public final class DoubleFunctionMemoizer extends DoubleFunction implements Unar
     }
 
     @Override
+    public String getName() {
+        return "memoize";
+    }
+
+    @Override
     public Function getArg() {
         return fn;
     }

@@ -53,6 +53,11 @@ public final class CharFunctionMemoizer extends CharFunction implements UnaryFun
     }
 
     @Override
+    public String getName() {
+        return "memoize";
+    }
+
+    @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         memoized = false;
         UnaryFunction.super.init(symbolTableSource, executionContext);

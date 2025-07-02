@@ -48,6 +48,11 @@ public final class ByteFunctionMemoizer extends ByteFunction implements UnaryFun
     }
 
     @Override
+    public String getName() {
+        return "memoize";
+    }
+
+    @Override
     public byte getByte(Record rec) {
         return memoized ? value : fn.getByte(rec);
     }

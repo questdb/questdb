@@ -59,6 +59,11 @@ public final class BooleanFunctionMemoizer extends BooleanFunction implements Un
     }
 
     @Override
+    public String getName() {
+        return "memoize";
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

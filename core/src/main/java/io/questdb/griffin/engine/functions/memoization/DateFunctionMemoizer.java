@@ -59,6 +59,11 @@ public final class DateFunctionMemoizer extends DateFunction implements UnaryFun
     }
 
     @Override
+    public String getName() {
+        return "memoize";
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

@@ -48,6 +48,11 @@ public final class IPv4FunctionMemoizer extends IPv4Function implements UnaryFun
     }
 
     @Override
+    public String getName() {
+        return "memoize";
+    }
+
+    @Override
     public int getIPv4(Record rec) {
         return memoized ? value : fn.getIPv4(rec);
     }
