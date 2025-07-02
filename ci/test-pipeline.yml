@@ -33,8 +33,7 @@ stages:
       - template: templates/start-self-hosted-job.yml
       - template: templates/self-hosted-jobs.yml
     variables:
-      includeTests: "**/griffin/**,**/cairo/**"
-      excludeTests: "**/O3*Test**,**/**Fuzz**"
+      includeTests: "**/griffin/**,**/cairo/fuzz/**"
 
   - stage: SelfHostedRunOther
     displayName: "SelfHosted Other tests"
@@ -45,8 +44,7 @@ stages:
       - template: templates/start-self-hosted-job.yml
       - template: templates/self-hosted-jobs.yml
     variables:
-      excludeTests: "**/griffin/**,**/cairo/**"
-      includeTests: "**/O3*Test**,**/**Fuzz**"
+      excludeTests: "**/griffin/**,**/cairo/fuzz/**"
 
   - stage: HostedRunTestsBranches
     displayName: "Hosted Running tests"
@@ -63,7 +61,7 @@ stages:
       - template: templates/hosted-cover-jobs.yml
 
   - stage: JavaAndRustLint
-    displayName: "Rust Test and Lint"
+    displayName: "Lint"
     dependsOn:
       - CheckChanges
     jobs:
