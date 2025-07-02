@@ -170,7 +170,12 @@ public class CursorPrinter {
                 }
                 break;
             case ColumnType.ARRAY:
-                ArrayTypeDriver.arrayToJson(record.getArray(columnIndex, columnType), sink, NoopArrayWriteState.INSTANCE);
+                ArrayTypeDriver.arrayToJson(
+                        record.getArray(columnIndex, columnType),
+                        sink,
+                        NoopArrayWriteState.INSTANCE,
+                        false
+                );
                 break;
             case ColumnType.ARRAY_STRING:
                 sink.put(record.getStrA(columnIndex));

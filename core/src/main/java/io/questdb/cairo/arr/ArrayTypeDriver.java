@@ -119,7 +119,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     public static final ArrayTypeDriver INSTANCE = new ArrayTypeDriver();
     public static final long OFFSET_MAX = (1L << 48) - 1L;
     private static final ArrayValueAppender VALUE_APPENDER_DOUBLE = ArrayTypeDriver::appendDoubleFromArrayToSink;
-    private static final ArrayValueAppender VALUE_APPENDER_DOUBLE_FINITE = ArrayTypeDriver::appendDoubleFromArrayToSinkFiniteOnly;
+    private static final ArrayValueAppender VALUE_APPENDER_DOUBLE_JSON = ArrayTypeDriver::appendDoubleFromArrayToSinkJson;
     private static final ArrayValueAppender VALUE_APPENDER_LONG = ArrayTypeDriver::appendLongFromArrayToSink;
 
     public static void appendDoubleFromArrayToSink(
@@ -131,16 +131,18 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         sink.put(d);
     }
 
-    public static void appendDoubleFromArrayToSinkFiniteOnly(
+    public static void appendDoubleFromArrayToSinkJson(
             @NotNull ArrayView array,
             int index,
             @NotNull CharSink<?> sink
     ) {
         double d = array.getDouble(index);
-        if (Numbers.isNull(d)) {
-            sink.putAscii("null");
+        if (Double.isFinite(d)) {
+            Numbers.append(sink, d);
         } else {
-            sink.put(d);
+            sink.put("\"");
+            Numbers.append(sink, d);
+            sink.put("\"");
         }
     }
 
@@ -210,12 +212,13 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     public static void arrayToJson(
             @Nullable ArrayView arrayView,
             @NotNull CharSink<?> sink,
-            @NotNull ArrayWriteState arrayState
+            @NotNull ArrayWriteState arrayState,
+            boolean strictJson
     ) {
         if (arrayView == null) {
             sink.put("null");
         } else {
-            arrayToJson(arrayView, sink, resolveAppender(arrayView, true), arrayState);
+            arrayToJson(arrayView, sink, resolveAppender(arrayView, strictJson), arrayState);
         }
     }
 
@@ -386,13 +389,8 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             int memoryTag,
             long opts
     ) {
-        long lo;
-        if (rowLo > 0) {
-            lo = readDataOffset(auxMem, ARRAY_AUX_WIDTH_BYTES * rowLo);
-        } else {
-            lo = 0;
-        }
-        long hi = calcDataOffsetEnd(auxMem, ARRAY_AUX_WIDTH_BYTES * (rowHi - 1));
+        long lo = rowLo > 0 ? readDataOffset(auxMem, ARRAY_AUX_WIDTH_BYTES * rowLo) : 0;
+        long hi = rowHi > 0 ? calcDataOffsetEnd(auxMem, ARRAY_AUX_WIDTH_BYTES * (rowHi - 1)) : 0;
         dataMem.ofOffset(
                 ff,
                 dataFd,
@@ -756,11 +754,11 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return res;
     }
 
-    private static @NotNull ArrayValueAppender resolveAppender(@NotNull ArrayView array, boolean convertNonFiniteToNull) {
+    private static @NotNull ArrayValueAppender resolveAppender(@NotNull ArrayView array, boolean strictJson) {
         int elemType = array.getElemType();
         switch (elemType) {
             case ColumnType.DOUBLE:
-                return convertNonFiniteToNull ? VALUE_APPENDER_DOUBLE_FINITE : VALUE_APPENDER_DOUBLE;
+                return strictJson ? VALUE_APPENDER_DOUBLE_JSON : VALUE_APPENDER_DOUBLE;
             case ColumnType.LONG:
             case ColumnType.NULL:
                 return VALUE_APPENDER_LONG;
@@ -778,12 +776,13 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     /**
-     * Write the values and -- while doing so, also calculate the crc value, unless it was already cached.
+     * Write the values.
      **/
     private static void writeDataEntry(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
         writeShape(dataMem, array);
         // We could be storing values of different datatypes.
-        // We thus need to align accordingly. I.e., if we store doubles, we need to align on an 8-byte boundary.
+        // We thus need to align accordingly. I.e., if we store doubles, we need to align
+        // on an 8-byte boundary.
         // for shorts, it's on a 2-byte boundary. For booleans, we align to the byte.
         final int requiredByteAlignment = ColumnType.sizeOf(array.getElemType());
         padTo(dataMem, requiredByteAlignment);
