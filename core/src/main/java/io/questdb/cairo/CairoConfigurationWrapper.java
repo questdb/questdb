@@ -1344,6 +1344,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
         return getDelegate().useWithinLatestByOptimisation();
     }
 
+    @Override
+    public boolean isColumnAliasExpressionEnabled() {
+        return getDelegate().isColumnAliasExpressionEnabled();
+    }
+
+    @Override
+    public int getColumnAliasGeneratedMaxSize() {
+        return getDelegate().getColumnAliasGeneratedMaxSize();
+    }
+
     protected CairoConfiguration getDelegate() {
         return delegate.get();
     }
