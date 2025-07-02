@@ -105,7 +105,6 @@ public class QueryColumn implements Mutable, Sinkable {
     }
 
     public void setAlias(CharSequence alias) {
-        // do not override organic flag by setting the same alias with "false"
         if (this.alias == alias || Chars.equalsNc(alias, this.alias)) {
             return;
         }
