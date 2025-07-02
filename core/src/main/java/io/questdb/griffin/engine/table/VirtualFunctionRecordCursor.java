@@ -67,11 +67,8 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-        if (baseCursor != null) {
-            baseCursor.calculateSize(circuitBreaker, counter);
-        } else {
-            RecordCursor.calculateSize(this, circuitBreaker, counter);
-        }
+        assert baseCursor != null;
+        baseCursor.calculateSize(circuitBreaker, counter);
     }
 
     @Override
@@ -104,7 +101,7 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     public boolean hasNext() {
         final boolean result = baseCursor.hasNext();
         if (result && memoizerCount > 0) {
-            prefetchRowStableFunctions();
+            memoizeFunctions();
         }
         return result;
     }
@@ -126,9 +123,8 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     @Override
     public void recordAt(Record record, long atRowId) {
         if (supportsRandomAccess) {
-            if (baseCursor != null) {
-                baseCursor.recordAt(((VirtualFunctionRecord) record).getBaseRecord(), atRowId);
-            }
+            assert baseCursor != null;
+            baseCursor.recordAt(((VirtualFunctionRecord) record).getBaseRecord(), atRowId);
         } else {
             throw new UnsupportedOperationException();
         }
@@ -136,27 +132,24 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
 
     @Override
     public long size() {
-        return baseCursor != null ? baseCursor.size() : -1;
+        assert baseCursor != null;
+        return baseCursor.size();
     }
 
     @Override
     public void skipRows(Counter rowCount) throws DataUnavailableException {
-        if (baseCursor != null) {
-            baseCursor.skipRows(rowCount);
-        } else {
-            RecordCursor.skipRows(this, rowCount);
-        }
+        assert baseCursor != null;
+        baseCursor.skipRows(rowCount);
     }
 
     @Override
     public void toTop() {
-        if (baseCursor != null) {
-            baseCursor.toTop();
-            GroupByUtils.toTop(functions);
-        }
+        assert baseCursor != null;
+        baseCursor.toTop();
+        GroupByUtils.toTop(functions);
     }
 
-    private void prefetchRowStableFunctions() {
+    private void memoizeFunctions() {
         for (int i = 0; i < memoizerCount; i++) {
             memoizers.getQuick(i).memoize(recordA);
         }
