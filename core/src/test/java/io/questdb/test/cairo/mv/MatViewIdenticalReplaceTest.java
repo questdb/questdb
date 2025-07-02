@@ -27,10 +27,11 @@ package io.questdb.test.cairo.mv;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.cairo.mv.MatViewTest.parseFloorPartialTimestamp;
 
 public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
 
@@ -61,24 +62,24 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
             );
 
             try (WalWriter ww = engine.getWalWriter(engine.verifyTableName("test"))) {
-                var row = ww.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-24"));
+                var row = ww.newRow(parseFloorPartialTimestamp("2022-02-24"));
                 row.putInt(1, 1);
                 row.putStr(2, "123");
                 row.append();
 
-                row = ww.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-24T00:55"));
+                row = ww.newRow(parseFloorPartialTimestamp("2022-02-24T00:55"));
                 row.putInt(1, 2);
                 row.putStr(2, null);
                 row.append();
 
-                row = ww.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-24T02"));
+                row = ww.newRow(parseFloorPartialTimestamp("2022-02-24T02"));
                 row.putInt(1, 3);
                 row.putStr(2, "2345567");
                 row.append();
 
                 ww.commitWithParams(
-                        IntervalUtils.parseFloorPartialTimestamp("2022-02-24"),
-                        IntervalUtils.parseFloorPartialTimestamp("2022-02-24T02:00:00.000001Z"),
+                        parseFloorPartialTimestamp("2022-02-24"),
+                        parseFloorPartialTimestamp("2022-02-24T02:00:00.000001Z"),
                         WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
                 );
             }

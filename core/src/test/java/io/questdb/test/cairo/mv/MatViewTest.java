@@ -4929,14 +4929,6 @@ public class MatViewTest extends AbstractCairoTest {
         execute("drop materialized view if exists price_1h_" + n + ";");
     }
 
-    private static long parseFloorPartialTimestamp(String toTs) {
-        try {
-            return MicrosTimestampDriver.floor(toTs);
-        } catch (NumericException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
     private String copySql(int from, int count) {
         return "select * from tmp where n >= " + from + " and n < " + (from + count);
     }
@@ -5542,5 +5534,13 @@ public class MatViewTest extends AbstractCairoTest {
         }
 
         Assert.assertEquals(0, remainingSize);
+    }
+
+    static long parseFloorPartialTimestamp(String toTs) {
+        try {
+            return MicrosTimestampDriver.floor(toTs);
+        } catch (NumericException e) {
+            throw new RuntimeException(e);
+        }
     }
 }

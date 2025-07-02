@@ -2187,7 +2187,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                                     // Remove empty partition dir
                                     Path path = Path.getThreadLocal(pathToTable);
-                                    setPathForNativePartition(path, tableWriter.getPartitionBy(), partitionTimestamp, txn);
+                                    setPathForNativePartition(path, tableWriter.getTimestampType(), tableWriter.getPartitionBy(), partitionTimestamp, txn);
                                     tableWriter.getConfiguration().getFilesFacade().rmdir(path, false);
 
                                     return;

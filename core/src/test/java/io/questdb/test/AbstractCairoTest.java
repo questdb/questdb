@@ -55,6 +55,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -469,6 +470,28 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    public static String readTxnToString(TableToken tt, boolean compareTxns, boolean compareTruncateVersion) {
+        try (TxReader rdr = new TxReader(engine.getConfiguration().getFilesFacade());
+             TableMetadata metadata = engine.getTableMetadata(tt)) {
+            Path tempPath = Path.getThreadLocal(root);
+            rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), metadata.getTimestampType(), PartitionBy.DAY);
+            rdr.unsafeLoadAll();
+
+            return txnToString(rdr, compareTxns, compareTruncateVersion, false);
+        }
+    }
+
+    public static String readTxnToString(TableToken tt, boolean compareTxns, boolean compareTruncateVersion, boolean comparePartitionTxns) {
+        try (TxReader rdr = new TxReader(engine.getConfiguration().getFilesFacade());
+             TableMetadata metadata = engine.getTableMetadata(tt)) {
+            Path tempPath = Path.getThreadLocal(root);
+            rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), metadata.getTimestampType(), PartitionBy.DAY);
+            rdr.unsafeLoadAll();
+
+            return txnToString(rdr, compareTxns, compareTruncateVersion, comparePartitionTxns);
+        }
+    }
+
     public static void refreshTablesInBaseEngine() {
         engine.reloadTableNames();
     }
@@ -659,26 +682,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     private static TestCairoEngineFactory getEngineFactory() {
         return engineFactory != null ? engineFactory : CairoEngine::new;
-    }
-
-    public static String readTxnToString(TableToken tt, boolean compareTxns, boolean compareTruncateVersion) {
-        try (TxReader rdr = new TxReader(engine.getConfiguration().getFilesFacade())) {
-            Path tempPath = Path.getThreadLocal(root);
-            rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
-            rdr.unsafeLoadAll();
-
-            return txnToString(rdr, compareTxns, compareTruncateVersion, false);
-        }
-    }
-
-    public static String readTxnToString(TableToken tt, boolean compareTxns, boolean compareTruncateVersion, boolean comparePartitionTxns) {
-        try (TxReader rdr = new TxReader(engine.getConfiguration().getFilesFacade())) {
-            Path tempPath = Path.getThreadLocal(root);
-            rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
-            rdr.unsafeLoadAll();
-
-            return txnToString(rdr, compareTxns, compareTruncateVersion, comparePartitionTxns);
-        }
     }
 
     private static void testStringsLong256AndBinary(RecordMetadata metadata, RecordCursor cursor) {
