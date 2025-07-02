@@ -4951,7 +4951,6 @@ public class MatViewTest extends AbstractCairoTest {
                     "create materialized view price_1h refresh manual as " +
                             "select sym, last(price) as price, ts from base_price sample by 1h;"
             );
-
             execute("insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-10T12:01')");
 
             currentMicros = parseFloorPartialTimestamp("2025-01-01T01:01:01.000000Z");
