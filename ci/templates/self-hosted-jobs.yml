@@ -1,6 +1,6 @@
 jobs:
   - job: linux_arm64_jdk17
-    displayName: "on linux-arm64 (jdk17)"
+    displayName: "on linux-arm64"
     pool:
       name: "arm64"
       demands:
@@ -26,7 +26,7 @@ jobs:
       - template: steps.yml
 
   - job: linux_x64_zfs_jdk17
-    displayName: "on linux-x64-zfs (jdk17)"
+    displayName: "on linux-x64-zfs"
     pool:
       name: "amd64-zfs"
       demands:
