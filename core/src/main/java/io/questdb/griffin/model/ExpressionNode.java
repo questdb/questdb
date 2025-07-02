@@ -227,11 +227,27 @@ public class ExpressionNode implements Mutable, Sinkable {
                 break;
             case 2:
                 if (registry.isOperator(token)) {
+                    // an operator child might have an higher precedence than the parent
+                    // if it was wrapped in parentheses.
+                    final boolean lhsParent = lhs.type == OPERATION && lhs.precedence > precedence;
+                    if (lhsParent) {
+                        sink.putAscii('(');
+                    }
                     toSink(sink, lhs);
+                    if (lhsParent) {
+                        sink.putAscii(')');
+                    }
                     sink.putAscii(' ');
                     sink.put(token);
                     sink.putAscii(' ');
+                    final boolean rhsParent = rhs.type == OPERATION && rhs.precedence >= precedence;
+                    if (rhsParent) {
+                        sink.putAscii('(');
+                    }
                     toSink(sink, rhs);
+                    if (rhsParent) {
+                        sink.putAscii(')');
+                    }
                 } else {
                     sink.put(token);
                     sink.putAscii('(');
