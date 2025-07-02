@@ -313,7 +313,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "windspeed\ttimestamp\ttimetocycle\n" +
                     "2.0\t1989-12-31T23:26:40.000000Z\tnull\n" +
                     "3.0\t1990-01-01T02:13:20.000000Z\t0.0\n"
-            : "windspeed\ttimestamp\ttimetocycle\n" +
+                    : "windspeed\ttimestamp\ttimetocycle\n" +
                     "2.0\t1989-12-31T23:26:40.000000000Z\tnull\n" +
                     "3.0\t1990-01-01T02:13:20.000000000Z\t0.0\n";
             assertTable(expected, tableNonPartitioned);
@@ -535,15 +535,15 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 Assert.assertTrue(isWalTable("weather"));
             }
             String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "dir\twindspeed\ttimestamp\ttimetocycle\n" +
-                            "South\t2.0\t1989-12-31T23:26:40.000000Z\tnull\n" +
-                            "NA\t1.0\t1990-01-01T00:00:00.000000Z\tnull\n" +
-                            "North\t3.0\t1990-01-01T02:13:20.000000Z\t0.0\n" +
-                            "SSW\t4.0\t1990-01-01T05:00:00.000000Z\tnull\n"
+                    "South\t2.0\t1989-12-31T23:26:40.000000Z\tnull\n" +
+                    "NA\t1.0\t1990-01-01T00:00:00.000000Z\tnull\n" +
+                    "North\t3.0\t1990-01-01T02:13:20.000000Z\t0.0\n" +
+                    "SSW\t4.0\t1990-01-01T05:00:00.000000Z\tnull\n"
                     : "dir\twindspeed\ttimestamp\ttimetocycle\n" +
-                            "South\t2.0\t1989-12-31T23:26:40.000000000Z\tnull\n" +
-                            "NA\t1.0\t1990-01-01T00:00:00.000000000Z\tnull\n" +
-                            "North\t3.0\t1990-01-01T02:13:20.000000000Z\t0.0\n" +
-                            "SSW\t4.0\t1990-01-01T05:00:00.000000000Z\tnull\n";
+                    "South\t2.0\t1989-12-31T23:26:40.000000000Z\tnull\n" +
+                    "NA\t1.0\t1990-01-01T00:00:00.000000000Z\tnull\n" +
+                    "North\t3.0\t1990-01-01T02:13:20.000000000Z\t0.0\n" +
+                    "SSW\t4.0\t1990-01-01T05:00:00.000000000Z\tnull\n";
             assertTable(expected, "weather");
         });
     }
@@ -745,7 +745,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testRenameTable() throws Exception {
-        Assume.assumeTrue(walEnabled &&timestampType == ColumnType.TIMESTAMP_NANO);
+        Assume.assumeTrue(walEnabled && timestampType == ColumnType.TIMESTAMP_NANO);
         node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 2);
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
         String weather = "weather";
@@ -1782,12 +1782,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
             String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
                     "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
+                            "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                            "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
+                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                            "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
                     : "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400200Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
@@ -1823,9 +1823,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
             String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
                     "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
+                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                            "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
                     : "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t85.0\t2016-06-13T17:43:50.102300200Z\n" +
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400200Z\n" +
@@ -1856,9 +1856,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
             String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
                     "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
+                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                            "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
                     : "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t85.0\t2016-06-13T17:43:50.102300200Z\n" +
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400200Z\n" +

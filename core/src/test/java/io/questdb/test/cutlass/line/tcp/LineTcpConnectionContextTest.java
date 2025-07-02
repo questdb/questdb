@@ -218,7 +218,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
                     "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
                     "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
-                    :"location\ttemperature\ttimestamp\n" +
+                    : "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400200Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400200Z\n" +
@@ -441,12 +441,12 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             closeContext();
             String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
                     "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
+                            "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                            "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
+                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                            "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
                     : "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400200Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
@@ -743,13 +743,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             closeContext();
             String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
                     "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
+                            "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                            "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
+                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                            "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                            "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
                     : "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400200Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
@@ -778,13 +778,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             closeContext();
             String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
                     "location\ttimestamp\ttemperature\n" +
-                    "us-midwest\t2016-06-13T17:43:50.100400Z\t82.0\n" +
-                    "us-midwest\t2016-06-13T17:43:50.100500Z\t83.0\n" +
-                    "us-eastcoast\t2016-06-13T17:43:50.101600Z\t81.0\n" +
-                    "us-midwest\t2016-06-13T17:43:50.102300Z\t85.0\n" +
-                    "us-eastcoast\t2016-06-13T17:43:50.102400Z\t89.0\n" +
-                    "us-eastcoast\t2016-06-13T17:43:50.102400Z\t80.0\n" +
-                    "us-westcost\t2016-06-13T17:43:50.102500Z\t82.0\n"
+                            "us-midwest\t2016-06-13T17:43:50.100400Z\t82.0\n" +
+                            "us-midwest\t2016-06-13T17:43:50.100500Z\t83.0\n" +
+                            "us-eastcoast\t2016-06-13T17:43:50.101600Z\t81.0\n" +
+                            "us-midwest\t2016-06-13T17:43:50.102300Z\t85.0\n" +
+                            "us-eastcoast\t2016-06-13T17:43:50.102400Z\t89.0\n" +
+                            "us-eastcoast\t2016-06-13T17:43:50.102400Z\t80.0\n" +
+                            "us-westcost\t2016-06-13T17:43:50.102500Z\t82.0\n"
                     : "location\ttimestamp\ttemperature\n" +
                     "us-midwest\t2016-06-13T17:43:50.100400000Z\t82.0\n" +
                     "us-midwest\t2016-06-13T17:43:50.100500000Z\t83.0\n" +
@@ -814,13 +814,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
             String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
                     "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100200Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
+                            "us-midwest\t82.0\t2016-06-13T17:43:50.100200Z\n" +
+                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                            "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
+                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                            "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                            "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
                     : "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100200000Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
@@ -850,13 +850,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             closeContext();
             String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
                     "location\ttemperature\ttime\tcity\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100300Z\t\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\t\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\tyork\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\tlondon\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\t\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102500Z\t\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102600Z\t\n"
+                            "us-midwest\t82.0\t2016-06-13T17:43:50.100300Z\t\n" +
+                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\t\n" +
+                            "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\tyork\n" +
+                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\tlondon\n" +
+                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\t\n" +
+                            "us-eastcoast\t80.0\t2016-06-13T17:43:50.102500Z\t\n" +
+                            "us-westcost\t82.0\t2016-06-13T17:43:50.102600Z\t\n"
                     : "location\ttemperature\ttime\tcity\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100300000Z\t\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\t\n" +
@@ -1239,13 +1239,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             closeContext();
             String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
                     "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101500Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
+                            "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                            "us-eastcoast\t81.0\t2016-06-13T17:43:50.101500Z\n" +
+                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                            "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                            "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
                     : "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400200Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
@@ -1274,13 +1274,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             closeContext();
             String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
                     "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
+                            "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                            "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
+                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                            "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                            "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
                     : "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400000Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
@@ -1600,13 +1600,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             closeContext();
             String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
                     "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
+                            "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                            "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
+                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                            "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                            "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
                     : "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400200Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
@@ -2078,13 +2078,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             closeContext();
             String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
                     "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t1970-01-01T00:00:00.000000Z\n" +
-                    "us-midwest\t83.0\t1970-01-01T00:00:00.000000Z\n" +
-                    "us-eastcoast\t81.0\t1970-01-01T00:00:00.000000Z\n" +
-                    "us-midwest\t85.0\t1970-01-01T00:00:00.000000Z\n" +
-                    "us-eastcoast\t89.0\t1970-01-01T00:00:00.000000Z\n" +
-                    "us-eastcoast\t80.0\t1970-01-01T00:00:00.000000Z\n" +
-                    "us-westcost\t82.0\t1970-01-01T00:00:00.000000Z\n"
+                            "us-midwest\t82.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "us-midwest\t83.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "us-eastcoast\t81.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "us-midwest\t85.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "us-eastcoast\t89.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "us-eastcoast\t80.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "us-westcost\t82.0\t1970-01-01T00:00:00.000000Z\n"
                     : "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t1970-01-01T00:00:00.000000000Z\n" +
                     "us-midwest\t83.0\t1970-01-01T00:00:00.000000000Z\n" +
@@ -2196,7 +2196,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
                     "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n":
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n" :
                     "location\ttemperature\ttimestamp\n" +
                             "us-midwest\t82.0\t2016-06-13T17:43:50.100400200Z\n" +
                             "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
@@ -2205,7 +2205,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400200Z\n" +
                             "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400200Z\n" +
                             "us-westcost\t82.0\t2016-06-13T17:43:50.102500200Z\n";
-                    ;
+            ;
             assertTable(expected, table);
         });
     }
