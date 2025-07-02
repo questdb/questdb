@@ -396,6 +396,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             }
             validatePgResultSetColumnTypesAndNames();
         } catch (Throwable th) {
+            if (th instanceof BadProtocolException) {
+                throw (BadProtocolException) th;
+            }
             throw kaput().put(th);
         }
     }

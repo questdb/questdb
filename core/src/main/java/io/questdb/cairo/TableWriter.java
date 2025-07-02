@@ -28,9 +28,11 @@ import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SymbolTable;
@@ -135,9 +137,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -264,6 +266,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private TxReader attachTxReader;
     private long avgRecordSize;
     private boolean avoidIndexOnCommit = false;
+    private BlockFileWriter blockFileWriter;
     private int columnCount;
     private long committedMasterRef;
     private ConvertOperatorImpl convertOperatorImpl;
@@ -1792,7 +1795,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 attachDetachStatus = AttachDetachStatus.OK;
                 LOG.info().$("detaching partition via unlink [path=").$substr(pathRootSize, path).I$();
             } else {
-
                 detachedPath.of(configuration.getDbRoot()).concat(tableToken.getDirName());
                 int detachedRootLen = detachedPath.size();
                 // detachedPath: detached partition folder
@@ -2856,20 +2858,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void setMetaMatViewRefreshLimit(int limitHoursOrMonths) {
-        commit();
-        metadata.setMatViewRefreshLimitHoursOrMonths(limitHoursOrMonths);
-        writeMetadataToDisk();
+    public void setMatViewRefreshLimit(int limitHoursOrMonths) {
+        assert tableToken.isMatView();
+
+        try {
+            final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+            if (oldDefinition == null) {
+                throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
+            }
+
+            final MatViewDefinition newDefinition = oldDefinition.updateRefreshLimit(limitHoursOrMonths);
+            updateMatViewDefinition(newDefinition);
+        } finally {
+            path.trimTo(pathSize);
+        }
     }
 
     @Override
-    public void setMetaMatViewRefreshTimer(long start, int interval, char unit) {
-        commit();
-        metadata.setMatViewTimerStart(start);
-        metadata.setMatViewTimerInterval(interval);
-        metadata.setMatViewTimerIntervalUnit(unit);
-        writeMetadataToDisk();
-        engine.getMatViewGraph().onAlterRefreshTimer(tableToken);
+    public void setMatViewRefreshTimer(long start, int interval, char unit) {
+        assert tableToken.isMatView();
+
+        try {
+            final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+            if (oldDefinition == null) {
+                throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
+            }
+
+            final MatViewDefinition newDefinition = oldDefinition.updateTimer(interval, unit, start);
+            updateMatViewDefinition(newDefinition);
+        } finally {
+            path.trimTo(pathSize);
+        }
     }
 
     @Override
@@ -5017,6 +5036,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(parquetColumnIdsAndTypes);
         Misc.free(segmentCopyInfo);
         Misc.free(walTxnDetails);
+        Misc.free(blockFileWriter);
         tempDirectMemList = Misc.free(tempDirectMemList);
         if (segmentFileCache != null) {
             segmentFileCache.closeWalFiles();
@@ -9239,10 +9259,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putBool(metadata.isWalEnabled());
             ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
-            ddlMem.putInt(metadata.getMatViewRefreshLimitHoursOrMonths());
-            ddlMem.putLong(metadata.getMatViewTimerStart());
-            ddlMem.putInt(metadata.getMatViewTimerInterval());
-            ddlMem.putChar(metadata.getMatViewTimerIntervalUnit());
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
@@ -9986,6 +10002,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } else {
             updateIndexesSerially(lo, hi);
         }
+    }
+
+    private void updateMatViewDefinition(MatViewDefinition newDefinition) {
+        if (blockFileWriter == null) {
+            blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
+        }
+        try (BlockFileWriter definitionWriter = blockFileWriter) {
+            definitionWriter.of(path.concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+            MatViewDefinition.append(newDefinition, definitionWriter);
+        }
+
+        // Unlike mat view state write-through behavior, we update the in-memory definition
+        // object here, after updating the definition file.
+        engine.getMatViewStateStore().updateViewDefinition(tableToken, newDefinition);
+        engine.getMatViewGraph().updateViewDefinition(tableToken, newDefinition);
     }
 
     private void updateMaxTimestamp(long timestamp) {

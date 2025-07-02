@@ -139,6 +139,8 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         super.of(baseCursor, executionContext);
         endFill = false;
         upperBound = Long.MAX_VALUE;
+        firstRun = true;
+        peeker.clear();
     }
 
     @Override
@@ -146,6 +148,8 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         super.toTop();
         endFill = false;
         upperBound = Long.MAX_VALUE;
+        firstRun = true;
+        peeker.clear();
     }
 
     private boolean setActiveA(long expectedLocalEpoch) {

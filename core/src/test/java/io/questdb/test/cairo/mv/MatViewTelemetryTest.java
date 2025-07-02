@@ -35,8 +35,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
-import static io.questdb.PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT;
-import static io.questdb.PropertyKey.DEV_MODE_ENABLED;
+import static io.questdb.PropertyKey.*;
 import static org.junit.Assert.assertNull;
 
 public class MatViewTelemetryTest extends AbstractCairoTest {
@@ -44,6 +43,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         setProperty(DEV_MODE_ENABLED, "true");
+        setProperty(MAT_VIEW_DEBUG_ENABLED, "true");
         setProperty(CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
         super.setUp();
     }

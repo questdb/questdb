@@ -495,11 +495,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getMatViewTimerStartEpsilon() {
-        return Timestamps.MINUTE_MICROS;
-    }
-
-    @Override
     public int getMaxCrashFiles() {
         return 1;
     }
@@ -738,6 +733,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlAsOfJoinLookAhead() {
         return 100;
+    }
+
+    @Override
+    public int getSqlAsOfJoinMapEvacuationThreshold() {
+        return 10_000_000;
+    }
+
+    @Override
+    public int getSqlAsOfJoinShortCircuitCacheCapacity() {
+        return 10_000_000;
     }
 
     @Override
@@ -1239,6 +1244,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isIOURingEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isMatViewDebugEnabled() {
+        return false;
     }
 
     @Override

@@ -279,8 +279,6 @@ public interface CairoConfiguration {
 
     int getMatViewRowsPerQueryEstimate();
 
-    long getMatViewTimerStartEpsilon();
-
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();
@@ -437,6 +435,10 @@ public interface CairoConfiguration {
     long getSpinLockTimeout();
 
     int getSqlAsOfJoinLookAhead();
+
+    int getSqlAsOfJoinMapEvacuationThreshold();
+
+    int getSqlAsOfJoinShortCircuitCacheCapacity();
 
     int getSqlCharacterStoreCapacity();
 
@@ -666,6 +668,8 @@ public interface CairoConfiguration {
     boolean isGroupByPresizeEnabled();
 
     boolean isIOURingEnabled();
+
+    boolean isMatViewDebugEnabled();
 
     boolean isMatViewEnabled();
 
