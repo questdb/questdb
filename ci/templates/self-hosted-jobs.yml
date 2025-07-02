@@ -20,6 +20,7 @@ jobs:
       javadoc_profile: ""
       jdk: "1.17"
       JAVA_HOME_17_AARCH64: "/usr/lib/jvm/java-17-amazon-corretto.aarch64"
+      JAVA_HOME: "/usr/lib/jvm/java-17-amazon-corretto.aarch64"
       os: Linux
     steps:
       - script: |
