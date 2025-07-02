@@ -61,7 +61,7 @@ stages:
       - template: templates/hosted-cover-jobs.yml
 
   - stage: JavaAndRustLint
-    displayName: "Lint"
+    displayName: "Rust Test and Lint"
     dependsOn:
       - CheckChanges
     jobs:
