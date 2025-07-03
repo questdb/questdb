@@ -31,6 +31,25 @@ import org.junit.Test;
 public class RndMemoizationTest extends AbstractCairoTest {
 
     @Test
+    public void testIPv4() throws SqlException {
+        allowFunctionMemoization();
+        assertSql(
+                "i\tcast\n" +
+                        "187.139.150.80\t187.139.150.80\n" +
+                        "18.206.96.238\t18.206.96.238\n" +
+                        "92.80.211.65\t92.80.211.65\n" +
+                        "212.159.205.29\t212.159.205.29\n" +
+                        "4.98.173.21\t4.98.173.21\n" +
+                        "199.122.166.85\t199.122.166.85\n" +
+                        "79.15.250.138\t79.15.250.138\n" +
+                        "35.86.82.23\t35.86.82.23\n" +
+                        "111.98.117.250\t111.98.117.250\n" +
+                        "205.123.179.216\t205.123.179.216\n",
+                "select rnd_ipv4() i, i::string from long_sequence(10)"
+        );
+    }
+
+    @Test
     public void testMemoizedFunctionsTriggerFullMaterialization() throws Exception {
         allowFunctionMemoization();
         assertSql(
@@ -41,19 +60,6 @@ public class RndMemoizationTest extends AbstractCairoTest {
                 "select rnd_int()+1 x1, x1+1 x12 from long_sequence(3) order by x12;"
         );
     }
-
-    @Test
-    public void testRndUuid() throws Exception {
-        allowFunctionMemoization();
-        assertSql(
-                "u\tcast\n" +
-                        "0010cde8-12ce-40ee-8010-a928bb8b9650\t0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
-                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
-                        "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n",
-                "select rnd_uuid4() u, u::string from long_sequence(3)"
-        );
-    }
-
 
     @Test
     public void testRndByte() throws SqlException {
@@ -114,25 +120,6 @@ public class RndMemoizationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIPv4() throws SqlException {
-        allowFunctionMemoization();
-        assertSql(
-                "i\tcast\n" +
-                        "187.139.150.80\t187.139.150.80\n" +
-                        "18.206.96.238\t18.206.96.238\n" +
-                        "92.80.211.65\t92.80.211.65\n" +
-                        "212.159.205.29\t212.159.205.29\n" +
-                        "4.98.173.21\t4.98.173.21\n" +
-                        "199.122.166.85\t199.122.166.85\n" +
-                        "79.15.250.138\t79.15.250.138\n" +
-                        "35.86.82.23\t35.86.82.23\n" +
-                        "111.98.117.250\t111.98.117.250\n" +
-                        "205.123.179.216\t205.123.179.216\n",
-                "select rnd_ipv4() i, i::string from long_sequence(10)"
-        );
-    }
-
-    @Test
     public void testRndDouble() throws SqlException {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
@@ -149,26 +136,6 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         "0.22452340856088226\t10.224523408560882\n" +
                         "0.5093827001617407\t10.50938270016174\n",
                 "select rnd_double() d, d + 10 k from long_sequence(10)"
-        );
-    }
-
-    @Test
-    public void testRndFloat() throws SqlException {
-        allowFunctionMemoization();
-        // assertQuery does not reset rnd between SQL executions - using assertSql
-        assertSql(
-                "d\tk\n" +
-                        "0.66077775\t10.660778\n" +
-                        "0.80432236\t10.804322\n" +
-                        "0.22463012\t10.22463\n" +
-                        "0.12966657\t10.129666\n" +
-                        "0.08486962\t10.084869\n" +
-                        "0.28455776\t10.284557\n" +
-                        "0.29919904\t10.299199\n" +
-                        "0.08438319\t10.084383\n" +
-                        "0.20447439\t10.204474\n" +
-                        "0.93446046\t10.934461\n",
-                "select rnd_float() d, d + 10 k from long_sequence(10)"
         );
     }
 
@@ -209,6 +176,26 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         "-0.22452340856088226\t9.775476591439118\n" +
                         "-0.5093827001617407\t9.49061729983826\n",
                 "select -rnd_double() d, d + 10 k from long_sequence(10)"
+        );
+    }
+
+    @Test
+    public void testRndFloat() throws SqlException {
+        allowFunctionMemoization();
+        // assertQuery does not reset rnd between SQL executions - using assertSql
+        assertSql(
+                "d\tk\n" +
+                        "0.66077775\t10.660778\n" +
+                        "0.80432236\t10.804322\n" +
+                        "0.22463012\t10.22463\n" +
+                        "0.12966657\t10.129666\n" +
+                        "0.08486962\t10.084869\n" +
+                        "0.28455776\t10.284557\n" +
+                        "0.29919904\t10.299199\n" +
+                        "0.08438319\t10.084383\n" +
+                        "0.20447439\t10.204474\n" +
+                        "0.93446046\t10.934461\n",
+                "select rnd_float() d, d + 10 k from long_sequence(10)"
         );
     }
 
@@ -293,6 +280,18 @@ public class RndMemoizationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRndLong256() throws Exception {
+        allowFunctionMemoization();
+        assertSql(
+                "l\tcolumn\n" +
+                        "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\t0\n" +
+                        "0xb5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad15\t0\n" +
+                        "0x322a2198864beb14797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fa\t0\n",
+                "select rnd_long256() l, l - l from long_sequence(3)"
+        );
+    }
+
+    @Test
     public void testRndLongBinary() throws SqlException {
         allowFunctionMemoization();
         // assertQuery does not reset rnd between SQL executions - using assertSql
@@ -349,6 +348,18 @@ public class RndMemoizationTest extends AbstractCairoTest {
                         "30202\t30212\n" +
                         "-19496\t-19486\n",
                 "select rnd_short() s, s + 10 k from long_sequence(10)"
+        );
+    }
+
+    @Test
+    public void testRndUuid() throws Exception {
+        allowFunctionMemoization();
+        assertSql(
+                "u\tcast\n" +
+                        "0010cde8-12ce-40ee-8010-a928bb8b9650\t0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                        "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n",
+                "select rnd_uuid4() u, u::string from long_sequence(3)"
         );
     }
 
