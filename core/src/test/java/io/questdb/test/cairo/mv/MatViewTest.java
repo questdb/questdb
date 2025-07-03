@@ -5175,6 +5175,121 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testViewInvalidatedOnRefreshAfterBaseTableRename() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create table base_price2 (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh manual as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values ('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2025-01-01T01:01:01.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-11T12:01')" +
+                            ",('jpyusd', 103.21, '2024-09-11T12:02')"
+            );
+            currentMicros += 6 * Timestamps.SECOND_MICROS;
+
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            execute("refresh materialized view price_1h incremental;");
+            execute("drop table base_price;");
+            execute("rename table base_price2 to base_price;");
+
+            drainQueues();
+
+            // the view must be marked as invalid as the result of refresh attempt
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\tinvalidation_reason\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tmanual\tbase_price\t2025-01-01T01:01:01.000000Z\t2025-01-01T01:01:07.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tinvalid\t[-1]: unexpected txn numbers, base table may have been renamed [view=price_1h, fromBaseTxn=2, toBaseTxn=1]\t2\t1\n",
+                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                            "from materialized_views",
+                    null
+            );
+        });
+    }
+
+    @Test
+    public void testViewInvalidatedOnTxnIntervalsCachingAfterBaseTableRename() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_TXN_INTERVALS_CACHE_TIMER_INTERVAL, "5s");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create table base_price2 (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh manual as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values ('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2099-01-01T01:01:01.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-11T12:01')" +
+                            ",('jpyusd', 103.21, '2024-09-11T12:02')"
+            );
+            currentMicros += 6 * Timestamps.SECOND_MICROS;
+
+            drainMatViewTimerQueue(timerJob);
+
+            execute("drop table base_price;");
+            execute("rename table base_price2 to base_price;");
+
+            drainQueues();
+
+            // the view must be marked as invalid as the result of WAL txn intervals caching attempt
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\tinvalidation_reason\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tmanual\tbase_price\t2099-01-01T01:01:01.000000Z\t2099-01-01T01:01:07.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tinvalid\t[-1]: unexpected txn numbers, base table may have been renamed [view=price_1h, lastRefreshTxn=2, lastTxn=1]\t2\t1\n",
+                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                            "from materialized_views",
+                    null
+            );
+        });
+    }
+
     private static void assertCannotModifyMatView(String updateSql) {
         try {
             execute(updateSql);

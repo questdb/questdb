@@ -227,6 +227,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long lastRefreshTxn = Math.max(viewState.getLastRefreshBaseTxn(), viewState.getCachedIntervalsBaseTxn());
 
         if (lastRefreshTxn > -1) {
+            if (lastRefreshTxn > lastTxn) {
+                throw CairoException.nonCritical().put("unexpected txn numbers, base table may have been renamed [view=").put(viewToken.getTableName())
+                        .put(", lastRefreshTxn=").put(lastRefreshTxn)
+                        .put(", lastTxn=").put(lastTxn)
+                        .put(']');
+            }
             if (lastRefreshTxn == lastTxn) {
                 return viewState.getCachedTxnIntervals();
             }
@@ -968,7 +974,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private void invalidateView(TableToken viewToken, String invalidationReason, boolean force) {
         final MatViewState viewState = stateStore.getViewState(viewToken);
-        if (viewState != null && !viewState.isDropped()) {
+        if (viewState != null && !viewState.isDropped() && !viewState.isInvalid()) {
             if (!viewState.tryLock()) {
                 LOG.debug().$("skipping materialized view invalidation, locked by another refresh run [view=").$(viewToken).I$();
                 viewState.markAsPendingInvalidation();
@@ -1287,7 +1293,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long toBaseTxn = baseSeqTracker.getWriterTxn();
 
         final long fromBaseTxn = viewState.getLastRefreshBaseTxn();
-        if (viewState.getViewDefinition().getPeriodLength() == 0 && fromBaseTxn >= 0 && fromBaseTxn >= toBaseTxn) {
+        if (fromBaseTxn > toBaseTxn) {
+            final TableToken viewToken = viewState.getViewDefinition().getMatViewToken();
+            throw CairoException.nonCritical().put("unexpected txn numbers, base table may have been renamed [view=").put(viewToken.getTableName())
+                    .put(", fromBaseTxn=").put(fromBaseTxn)
+                    .put(", toBaseTxn=").put(toBaseTxn)
+                    .put(']');
+        }
+        if (viewState.getViewDefinition().getPeriodLength() == 0 && fromBaseTxn > -1 && fromBaseTxn == toBaseTxn) {
             // Non-period mat view which is already refreshed.
             return false;
         }
