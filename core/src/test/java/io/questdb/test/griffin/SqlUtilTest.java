@@ -64,8 +64,8 @@ public class SqlUtilTest {
         for (int i = 0, n = registry.operators.size(); i < n; i++) {
             String token = registry.operators.getQuick(i).getToken();
             Assert.assertEquals(
-                    "_" + token,
-                    SqlUtil.createExprColumnAlias(store, token, aliasMap, 64, true)
+                    '"' + token + '"',
+                    SqlUtil.createExprColumnAlias(store, token, aliasMap, 64, true).toString()
             );
         }
     }

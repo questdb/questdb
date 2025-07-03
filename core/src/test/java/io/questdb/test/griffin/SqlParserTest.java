@@ -11599,7 +11599,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testExpressionAliasDots() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
         assertQuery(
-                "select-virtual floor(1.2) floor(1.2), 'Hello there.' 'Hello there.' from (long_sequence(1))",
+                "select-virtual floor(1.2) \"floor(1.2)\", 'Hello there.' \"'Hello there.'\" from (long_sequence(1))",
                 "select floor(1.2), 'Hello there.'"
         );
     }
