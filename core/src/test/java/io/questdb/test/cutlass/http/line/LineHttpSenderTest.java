@@ -978,6 +978,48 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testSuperWideTable() throws Exception {
+        assertMemoryLeak(() -> {
+            int colCount = 200_000;
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE.getEnvVarName(), "64",
+                    PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE.getEnvVarName(), "64",
+                    PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE.getEnvVarName(), "64",
+                    PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE.getEnvVarName(), "64",
+                    PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE.getEnvVarName(), "64"
+
+            )) {
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .build()
+                ) {
+                    sender.table("mytable");
+                    for (int i = 0; i < colCount; i++) {
+                        sender.longColumn("col" + i, i);
+                    }
+                    sender.at(0, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("mytable");
+
+                StringSink expectedSink = new StringSink();
+                for (int i = 0; i < colCount; i++) {
+                    expectedSink.put("col").put(i).put('\t');
+                }
+                expectedSink.put("timestamp\n");
+                for (int i = 0; i < colCount; i++) {
+                    expectedSink.put(i).put('\t');
+                }
+                expectedSink.put("1970-01-01T00:00:00.000000Z\n");
+
+                assertSql(serverMain.getEngine(), "SELECT * FROM mytable", expectedSink);
+            }
+        });
+    }
+
+    @Test
     public void testTimestampUpperBounds() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             TimestampFormatCompiler timestampFormatCompiler = new TimestampFormatCompiler();
