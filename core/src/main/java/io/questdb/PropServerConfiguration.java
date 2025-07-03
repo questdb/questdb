@@ -1701,7 +1701,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         // compatibility switch, to be removed in future
         this.sqlSampleByValidateFillType = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_VALIDATE_FILL_TYPE, true);
 
-        this.cairoSqlColumnAliasExpressionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, false);
+        this.cairoSqlColumnAliasExpressionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, true);
         this.cairoSqlColumnAliasGeneratedMaxSize = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE, COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT);
         if (this.cairoSqlColumnAliasGeneratedMaxSize < COLUMN_ALIAS_GENERATED_MAX_SIZE_MINIMUM) {
             log.info()

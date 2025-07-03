@@ -1362,7 +1362,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isColumnAliasExpressionEnabled() {
-        return false;
+        return true;
     }
 
     @Override
