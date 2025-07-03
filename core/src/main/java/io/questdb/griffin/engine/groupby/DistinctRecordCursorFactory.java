@@ -95,7 +95,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return base.recordCursorSupportsRandomAccess();
+        return false;
     }
 
     @Override
@@ -122,6 +122,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     private static class DistinctRecordCursor implements NoRandomAccessRecordCursor {
+        private final IntList columnIndex = new IntList();
         private final Map dataMap;
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
@@ -130,7 +131,6 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         private RecordCursor mapCursor;
         private MapRecord recordA;
         private RecordSink recordSink;
-        private final IntList columnIndex = new IntList();
 
         public DistinctRecordCursor(CairoConfiguration configuration, RecordMetadata metadata) {
             this.isOpen = true;

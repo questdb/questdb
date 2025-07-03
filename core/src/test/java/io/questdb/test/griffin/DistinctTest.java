@@ -151,7 +151,7 @@ public class DistinctTest extends AbstractCairoTest {
                         "  from long_sequence(10)" +
                         ") timestamp(created);",
                 null,
-                true,
+                false,
                 true
         );
     }
