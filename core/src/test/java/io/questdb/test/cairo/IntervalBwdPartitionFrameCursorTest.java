@@ -28,7 +28,7 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IntervalBwdPartitionFrameCursor;
-import io.questdb.cairo.IntervalBwdPartitionFrameCursorFactory;
+import io.questdb.cairo.IntervalPartitionFrameCursorFactory;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -386,7 +386,103 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
         final String expected2 = "1983-01-05T14:00:00.000000Z\n" +
                 "1983-01-05T12:00:00.000000Z\n" + expected1;
 
-        testReload(increment, intervals, N, expected1, expected2);
+        testReload(PartitionBy.DAY, increment, intervals, N, expected1, expected2);
+    }
+
+    public void testReload(
+            int partitionBy,
+            long increment,
+            LongList intervals,
+            int rowCount,
+            CharSequence expected1,
+            CharSequence expected2
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken;
+            TableModel model = new TableModel(configuration, "x", partitionBy).
+                    col("a", ColumnType.SYMBOL).indexed(true, 4).
+                    col("b", ColumnType.SYMBOL).indexed(true, 4).
+                    timestamp();
+            tableToken = AbstractCairoTest.create(model);
+
+            final Rnd rnd = new Rnd();
+            long timestamp = TimestampFormatUtils.parseTimestamp("1980-01-01T00:00:00.000Z");
+
+            GenericRecordMetadata metadata;
+            final int timestampIndex;
+
+            final SqlExecutionContext executionContext = new SqlExecutionContextStub(engine);
+
+            try (TableReader reader = engine.getReader(tableToken)) {
+                timestampIndex = reader.getMetadata().getTimestampIndex();
+                metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
+            }
+            final TestTableReaderRecord record = new TestTableReaderRecord();
+            try (
+                    final IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(
+                            tableToken,
+                            0,
+                            new RuntimeIntervalModel(intervals),
+                            timestampIndex,
+                            metadata,
+                            ORDER_DESC
+                    );
+                    final PartitionFrameCursor cursor = factory.getCursor(executionContext, ORDER_DESC)
+            ) {
+                // assert that there is nothing to start with
+                record.of(cursor.getTableReader());
+
+                assertEqualTimestamps("", record, cursor);
+
+                try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                    for (int i = 0; i < rowCount; i++) {
+                        TableWriter.Row row = writer.newRow(timestamp);
+                        row.putSym(0, rnd.nextChars(4));
+                        row.putSym(1, rnd.nextChars(4));
+                        row.append();
+                        timestamp += increment;
+                    }
+                    writer.commit();
+
+                    Assert.assertTrue(cursor.reload());
+                    assertEqualTimestamps(expected1, record, cursor);
+
+                    timestamp = Timestamps.addYears(timestamp, 3);
+
+                    for (int i = 0; i < rowCount; i++) {
+                        TableWriter.Row row = writer.newRow(timestamp);
+                        row.putSym(0, rnd.nextChars(4));
+                        row.putSym(1, rnd.nextChars(4));
+                        row.append();
+                        timestamp += increment;
+                    }
+                    writer.commit();
+
+                    Assert.assertTrue(cursor.reload());
+                    if (expected2 != null) {
+                        assertEqualTimestamps(expected2, record, cursor);
+                    } else {
+                        assertEqualTimestamps(expected1, record, cursor);
+                    }
+
+                    Assert.assertFalse(cursor.reload());
+                }
+
+                if (convertToParquet) {
+                    execute("alter table x convert partition to parquet where timestamp >= 0;");
+                }
+
+                try (TableWriter writer = engine.getWriter(tableToken, "testing")) {
+                    writer.removeColumn("b");
+                }
+
+                try {
+                    factory.getCursor(executionContext, ORDER_DESC);
+                    Assert.fail();
+                } catch (TableReferenceOutOfDateException ignored) {
+                }
+            }
+        });
     }
 
     @Test

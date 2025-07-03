@@ -32,43 +32,50 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.Misc;
 
-public class IntervalBwdPartitionFrameCursorFactory extends AbstractPartitionFrameCursorFactory {
-    private final IntervalBwdPartitionFrameCursor cursor;
-    private IntervalFwdPartitionFrameCursor fwdCursor;
+public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameCursorFactory {
+    private final int baseOrder;
     private final RuntimeIntrinsicIntervalModel intervalModel;
+    private final int timestampIndex;
+    private IntervalBwdPartitionFrameCursor bwdCursor;
+    private IntervalFwdPartitionFrameCursor fwdCursor;
 
-    public IntervalBwdPartitionFrameCursorFactory(
+    public IntervalPartitionFrameCursorFactory(
             TableToken tableToken,
             long metadataVersion,
             RuntimeIntrinsicIntervalModel intervalModel,
             int timestampIndex,
-            RecordMetadata metadata
+            RecordMetadata metadata,
+            int baseOrder
     ) {
         super(tableToken, metadataVersion, metadata);
-        this.cursor = new IntervalBwdPartitionFrameCursor(intervalModel, timestampIndex);
+        this.timestampIndex = timestampIndex;
         this.intervalModel = intervalModel;
+        this.baseOrder = baseOrder;
     }
 
     @Override
     public void close() {
         super.close();
-        Misc.free(cursor);
-        Misc.free(intervalModel);
         fwdCursor = Misc.free(fwdCursor);
+        bwdCursor = Misc.free(bwdCursor);
+        Misc.free(intervalModel);
     }
 
     @Override
     public PartitionFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         final TableReader reader = getReader(executionContext);
         try {
-            if (order == ORDER_DESC || order == ORDER_ANY) {
-                return cursor.of(reader, executionContext);
+            if (order == ORDER_ASC || ((order == ORDER_ANY || order < 0) && baseOrder != ORDER_DESC)) {
+                if (fwdCursor == null) {
+                    fwdCursor = new IntervalFwdPartitionFrameCursor(intervalModel, timestampIndex);
+                }
+                return fwdCursor.of(reader, executionContext);
             }
 
-            if (fwdCursor == null) {
-                fwdCursor = new IntervalFwdPartitionFrameCursor(intervalModel, cursor.getTimestampIndex());
+            if (bwdCursor == null) {
+                bwdCursor = new IntervalBwdPartitionFrameCursor(intervalModel, timestampIndex);
             }
-            return fwdCursor.of(reader, executionContext);
+            return bwdCursor.of(reader, executionContext);
         } catch (Throwable th) {
             Misc.free(reader);
             throw th;
@@ -77,7 +84,7 @@ public class IntervalBwdPartitionFrameCursorFactory extends AbstractPartitionFra
 
     @Override
     public int getOrder() {
-        return ORDER_DESC;
+        return baseOrder;
     }
 
     @Override
@@ -87,10 +94,14 @@ public class IntervalBwdPartitionFrameCursorFactory extends AbstractPartitionFra
 
     @Override
     public void toPlan(PlanSink sink) {
-        if (sink.getOrder() == ORDER_ASC) {
-            sink.type("Interval forward scan");
-        } else {
+        int order = sink.getOrder();
+        if (order == ORDER_ANY || order < 0) {
+            order = baseOrder;
+        }
+        if (order == ORDER_DESC) {
             sink.type("Interval backward scan");
+        } else {
+            sink.type("Interval forward scan");
         }
         super.toPlan(sink);
         sink.attr("intervals").val(intervalModel);
