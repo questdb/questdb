@@ -47,6 +47,8 @@ import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
+
 /**
  * Specialized ASOF join cursor factory usable when the slave table supports TimeFrameRecordCursor.
  * <p>
@@ -115,7 +117,7 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
         } else {
             this.selectedTimeFrameCursor = null;
         }
-        this.toleranceInterval = toleranceInterval;
+        this.toleranceInterval = scaleTimestamp(toleranceInterval, cursor.slaveTimestampScale);
     }
 
     @Override
@@ -208,7 +210,7 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
                 return false;
             }
 
-            final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+            final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
             TimeFrame timeFrame = slaveTimeFrameCursor.getTimeFrame();
             record.hasSlave(origHasSlave);
             if (unfilteredRecordRowId != -1 && slaveRecB.getRowId() != unfilteredRecordRowId) {
@@ -255,7 +257,7 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
             long filteredRowId = initialFilteredRowId;
 
             for (; ; ) {
-                long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                 if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
                     // we are past the tolerance interval, no need to traverse the slave cursor any further
                     record.hasSlave(false);

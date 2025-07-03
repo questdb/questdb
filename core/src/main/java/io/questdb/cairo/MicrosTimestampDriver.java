@@ -329,12 +329,17 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long fromNanos(long nanos) {
-        return CommonUtils.nanosToMicros(nanos);
+        return nanos / 1000L;
     }
 
     @Override
     public long fromSeconds(int seconds) {
         return seconds * Timestamps.SECOND_MICROS;
+    }
+
+    @Override
+    public long fromWeeks(int weeks) {
+        return weeks * Timestamps.WEEK_MICROS;
     }
 
     @Override
@@ -538,6 +543,28 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 return FLOOR_YYYY_WITH_STRIDE;
             default:
                 return null;
+        }
+    }
+
+    @Override
+    public long getTimestampMultiplier(char unit) {
+        switch (unit) {
+            case 'U':
+                return 1;
+            case 'T':
+                return Timestamps.MILLI_MICROS;
+            case 's':
+                return Timestamps.SECOND_MICROS;
+            case 'm':
+                return Timestamps.MINUTE_MICROS;
+            case 'h':
+                return Timestamps.HOUR_MICROS;
+            case 'd':
+                return Timestamps.DAY_MICROS;
+            case 'w':
+                return Timestamps.WEEK_MICROS;
+            default:
+                return 0;
         }
     }
 

@@ -81,6 +81,18 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         }
     }
 
+    public static long scaleTimestamp(long timestamp, long scale) {
+        if (scale == 1 || timestamp == Long.MIN_VALUE) {
+            return timestamp;
+        }
+        try {
+            return Math.multiplyExact(timestamp, scale);
+        } catch (ArithmeticException e) {
+            // May "overflow" when micros scales to nanos, which will return max timestamp.
+            return Long.MAX_VALUE;
+        }
+    }
+
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
         masterCursor.calculateSize(circuitBreaker, counter);
@@ -258,18 +270,6 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                 // The frame looks promising, let's open it.
                 isSlaveOpenPending = true;
             }
-        }
-    }
-
-    protected static long scaleTimestamp(long timestamp, long scale) {
-        if (scale == 1 || timestamp == Long.MIN_VALUE) {
-            return timestamp;
-        }
-        try {
-            return Math.multiplyExact(timestamp, scale);
-        } catch (ArithmeticException e) {
-            // May "overflow" when micros scales to nanos, which will return max timestamp.
-            return Long.MAX_VALUE;
         }
     }
 

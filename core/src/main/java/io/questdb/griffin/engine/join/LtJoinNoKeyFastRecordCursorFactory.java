@@ -120,7 +120,7 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
                 int lookahead,
                 long toleranceInterval) {
             super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, masterTimestampType, slaveTimestampType, lookahead);
-            this.toleranceInterval = toleranceInterval;
+            this.toleranceInterval = scaleTimestamp(toleranceInterval, slaveTimestampScale);
         }
 
         @Override
@@ -140,7 +140,7 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
                 }
                 nextSlave(masterTimestamp - 1);
                 if (toleranceInterval != Numbers.LONG_NULL && record.hasSlave()) {
-                    slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                    slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                     record.hasSlave(slaveTimestamp >= masterTimestamp - toleranceInterval);
                 }
                 isMasterHasNextPending = true;

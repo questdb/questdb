@@ -44,6 +44,8 @@ import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
+
 /**
  * Specialized ASOF join cursor factory usable when the slave table supports TimeFrameRecordCursor.
  * <p>
@@ -100,7 +102,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         } else {
             this.selectedTimeFrameCursor = null;
         }
-        this.toleranceInterval = toleranceInterval;
+        this.toleranceInterval = scaleTimestamp(toleranceInterval, cursor.slaveTimestampScale);
     }
 
     @Override
@@ -209,7 +211,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 return true;
             }
 
-            if (toleranceInterval != Numbers.LONG_NULL && slaveRecB.getTimestamp(slaveTimestampIndex) < masterTimestamp - toleranceInterval) {
+            if (toleranceInterval != Numbers.LONG_NULL && scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale) < masterTimestamp - toleranceInterval) {
                 // we are past the tolerance interval, no need to traverse the slave cursor any further
                 record.hasSlave(false);
                 return true;
@@ -279,7 +281,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 }
 
                 slaveTimeFrameCursor.recordAtRowIndex(slaveRecB, filteredRowId);
-                if (toleranceInterval != Numbers.LONG_NULL && slaveRecB.getTimestamp(slaveTimestampIndex) < masterTimestamp - toleranceInterval) {
+                if (toleranceInterval != Numbers.LONG_NULL && scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale) < masterTimestamp - toleranceInterval) {
                     // we are past the tolerance interval, no need to traverse the slave cursor any further
                     record.hasSlave(false);
                     highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId + 1);

@@ -117,6 +117,8 @@ public interface TimestampDriver {
 
     long fromSeconds(int seconds);
 
+    long fromWeeks(int weeks);
+
     int getColumnType();
 
     PartitionAddMethod getPartitionAddMethod(int partitionBy);
@@ -140,6 +142,8 @@ public interface TimestampDriver {
     TimestampFloorWithOffsetMethod getTimestampFloorWithOffsetMethod(char c);
 
     TimestampFloorWithStrideMethod getTimestampFloorWithStrideMethod(String c);
+
+    long getTimestampMultiplier(char unit);
 
     CommonUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType);
 

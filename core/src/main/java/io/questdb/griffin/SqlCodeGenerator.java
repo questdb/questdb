@@ -49,6 +49,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Function;
@@ -190,9 +191,9 @@ import io.questdb.griffin.engine.groupby.vect.SumShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
-import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.ChainedSymbolShortCircuit;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
@@ -214,9 +215,9 @@ import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.join.RecordAsAFieldRecordCursorFactory;
 import io.questdb.griffin.engine.join.SingleStringSymbolShortCircuit;
+import io.questdb.griffin.engine.join.SingleSymbolSymbolShortCircuit;
 import io.questdb.griffin.engine.join.SingleVarcharSymbolShortCircuit;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
-import io.questdb.griffin.engine.join.SingleSymbolSymbolShortCircuit;
 import io.questdb.griffin.engine.join.SymbolShortCircuit;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
@@ -235,7 +236,6 @@ import io.questdb.griffin.engine.table.FilterOnExcludedValuesRecordCursorFactory
 import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnValuesRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllSymbolsFilteredRecordCursorFactory;
@@ -251,6 +251,7 @@ import io.questdb.griffin.engine.table.LatestByValueIndexedFilteredRecordCursorF
 import io.questdb.griffin.engine.table.LatestByValueIndexedRowCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
@@ -297,7 +298,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -755,42 +755,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
     }
 
-    private static long tolerance(QueryModel slaveModel) throws SqlException {
+    private static long tolerance(QueryModel slaveModel, int timestampType) throws SqlException {
         ExpressionNode tolerance = slaveModel.getAsOfJoinTolerance();
         long toleranceInterval = Numbers.LONG_NULL;
         if (tolerance != null) {
             int k = TimestampSamplerFactory.findIntervalEndIndex(tolerance.token, tolerance.position, "tolerance");
             assert tolerance.token.length() > k;
             char unit = tolerance.token.charAt(k);
+            TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
             long multiplier;
-            switch (unit) {
-                case 'U':
-                    multiplier = 1;
-                    break;
-                case 'T':
-                    multiplier = Timestamps.MILLI_MICROS;
-                    break;
-                case 's':
-                    multiplier = Timestamps.SECOND_MICROS;
-                    break;
-                case 'm':
-                    multiplier = Timestamps.MINUTE_MICROS;
-                    break;
-                case 'h':
-                    multiplier = Timestamps.HOUR_MICROS;
-                    break;
-                case 'd':
-                    multiplier = Timestamps.DAY_MICROS;
-                    break;
-                case 'w':
-                    multiplier = Timestamps.WEEK_MICROS;
-                    break;
-                default:
+            if (unit == 'n') {
+                toleranceInterval = timestampDriver.fromNanos(toleranceInterval);
+            } else {
+                multiplier = timestampDriver.getTimestampMultiplier(unit);
+                if (multiplier == 0) {
                     throw SqlException.$(tolerance.position, "unsupported TOLERANCE unit [unit=").put(unit).put(']');
+                }
+                int maxValue = (int) Math.min(Long.MAX_VALUE / multiplier, Integer.MAX_VALUE);
+                toleranceInterval = TimestampSamplerFactory.parseInterval(tolerance.token, k, tolerance.position, "tolerance", maxValue, unit);
+                toleranceInterval *= multiplier;
             }
-            int maxValue = (int) Math.min(Long.MAX_VALUE / multiplier, Integer.MAX_VALUE);
-            toleranceInterval = TimestampSamplerFactory.parseInterval(tolerance.token, k, tolerance.position, "tolerance", maxValue, unit);
-            toleranceInterval *= multiplier;
         }
         return toleranceInterval;
     }
@@ -2586,7 +2570,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 boolean selfJoin = isSameTable(master, slave);
                                 processJoinContext(index == 1, selfJoin, slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
-                                long asOfToleranceInterval = tolerance(slaveModel);
+                                long asOfToleranceInterval = tolerance(slaveModel, slaveMetadata.getTimestampType());
                                 boolean asOfAvoidBinarySearch = SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
@@ -2843,7 +2827,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 releaseSlave = false;
                                 break;
                             case JOIN_LT:
-                                long ltToleranceInterval = tolerance(slaveModel);
+                                long ltToleranceInterval = tolerance(slaveModel, slaveMetadata.getTimestampType());
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "LT");
                                 boolean ltAvoidBinarySearch = SqlHints.hasAvoidLtJoinBinarySearchHint(model, masterAlias, slaveModel.getName());

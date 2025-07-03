@@ -306,27 +306,27 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public long fromDays(int days) {
-        return CommonUtils.scaleTimestamp(days, Nanos.DAY_NANOS);
+        return days * Nanos.DAY_NANOS;
     }
 
     @Override
     public long fromHours(int hours) {
-        return CommonUtils.scaleTimestamp(hours, Nanos.HOUR_NANOS);
+        return hours * Nanos.HOUR_NANOS;
     }
 
     @Override
     public long fromMicros(long micros) {
-        return CommonUtils.scaleTimestamp(micros, Nanos.MICRO_NANOS);
+        return micros * Nanos.MICRO_NANOS;
     }
 
     @Override
     public long fromMillis(long millis) {
-        return CommonUtils.scaleTimestamp(millis, Nanos.MILLI_NANOS);
+        return millis * Nanos.MILLI_NANOS;
     }
 
     @Override
     public long fromMinutes(int minutes) {
-        return CommonUtils.scaleTimestamp(minutes, Nanos.MINUTE_NANOS);
+        return minutes * Nanos.MINUTE_NANOS;
     }
 
     @Override
@@ -336,7 +336,12 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public long fromSeconds(int seconds) {
-        return CommonUtils.scaleTimestamp(seconds, Nanos.SECOND_NANOS);
+        return seconds * Nanos.SECOND_NANOS;
+    }
+
+    @Override
+    public long fromWeeks(int weeks) {
+        return weeks * Nanos.WEEK_NANOS;
     }
 
     @Override
@@ -540,6 +545,28 @@ public class NanosTimestampDriver implements TimestampDriver {
                 return FLOOR_YYYY_WITH_STRIDE;
             default:
                 return null;
+        }
+    }
+
+    @Override
+    public long getTimestampMultiplier(char unit) {
+        switch (unit) {
+            case 'U':
+                return 1;
+            case 'T':
+                return Nanos.MILLI_NANOS;
+            case 's':
+                return Nanos.SECOND_NANOS;
+            case 'm':
+                return Nanos.MINUTE_NANOS;
+            case 'h':
+                return Nanos.HOUR_NANOS;
+            case 'd':
+                return Nanos.DAY_NANOS;
+            case 'w':
+                return Nanos.WEEK_NANOS;
+            default:
+                return 0;
         }
     }
 
