@@ -514,6 +514,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Both types are geohash, resolve to the one with fewer geohash bits.
             return geoBitsA < geoBitsB ? typeA : typeB;
         }
+
+        if (tagA == INTERVAL || tagB == INTERVAL) {
+            if (tagA == INTERVAL && tagB == INTERVAL) {
+                return Math.max(typeA, typeB);
+            }
+            if (tagA == INTERVAL && tagB == NULL) {
+                return typeA;
+            }
+            if (tagB == INTERVAL && tagA == NULL) {
+                return typeB;
+            }
+        }
+
         // Neither type is geohash, use the type cast matrix to resolve.
         return UNION_CAST_MATRIX[tagA][tagB];
     }
