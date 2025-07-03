@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -256,6 +257,16 @@ public class MicrosTimestampDriver implements TimestampDriver {
             return true;
         }
         return false;
+    }
+
+    @Override
+    public long dayEnd(long start) {
+        return start + Timestamps.DAY_MICROS - 1;
+    }
+
+    @Override
+    public long dayStart(long now, int shiftDays) {
+        return Timestamps.floorDD(Timestamps.addDays(now, shiftDays));
     }
 
     @Override
@@ -574,6 +585,15 @@ public class MicrosTimestampDriver implements TimestampDriver {
             return CommonUtils::nanosToMicros;
         }
         return null;
+    }
+
+    @Override
+    public boolean inInterval(long value, int intervalType, Interval interval) {
+        assert intervalType == ColumnType.INTERVAL_TIMESTAMP_NANO || intervalType == ColumnType.INTERVAL_TIMESTAMP_MICRO;
+        if (intervalType == ColumnType.INTERVAL_TIMESTAMP_NANO) {
+            value = CommonUtils.microsToNanos(value);
+        }
+        return value >= interval.getLo() && value <= interval.getHi();
     }
 
     @Override
@@ -1007,6 +1027,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
     @Override
     public long toNanosScale() {
         return Timestamps.MICRO_NANOS;
+    }
+
+    @Override
+    public String toString(long timestamp) {
+        return Timestamps.toString(timestamp);
     }
 
     @Override

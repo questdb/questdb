@@ -212,7 +212,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.IPv4:
                 return new IPv4Column(index);
             case ColumnType.INTERVAL:
-                return IntervalColumn.newInstance(index);
+                return IntervalColumn.newInstance(index, columnType);
             case ColumnType.ARRAY:
                 return new ArrayColumn(index, columnType);
             default:

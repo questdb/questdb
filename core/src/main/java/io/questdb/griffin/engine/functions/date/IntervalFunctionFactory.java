@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
@@ -64,18 +65,18 @@ public class IntervalFunctionFactory implements FunctionFactory {
             long lo = loFunc.getTimestamp(null);
             long hi = hiFunc.getTimestamp(null);
             if (lo == Numbers.LONG_NULL || hi == Numbers.LONG_NULL) {
-                return IntervalConstant.NULL;
+                return IntervalConstant.TIMESTAMP_MICRO_NULL;
             }
             if (lo > hi) {
                 throw SqlException.position(position).put("invalid interval boundaries");
             }
-            return IntervalConstant.newInstance(lo, hi);
+            return IntervalConstant.newInstance(lo, hi, ColumnType.INTERVAL_TIMESTAMP_MICRO);
         }
         if ((loFunc.isConstant() || loFunc.isRuntimeConstant())
                 || (hiFunc.isConstant() || hiFunc.isRuntimeConstant())) {
-            return new RuntimeConstFunc(position, loFunc, hiFunc);
+            return new RuntimeConstFunc(position, loFunc, hiFunc, ColumnType.INTERVAL_TIMESTAMP_MICRO);
         }
-        return new Func(loFunc, hiFunc);
+        return new Func(loFunc, hiFunc, ColumnType.INTERVAL_TIMESTAMP_MICRO);
     }
 
     private static class Func extends IntervalFunction implements BinaryFunction, FunctionExtension {
@@ -83,7 +84,8 @@ public class IntervalFunctionFactory implements FunctionFactory {
         private final Interval interval = new Interval();
         private final Function loFunc;
 
-        public Func(Function loFunc, Function hiFunc) {
+        public Func(Function loFunc, Function hiFunc, int timestampType) {
+            super(timestampType);
             this.loFunc = loFunc;
             this.hiFunc = hiFunc;
         }
@@ -153,7 +155,8 @@ public class IntervalFunctionFactory implements FunctionFactory {
         private final Function loFunc;
         private final int position;
 
-        public RuntimeConstFunc(int position, Function loFunc, Function hiFunc) {
+        public RuntimeConstFunc(int position, Function loFunc, Function hiFunc, int intervalType) {
+            super(intervalType);
             this.position = position;
             this.loFunc = loFunc;
             this.hiFunc = hiFunc;

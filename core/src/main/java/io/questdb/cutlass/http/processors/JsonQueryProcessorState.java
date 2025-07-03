@@ -434,13 +434,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
-    private static void putIntervalValue(HttpChunkedResponse response, Record rec, int col) {
+    private static void putIntervalValue(HttpChunkedResponse response, Record rec, int col, int intervalType) {
         final Interval interval = rec.getInterval(col);
         if (Interval.NULL.equals(interval)) {
             response.putAscii("null");
             return;
         }
-        response.putAscii('"').put(interval).putAscii('"');
+        response.putAscii('"').put(interval, intervalType).putAscii('"');
     }
 
     private static void putLong256Value(HttpChunkedResponse response, Record rec, int col) {
@@ -732,7 +732,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putIPv4Value(response, record, columnIdx);
                     break;
                 case ColumnType.INTERVAL:
-                    putIntervalValue(response, record, columnIdx);
+                    putIntervalValue(response, record, columnIdx, columnType);
                     break;
                 case ColumnType.ARRAY:
                     putArrayValue(response, columnIdx, columnType);

@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -329,7 +330,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             long todayStart = today(sqlExecutionContext.getNow());
             long todayEnd = tomorrow(sqlExecutionContext.getNow()) - 1;
             final Interval interval = new Interval(todayStart, todayEnd);
-            assertSql("today\n" + intervalAsString(interval) + "\n", "select today()");
+            assertSql("today\n" + intervalAsString(interval, ColumnType.INTERVAL_TIMESTAMP_MICRO) + "\n", "select today()");
         });
     }
 
@@ -380,7 +381,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             long tomorrowStart = tomorrow(sqlExecutionContext.getNow());
             long tomorrowEnd = Timestamps.addDays(tomorrowStart, 1) - 1;
             final Interval interval = new Interval(tomorrowStart, tomorrowEnd);
-            assertSql("tomorrow\n" + intervalAsString(interval) + "\n", "select tomorrow()");
+            assertSql("tomorrow\n" + intervalAsString(interval, ColumnType.INTERVAL_TIMESTAMP_MICRO) + "\n", "select tomorrow()");
         });
     }
 
@@ -431,7 +432,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             long yesterdayStart = yesterday(sqlExecutionContext.getNow());
             long yesterdayEnd = today(sqlExecutionContext.getNow()) - 1;
             final Interval interval = new Interval(yesterdayStart, yesterdayEnd);
-            assertSql("yesterday\n" + intervalAsString(interval) + "\n", "select yesterday()");
+            assertSql("yesterday\n" + intervalAsString(interval, ColumnType.INTERVAL_TIMESTAMP_MICRO) + "\n", "select yesterday()");
         });
     }
 
@@ -493,8 +494,10 @@ public class IntervalFunctionTest extends AbstractCairoTest {
         sink.put("\")]\n");
     }
 
-    private static String intervalAsString(Interval interval) {
-        return new StringSink().put(interval).toString();
+    private static String intervalAsString(Interval interval, int columnType) {
+        StringSink sink = new StringSink();
+        interval.toSink(sink, columnType);
+        return sink.toString();
     }
 
     private static long today(long nowMicros) {

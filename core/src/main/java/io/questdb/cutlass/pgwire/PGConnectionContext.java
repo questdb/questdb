@@ -902,13 +902,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void appendInterval(Record record, int columnIndex) {
+    private void appendInterval(Record record, int columnIndex, int intervalType) {
         final Interval interval = record.getInterval(columnIndex);
         if (Interval.NULL.equals(interval)) {
             responseUtf8Sink.setNullValue();
         } else {
             final long a = responseUtf8Sink.skip();
-            interval.toSink(responseUtf8Sink);
+            interval.toSink(responseUtf8Sink, intervalType);
             responseUtf8Sink.putLenEx(a);
         }
     }
@@ -1062,7 +1062,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 case BINARY_TYPE_INTERVAL:
                     // While Postgres has native INTERVAL type,
                     // for now we output intervals as strings.
-                    appendInterval(record, i);
+                    appendInterval(record, i, columnType);
                     break;
                 default:
                     assert false;

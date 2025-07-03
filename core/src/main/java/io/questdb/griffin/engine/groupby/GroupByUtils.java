@@ -370,7 +370,7 @@ public class GroupByUtils {
                 func = UuidColumn.newInstance(keyColumnIndex - 1);
                 break;
             case ColumnType.INTERVAL:
-                func = IntervalColumn.newInstance(keyColumnIndex - 1);
+                func = IntervalColumn.newInstance(keyColumnIndex - 1, type);
                 break;
             case ColumnType.ARRAY:
                 func = new ArrayColumn(keyColumnIndex - 1, type);

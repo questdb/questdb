@@ -1853,13 +1853,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColInterval(PGResponseSink utf8Sink, Record record, int columnIndex) {
+    private void outColInterval(PGResponseSink utf8Sink, Record record, int columnIndex, int intervalType) {
         final Interval interval = record.getInterval(columnIndex);
         if (Interval.NULL.equals(interval)) {
             utf8Sink.setNullValue();
         } else {
             long a = utf8Sink.skipInt();
-            interval.toSink(utf8Sink);
+            interval.toSink(utf8Sink, intervalType);
             utf8Sink.putLenEx(a);
         }
     }
@@ -2253,7 +2253,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         break;
                     case ColumnType.INTERVAL:
                     case BINARY_TYPE_INTERVAL:
-                        outColInterval(utf8Sink, record, colIndex);
+                        outColInterval(utf8Sink, record, colIndex, columnType);
                         break;
                     case ColumnType.VARCHAR:
                     case BINARY_TYPE_VARCHAR:

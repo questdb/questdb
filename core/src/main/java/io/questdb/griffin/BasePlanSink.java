@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjStack;
@@ -209,6 +210,12 @@ public abstract class BasePlanSink implements PlanSink {
     @Override
     public PlanSink valISODate(TimestampDriver driver, long l) {
         sink.putISODate(driver, l);
+        return this;
+    }
+
+    @Override
+    public PlanSink valInterval(Interval interval, int intervalType) {
+        interval.toSink(sink, intervalType);
         return this;
     }
 

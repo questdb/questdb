@@ -36,12 +36,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.Uuid;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Chars;
-import io.questdb.std.Interval;
-import io.questdb.std.Numbers;
-import io.questdb.std.Uuid;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableCharSink;
@@ -171,7 +165,7 @@ public class CursorPrinter {
             case ColumnType.INTERVAL:
                 Interval interval = record.getInterval(columnIndex);
                 if (!Interval.NULL.equals(interval)) {
-                    interval.toSink(sink);
+                    interval.toSink(sink, columnType);
                 }
                 break;
             case ColumnType.ARRAY:

@@ -2366,7 +2366,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             constFuncs.put(ColumnType.LONG128, list(new Long128Constant(0, 1)));
             constFuncs.put(ColumnType.UUID, list(new UuidConstant(0, 1)));
             constFuncs.put(ColumnType.NULL, list(NullConstant.NULL));
-            constFuncs.put(ColumnType.INTERVAL, list(IntervalConstant.NULL));
+            constFuncs.put(ColumnType.INTERVAL_RAW, list(IntervalConstant.RAW_NULL));
+            constFuncs.put(ColumnType.INTERVAL_TIMESTAMP_NANO, list(IntervalConstant.TIMESTAMP_NANO_NULL));
+            constFuncs.put(ColumnType.INTERVAL_TIMESTAMP_MICRO, list(IntervalConstant.TIMESTAMP_MICRO_NULL));
             constFuncs.put(ColumnType.ARRAY_STRING, list(new StringToStringArrayFunction(0, "{all}")));
 
             GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -2407,7 +2409,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             colFuncs.put(ColumnType.LONG128, Long128Column.newInstance(1));
             colFuncs.put(ColumnType.UUID, UuidColumn.newInstance(1));
             colFuncs.put(ColumnType.ARRAY, new ArrayColumn(1, ColumnType.encodeArrayType(ColumnType.DOUBLE, 2)));
-            colFuncs.put(ColumnType.INTERVAL, IntervalColumn.newInstance(1));
+            colFuncs.put(ColumnType.INTERVAL_RAW, IntervalColumn.newInstance(1, ColumnType.INTERVAL_RAW));
+            colFuncs.put(ColumnType.INTERVAL_TIMESTAMP_MICRO, IntervalColumn.newInstance(1, ColumnType.INTERVAL_TIMESTAMP_MICRO));
+            colFuncs.put(ColumnType.INTERVAL_TIMESTAMP_NANO, IntervalColumn.newInstance(1, ColumnType.INTERVAL_TIMESTAMP_NANO));
 
             PlanSink planSink = new TextPlanSink() {
                 @Override
@@ -2538,7 +2542,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new StrConstant("a"));
                                     args.add(new StrConstant("b"));
                                 } else if (factory instanceof EqIntervalFunctionFactory) {
-                                    args.add(IntervalConstant.NULL);
+                                    args.add(IntervalConstant.RAW_NULL);
                                 } else if (factory instanceof CoalesceFunctionFactory) {
                                     args.add(FloatColumn.newInstance(1));
                                     args.add(FloatColumn.newInstance(2));
@@ -2615,7 +2619,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new StrConstant("*"));
                                 } else if (factory instanceof InTimestampIntervalFunctionFactory) {
                                     args.add(new TimestampConstant(123141, ColumnType.TIMESTAMP_MICRO));
-                                    args.add(new IntervalConstant(1231, 123146));
+                                    args.add(new IntervalConstant(1231, 123146, ColumnType.INTERVAL_TIMESTAMP_MICRO));
                                 } else if (Chars.equals(key, "approx_count_distinct") && sigArgCount == 2 && p == 1 && sigArgType == ColumnType.INT) {
                                     args.add(new IntConstant(4)); // precision has to be in the range of 4 to 18
                                 } else if (!useConst) {

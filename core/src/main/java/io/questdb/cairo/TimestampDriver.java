@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.PlanSink;
+import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -73,6 +74,10 @@ public interface TimestampDriver {
 
     // todo: explore static ref
     boolean convertToVar(long fixedAddr, CharSink<?> stringSink);
+
+    long dayEnd(long start);
+
+    long dayStart(long now, int shiftDays);
 
     long from(long value, ChronoUnit unit);
 
@@ -192,6 +197,8 @@ public interface TimestampDriver {
         return Numbers.LONG_NULL;
     }
 
+    boolean inInterval(long value, int intervalType, Interval interval);
+
     long monthsBetween(long hi, long lo);
 
     long parseAnyFormat(CharSequence token, int start, int len) throws NumericException;
@@ -221,6 +228,8 @@ public interface TimestampDriver {
     long toDate(long timestamp);
 
     long toNanosScale();
+
+    String toString(long timestamp);
 
     void validateBounds(long timestamp);
 

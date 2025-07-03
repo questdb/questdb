@@ -31,7 +31,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
-import io.questdb.std.datetime.microtime.Timestamps;
 
 
 public final class TimestampFloorOffsetFunction extends TimestampFunction implements UnaryFunction {
@@ -69,7 +68,7 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
         sink.val(unit).val("',");
         sink.val(getArg());
         if (offset != 0) {
-            sink.val(",'").val(Timestamps.toString(offset)).val('\'');
+            sink.val(",'").val(timestampDriver.toString(offset)).val('\'');
         }
         sink.val(')');
     }

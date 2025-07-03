@@ -119,6 +119,7 @@ public final class ColumnType {
     // slightly bigger than needed to make it a power of 2
     private static final short OVERLOAD_PRIORITY_N = (short) Math.pow(2.0, Numbers.msb(NULL) + 1.0);
     private static final int[] OVERLOAD_PRIORITY_MATRIX = new int[OVERLOAD_PRIORITY_N * OVERLOAD_PRIORITY_N]; // NULL to any is 0
+    public static final int INTERVAL_RAW = INTERVAL;
     public static final int VARCHAR_AUX_SHL = 4;
     // column type version as written to the metadata file
     public static final int VERSION = 426;
@@ -129,6 +130,10 @@ public final class ColumnType {
     private static final int ARRAY_NDIMS_FIELD_MASK = ARRAY_NDIMS_LIMIT - 1;
     private static final int ARRAY_NDIMS_FIELD_POS = 14;
     private static final int BYTE_BITS = 8;
+    private static final int INTERVAL_TIMESTAMP_MICRO_TYPE_FLAG = 1 << 16;
+    public static final int INTERVAL_TIMESTAMP_MICRO = INTERVAL | INTERVAL_TIMESTAMP_MICRO_TYPE_FLAG;
+    private static final int INTERVAL_TIMESTAMP_NANO_TYPE_FLAG = 2 << 16;
+    public static final int INTERVAL_TIMESTAMP_NANO = INTERVAL | INTERVAL_TIMESTAMP_NANO_TYPE_FLAG;
     private static final short[][] OVERLOAD_PRIORITY;
     private static final int TIMESTAMP_MICRO_PRECISION_FLAG = 0;
     public static final int TIMESTAMP_MICRO = TIMESTAMP_MICRO_PRECISION_FLAG | TIMESTAMP;
@@ -264,6 +269,15 @@ public final class ColumnType {
         }
     }
 
+    public static TimestampDriver getTimestampDriverByIntervalType(int intervalType) {
+        assert intervalType == INTERVAL_TIMESTAMP_MICRO || intervalType == INTERVAL_TIMESTAMP_NANO;
+        if (intervalType == INTERVAL_TIMESTAMP_MICRO) {
+            return MicrosTimestampDriver.INSTANCE;
+        } else {
+            return NanosTimestampDriver.INSTANCE;
+        }
+    }
+
     public static int getWalDataColumnShl(int columnType, boolean designatedTimestamp) {
         if (ColumnType.tagOf(columnType) == ColumnType.TIMESTAMP && designatedTimestamp) {
             return 4; // 128 bit column
@@ -377,7 +391,7 @@ public final class ColumnType {
     }
 
     public static boolean isInterval(int columnType) {
-        return columnType == INTERVAL;
+        return tagOf(columnType) == INTERVAL;
     }
 
     public static boolean isNull(int columnType) {

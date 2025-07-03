@@ -24,12 +24,11 @@
 
 package io.questdb.std;
 
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
-public class Interval implements Sinkable, Mutable {
+public class Interval implements Mutable {
     public static final Interval NULL = new Interval(Numbers.LONG_NULL, Numbers.LONG_NULL);
 
     private long hi = Numbers.LONG_NULL;
@@ -79,12 +78,15 @@ public class Interval implements Sinkable, Mutable {
         return this;
     }
 
-    @Override
-    public void toSink(@NotNull CharSink<?> sink) {
+    public void toSink(@NotNull CharSink<?> sink, int intervalType) {
         sink.putAscii('(');
         if (lo != Long.MIN_VALUE) {
             sink.putAscii('\'');
-            sink.put(Timestamps.toString(lo));
+            if (intervalType == ColumnType.INTERVAL_RAW) {
+                sink.put(lo);
+            } else {
+                sink.put(ColumnType.getTimestampDriverByIntervalType(intervalType).toString(lo));
+            }
             sink.putAscii('\'');
         } else {
             sink.putAscii("null");
@@ -92,7 +94,11 @@ public class Interval implements Sinkable, Mutable {
         sink.putAscii(", ");
         if (hi != Long.MIN_VALUE) {
             sink.putAscii('\'');
-            sink.put(Timestamps.toString(hi));
+            if (intervalType == ColumnType.INTERVAL_RAW) {
+                sink.put(hi);
+            } else {
+                sink.put(ColumnType.getTimestampDriverByIntervalType(intervalType).toString(hi));
+            }
             sink.putAscii('\'');
         } else {
             sink.putAscii("null");

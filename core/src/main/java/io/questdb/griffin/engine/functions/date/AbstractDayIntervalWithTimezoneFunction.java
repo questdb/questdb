@@ -42,7 +42,8 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDayIntervalFunction implements UnaryFunction {
     protected final Function tzFunc;
 
-    public AbstractDayIntervalWithTimezoneFunction(Function tzFunc) {
+    public AbstractDayIntervalWithTimezoneFunction(int intervalType, Function tzFunc) {
+        super(intervalType);
         this.tzFunc = tzFunc;
     }
 
@@ -74,8 +75,9 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
     protected Interval calculateInterval(long now, CharSequence tz) {
         if (tz == null) {
             // no timezone, default to UTC
-            final long start = intervalStart(now);
-            final long end = intervalEnd(start);
+            final long start = timestampDriver.dayStart(now, shiftFromToday());
+            ;
+            final long end = timestampDriver.dayEnd(start);
             return interval.of(start, end);
         }
 
@@ -85,8 +87,8 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
                 // the timezone is in numeric offset format
                 final long offset = Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS;
                 final long nowWithTz = now + offset;
-                final long startWithTz = intervalStart(nowWithTz);
-                final long endWithTz = intervalEnd(startWithTz);
+                final long startWithTz = timestampDriver.dayStart(nowWithTz, shiftFromToday());
+                final long endWithTz = timestampDriver.dayEnd(startWithTz);
                 return interval.of(startWithTz - offset, endWithTz - offset);
             }
 
@@ -98,8 +100,8 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
             final long offset = tzRules.getOffset(now);
             final long nowWithTz = now + offset;
             // calculate date start and end with tz
-            long startWithTz = intervalStart(nowWithTz);
-            long endWithTz = intervalEnd(startWithTz);
+            long startWithTz = timestampDriver.dayStart(nowWithTz, shiftFromToday());
+            long endWithTz = timestampDriver.dayEnd(startWithTz);
             return interval.of(Timestamps.toUTC(startWithTz, tzRules), Timestamps.toUTC(endWithTz, tzRules));
         } catch (NumericException e) {
             return interval.of(Interval.NULL.getLo(), Interval.NULL.getHi());

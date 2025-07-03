@@ -1798,7 +1798,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
                                 break;
                             case ColumnType.INTERVAL:
-                                castFunctions.add(new CastIntervalToStrFunctionFactory.Func(IntervalColumn.newInstance(i)));
+                                castFunctions.add(new CastIntervalToStrFunctionFactory.Func(IntervalColumn.newInstance(i, fromType)));
                                 break;
                             case ColumnType.BINARY:
                                 throw SqlException.unsupportedCast(
@@ -2146,7 +2146,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                         break;
                     case ColumnType.INTERVAL:
-                        castFunctions.add(IntervalColumn.newInstance(i));
+                        castFunctions.add(IntervalColumn.newInstance(i, toType));
                         break;
                     case ColumnType.ARRAY:
                         switch (fromTag) {
