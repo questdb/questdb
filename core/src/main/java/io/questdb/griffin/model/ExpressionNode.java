@@ -248,6 +248,12 @@ public class ExpressionNode implements Mutable, Sinkable {
                     if (rhsParent) {
                         sink.putAscii(')');
                     }
+                } else if (token.length() == 2 && token.charAt(0) == '[' && token.charAt(1) == ']') {
+                    // for array dereference we want to display them as lhs[rhs] instead of [](lhs, rhs)
+                    sink.put(lhs);
+                    sink.put('[');
+                    sink.put(rhs);
+                    sink.put(']');
                 } else {
                     sink.put(token);
                     sink.putAscii('(');

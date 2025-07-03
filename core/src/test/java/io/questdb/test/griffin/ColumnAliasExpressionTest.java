@@ -161,7 +161,7 @@ public class ColumnAliasExpressionTest extends AbstractCairoTest {
     @Test
     public void testArrayDereference() throws Exception {
         assertGeneratedColumnEqual(
-                "[]([](arr, 10), 2)\n",
+                "arr[10][2]\n",
                 "select arr[10][2] from tab",
                 "create table tab (arr double[][])",
                 0
