@@ -44,6 +44,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -129,10 +130,15 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         private RecordCursor mapCursor;
         private MapRecord recordA;
         private RecordSink recordSink;
+        private final IntList columnIndex = new IntList();
 
         public DistinctRecordCursor(CairoConfiguration configuration, RecordMetadata metadata) {
             this.isOpen = true;
             this.dataMap = MapFactory.createOrderedMap(configuration, metadata);
+            // entity column index because distinct SQL has the same metadata as the base SQL
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                columnIndex.add(i);
+            }
         }
 
         @Override
@@ -173,6 +179,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
             }
             this.isMapBuilt = false;
             this.recordA = dataMap.getRecord();
+            this.recordA.setSymbolTableResolver(baseCursor, columnIndex);
             this.recordSink = recordSink;
             this.circuitBreaker = circuitBreaker;
         }

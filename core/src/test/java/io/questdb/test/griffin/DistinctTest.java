@@ -137,6 +137,26 @@ public class DistinctTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDuplicateCount2() throws Exception {
+        assertQuery(
+                "sym\tcount\tcount1\n" +
+                        "foo\t10\t10\n",
+                "SELECT DISTINCT sym, count(*), count(*) FROM x;",
+                "create table x as (" +
+                        "  select" +
+                        "    rnd_symbol('foo') sym," +
+                        "    rnd_short() origin," +
+                        "    rnd_short() event," +
+                        "    timestamp_sequence(0, 0) created" +
+                        "  from long_sequence(10)" +
+                        ") timestamp(created);",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testDuplicateCountNested() throws Exception {
         assertQuery(
                 "count\tcount1\n" +

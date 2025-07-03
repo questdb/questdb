@@ -149,11 +149,33 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     }
 
     /**
-     * Quantifies internal cursor state. This method is used to assert that toTop() does not suffer major
-     * and avoidable overhead when returning to the beginning of the cursor. The assertion entails that
-     * pre-computed state size, computed after fetching the cursor remains the same before and after calling toTop().
+     * Calculates a numeric representation of the cursor's pre-computed internal state,
+     * primarily for performance assertions.
+     * <p>
+     * The {@link #toTop()} method is designed to be a lightweight operation that resets the
+     * cursor to its starting position. It should not discard the cursor's internal state
+     * (e.g., cached data structures) which would cause expensive re-computation on the
+     * next iteration.
+     * <p>
+     * This method provides a way to verify that behavior. The expected usage, typically
+     * within an {@code assert} statement, is to compare the state size before and after
+     * calling {@link #toTop()}. A correct implementation will not change its state,
+     * so the values should be identical.
      *
-     * @return quantifies not-null pointers, booleans and other types as long. We are only tracking state change here.
+     * <p><b>Usage Example (in testing):</b></p>
+     * <pre>{@code
+     * doSomeWorkWith(cursor);
+     * long stateBefore = cursor.preComputedStateSize();
+     * cursor.toTop();
+     * long stateAfter = cursor.preComputedStateSize();
+     *
+     * // Assert that resetting the cursor did not discard its state
+     * Assert.assertEquals("Cursor precomputed state should not change on toTop()", stateBefore, stateAfter);
+     * }
+     * }</pre>
+     *
+     * @return A long value representing the cursor's pre-computed state. This is not
+     * a memory size in bytes, but a stable value used to detect state changes.
      */
     long preComputedStateSize();
 
