@@ -130,9 +130,9 @@ public final class ColumnType {
     private static final int ARRAY_NDIMS_FIELD_MASK = ARRAY_NDIMS_LIMIT - 1;
     private static final int ARRAY_NDIMS_FIELD_POS = 14;
     private static final int BYTE_BITS = 8;
-    private static final int INTERVAL_TIMESTAMP_MICRO_TYPE_FLAG = 1 << 16;
+    private static final int INTERVAL_TIMESTAMP_MICRO_TYPE_FLAG = 1 << 17;
     public static final int INTERVAL_TIMESTAMP_MICRO = INTERVAL | INTERVAL_TIMESTAMP_MICRO_TYPE_FLAG;
-    private static final int INTERVAL_TIMESTAMP_NANO_TYPE_FLAG = 2 << 16;
+    private static final int INTERVAL_TIMESTAMP_NANO_TYPE_FLAG = 1 << 18;
     public static final int INTERVAL_TIMESTAMP_NANO = INTERVAL | INTERVAL_TIMESTAMP_NANO_TYPE_FLAG;
     private static final short[][] OVERLOAD_PRIORITY;
     private static final int TIMESTAMP_MICRO_PRECISION_FLAG = 0;

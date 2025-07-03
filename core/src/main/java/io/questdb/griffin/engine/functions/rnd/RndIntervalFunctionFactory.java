@@ -64,7 +64,7 @@ public class RndIntervalFunctionFactory implements FunctionFactory {
         private Rnd rnd;
 
         protected RndFunction() {
-            super(ColumnType.INTERVAL_RAW);
+            super(ColumnType.INTERVAL_TIMESTAMP_MICRO);
         }
 
         @Override
