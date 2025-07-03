@@ -2031,6 +2031,20 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRndDoubleArray() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql("rnd_double_array\n[NaN]\n",
+                    "SELECT rnd_double_array(1::byte, 1::byte, 0::byte, 1::byte)");
+            assertSql("rnd_double_array\n[NaN]\n",
+                    "SELECT rnd_double_array(1::short, 1::short, 0::short, 1::short)");
+            assertSql("rnd_double_array\n[NaN]\n",
+                    "SELECT rnd_double_array(1::int, 1::int, 0::int, 1::int)");
+            assertSql("rnd_double_array\n[NaN]\n",
+                    "SELECT rnd_double_array(1::long, 1::long, 0::long, 1::long)");
+        });
+    }
+
+    @Test
     public void testRndDoubleFunctionEdgeCases() throws Exception {
         assertMemoryLeak(() -> {
             assertExceptionNoLeakCheck(
@@ -2042,31 +2056,30 @@ public class ArrayTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "select rnd_double_array(10, 0, 0)",
                     31,
-                    "maxDimLen must be positive int [maxDimLen=0]"
+                    "maxDimLen must be a positive integer [maxDimLen=0]"
             );
 
-            assertSql("rnd_double_array\n" +
-                            "null\n",
+            assertSql("rnd_double_array\nnull\n",
                     "select rnd_double_array(0, 0, 1000)"
             );
 
             assertExceptionNoLeakCheck(
                     "select rnd_double_array(1, -1, 1000)",
                     27,
-                    "invalid NaN rate [nanRate=-1]"
+                    "invalid nanRate [nanRate=-1]"
             );
 
             // not enough dim lens
             assertExceptionNoLeakCheck(
                     "select rnd_double_array(2, 1, 0, 1)",
                     33,
-                    "not enough values for dim length [dimensionCount=2, dimLengths=1]"
+                    "not enough dim lengths [nDims=2, nDimLengths=1]"
             );
 
             assertExceptionNoLeakCheck(
                     "select rnd_double_array(2, 1, 0, 1, 2, 4)",
                     39,
-                    "too many values for dim length [dimensionCount=2, dimLengths=3]"
+                    "too many dim lengths [nDims=2, nDimLengths=3]"
             );
 
             assertSql(
