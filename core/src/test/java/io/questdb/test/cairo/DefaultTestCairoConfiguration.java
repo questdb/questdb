@@ -112,4 +112,9 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     public boolean mangleTableDirNames() {
         return true;
     }
+
+    @Override
+    public boolean isColumnAliasExpressionEnabled() {
+        return false;
+    }
 }
