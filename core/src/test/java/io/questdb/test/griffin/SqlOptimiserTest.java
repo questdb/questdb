@@ -94,10 +94,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testAliasAppearsInFuncArgs2() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y ( x int );");
-            final String query = "select concat(lpad(cast(x1 as string), 5)), x1, sum(x1) from (select x x1 from y)";
+            final String query = "select concat(lpad(x1::string, 5)), x1, sum(x1) from (select x x1 from y)";
             final QueryModel model = compileModel(query);
             TestUtils.assertEquals(
-                    "select-group-by concat(lpad(cast(x1, string), 5)) concat, x1, sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))",
+                    "select-group-by concat(lpad(x1::string, 5)) concat, x1, sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))",
                     model.toString0()
             );
             assertPlanNoLeakCheck(
@@ -117,9 +117,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testAliasAppearsInFuncArgs3() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y ( x int );");
-            final String query = "select concat(lpad(cast(x1 as string), 5)), x1 from (select x x1 from y) group by x1";
+            final String query = "select concat(lpad(x1::string, 5)), x1 from (select x x1 from y) group by x1";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-virtual concat(lpad(cast(x1, string), 5)) concat, x1 from (select-group-by [x1] x1 from (select-choose [x x1] x x1 from (select [x] from y)))", model.toString0());
+            TestUtils.assertEquals("select-virtual concat(lpad(x1::string, 5)) concat, x1 from (select-group-by [x1] x1 from (select-choose [x x1] x x1 from (select [x] from y)))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
             assertPlanNoLeakCheck(

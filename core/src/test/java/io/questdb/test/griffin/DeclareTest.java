@@ -278,19 +278,19 @@ public class DeclareTest extends AbstractSqlParserTest {
 
     @Test
     public void testDeclareSelectCase() throws Exception {
-        assertModel("select-virtual case(1 = 1, 5, 2) case from (long_sequence(1))",
+        assertModel("select-virtual case when 1 = 1 then 5 else 2 end case from (long_sequence(1))",
                 "DECLARE @x := 1, @y := 5, @z := 2 SELECT CASE WHEN @x = @X THEN @y ELSE @z END", ExecutionModel.QUERY);
     }
 
     @Test
     public void testDeclareSelectCast1() throws Exception {
-        assertModel("select-virtual cast(2, timestamp) cast from (long_sequence(1))",
+        assertModel("select-virtual 2::timestamp cast from (long_sequence(1))",
                 "DECLARE @x := 2::timestamp SELECT @x", ExecutionModel.QUERY);
     }
 
     @Test
     public void testDeclareSelectCast2() throws Exception {
-        assertModel("select-virtual cast(5, timestamp) cast from (long_sequence(1))",
+        assertModel("select-virtual 5::timestamp cast from (long_sequence(1))",
                 "DECLARE @x := 5 SELECT CAST(@x AS timestamp)", ExecutionModel.QUERY);
     }
 
@@ -603,7 +603,7 @@ public class DeclareTest extends AbstractSqlParserTest {
 
     @Test
     public void testDeclareSelectWhereComplex() throws Exception {
-        assertModel("select-virtual cast(2, timestamp) + cast(5, timestamp) column from (long_sequence(1) where cast(2, timestamp) < cast(5, timestamp))",
+        assertModel("select-virtual 2::timestamp + 5::timestamp column from (long_sequence(1) where 2::timestamp < 5::timestamp)",
                 "DECLARE @x := 2::timestamp, @y := 5::timestamp SELECT @x + @y FROM long_sequence(1) WHERE @x < @y", ExecutionModel.QUERY);
     }
 

@@ -943,7 +943,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAliasWithWildcard2() throws SqlException {
         assertQuery(
-                "select-virtual cast(a, long) a1, a, b from (select [a, b] from x)",
+                "select-virtual a::long a1, a, b from (select [a, b] from x)",
                 "select a::long as a1, * from x",
                 modelOf("x").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -952,7 +952,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAliasWithWildcard3() throws SqlException {
         assertQuery(
-                "select-virtual cast(a, long) a1, a, b from (select [a, b] from x)",
+                "select-virtual a::long a1, a, b from (select [a, b] from x)",
                 "select cast(a as long) a1, * from x",
                 modelOf("x").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -961,7 +961,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAliasWithWildcard4() throws SqlException {
         assertQuery(
-                "select-virtual a, b, cast(a, long) a1 from (select [a, b] from x)",
+                "select-virtual a, b, a::long a1 from (select [a, b] from x)",
                 "select *, cast(a as long) a1 from x",
                 modelOf("x").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -1291,7 +1291,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testBetweenInsideCast() throws Exception {
         assertQuery(
-                "select-virtual cast(t between (cast('2020-01-01', TIMESTAMP), '2021-01-02'), INT) + 1 column from (select [t] from x)",
+                "select-virtual (t between ('2020-01-01'::TIMESTAMP, '2021-01-02'))::INT + 1 column from (select [t] from x)",
                 "select CAST(t between CAST('2020-01-01' AS TIMESTAMP) and '2021-01-02' AS INT) + 1 from x",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
         );
@@ -1310,7 +1310,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testBetweenWithCase() throws Exception {
         assertQuery(
-                "select-virtual case(t between (cast('2020-01-01', TIMESTAMP), '2021-01-02'), 'a', 'b') case from (select [t] from x)",
+                "select-virtual case when t between ('2020-01-01'::TIMESTAMP, '2021-01-02') then 'a' else 'b' end case from (select [t] from x)",
                 "select case when t between CAST('2020-01-01' AS TIMESTAMP) and '2021-01-02' then 'a' else 'b' end from x",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
         );
@@ -1319,7 +1319,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testBetweenWithCast() throws Exception {
         assertQuery(
-                "select-choose t from (select [t] from x where t between (cast('2020-01-01', TIMESTAMP), '2021-01-02'))",
+                "select-choose t from (select [t] from x where t between ('2020-01-01'::TIMESTAMP, '2021-01-02'))",
                 "select t from x where t between CAST('2020-01-01' AS TIMESTAMP) and '2021-01-02'",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
         );
@@ -1328,7 +1328,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testBetweenWithCastAndSum() throws Exception {
         assertQuery(
-                "select-choose tt from (select [tt, t] from x where t between ('2020-01-01', now() + cast(NULL, LONG)))",
+                "select-choose tt from (select [tt, t] from x where t between ('2020-01-01', now() + NULL::LONG))",
                 "select tt from x where t between '2020-01-01' and (now() + CAST(NULL AS LONG))",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
         );
@@ -1337,7 +1337,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testBetweenWithCastAndSum2() throws Exception {
         assertQuery(
-                "select-choose tt from (select [tt, t] from x where t between (now() + cast(NULL, LONG), '2020-01-01'))",
+                "select-choose tt from (select [tt, t] from x where t between (now() + NULL::LONG, '2020-01-01'))",
                 "select tt from x where t between (now() + CAST(NULL AS LONG)) and '2020-01-01'",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
         );
@@ -1395,12 +1395,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testBracedArithmeticsInsideCast() throws SqlException {
         assertQuery(
-                "select-virtual cast(500000000000L + case(x > 400, x - 1, x), timestamp) ts from (select [x] from long_sequence(1000))",
+                "select-virtual (500000000000L + case when x > 400 then x - 1 else x end)::timestamp ts from (select [x] from long_sequence(1000))",
                 "select cast((500000000000L + case when x > 400 then x - 1 else x end) as timestamp) ts from long_sequence(1000)",
                 modelOf("ts").col("ts", ColumnType.TIMESTAMP)
         );
         assertQuery(
-                "select-virtual cast(500000000000L + case(x > 400, (x - 1) / 4 * 1000L + (4 - (x - 1) % 4) * 89, x), timestamp) ts from (select [x] from long_sequence(1000))",
+                "select-virtual (500000000000L + case when x > 400 then (x - 1) / 4 * 1000L + (4 - (x - 1) % 4) * 89 else x end)::timestamp ts from (select [x] from long_sequence(1000))",
                 "select cast(" +
                         "(500000000000L + " +
                         "  case when x > 400 " +
@@ -1434,7 +1434,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCaseImpossibleRewrite1() throws SqlException {
         // referenced columns in 'when' clauses are different
         assertQuery(
-                "select-virtual case(a = 1, 'A', 2 = b, 'B', 'C') + 1 column, b from (select [a, b] from tab)",
+                "select-virtual case when a = 1 then 'A' when 2 = b then 'B' else 'C' end + 1 column, b from (select [a, b] from tab)",
                 "select case when a = 1 then 'A' when 2 = b then 'B' else 'C' end+1, b from tab",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -1444,7 +1444,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCaseImpossibleRewrite2() throws SqlException {
         // 'when' is non-constant
         assertQuery(
-                "select-virtual case(a = 1, 'A', 2 + b = a, 'B', 'C') + 1 column, b from (select [a, b] from tab)",
+                "select-virtual case when a = 1 then 'A' when 2 + b = a then 'B' else 'C' end + 1 column, b from (select [a, b] from tab)",
                 "select case when a = 1 then 'A' when 2 + b = a then 'B' else 'C' end+1, b from tab",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -1454,7 +1454,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCaseNoElseClause() throws SqlException {
         // referenced columns in 'when' clauses are different
         assertQuery(
-                "select-virtual case(a = 1, 'A', 2 = b, 'B') + 1 column, b from (select [a, b] from tab)",
+                "select-virtual case when a = 1 then 'A' when 2 = b then 'B' end + 1 column, b from (select [a, b] from tab)",
                 "select case when a = 1 then 'A' when 2 = b then 'B' end+1, b from tab",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -4179,7 +4179,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " from pg_catalog.pg_attribute() ia" +
                         " where not(attisdropped)) ia" +
                         " on ia.attrelid = i.indexrelid" +
-                        " post-join-where ta.attnum = [](i.indkey, ia.attnum - 1)" +
+                        " post-join-where ta.attnum = i.indkey[ia.attnum - 1]" +
                         " join (select [nspname, oid]" +
                         " from pg_catalog.pg_namespace() n" +
                         " where nspname = 'public') n" +
@@ -4240,7 +4240,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " from pg_catalog.pg_attribute() ia" +
                         " where not(attisdropped)) ia" +
                         " on ia.attrelid = i.indexrelid" +
-                        " post-join-where ta.attnum = [](i.indkey, ia.attnum - 1)" +
+                        " post-join-where ta.attnum = i.indkey[ia.attnum - 1]" +
                         " join (select [relname, oid, relnamespace]" +
                         " from pg_catalog.pg_class() ic" +
                         " where relname = 'telemetry_config_pkey') ic" +
@@ -4485,7 +4485,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testFilter1() throws SqlException {
         assertQuery(
-                "select-virtual x, cast(x + 10, timestamp) cast from (select-virtual [x, rnd_double() rnd] x, rnd_double() rnd from (select [x] from long_sequence(100000)) where rnd < 0.9999)",
+                "select-virtual x, (x + 10)::timestamp cast from (select-virtual [x, rnd_double() rnd] x, rnd_double() rnd from (select [x] from long_sequence(100000)) where rnd < 0.9999)",
                 "select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(100000)) where rnd<0.9999"
         );
     }
@@ -5818,7 +5818,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinClauseAlignmentBug() throws SqlException {
         assertQuery(
-                "select-virtual NULL TABLE_CAT, TABLE_SCHEM, TABLE_NAME, switch(TABLE_SCHEM ~ '^pg_' or TABLE_SCHEM = 'information_schema', true, case(TABLE_SCHEM = 'pg_catalog' or TABLE_SCHEM = 'information_schema', switch(relkind, 'r', 'SYSTEM TABLE', 'v', 'SYSTEM VIEW', 'i', 'SYSTEM INDEX', NULL), TABLE_SCHEM = 'pg_toast', switch(relkind, 'r', 'SYSTEM TOAST TABLE', 'i', 'SYSTEM TOAST INDEX', NULL), switch(relkind, 'r', 'TEMPORARY TABLE', 'p', 'TEMPORARY TABLE', 'i', 'TEMPORARY INDEX', 'S', 'TEMPORARY SEQUENCE', 'v', 'TEMPORARY VIEW', NULL)), false, switch(relkind, 'r', 'TABLE', 'p', 'PARTITIONED TABLE', 'i', 'INDEX', 'S', 'SEQUENCE', 'v', 'VIEW', 'c', 'TYPE', 'f', 'FOREIGN TABLE', 'm', 'MATERIALIZED VIEW', NULL), NULL) TABLE_TYPE, REMARKS, '' TYPE_CAT, '' TYPE_SCHEM, '' TYPE_NAME, '' SELF_REFERENCING_COL_NAME, '' REF_GENERATION from (select-choose [n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS] n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS from (select [nspname, oid] from pg_catalog.pg_namespace() n join (select [relname, relkind, relnamespace, oid] from pg_catalog.pg_class() c where relname like 'quickstart-events2') c on c.relnamespace = n.oid post-join-where false or c.relkind = 'r' and n.nspname !~ '^pg_' and n.nspname != 'information_schema' left join select [description, objoid, objsubid, classoid] from pg_catalog.pg_description() d on d.objoid = c.oid outer-join-expression d.objsubid = 0 left join select [oid, relname, relnamespace] from pg_catalog.pg_class() dc on dc.oid = d.classoid outer-join-expression dc.relname = 'pg_class' left join select [oid, nspname] from pg_catalog.pg_namespace() dn on dn.oid = dc.relnamespace outer-join-expression dn.nspname = 'pg_catalog') n) n order by TABLE_TYPE, TABLE_SCHEM, TABLE_NAME",
+                "select-virtual NULL TABLE_CAT, TABLE_SCHEM, TABLE_NAME, switch(TABLE_SCHEM ~ '^pg_' or TABLE_SCHEM = 'information_schema', true, case when TABLE_SCHEM = 'pg_catalog' or TABLE_SCHEM = 'information_schema' then switch(relkind, 'r', 'SYSTEM TABLE', 'v', 'SYSTEM VIEW', 'i', 'SYSTEM INDEX', NULL) when TABLE_SCHEM = 'pg_toast' then switch(relkind, 'r', 'SYSTEM TOAST TABLE', 'i', 'SYSTEM TOAST INDEX', NULL) else switch(relkind, 'r', 'TEMPORARY TABLE', 'p', 'TEMPORARY TABLE', 'i', 'TEMPORARY INDEX', 'S', 'TEMPORARY SEQUENCE', 'v', 'TEMPORARY VIEW', NULL) end, false, switch(relkind, 'r', 'TABLE', 'p', 'PARTITIONED TABLE', 'i', 'INDEX', 'S', 'SEQUENCE', 'v', 'VIEW', 'c', 'TYPE', 'f', 'FOREIGN TABLE', 'm', 'MATERIALIZED VIEW', NULL), NULL) TABLE_TYPE, REMARKS, '' TYPE_CAT, '' TYPE_SCHEM, '' TYPE_NAME, '' SELF_REFERENCING_COL_NAME, '' REF_GENERATION from (select-choose [n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS] n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS from (select [nspname, oid] from pg_catalog.pg_namespace() n join (select [relname, relkind, relnamespace, oid] from pg_catalog.pg_class() c where relname like 'quickstart-events2') c on c.relnamespace = n.oid post-join-where false or c.relkind = 'r' and n.nspname !~ '^pg_' and n.nspname != 'information_schema' left join select [description, objoid, objsubid, classoid] from pg_catalog.pg_description() d on d.objoid = c.oid outer-join-expression d.objsubid = 0 left join select [oid, relname, relnamespace] from pg_catalog.pg_class() dc on dc.oid = d.classoid outer-join-expression dc.relname = 'pg_class' left join select [oid, nspname] from pg_catalog.pg_namespace() dn on dn.oid = dc.relnamespace outer-join-expression dn.nspname = 'pg_catalog') n) n order by TABLE_TYPE, TABLE_SCHEM, TABLE_NAME",
                 "SELECT \n" +
                         "     NULL AS TABLE_CAT, \n" +
                         "     n.nspname AS TABLE_SCHEM, \n" +
@@ -6948,7 +6948,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testMoveOrderByFlat() throws Exception {
         assertQuery(
-                "select-choose transaction_id from (select-virtual [cast(cast(transactionid, varchar), bigint) transaction_id, pg_catalog.age(transactionid1) age] cast(cast(transactionid, varchar), bigint) transaction_id, pg_catalog.age(transactionid1) age from (select-choose [transactionid, transactionid transactionid1] transactionid, transactionid transactionid1 from (select [transactionid] from pg_catalog.pg_locks() L where transactionid != null) L) L order by age desc limit 1)",
+                "select-choose transaction_id from (select-virtual [transactionid::varchar::bigint transaction_id, pg_catalog.age(transactionid1) age] transactionid::varchar::bigint transaction_id, pg_catalog.age(transactionid1) age from (select-choose [transactionid, transactionid transactionid1] transactionid, transactionid transactionid1 from (select [transactionid] from pg_catalog.pg_locks() L where transactionid != null) L) L order by age desc limit 1)",
                 "select L.transactionid::varchar::bigint as transaction_id\n" +
                         "from pg_catalog.pg_locks L\n" +
                         "where L.transactionid is not null\n" +
@@ -7044,7 +7044,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testMoveOrderBySubQuery() throws Exception {
         assertQuery(
-                "select-virtual transaction_id + 1 column from (select-choose [transaction_id] transaction_id from (select-virtual [cast(cast(transactionid, varchar), bigint) transaction_id, pg_catalog.age(transactionid1) age] cast(cast(transactionid, varchar), bigint) transaction_id, pg_catalog.age(transactionid1) age from (select-choose [transactionid, transactionid transactionid1] transactionid, transactionid transactionid1 from (select [transactionid] from pg_catalog.pg_locks() L where transactionid != null) L) L order by age desc limit 1))",
+                "select-virtual transaction_id + 1 column from (select-choose [transaction_id] transaction_id from (select-virtual [transactionid::varchar::bigint transaction_id, pg_catalog.age(transactionid1) age] transactionid::varchar::bigint transaction_id, pg_catalog.age(transactionid1) age from (select-choose [transactionid, transactionid transactionid1] transactionid, transactionid transactionid1 from (select [transactionid] from pg_catalog.pg_locks() L where transactionid != null) L) L order by age desc limit 1))",
                 "select transaction_id + 1 from (select L.transactionid::varchar::bigint as transaction_id\n" +
                         "from pg_catalog.pg_locks L\n" +
                         "where L.transactionid is not null\n" +
@@ -7071,7 +7071,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testNestedCast() throws SqlException {
         assertQuery(
-                "select-virtual cast(cast((1 + x) / 2, int), timestamp) ts from (select [x] from long_sequence(1000))",
+                "select-virtual ((1 + x) / 2)::int::timestamp ts from (select [x] from long_sequence(1000))",
                 "select cast(cast((1 + x) / 2 as int) as timestamp) ts from long_sequence(1000)",
                 modelOf("ts").col("ts", ColumnType.TIMESTAMP)
         );
@@ -8114,7 +8114,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPGCastToFloat4() throws SqlException {
         assertQuery(
-                "select-virtual cast(123, FLOAT) x from (long_sequence(1))",
+                "select-virtual 123::FLOAT x from (long_sequence(1))",
                 "select 123::float4 x"
         );
     }
@@ -8122,7 +8122,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPGCastToFloat8() throws SqlException {
         assertQuery(
-                "select-virtual cast(123, DOUBLE) x from (long_sequence(1))",
+                "select-virtual 123::DOUBLE x from (long_sequence(1))",
                 "select 123::float8 x"
         );
     }
@@ -8189,7 +8189,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPgCastRewrite() throws Exception {
         assertQuery(
-                "select-virtual cast(t, varchar) cast from (select [t] from x)",
+                "select-virtual t::varchar cast from (select [t] from x)",
                 "select t::varchar from x",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
         );
@@ -8237,7 +8237,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPipeConcatWithFunctionConcatOnLeft() throws SqlException {
         assertQuery(
-                "select-virtual 1 1, x, concat('2', cast(x + 1, string), '3') concat from (select [x] from tab)",
+                "select-virtual 1 1, x, concat('2', x + 1::string, '3') concat from (select [x] from tab)",
                 "select 1, x, concat('2', cast(x + 1 as string)) || '3' from tab",
                 modelOf("tab").col("x", ColumnType.INT)
         );
@@ -8246,7 +8246,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPipeConcatWithFunctionConcatOnRight() throws SqlException {
         assertQuery(
-                "select-virtual 1 1, x, concat('2', cast(x + 1, string), '3') concat from (select [x] from tab)",
+                "select-virtual 1 1, x, concat('2', x + 1::string, '3') concat from (select [x] from tab)",
                 "select 1, x, '2' || concat(cast(x + 1 as string), '3') from tab",
                 modelOf("tab").col("x", ColumnType.INT)
         );
@@ -8255,7 +8255,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPipeConcatWithNestedCast() throws SqlException {
         assertQuery(
-                "select-virtual 1 1, x, concat('2', cast(x + 1, string), '3') concat from (select [x] from tab)",
+                "select-virtual 1 1, x, concat('2', (x + 1)::string, '3') concat from (select [x] from tab)",
                 "select 1, x, '2' || cast(x + 1 as string) || '3' from tab",
                 modelOf("tab").col("x", ColumnType.INT)
         );
@@ -10898,7 +10898,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTimestampWithTimezoneCast() throws Exception {
         assertQuery(
-                "select-virtual cast(t, timestamp) cast from (select [t] from x)",
+                "select-virtual t::timestamp cast from (select [t] from x)",
                 "select cast(t as timestamp with time zone) from x",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
         );
@@ -10907,7 +10907,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTimestampWithTimezoneCastInSelect() throws Exception {
         assertQuery(
-                "select-virtual cast('2005-04-02 12:00:00-07', timestamp) col from (x)",
+                "select-virtual '2005-04-02 12:00:00-07'::timestamp col from (x)",
                 "select cast('2005-04-02 12:00:00-07' as timestamp with time zone) col from x",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
         );
@@ -10916,7 +10916,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTimestampWithTimezoneConstPrefix() throws Exception {
         assertQuery(
-                "select-choose t, tt from (select [t, tt] from x where t > cast('2005-04-02 12:00:00-07', timestamp))",
+                "select-choose t, tt from (select [t, tt] from x where t > '2005-04-02 12:00:00-07'::timestamp)",
                 "select * from x where t > timestamp with time zone '2005-04-02 12:00:00-07'",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
         );
@@ -10931,7 +10931,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTimestampWithTimezoneConstPrefixInSelect() throws Exception {
         assertQuery(
-                "select-virtual cast('2005-04-02 12:00:00-07', timestamp) alias from (x)",
+                "select-virtual '2005-04-02 12:00:00-07'::timestamp alias from (x)",
                 "select timestamp with time zone '2005-04-02 12:00:00-07' \"alias\" from x",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
         );
@@ -10940,7 +10940,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTimestampWithTimezoneConstPrefixInsideCast() throws Exception {
         assertQuery(
-                "select-choose t, tt from (select [t, tt] from x where t > cast(cast('2005-04-02 12:00:00-07', timestamp), DATE))",
+                "select-choose t, tt from (select [t, tt] from x where t > '2005-04-02 12:00:00-07'::timestamp::DATE)",
                 "select * from x where t > CAST(timestamp with time zone '2005-04-02 12:00:00-07' as DATE)",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
         );
@@ -11046,10 +11046,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError("SELECT CASE WHEN True THEN . ELSE 1 END", 27, "unexpected dot");
         assertSyntaxError("SELECT CASE WHEN True THEN 1 ELSE . END", 34, "unexpected dot");
 
-        assertQuery("select-virtual case(True, 1.0f, 1) case from (long_sequence(1))", "SELECT CASE WHEN True THEN 1.0f ELSE 1 END");
-        assertQuery("select-virtual case(True, 'a.b', '1') case from (long_sequence(1))", "SELECT CASE WHEN True THEN 'a.b' ELSE '1' END");
-        assertQuery("select-virtual case(True, x, '1') case from (select [x] from long_sequence(1) a) a", "SELECT CASE WHEN True THEN \"a.x\" ELSE '1' END from long_sequence(1) a");
-        assertQuery("select-virtual case(True, x, 1) case from (select [x] from long_sequence(1) a) a", "SELECT CASE WHEN True THEN a.x ELSE 1 END from long_sequence(1) a");
+        assertQuery("select-virtual case when True then 1.0f else 1 end case from (long_sequence(1))", "SELECT CASE WHEN True THEN 1.0f ELSE 1 END");
+        assertQuery("select-virtual case when True then 'a.b' else '1' end case from (long_sequence(1))", "SELECT CASE WHEN True THEN 'a.b' ELSE '1' END");
+        assertQuery("select-virtual case when True then x else '1' end case from (select [x] from long_sequence(1) a) a", "SELECT CASE WHEN True THEN \"a.x\" ELSE '1' END from long_sequence(1) a");
+        assertQuery("select-virtual case when True then x else 1 end case from (select [x] from long_sequence(1) a) a", "SELECT CASE WHEN True THEN a.x ELSE 1 END from long_sequence(1) a");
     }
 
     @Test

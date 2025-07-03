@@ -3427,7 +3427,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testUnindexedEqualsVarchar() throws SqlException {
         IntrinsicModel m = unindexedModelOf("sym = 'ABC'::varchar", null);
         Assert.assertNull(m.keyColumn);
-        TestUtils.assertEquals("sym = cast('ABC', varchar)", GriffinParserTestUtils.toRpn(m.filter));
+        TestUtils.assertEquals("sym = 'ABC'::varchar", GriffinParserTestUtils.toRpn(m.filter));
         TestUtils.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
@@ -3475,7 +3475,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testUnindexedPreferredInVsIndexedVarchar() throws SqlException {
         IntrinsicModel m = unindexedModelOf("sym in (1,2) and ex in ('XYZ'::varchar)", "sym");
         TestUtils.assertEquals("sym", m.keyColumn);
-        TestUtils.assertEquals("ex in cast('XYZ', varchar)", GriffinParserTestUtils.toRpn(m.filter));
+        TestUtils.assertEquals("ex in 'XYZ'::varchar", GriffinParserTestUtils.toRpn(m.filter));
         TestUtils.assertEquals("[1,2]", keyValueFuncsToString(m.keyValueFuncs));
     }
 

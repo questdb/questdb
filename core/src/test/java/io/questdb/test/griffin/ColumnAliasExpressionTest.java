@@ -101,7 +101,7 @@ public class ColumnAliasExpressionTest extends AbstractCairoTest {
     @Test
     public void testCaseExpressions() throws Exception {
         assertGeneratedColumnEqual(
-                "case(a > b, a + b, a - b)\n",
+                "case when a > b then a + b else a - b end\n",
                 "select CASE WHEN a > b THEN a + b ELSE a - b END from tab",
                 "create table tab (a int, b int)",
                 0
@@ -196,8 +196,8 @@ public class ColumnAliasExpressionTest extends AbstractCairoTest {
     @Test
     public void testCast() throws Exception {
         assertGeneratedColumnEqual(
-                "a::long\tb::long\n",
-                "select cast(a as long), b::long from tab",
+                "a::long\tb::long\t(a + 1)::string\n",
+                "select cast(a as long), b::long, cast(a + 1 as string) from tab",
                 "create table tab (a int, b int)",
                 0
         );

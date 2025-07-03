@@ -136,7 +136,7 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
 
     protected void assertInsertQuery(TableModel... tableModels) throws SqlException {
         assertModel(
-                "insert into test (test_timestamp, test_value) values (cast('2020-12-31 15:15:51.663+00:00', timestamp), '256')",
+                "insert into test (test_timestamp, test_value) values ('2020-12-31 15:15:51.663+00:00'::timestamp, '256')",
                 "insert into test (test_timestamp, test_value) values (timestamp with time zone '2020-12-31 15:15:51.663+00:00', '256')",
                 ExecutionModel.INSERT,
                 tableModels
