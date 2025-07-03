@@ -106,7 +106,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                     );
                 }
 
-                final String expected = "count[BIGINT]\n" +
+                final String expected = "count()[BIGINT]\n" +
                         "9999999\n";
                 try (PreparedStatement stmt = conn.prepareStatement("select count() from x where x != 1")) {
                     // Set RSS limit, so that the SELECT will fail with OOM.
@@ -148,7 +148,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                     );
                 }
 
-                final String expected = "count[BIGINT]\n" +
+                final String expected = "count()[BIGINT]\n" +
                         "10000000\n";
                 try (PreparedStatement stmt = conn.prepareStatement("select count() from (select x from x group by x)")) {
                     // Set RSS limit, so that the SELECT will fail with OOM.
@@ -282,7 +282,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 }
 
                 String query = "select count() from (select * from x where l = 42);";
-                String expected = "count[BIGINT]\n" +
+                String expected = "count()[BIGINT]\n" +
                         "100\n";
                 try (ResultSet rs = conn.prepareStatement(query).executeQuery()) {
                     sink.clear();
@@ -304,7 +304,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 }
 
                 String query = "select count_distinct(l1), count_distinct(l2) from x;";
-                String expected = "count_distinct[BIGINT],count_distinct1[BIGINT]\n" +
+                String expected = "count_distinct(l1)[BIGINT],count_distinct(l2)[BIGINT]\n" +
                         "10000,1000\n";
                 try (ResultSet rs = conn.prepareStatement(query).executeQuery()) {
                     sink.clear();
@@ -326,7 +326,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 }
 
                 String query = "select k, count_distinct(l) from x order by k;";
-                String expected = "k[VARCHAR],count_distinct[BIGINT]\n" +
+                String expected = "k[VARCHAR],count_distinct(l)[BIGINT]\n" +
                         "k0,10000\n" +
                         "k1,10000\n" +
                         "k2,10000\n";
@@ -355,7 +355,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: tab\n",
-                "key[VARCHAR],min[BIGINT],max[BIGINT]\n" +
+                "key[VARCHAR],min(quantity)[BIGINT],max(quantity)[BIGINT]\n" +
                         "k4,4,9999\n" +
                         "k3,3,9998\n" +
                         "k2,2,9997\n" +
@@ -378,7 +378,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n",
-                "min[BIGINT],max[BIGINT]\n" +
+                "min(quantity)[BIGINT],max(quantity)[BIGINT]\n" +
                         "1,10000\n"
         );
     }
@@ -403,7 +403,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: tab\n",
-                "day[INTEGER],key[VARCHAR],vwap[DOUBLE]\n" +
+                "day[INTEGER],key[VARCHAR],vwap(price, quantity)[DOUBLE]\n" +
                         "1,k0,6624.171717171717\n" +
                         "1,k1,6624.8468153184685\n" +
                         "1,k10,6612.932687914096\n" +
@@ -435,7 +435,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: tab\n",
-                "key[VARCHAR],count_distinct[BIGINT]\n" +
+                "key[VARCHAR],count_distinct(x)[BIGINT]\n" +
                         "k0,99\n" +
                         "k1,100\n" +
                         "k10,99\n" +

@@ -218,7 +218,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 try {
                     testHttpClient.assertGet(
                             "/exec",
-                            "{\"query\":\"select length('qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq');\",\"columns\":[{\"name\":\"length\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[150]],\"count\":1}",
+                            "{\"query\":\"select length('qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq');\",\"columns\":[{\"name\":\"length\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[150]],\"count()\":1}",
                             query
                     );
                     Assert.fail();
@@ -240,7 +240,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
                 testHttpClient.assertGet(
                         "/exec",
-                        "{\"query\":\"select length('qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq');\",\"columns\":[{\"name\":\"length\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[150]],\"count\":1}",
+                        "{\"query\":\"select length('qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq');\",\"columns\":[{\"name\":\"length\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[150]],\"count()\":1}",
                         query
                 );
             }
@@ -279,7 +279,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
                 testHttpClient.assertGet(
                         "/exec",
-                        "{\"query\":\"select rpad('QuestDB', 150, '0');\",\"columns\":[{\"name\":\"rpad\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"QuestDB00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"]],\"count\":1}",
+                        "{\"query\":\"select rpad('QuestDB', 150, '0');\",\"columns\":[{\"name\":\"rpad\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"QuestDB00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"]],\"count()\":1}",
                         query
                 );
             }
