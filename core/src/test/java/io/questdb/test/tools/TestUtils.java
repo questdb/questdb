@@ -811,6 +811,69 @@ public final class TestUtils {
         }
     }
 
+    /**
+     * Asserts that the actual lines are the same as the expected lines in the reverse order.
+     * For example, assertion with expected: "123\n456\n789\n" and actual: "789\n456\n123\n" passes.
+     * This method expects for the char sequences to end up with a newline character.
+     */
+    public static void assertReverseLinesEqual(@Nullable String message, CharSequence expected, CharSequence actual) {
+        String cleanMessage = message == null ? "" : message;
+        if (expected == null && actual == null) {
+            return;
+        }
+
+        if (expected != null && actual == null) {
+            Assert.fail(cleanMessage + "expected:<" + expected + "> but was: NULL");
+        }
+
+        if (expected == null) {
+            Assert.fail(cleanMessage + "expected: NULL but was:<" + actual + ">");
+        }
+
+        if (expected.length() != actual.length()) {
+            Assert.fail(cleanMessage + "expected:<" + reverseLines(expected) + "> but was:<" + actual + ">");
+        }
+
+        if (expected.length() == 0) {
+            // If expected is empty, so is actual here (otherwise it would have failed the last condition).
+            return;
+        }
+
+        if (expected.charAt(expected.length() - 1) != '\n') {
+            Assert.fail(cleanMessage + "expected must end up with a newline character");
+        }
+
+        if (actual.charAt(actual.length() - 1) != '\n') {
+            Assert.fail(cleanMessage + "actual must end up with a newline character");
+        }
+
+        int expLo = expected.length();
+        int actHi = -1;
+        final int actLen = actual.length();
+        while (expLo != 0) {
+            int idx = Chars.lastIndexOf(expected, 0, expLo - 1, '\n');
+            final int len = expLo - idx - 1;
+            expLo = idx + 1;
+
+            final int actLo = actHi + 1;
+            idx = Chars.indexOf(actual, actLo, actLen, '\n');
+            if (idx == -1 || idx - actHi != len) {
+                Assert.fail(cleanMessage + "expected:<" + reverseLines(expected) + "> but was:<" + actual + ">");
+            }
+            actHi = idx;
+
+            for (int j = 0; j < len; j++) {
+                if (expected.charAt(expLo + j) != actual.charAt(actLo + j)) {
+                    Assert.fail(cleanMessage + "expected:<" + reverseLines(expected) + "> but was:<" + actual + ">");
+                }
+            }
+        }
+
+        if (actHi != actLen - 1) {
+            Assert.fail(cleanMessage + "expected:<" + reverseLines(expected) + "> but was:<" + actual + ">");
+        }
+    }
+
     public static void assertSql(
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
@@ -2253,6 +2316,15 @@ public final class TestUtils {
             }
         }
         return sink.toString();
+    }
+
+    private static CharSequence reverseLines(CharSequence expected) {
+        String[] lines = expected.toString().split("\n");
+        StringSink sink = new StringSink(expected.length());
+        for (int i = 0, n = lines.length; i < n; i++) {
+            sink.put(lines[n - i - 1]).put('\n');
+        }
+        return sink;
     }
 
     private static String toHexString(Long256 expected) {

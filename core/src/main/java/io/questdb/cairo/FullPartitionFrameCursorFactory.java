@@ -30,36 +30,40 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
-public class FullBwdPartitionFrameCursorFactory extends AbstractPartitionFrameCursorFactory {
-    private final FullBwdPartitionFrameCursor cursor;
+public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCursorFactory {
+    private final int baseOrder;
+    private FullBwdPartitionFrameCursor bwdCursor;
     private FullFwdPartitionFrameCursor fwdCursor;
 
-    public FullBwdPartitionFrameCursorFactory(TableToken tableToken, long metadataVersion, RecordMetadata metadata) {
+    public FullPartitionFrameCursorFactory(TableToken tableToken, long metadataVersion, RecordMetadata metadata, int order) {
         super(tableToken, metadataVersion, metadata);
-        this.cursor = new FullBwdPartitionFrameCursor();
+        this.baseOrder = order;
     }
 
     @Override
     public void close() {
         super.close();
-        Misc.free(cursor);
-        Misc.free(fwdCursor);
+        fwdCursor = Misc.free(fwdCursor);
+        bwdCursor = Misc.free(bwdCursor);
     }
 
     @Override
     public PartitionFrameCursor getCursor(SqlExecutionContext executionContext, int order) {
         final TableReader reader = getReader(executionContext);
         try {
-            if (order == ORDER_DESC || order == ORDER_ANY) {
-                return cursor.of(reader);
+            if (order == ORDER_ASC || ((order == ORDER_ANY || order < 0) && baseOrder != ORDER_DESC)) {
+                if (fwdCursor == null) {
+                    fwdCursor = new FullFwdPartitionFrameCursor();
+                }
+                return fwdCursor.of(reader);
             }
 
-            // Create forward scanning cursor when needed. Factory requesting forward cursor must
-            // still return records in descending timestamp order.
-            if (fwdCursor == null) {
-                fwdCursor = new FullFwdPartitionFrameCursor();
+            // Create backward scanning cursor when needed. Factory requesting backward cursor must
+            // still return records in ascending timestamp order.
+            if (bwdCursor == null) {
+                bwdCursor = new FullBwdPartitionFrameCursor();
             }
-            return fwdCursor.of(reader);
+            return bwdCursor.of(reader);
         } catch (Throwable th) {
             Misc.free(reader);
             throw th;
@@ -68,7 +72,7 @@ public class FullBwdPartitionFrameCursorFactory extends AbstractPartitionFrameCu
 
     @Override
     public int getOrder() {
-        return ORDER_DESC;
+        return baseOrder;
     }
 
     @Override
@@ -78,10 +82,14 @@ public class FullBwdPartitionFrameCursorFactory extends AbstractPartitionFrameCu
 
     @Override
     public void toPlan(PlanSink sink) {
-        if (sink.getOrder() == ORDER_ASC) {
-            sink.type("Frame forward scan");
-        } else {
+        int order = sink.getOrder();
+        if (order == ORDER_ANY || order < 0) {
+            order = baseOrder;
+        }
+        if (order == ORDER_DESC) {
             sink.type("Frame backward scan");
+        } else {
+            sink.type("Frame forward scan");
         }
         super.toPlan(sink);
     }
