@@ -53,10 +53,10 @@ public class MatViewState implements QuietCloseable {
     public static final int MAT_VIEW_STATE_FORMAT_EXTRA_PERIOD_MSG_TYPE = 2;
     public static final int MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE = 1;
     public static final int MAT_VIEW_STATE_FORMAT_MSG_TYPE = 0;
-    // Protected via latch.
-    // Holds cached txn intervals read from WAL transactions (_event files).
-    // Lets WalPurgeJob to make progress and delete applied WAL segments of a base table
-    // without having to wait for all dependent mat views to be refreshed.
+    // Protected by this.latch.
+    // Holds cached txn intervals read from WAL transactions (_event files) of the base table.
+    // Lets WalPurgeJob to make progress and delete applied WAL segments of a base table without
+    // having to wait for all dependent mat views to be refreshed.
     private final LongList cachedTxnIntervals = new LongList();
     // Used to avoid concurrent refresh runs.
     private final AtomicBoolean latch = new AtomicBoolean(false);
@@ -67,10 +67,10 @@ public class MatViewState implements QuietCloseable {
     // Incremented each time there's a base table transaction(s).
     // Used by MatViewTimerJob to avoid queueing redundant WAL txn intervals caching tasks.
     private final AtomicLong txnIntervalsCacheSeq = new AtomicLong();
-    // Protected via latch.
+    // Protected by this.latch.
     // Base table txn that corresponds to cachedTxnIntervals.
     private volatile long cachedIntervalsBaseTxn = -1;
-    // Protected by latch.
+    // Protected by this.latch.
     private RecordCursorFactory cursorFactory;
     private volatile boolean dropped;
     private volatile boolean invalid;
@@ -83,9 +83,9 @@ public class MatViewState implements QuietCloseable {
     private volatile long lastRefreshFinishTimestamp = Numbers.LONG_NULL;
     private volatile long lastRefreshStartTimestamp = Numbers.LONG_NULL;
     private volatile boolean pendingInvalidation;
-    // Protected by latch.
+    // Protected by this.latch.
     private long recordRowCopierMetadataVersion;
-    // Protected by latch.
+    // Protected by this.latch.
     private RecordToRowCopier recordToRowCopier;
     private volatile MatViewDefinition viewDefinition;
 
