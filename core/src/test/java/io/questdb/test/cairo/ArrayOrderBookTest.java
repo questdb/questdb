@@ -37,7 +37,33 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCumulativeImbalance() throws Exception {
+    public void testBidAskSpread() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("INSERT INTO order_book VALUES " +
+                    "('2025-07-01T12:00:00Z', ARRAY[ [10.1, 10.2], [0, 0] ], ARRAY[ [9.3, 9.2], [0, 0] ]), " +
+                    "('2025-07-01T12:00:01Z', ARRAY[ [10.3, 10.5], [0, 0] ], ARRAY[ [9.7, 9.4], [0, 0] ])"
+            );
+            assertSql("second\tspread\n" +
+                            "0\t0.8\n" +
+                            "1\t0.6\n",
+                    "SELECT second(ts), round(asks[1][1] - bids[1][1], 2) spread FROM order_book");
+        });
+    }
+
+    @Test
+    public void testImbalanceAtTopLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("INSERT INTO order_book VALUES " +
+                    "(0, ARRAY[ [0.0,0], [10.0, 15] ], ARRAY[ [0.0,0], [20.0, 25] ]), " +
+                    "(1, ARRAY[ [0.0,0], [15.0,  2] ], ARRAY[ [0.0,0], [14.0, 45] ])"
+            );
+            assertSql("imbalance\n2.0\n0.93\n",
+                    "SELECT round(bids[2, 1] / asks[2, 1], 2) imbalance FROM order_book");
+        });
+    }
+
+    @Test
+    public void testImbalanceCumulative() throws Exception {
         assertMemoryLeak(() -> {
             execute("INSERT INTO order_book VALUES " +
                     "(0, ARRAY[ [0.0,0,0,0], [10.0, 15, 13, 12] ], ARRAY[ [0.0,0,0,0], [20.0, 25, 23, 22] ]), " +
@@ -104,12 +130,12 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                             "1970-01-01T00:00:02.000000Z\t9.0\t4.0\t9.0\t8.0\n" +
                             "1970-01-01T00:00:03.000000Z\t4.0\t4.0\t8.0\t4.0\n",
                     "SELECT * FROM (SELECT " +
-                            "t2.ts ts, " +
-                            "t1.asks[2, 1] prev_ask_vol, " +
-                            "t2.asks[2, 1] curr_ask_vol, " +
-                            "t1.bids[2, 1] prev_bid_vol, " +
-                            "t2.bids[2, 1] curr_bid_vol " +
-                            "FROM order_book t1 JOIN order_book t2 ON t1.ts = t2.ts - 1_000_000) " +
+                            "ts ts, " +
+                            "lag(asks[2, 1]) OVER () prev_ask_vol, " +
+                            "asks[2, 1] curr_ask_vol, " +
+                            "lag(bids[2, 1]) OVER () prev_bid_vol, " +
+                            "bids[2, 1] curr_bid_vol " +
+                            "FROM order_book)" +
                             "WHERE prev_bid_vol > curr_bid_vol * 1.5 OR prev_ask_vol > curr_ask_vol * 1.5");
         });
     }
@@ -146,6 +172,22 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                     "SELECT array_sum(" +
                             "asks[2, 1:insertion_point(asks[1], 1.01 * asks[1, 1])]" +
                             ") volume FROM order_book");
+        });
+    }
+
+    @Test
+    public void testVolumeDropoff() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("INSERT INTO order_book VALUES " +
+                    "(0, ARRAY[ [0.0,0,0,0,0,0], [20.0, 15, 13, 12, 18, 20] ], NULL), " +
+                    "(1, ARRAY[ [0.0,0,0,0,0,0], [20.0, 25,  3,  7,  5,  2] ], NULL)"
+            );
+            assertSql("top\tdeep\n22.5\t5.0\n",
+                    "SELECT * FROM (SELECT " +
+                            "array_avg(asks[2, 1:3]) top, " +
+                            "array_avg(asks[2, 3:6]) deep " +
+                            "FROM order_book) " +
+                            "WHERE top > 3 * deep");
         });
     }
 }
