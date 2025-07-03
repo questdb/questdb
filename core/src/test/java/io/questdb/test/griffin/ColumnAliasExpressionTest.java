@@ -168,6 +168,41 @@ public class ColumnAliasExpressionTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testCase() throws Exception {
+        assertGeneratedColumnEqual(
+                "case when a >= 0 then 'positive' else 'negative' end\n",
+                "select case when a >= 0 then 'positive' else 'negative' end from tab",
+                "create table tab (a int)",
+                0
+        );
+        assertGeneratedColumnEqual(
+                "case when a > 0 then 'pos' when a < 0 then 'neg' else 'zero' end\n",
+                "select case when a > 0 then 'pos' when a < 0 then 'neg' else 'zero' end from tab",
+                0
+        );
+        assertGeneratedColumnEqual(
+                "case when a > 0 then 'pos' end\n",
+                "select case when a > 0 then 'pos' end from tab",
+                0
+        );
+        assertGeneratedColumnEqual(
+                "case when a > 0 then 'pos' when a < 0 then 'neg' end\n",
+                "select case when a > 0 then 'pos' when a < 0 then 'neg' end from tab",
+                0
+        );
+    }
+
+    @Test
+    public void testCast() throws Exception {
+        assertGeneratedColumnEqual(
+                "a::long\tb::long\n",
+                "select cast(a as long), b::long from tab",
+                "create table tab (a int, b int)",
+                0
+        );
+    }
+
     private void assertGeneratedColumnEqual(String expected, String query, String ddl, int maxSize) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
         if (maxSize > 0) {

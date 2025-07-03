@@ -26,6 +26,7 @@ package io.questdb.griffin.model;
 
 import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.OperatorRegistry;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -254,6 +255,19 @@ public class ExpressionNode implements Mutable, Sinkable {
                     sink.put('[');
                     sink.put(rhs);
                     sink.put(']');
+                } else if (SqlKeywords.isCaseKeyword(token)) {
+                    // for case we want to display them as 'case when lhs then rhs end' instead of case(lhs, rhs)
+                    sink.put("case when ");
+                    sink.put(lhs);
+                    sink.put(" then ");
+                    sink.put(rhs);
+                    sink.put(" end");
+                } else if (SqlKeywords.isCastKeyword(token)) {
+                    // for cast we want to display them as lhs::rhs instead of cast(lhs, rhs)
+                    sink.put(lhs);
+                    sink.put(':');
+                    sink.put(':');
+                    sink.put(rhs);
                 } else {
                     sink.put(token);
                     sink.putAscii('(');
@@ -281,6 +295,20 @@ public class ExpressionNode implements Mutable, Sinkable {
                         toSink(sink, args.getQuick(i));
                     }
                     sink.putAscii(')');
+                } else if (SqlKeywords.isCaseKeyword(token)) {
+                    // For the case keyword we want to display it as 'case [when x then x-1] [else x] end'.
+                    sink.put("case");
+                    for (int i = n - 1; i > 0; i -= 2) {
+                        sink.put(" when ");
+                        sink.put(args.getQuick(i));
+                        sink.put(" then ");
+                        toSink(sink, args.getQuick(i - 1));
+                    }
+                    if (n % 2 == 1) {
+                        sink.put(" else ");
+                        toSink(sink, args.getQuick(0));
+                    }
+                    sink.put(" end");
                 } else {
                     sink.put(token);
                     sink.putAscii('(');
