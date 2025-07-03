@@ -44,7 +44,7 @@ public class DoubleArrayShiftFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return FUNCTION_NAME + "(D[]Id)";
+        return FUNCTION_NAME + "(D[]ID)";
     }
 
     @Override
