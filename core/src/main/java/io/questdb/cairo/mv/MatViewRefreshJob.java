@@ -68,7 +68,6 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
-import static io.questdb.cairo.wal.WalUtils.WAL_DEFAULT_LAST_REFRESH_TIMESTAMP;
 
 public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
@@ -285,6 +284,76 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
         }
         return false;
+    }
+
+    private void commitMatView(
+            @NotNull MatViewState viewState,
+            @NotNull WalWriter walWriter,
+            @NotNull RefreshContext refreshContext,
+            @NotNull RecordCursorFactory factory,
+            @NotNull RecordToRowCopier copier,
+            long refreshTriggerTimestamp,
+            long replacementTimestampLo,
+            long replacementTimestampHi
+    ) {
+        final long recordRowCopierMetadataVersion = walWriter.getMetadata().getMetadataVersion();
+        final long refreshFinishTimestamp = microsecondClock.getTicks();
+        final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
+        if (refreshContext.toBaseTxn == -1) {
+            // It's a range refresh.
+            // It comes in two flavors:
+            //   1. Range refresh run by the user via REFRESH SQL
+            //   2. Period range refresh triggered by period timer
+
+            // First, do a range replace commit.
+            walWriter.commitWithParams(
+                    replacementTimestampLo,
+                    replacementTimestampHi,
+                    WAL_DEDUP_MODE_REPLACE_RANGE
+            );
+            // Second, if it's a period range refresh, we need to persist state
+            // with the new lastPeriodHi, but the same base txn and cached txn intervals.
+            // If we did a mat view data commit, we'd unintentionally reset the cached intervals.
+            if (refreshContext.periodHi != Numbers.LONG_NULL) {
+                walWriter.resetMatViewState(
+                        viewState.getLastRefreshBaseTxn(),
+                        refreshFinishTimestamp,
+                        false,
+                        null,
+                        commitPeriodHi,
+                        viewState.getCachedTxnIntervals(),
+                        viewState.getCachedIntervalsBaseTxn()
+                );
+            }
+            viewState.rangeRefreshSuccess(
+                    factory,
+                    copier,
+                    recordRowCopierMetadataVersion,
+                    refreshFinishTimestamp,
+                    refreshTriggerTimestamp,
+                    commitPeriodHi
+            );
+        } else {
+            // It's an incremental/full refresh.
+            // Easy job: first commit data along with the mat view state and then update the in-memory state.
+            // The mat view data commit will reset cached txn intervals since we want to evict them.
+            walWriter.commitMatView(
+                    refreshContext.toBaseTxn,
+                    refreshFinishTimestamp,
+                    commitPeriodHi,
+                    replacementTimestampLo,
+                    replacementTimestampHi
+            );
+            viewState.refreshSuccess(
+                    factory,
+                    copier,
+                    recordRowCopierMetadataVersion,
+                    refreshFinishTimestamp,
+                    refreshTriggerTimestamp,
+                    refreshContext.toBaseTxn,
+                    commitPeriodHi
+            );
+        }
     }
 
     private void enqueueInvalidateDependentViews(TableToken viewToken, String invalidationReason) {
@@ -656,7 +725,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private boolean insertAsSelect(
             @NotNull MatViewState viewState,
             @NotNull WalWriter walWriter,
-            @NotNull MatViewRefreshJob.RefreshContext refreshContext,
+            @NotNull RefreshContext refreshContext,
             long refreshTriggerTimestamp
     ) {
         assert viewState.isLocked();
@@ -671,13 +740,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         viewState.setLastRefreshStartTimestamp(refreshStartTimestamp);
         final MatViewDefinition viewDefinition = viewState.getViewDefinition();
         final TableToken viewTableToken = viewDefinition.getMatViewToken();
-        final long commitBaseTxn = refreshContext.toBaseTxn != -1 ? refreshContext.toBaseTxn : viewState.getLastRefreshBaseTxn();
-        final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
 
         final SampleByIntervalIterator intervalIterator = refreshContext.intervalIterator;
         if (intervalIterator == null) {
             // We don't have intervals to query, but we may need to bump base table txn or last period hi.
             if (refreshContext.toBaseTxn != -1 || refreshContext.periodHi != Numbers.LONG_NULL) {
+                final long commitBaseTxn = refreshContext.toBaseTxn != -1 ? refreshContext.toBaseTxn : viewState.getLastRefreshBaseTxn();
+                final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
                 refreshSuccessNoRows(
                         viewState,
                         walWriter,
@@ -691,7 +760,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
-        long refreshFinishTimestamp = 0;
         int intervalStep = intervalIterator.getStep();
         try {
             factory = viewState.acquireRecordFactory();
@@ -770,15 +838,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             }
 
                             if (rowCount >= commitTarget) {
-                                final boolean isLastInterval = intervalIterator.isLast();
-                                refreshFinishTimestamp = isLastInterval ? microsecondClock.getTicks() : WAL_DEFAULT_LAST_REFRESH_TIMESTAMP;
-
-                                if (isLastInterval) {
-                                    refreshFinishTimestamp = microsecondClock.getTicks();
-                                    walWriter.commitMatView(
-                                            commitBaseTxn,
-                                            refreshFinishTimestamp,
-                                            commitPeriodHi,
+                                if (intervalIterator.isLast()) {
+                                    commitMatView(
+                                            viewState,
+                                            walWriter,
+                                            refreshContext,
+                                            factory,
+                                            copier,
+                                            refreshTriggerTimestamp,
                                             replacementTimestampLo,
                                             replacementTimestampHi
                                     );
@@ -797,11 +864,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
 
                     if (replacementTimestampHi > replacementTimestampLo) {
-                        refreshFinishTimestamp = microsecondClock.getTicks();
-                        walWriter.commitMatView(
-                                commitBaseTxn,
-                                refreshFinishTimestamp,
-                                commitPeriodHi,
+                        commitMatView(
+                                viewState,
+                                walWriter,
+                                refreshContext,
+                                factory,
+                                copier,
+                                refreshTriggerTimestamp,
                                 replacementTimestampLo,
                                 replacementTimestampHi
                         );
@@ -830,31 +899,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
                     throw th;
                 }
-            }
-
-            final long recordRowCopierMetadataVersion = walWriter.getMetadata().getMetadataVersion();
-            if (refreshContext.toBaseTxn == -1) {
-                // It's a range refresh, so we don't bump last refresh base table txn.
-                // Keep the last refresh txn as is and only update the finish timestamp.
-                viewState.rangeRefreshSuccess(
-                        factory,
-                        copier,
-                        recordRowCopierMetadataVersion,
-                        refreshFinishTimestamp,
-                        refreshTriggerTimestamp,
-                        commitPeriodHi
-                );
-            } else {
-                // It's an incremental/full refresh.
-                viewState.refreshSuccess(
-                        factory,
-                        copier,
-                        recordRowCopierMetadataVersion,
-                        refreshFinishTimestamp,
-                        refreshTriggerTimestamp,
-                        commitBaseTxn,
-                        commitPeriodHi
-                );
             }
         } catch (Throwable th) {
             Misc.free(factory);
