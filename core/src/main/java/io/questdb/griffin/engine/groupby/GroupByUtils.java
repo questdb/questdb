@@ -132,6 +132,7 @@ public class GroupByUtils {
                     innerProjectionFunctions.add(func);
 
                     if (node.type != LITERAL) {
+
                         m = new TableColumnMetadata(
                                 Chars.toString(column.getName()),
                                 func.getType(),
@@ -140,6 +141,7 @@ public class GroupByUtils {
                                 func instanceof SymbolFunction && (((SymbolFunction) func).isSymbolTableStatic()),
                                 func.getMetadata()
                         );
+
                         if (func instanceof GroupByFunction) {
                             projectionFunctionFlags.add(PROJECTION_FUNCTION_FLAG_GROUP_BY);
                         } else {
@@ -154,14 +156,13 @@ public class GroupByUtils {
                     // to create these columns in advance of cursor instantiation
                     outerProjectionFunctions.add(null);
                     projectionFunctionFlags.add(PROJECTION_FUNCTION_FLAG_COLUMN);
+
+                    if (projectionMetadata.getTimestampIndex() == -1) {
+                        projectionMetadata.setTimestampIndex(i);
+                    }
                 }
 
-                if (node.type == LITERAL) {
-                    if (index == timestampIndex && !timestampUnimportant) {
-                        if (projectionMetadata.getTimestampIndex() == -1) {
-                            projectionMetadata.setTimestampIndex(i);
-                        }
-                    }
+                if (m == null) {
                     if (column.getAlias() == null) {
                         m = baseMetadata.getColumnMetadata(index);
                     } else {
@@ -176,7 +177,6 @@ public class GroupByUtils {
                     }
                 }
                 projectionMetadata.add(m);
-                // todo: investigate how we may end up with null metadata here
                 outPriorityMetadata.add(m);
             }
 
@@ -299,8 +299,6 @@ public class GroupByUtils {
             validateGroupByColumns(sqlNodeStack, model, inferredKeyColumnCount);
         } catch (Throwable e) {
             Misc.freeObjListAndClear(outerProjectionFunctions);
-            Misc.freeObjList(outGroupByFunctions);
-            Misc.freeObjList(innerProjectionFunctions);
             throw e;
         }
     }

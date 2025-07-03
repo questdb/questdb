@@ -54,11 +54,6 @@ public class RndUuidFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean shouldMemoize() {
-            return true;
-        }
-
-        @Override
         public long getLong128Hi(Record rec) {
             long hi = rnd.nextLong();
             // set version to 4
@@ -83,6 +78,16 @@ public class RndUuidFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isRandom() {
+            return true;
+        }
+
+        @Override
+        public boolean shouldMemoize() {
             return true;
         }
     }

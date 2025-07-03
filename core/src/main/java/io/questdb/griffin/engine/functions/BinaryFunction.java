@@ -72,6 +72,11 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
+    default boolean isRandom() {
+        return getLeft().isRandom() || getRight().isRandom();
+    }
+
+    @Override
     default boolean isRuntimeConstant() {
         final Function l = getLeft();
         final Function r = getRight();

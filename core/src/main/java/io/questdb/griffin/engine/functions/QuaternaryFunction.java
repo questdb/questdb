@@ -82,6 +82,11 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
+    default boolean isRandom() {
+        return getFunc0().isRandom() || getFunc1().isRandom() || getFunc2().isRandom() || getFunc3().isRandom();
+    }
+
+    @Override
     default boolean isRuntimeConstant() {
         final boolean arc = getFunc0().isRuntimeConstant();
         final boolean brc = getFunc1().isRuntimeConstant();

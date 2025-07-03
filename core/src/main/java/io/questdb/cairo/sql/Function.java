@@ -226,6 +226,10 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return false;
     }
 
+    default boolean isRandom() {
+        return false;
+    }
+
     /**
      * Declares that the function will maintain its value for all the rows during
      * {@link RecordCursor} traversal. However, between cursor traversals the function

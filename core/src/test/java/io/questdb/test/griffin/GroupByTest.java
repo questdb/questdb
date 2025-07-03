@@ -1642,7 +1642,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "1\ta\t0\n",
                     query,
                     null,
-                    true,
+                    false,
                     true
             );
         });

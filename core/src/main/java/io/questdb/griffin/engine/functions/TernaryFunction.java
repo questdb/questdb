@@ -71,6 +71,11 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
+    default boolean isRandom() {
+        return getLeft().isRandom() || getCenter().isRandom() || getRight().isRandom();
+    }
+
+    @Override
     default boolean isRuntimeConstant() {
         boolean arc = getLeft().isRuntimeConstant();
         boolean brc = getCenter().isRuntimeConstant();

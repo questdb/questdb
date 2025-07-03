@@ -81,6 +81,11 @@ public class RndDoubleCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isRandom() {
+            return true;
+        }
+
+        @Override
         public boolean shouldMemoize() {
             return true;
         }

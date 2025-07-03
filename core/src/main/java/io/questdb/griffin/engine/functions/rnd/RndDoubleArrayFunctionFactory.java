@@ -158,6 +158,11 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isRandom() {
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_double_array").val('(')
                     .val(array.getDimCount()).val(',')
@@ -215,6 +220,11 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isRandom() {
             return true;
         }
 

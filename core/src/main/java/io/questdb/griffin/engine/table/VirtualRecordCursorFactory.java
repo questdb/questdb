@@ -60,23 +60,23 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
         int functionCount = functions.size();
         boolean supportsRandomAccess = base.recordCursorSupportsRandomAccess();
         final ObjList<Function> memoizedFunctions = new ObjList<>();
-        int nonDeterministicCount = 0;
+        int randomCount = 0;
         for (int i = 0; i < functionCount; i++) {
             Function function = functions.getQuick(i);
             if (supportsRandomAccess && !function.supportsRandomAccess()) {
                 supportsRandomAccess = false;
             }
 
-            if (function.isNonDeterministic()) {
-                nonDeterministicCount++;
+            if (function.isRandom()) {
+                randomCount++;
             }
 
             if (allowMemoization && function.shouldMemoize()) {
                 memoizedFunctions.add(function);
             }
         }
-        this.supportsRandomAccess = supportsRandomAccess && nonDeterministicCount == 0;
-        this.cursor = new VirtualFunctionRecordCursor(functions, memoizedFunctions, supportsRandomAccess, virtualColumnReservedSlots);
+        this.supportsRandomAccess = supportsRandomAccess && randomCount == 0;
+        this.cursor = new VirtualFunctionRecordCursor(functions, memoizedFunctions, this.supportsRandomAccess, virtualColumnReservedSlots);
         this.internalSymbolTableSource = new VirtualRecordCursorFactorySymbolTableSource(cursor, virtualColumnReservedSlots);
         this.priorityMetadata = priorityMetadata;
     }

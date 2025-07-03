@@ -61,6 +61,11 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
+    default boolean isRandom() {
+        return getArg().isRandom();
+    }
+
+    @Override
     default boolean isRuntimeConstant() {
         return getArg().isRuntimeConstant();
     }
