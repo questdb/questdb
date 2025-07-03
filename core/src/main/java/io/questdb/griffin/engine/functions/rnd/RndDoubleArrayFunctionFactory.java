@@ -122,7 +122,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
         public RndDoubleArrayFixDimLenFunction(CairoConfiguration configuration, int nDims, int nanRate, IntList dimLens, int functionPosition) {
             try {
-                this.nanRate = nanRate + 1;
+                this.nanRate = nanRate;
                 this.nDims = nDims;
                 this.array = new DirectArray(configuration);
                 this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
@@ -161,7 +161,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("rnd_double_array").val('(')
                     .val(array.getDimCount()).val(',')
-                    .val(nanRate - 1).val(',')
+                    .val(nanRate).val(',')
                     .val("ignored,");
             for (int i = 0, n = dimLens.size(); i < n; i++) {
                 if (i > 0) {
@@ -183,7 +183,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
         public RndDoubleArrayRndDimLenFunction(CairoConfiguration configuration, int nDims, int nanRate, int maxDimLen, int functionPosition) {
             try {
-                this.nanRate = nanRate + 1;
+                this.nanRate = nanRate;
                 this.nDims = nDims;
                 this.array = new DirectArray(configuration);
                 this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
@@ -222,7 +222,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("rnd_double_array").val('(')
                     .val(array.getDimCount()).val(',')
-                    .val(nanRate - 1).val(',')
+                    .val(nanRate).val(',')
                     .val(maxDimLen)
                     .val(')');
         }
