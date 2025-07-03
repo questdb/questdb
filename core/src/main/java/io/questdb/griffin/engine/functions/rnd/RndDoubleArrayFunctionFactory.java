@@ -84,11 +84,11 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
             return new RndDoubleArrayRndDimLenFunction(configuration, nDims, nanRate, MAX_DIM_LEN, position);
         }
 
-        final int maxDimLen = validateAndGetArg(args, argPositions, 2, "maxDimLen");
+        final int maxDimLen = validateAndGetArg(args, argPositions, 2, "maxDimLength");
         if (args.size() == 3) {
             if (maxDimLen <= 0) {
                 throw SqlException.$(argPositions.getQuick(2),
-                        "maxDimLen must be a positive integer [maxDimLen=").put(maxDimLen).put(']');
+                        "maxDimLength must be a positive integer [maxDimLength=").put(maxDimLen).put(']');
             }
             return new RndDoubleArrayRndDimLenFunction(configuration, nDims, nanRate, maxDimLen, position);
         }
@@ -139,7 +139,9 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         private DirectArray array;
         private Rnd rnd;
 
-        public RndDoubleArrayFixDimLenFunction(CairoConfiguration configuration, int nDims, int nanRate, IntList dimLens, int functionPosition) {
+        public RndDoubleArrayFixDimLenFunction(
+                CairoConfiguration configuration, int nDims, int nanRate, IntList dimLens, int functionPosition
+        ) {
             try {
                 this.nanRate = nanRate;
                 this.nDims = nDims;

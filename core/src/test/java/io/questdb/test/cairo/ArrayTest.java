@@ -2056,7 +2056,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "select rnd_double_array(10, 0, 0)",
                     31,
-                    "maxDimLen must be a positive integer [maxDimLen=0]"
+                    "maxDimLength must be a positive integer [maxDimLength=0]"
             );
 
             assertSql("rnd_double_array\nnull\n",
