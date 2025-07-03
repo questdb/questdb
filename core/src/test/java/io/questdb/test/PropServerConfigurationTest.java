@@ -1066,13 +1066,13 @@ public class PropServerConfigurationTest {
         final Properties properties = new Properties();
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertEquals("shared-io", configuration.getIOWorkerPoolConfiguration().getPoolName());
-        Assert.assertTrue("must be minimum of 4 shared workers", configuration.getIOWorkerPoolConfiguration().getWorkerCount() >= 4);
+        Assert.assertTrue("must be minimum of 2 shared workers", configuration.getIOWorkerPoolConfiguration().getWorkerCount() >= 2);
 
         Assert.assertEquals("shared-query", configuration.getQueryWorkerPoolConfiguration().getPoolName());
-        Assert.assertTrue("must be minimum of 4 shared workers", configuration.getQueryWorkerPoolConfiguration().getWorkerCount() >= 4);
+        Assert.assertTrue("must be minimum of 2 shared workers", configuration.getQueryWorkerPoolConfiguration().getWorkerCount() >= 2);
 
         Assert.assertEquals("shared-write", configuration.getWriteWorkerPoolConfiguration().getPoolName());
-        Assert.assertTrue("must be minimum of 6 shared workers", configuration.getWriteWorkerPoolConfiguration().getWorkerCount() >= 6);
+        Assert.assertTrue("must be minimum of 3 shared workers", configuration.getWriteWorkerPoolConfiguration().getWorkerCount() >= 3);
     }
 
     @Test

@@ -1610,7 +1610,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             // Legacy shared pool, it used to be a single shared pool for all the tasks.
             // Now it's split into 3: IO, Query and Write
             // But the old props are the defaults for the new shared pools, read them.
-            int sharedWorkerCount = getInt(properties, env, PropertyKey.SHARED_WORKER_COUNT, cpuAvailable - cpuSpare);
+            int sharedWorkerCountSett = getInt(properties, env, PropertyKey.SHARED_WORKER_COUNT, Math.max(2, cpuAvailable - cpuSpare));
             boolean sharedWorkerHaltOnError = getBoolean(properties, env, PropertyKey.SHARED_WORKER_HALT_ON_ERROR, false);
             long sharedWorkerYieldThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_YIELD_THRESHOLD, 10);
             long sharedWorkerNapThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_NAP_THRESHOLD, 7_000);
@@ -1623,7 +1623,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.ioSharedWorkerPoolConfiguration,
                     PropertyKey.IO_SHARED_WORKER_COUNT,
                     PropertyKey.IO_SHARED_WORKER_AFFINITY,
-                    sharedWorkerCount,
+                    sharedWorkerCountSett,
                     Thread.NORM_PRIORITY + 1,
                     sharedWorkerHaltOnError,
                     sharedWorkerYieldThreshold,
@@ -1632,12 +1632,12 @@ public class PropServerConfiguration implements ServerConfiguration {
                     sharedWorkerSleepTimeout
             );
 
-            configureSharedThreadPool(
+            int querySharedWorkers = configureSharedThreadPool(
                     properties, env,
                     this.querySharedWorkerPoolConfiguration,
                     PropertyKey.QUERY_SHARED_WORKER_COUNT,
                     PropertyKey.QUERY_SHARED_WORKER_AFFINITY,
-                    sharedWorkerCount,
+                    sharedWorkerCountSett,
                     Thread.NORM_PRIORITY,
                     sharedWorkerHaltOnError,
                     sharedWorkerYieldThreshold,
@@ -1648,12 +1648,12 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             // Write pool supposed to be mostly IO constrained, not that CPU constrained
             // Allocate 50% the shared worker count by default.
-            configureSharedThreadPool(
+            int writeSharedWorkers = configureSharedThreadPool(
                     properties, env,
                     this.writeSharedWorkerPoolConfiguration,
                     PropertyKey.WRITE_SHARED_WORKER_COUNT,
                     PropertyKey.WRITE_SHARED_WORKER_AFFINITY,
-                    (int) (1.5 * sharedWorkerCount),
+                    (int) (1.5 * sharedWorkerCountSett),
                     Thread.NORM_PRIORITY,
                     sharedWorkerHaltOnError,
                     sharedWorkerYieldThreshold,
@@ -1669,15 +1669,15 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgSelectCacheBlockCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_BLOCK_COUNT, 32);
                 this.pgSelectCacheRowCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_ROW_COUNT, Math.max(effectivePGWorkerCount, 4));
             }
-            final int effectiveHttpWorkerCount = httpWorkerCount > 0 ? httpWorkerCount : sharedWorkerCount;
+            final int effectiveHttpWorkerCount = httpWorkerCount > 0 ? httpWorkerCount : ioSharedPoolWorkerCount;
             this.httpSqlCacheEnabled = getBoolean(properties, env, PropertyKey.HTTP_QUERY_CACHE_ENABLED, true);
             this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 32);
             this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, Math.max(effectiveHttpWorkerCount, 4));
             this.queryCacheEventQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY, 4));
 
-            this.sqlCompilerPoolCapacity = 2 * (httpWorkerCount + pgWorkerCount + sharedWorkerCount + walApplyWorkerCount);
+            this.sqlCompilerPoolCapacity = 2 * (httpWorkerCount + pgWorkerCount + writeSharedWorkers + ioSharedPoolWorkerCount);
 
-            final int defaultReduceQueueCapacity = Math.min(2 * sharedWorkerCount, 64);
+            final int defaultReduceQueueCapacity = querySharedWorkers > 0 ? Math.min(2 * querySharedWorkers, 64) : 0;
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByShardingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 100_000);
@@ -1686,16 +1686,21 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoGroupByPresizeMaxHeapSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_HEAP_SIZE, Numbers.SIZE_1GB);
             this.cairoPageFrameReduceRowIdListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY, 256));
             this.cairoPageFrameReduceColumnListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY, 16));
-            final int defaultReduceShardCount = Math.min(sharedWorkerCount, 4);
+            final int defaultReduceShardCount = querySharedWorkers > 0 ? Math.min(querySharedWorkers, 4) : 0;
             this.cairoPageFrameReduceShardCount = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, defaultReduceShardCount);
             this.sqlParallelFilterPreTouchEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, true);
             this.sqlParallelFilterPreTouchThreshold = getDouble(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD, "0.05");
             this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
 
-            final boolean defaultParallelSqlEnabled = sharedWorkerCount >= 4;
+            final boolean defaultParallelSqlEnabled = querySharedWorkers > 0;
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelReadParquetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, defaultParallelSqlEnabled);
+            if (!sqlParallelFilterEnabled && !sqlParallelGroupByEnabled && !sqlParallelReadParquetEnabled) {
+                // All type of parallel queries are disabled. Don't start the query thread pool
+                querySharedWorkerPoolConfiguration.sharedWorkerCount = 0;
+            }
+
             this.walParallelExecutionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED, true);
             this.matViewParallelExecutionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, true);
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);

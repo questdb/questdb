@@ -49,19 +49,16 @@ public abstract class WorkerPoolManager implements Target {
 
     public WorkerPoolManager(ServerConfiguration config) {
         sharedPoolIO = new WorkerPool(config.getIOWorkerPoolConfiguration());
-        sharedPoolQuery = new WorkerPool(config.getQueryWorkerPoolConfiguration());
+        sharedPoolQuery = config.getQueryWorkerPoolConfiguration().getWorkerCount() > 0 ? new WorkerPool(config.getQueryWorkerPoolConfiguration()) : null;
         sharedPoolWrite = new WorkerPool(config.getWriteWorkerPoolConfiguration());
 
-        configureSharedPool(sharedPoolIO, sharedPoolQuery, sharedPoolWrite); // abstract method giving callers the chance to assign jobs
+        WorkerPool queryPool = sharedPoolQuery != null ? sharedPoolQuery : sharedPoolIO;
+        configureSharedPool(sharedPoolIO, queryPool, sharedPoolWrite); // abstract method giving callers the chance to assign jobs
         config.getMetrics().addScrapable(this);
     }
 
     public WorkerPool getInstanceIO(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
         return getWorkerPool(config, requester, sharedPoolIO);
-    }
-
-    public WorkerPool getInstanceQuery(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
-        return getWorkerPool(config, requester, sharedPoolQuery);
     }
 
     public WorkerPool getInstanceWrite(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
@@ -124,17 +121,21 @@ public abstract class WorkerPoolManager implements Target {
     }
 
     private static void startWorkerPool(Log sharedPoolLog, WorkerPool p, String msg) {
-        p.start(sharedPoolLog);
-        LOG.info().$(msg).$(p.getPoolName())
-                .$(", workers=").$(p.getWorkerCount())
-                .I$();
+        if (p != null) {
+            p.start(sharedPoolLog);
+            LOG.info().$(msg).$(p.getPoolName())
+                    .$(", workers=").$(p.getWorkerCount())
+                    .I$();
+        }
     }
 
     private void closePool(WorkerPool p, String message) {
-        LOG.info().$(message).$(p.getPoolName())
-                .$(", workers=").$(p.getWorkerCount())
-                .I$();
-        p.halt();
+        if (p != null) {
+            LOG.info().$(message).$(p.getPoolName())
+                    .$(", workers=").$(p.getWorkerCount())
+                    .I$();
+            p.halt();
+        }
     }
 
     @NotNull
