@@ -118,30 +118,9 @@ public class OrderByNegativeLimitFuzzTest extends AbstractCairoTest {
         CharSequence actual = sink.subSequence(0, actualIndex);
         TestUtils.assertEquals(expected, actual);
 
-        // As we inverted the `order by` between the expected and actual query to have the same result sets, we
-        // now get the result in the opposite order.
-        expectedIndex = expectedSink.length() - 1;
-        while (true) {
-            int index = expectedSink.lastIndexOf("\n", expectedIndex - 1);
-            if (index < 0) {
-                break;
-            }
-
-            CharSequence expectedRow = expectedSink.subSequence(index + 1, expectedIndex + 1);
-            expectedIndex = index;
-
-            index = actualSink.indexOf("\n", actualIndex + 1);
-            assert index >= 0 : "missing expected rows in the results set";
-
-            CharSequence actualRow = actualSink.subSequence(actualIndex + 1, index + 1);
-            actualIndex = index;
-
-            TestUtils.assertEquals(expectedRow, actualRow);
-        }
-
-        if (actualSink.indexOf("\n", actualIndex + 1) >= 0) {
-            throw new AssertionError("actual result set contains more rows than expected");
-        }
+        expected = expectedSink.subSequence(expectedIndex + 1, expectedSink.length());
+        actual = sink.subSequence(actualIndex + 1, sink.length());
+        TestUtils.assertReverseLinesEqual(null, expected, actual);
     }
 
     private @Nullable String generateFilter(Rnd rnd, @Nullable Object[] columns) {

@@ -24,16 +24,35 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.griffin.PlanSink;
 
-public class BwdPageFrameRowCursorFactory implements RowCursorFactory {
-    private final PageFrameBwdRowCursor cursor = new PageFrameBwdRowCursor();
+public class PageFrameRowCursorFactory implements RowCursorFactory {
+    private final int baseOrder;
+    private PageFrameBwdRowCursor bwdCursor;
+    private PageFrameFwdRowCursor fwdCursor;
+
+    public PageFrameRowCursorFactory(int order) {
+        this.baseOrder = order;
+    }
 
     @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
-        cursor.of(pageFrame);
-        return cursor;
+        if (baseOrder == PartitionFrameCursorFactory.ORDER_ASC || baseOrder == PartitionFrameCursorFactory.ORDER_ANY) {
+            if (fwdCursor == null) {
+                fwdCursor = new PageFrameFwdRowCursor();
+            }
+            return fwdCursor.of(pageFrame);
+        }
+
+        if (bwdCursor == null) {
+            bwdCursor = new PageFrameBwdRowCursor();
+        }
+        return bwdCursor.of(pageFrame);
     }
 
     @Override
@@ -43,11 +62,14 @@ public class BwdPageFrameRowCursorFactory implements RowCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        if (sink.getOrder() == PartitionFrameCursorFactory.ORDER_ASC) {
-            sink.type("Row forward scan");
-        } else {
+        int order = sink.getOrder();
+        if (order == PartitionFrameCursorFactory.ORDER_ANY || order < 0) {
+            order = baseOrder;
+        }
+        if (order == PartitionFrameCursorFactory.ORDER_DESC) {
             sink.type("Row backward scan");
+        } else {
+            sink.type("Row forward scan");
         }
     }
 }
-

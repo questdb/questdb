@@ -816,6 +816,10 @@ public final class Chars {
         return indexOf(sequence, sequenceLo, sequenceHi, term, -1);
     }
 
+    public static int lastIndexOf(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, char c) {
+        return indexOf(sequence, sequenceLo, sequenceHi, c, -1);
+    }
+
     /**
      * Strictly greater than (&lt;) comparison of two UTF16 sequences in lexicographical
      * order. For example, for:

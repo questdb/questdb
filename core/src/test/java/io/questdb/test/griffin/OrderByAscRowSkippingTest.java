@@ -24,14 +24,15 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.FullFwdPartitionFrameCursorFactory;
+import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.engine.table.FwdPageFrameRowCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.test.AbstractCairoTest;
@@ -858,8 +859,8 @@ public class OrderByAscRowSkippingTest extends AbstractCairoTest {
         return new PageFrameRecordCursorFactory(
                 engine.getConfiguration(),
                 metadata,
-                new FullFwdPartitionFrameCursorFactory(metadata.getTableToken(), reader.getMetadataVersion(), GenericRecordMetadata.copyOf(metadata)),
-                new FwdPageFrameRowCursorFactory(),
+                new FullPartitionFrameCursorFactory(metadata.getTableToken(), reader.getMetadataVersion(), GenericRecordMetadata.copyOf(metadata), PartitionFrameCursorFactory.ORDER_ASC),
+                new PageFrameRowCursorFactory(PartitionFrameCursorFactory.ORDER_ASC),
                 false,
                 null,
                 true,
