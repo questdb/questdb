@@ -48,9 +48,9 @@ public abstract class WorkerPoolManager implements Target {
     private final AtomicBoolean running = new AtomicBoolean();
 
     public WorkerPoolManager(ServerConfiguration config) {
-        sharedPoolIO = new WorkerPool(config.getIOWorkerPoolConfiguration(), "shared_io");
-        sharedPoolQuery = new WorkerPool(config.getQueryWorkerPoolConfiguration(), "shared_query");
-        sharedPoolWrite = new WorkerPool(config.getWriteWorkerPoolConfiguration(), "shared_write");
+        sharedPoolIO = new WorkerPool(config.getIOWorkerPoolConfiguration());
+        sharedPoolQuery = new WorkerPool(config.getQueryWorkerPoolConfiguration());
+        sharedPoolWrite = new WorkerPool(config.getWriteWorkerPoolConfiguration());
 
         configureSharedPool(sharedPoolIO, sharedPoolQuery, sharedPoolWrite); // abstract method giving callers the chance to assign jobs
         config.getMetrics().addScrapable(this);
@@ -146,6 +146,7 @@ public abstract class WorkerPoolManager implements Target {
         if (config.getWorkerCount() < 1) {
             LOG.info().$("using SHARED pool [requester=").$(requester)
                     .$(", workers=").$(sharedPool.getWorkerCount())
+                    .$(", pool=").$(sharedPool.getPoolName())
                     .I$();
             return sharedPool;
         }

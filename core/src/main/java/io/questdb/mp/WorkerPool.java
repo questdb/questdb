@@ -59,10 +59,6 @@ public class WorkerPool implements Closeable {
     private final long yieldThreshold;
 
     public WorkerPool(WorkerPoolConfiguration configuration) {
-        this(configuration, null);
-    }
-
-    public WorkerPool(WorkerPoolConfiguration configuration, String poolNameOverride) {
         this.workerCount = configuration.getWorkerCount();
         int[] workerAffinity = configuration.getWorkerAffinity();
         if (workerAffinity != null && workerAffinity.length > 0) {
@@ -73,7 +69,7 @@ public class WorkerPool implements Closeable {
         this.halted = new SOCountDownLatch(workerCount);
         this.haltOnError = configuration.haltOnError();
         this.daemons = configuration.isDaemonPool();
-        this.poolName = poolNameOverride != null ? poolNameOverride : configuration.getPoolName();
+        this.poolName = configuration.getPoolName();
         this.yieldThreshold = configuration.getYieldThreshold();
         this.napThreshold = configuration.getNapThreshold();
         this.sleepThreshold = configuration.getSleepThreshold();

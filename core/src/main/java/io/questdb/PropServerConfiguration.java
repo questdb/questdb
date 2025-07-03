@@ -1607,51 +1607,65 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.ilpAutoCreateNewColumns = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS, true);
             this.ilpAutoCreateNewTables = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_TABLES, true);
 
+            // Legacy shared pool, it used to be a single shared pool for all the tasks.
+            // Now it's split into 3: IO, Query and Write
+            // But the old props are the defaults for the new shared pools, read them.
             int sharedWorkerCount = getInt(properties, env, PropertyKey.SHARED_WORKER_COUNT, cpuAvailable - cpuSpare);
-            int[] sharedWorkerAffinity = getAffinity(properties, env, PropertyKey.SHARED_WORKER_AFFINITY, sharedWorkerCount);
             boolean sharedWorkerHaltOnError = getBoolean(properties, env, PropertyKey.SHARED_WORKER_HALT_ON_ERROR, false);
             long sharedWorkerYieldThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_YIELD_THRESHOLD, 10);
             long sharedWorkerNapThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_NAP_THRESHOLD, 7_000);
             long sharedWorkerSleepThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_SLEEP_THRESHOLD, 10_000);
             long sharedWorkerSleepTimeout = getMillis(properties, env, PropertyKey.SHARED_WORKER_SLEEP_TIMEOUT, 10);
 
-            this.ioSharedWorkerPoolConfiguration.sharedWorkerCount = getInt(properties, env, PropertyKey.IO_SHARED_WORKER_COUNT, sharedWorkerCount);
-            this.ioSharedWorkerPoolConfiguration.sharedWorkerAffinity = getAffinity(properties, env, PropertyKey.IO_SHARED_WORKER_AFFINITY, this.ioSharedWorkerPoolConfiguration.sharedWorkerCount);
-            this.ioSharedWorkerPoolConfiguration.sharedWorkerHaltOnError = sharedWorkerHaltOnError;
-            this.ioSharedWorkerPoolConfiguration.sharedWorkerYieldThreshold = sharedWorkerYieldThreshold;
-            this.ioSharedWorkerPoolConfiguration.sharedWorkerNapThreshold = sharedWorkerNapThreshold;
-            this.ioSharedWorkerPoolConfiguration.sharedWorkerSleepThreshold = sharedWorkerSleepThreshold;
-            this.ioSharedWorkerPoolConfiguration.sharedWorkerSleepTimeout = sharedWorkerSleepTimeout;
-            this.ioSharedWorkerPoolConfiguration.metrics = this.metrics;
             // IO will be slightly higher priority than query and write pools to make the server more responsive
-            this.ioSharedWorkerPoolConfiguration.workerPoolPriority = Thread.NORM_PRIORITY + 1;
+            int ioSharedPoolWorkerCount = configureSharedThreadPool(
+                    properties, env,
+                    this.ioSharedWorkerPoolConfiguration,
+                    PropertyKey.IO_SHARED_WORKER_COUNT,
+                    PropertyKey.IO_SHARED_WORKER_AFFINITY,
+                    sharedWorkerCount,
+                    Thread.NORM_PRIORITY + 1,
+                    sharedWorkerHaltOnError,
+                    sharedWorkerYieldThreshold,
+                    sharedWorkerNapThreshold,
+                    sharedWorkerSleepThreshold,
+                    sharedWorkerSleepTimeout
+            );
 
-            this.querySharedWorkerPoolConfiguration.sharedWorkerCount = getInt(properties, env, PropertyKey.QUERY_SHARED_WORKER_COUNT, sharedWorkerCount);
-            this.querySharedWorkerPoolConfiguration.sharedWorkerAffinity = getAffinity(properties, env, PropertyKey.QUERY_SHARED_WORKER_AFFINITY, this.querySharedWorkerPoolConfiguration.sharedWorkerCount);
-            this.querySharedWorkerPoolConfiguration.sharedWorkerHaltOnError = sharedWorkerHaltOnError;
-            this.querySharedWorkerPoolConfiguration.sharedWorkerYieldThreshold = sharedWorkerYieldThreshold;
-            this.querySharedWorkerPoolConfiguration.sharedWorkerNapThreshold = sharedWorkerNapThreshold;
-            this.querySharedWorkerPoolConfiguration.sharedWorkerSleepThreshold = sharedWorkerSleepThreshold;
-            this.querySharedWorkerPoolConfiguration.sharedWorkerSleepTimeout = sharedWorkerSleepTimeout;
-            this.querySharedWorkerPoolConfiguration.metrics = this.metrics;
-            this.ioSharedWorkerPoolConfiguration.workerPoolPriority = Thread.NORM_PRIORITY;
+            configureSharedThreadPool(
+                    properties, env,
+                    this.querySharedWorkerPoolConfiguration,
+                    PropertyKey.QUERY_SHARED_WORKER_COUNT,
+                    PropertyKey.QUERY_SHARED_WORKER_AFFINITY,
+                    sharedWorkerCount,
+                    Thread.NORM_PRIORITY,
+                    sharedWorkerHaltOnError,
+                    sharedWorkerYieldThreshold,
+                    sharedWorkerNapThreshold,
+                    sharedWorkerSleepThreshold,
+                    sharedWorkerSleepTimeout
+            );
 
             // Write pool supposed to be mostly IO constrained, not that CPU constrained
             // Allocate 50% the shared worker count by default.
-            this.writeSharedWorkerPoolConfiguration.sharedWorkerCount = getInt(properties, env, PropertyKey.WRITE_SHARED_WORKER_COUNT, (int) (1.5 * sharedWorkerCount));
-            this.writeSharedWorkerPoolConfiguration.sharedWorkerAffinity = getAffinity(properties, env, PropertyKey.WRITE_SHARED_WORKER_AFFINITY, this.writeSharedWorkerPoolConfiguration.sharedWorkerCount);
-            this.writeSharedWorkerPoolConfiguration.sharedWorkerHaltOnError = sharedWorkerHaltOnError;
-            this.writeSharedWorkerPoolConfiguration.sharedWorkerYieldThreshold = sharedWorkerYieldThreshold;
-            this.writeSharedWorkerPoolConfiguration.sharedWorkerNapThreshold = sharedWorkerNapThreshold;
-            this.writeSharedWorkerPoolConfiguration.sharedWorkerSleepThreshold = sharedWorkerSleepThreshold;
-            this.writeSharedWorkerPoolConfiguration.sharedWorkerSleepTimeout = sharedWorkerSleepTimeout;
-            this.writeSharedWorkerPoolConfiguration.metrics = this.metrics;
-            this.ioSharedWorkerPoolConfiguration.workerPoolPriority = Thread.NORM_PRIORITY;
+            configureSharedThreadPool(
+                    properties, env,
+                    this.writeSharedWorkerPoolConfiguration,
+                    PropertyKey.WRITE_SHARED_WORKER_COUNT,
+                    PropertyKey.WRITE_SHARED_WORKER_AFFINITY,
+                    (int) (1.5 * sharedWorkerCount),
+                    Thread.NORM_PRIORITY,
+                    sharedWorkerHaltOnError,
+                    sharedWorkerYieldThreshold,
+                    sharedWorkerNapThreshold,
+                    sharedWorkerSleepThreshold,
+                    sharedWorkerSleepTimeout
+            );
 
             // Now all worker counts are known, so we can set select cache capacity props.
             if (pgEnabled) {
                 this.pgSelectCacheEnabled = getBoolean(properties, env, PropertyKey.PG_SELECT_CACHE_ENABLED, true);
-                final int effectivePGWorkerCount = pgWorkerCount > 0 ? pgWorkerCount : sharedWorkerCount;
+                final int effectivePGWorkerCount = pgWorkerCount > 0 ? pgWorkerCount : ioSharedPoolWorkerCount;
                 this.pgSelectCacheBlockCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_BLOCK_COUNT, 32);
                 this.pgSelectCacheRowCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_ROW_COUNT, Math.max(effectivePGWorkerCount, 4));
             }
@@ -1856,6 +1870,33 @@ public class PropServerConfiguration implements ServerConfiguration {
             httpContextWebConsole = httpContextWebConsole.substring(0, httpContextWebConsole.length() - n);
         }
         return httpContextWebConsole;
+    }
+
+    private int configureSharedThreadPool(
+            Properties properties,
+            Map<String, String> env,
+            PropWorkerPoolConfiguration poolConfiguration,
+            PropertyKey workerCountProp,
+            PropertyKey affinityProp,
+            int sharedWorkerCount,
+            int priority,
+            boolean sharedWorkerHaltOnError,
+            long sharedWorkerYieldThreshold,
+            long sharedWorkerNapThreshold,
+            long sharedWorkerSleepThreshold,
+            long sharedWorkerSleepTimeout
+    ) throws ServerConfigurationException {
+        poolConfiguration.sharedWorkerCount = getInt(properties, env, workerCountProp, sharedWorkerCount);
+        poolConfiguration.sharedWorkerAffinity =
+                getAffinity(properties, env, affinityProp, poolConfiguration.sharedWorkerCount);
+        poolConfiguration.sharedWorkerHaltOnError = sharedWorkerHaltOnError;
+        poolConfiguration.sharedWorkerYieldThreshold = sharedWorkerYieldThreshold;
+        poolConfiguration.sharedWorkerNapThreshold = sharedWorkerNapThreshold;
+        poolConfiguration.sharedWorkerSleepThreshold = sharedWorkerSleepThreshold;
+        poolConfiguration.sharedWorkerSleepTimeout = sharedWorkerSleepTimeout;
+        poolConfiguration.metrics = this.metrics;
+        poolConfiguration.workerPoolPriority = priority;
+        return poolConfiguration.sharedWorkerCount;
     }
 
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {

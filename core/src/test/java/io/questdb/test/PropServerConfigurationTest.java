@@ -474,10 +474,10 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isWalSupported());
         Assert.assertTrue(configuration.getCairoConfiguration().getWalEnabledDefault());
         Assert.assertTrue(configuration.getCairoConfiguration().isWalApplyEnabled());
-        Assert.assertTrue(configuration.getWalApplyPoolConfiguration().isEnabled());
+        Assert.assertFalse(configuration.getWalApplyPoolConfiguration().isEnabled());
         Assert.assertFalse(configuration.getWalApplyPoolConfiguration().haltOnError());
         Assert.assertEquals("wal-apply", configuration.getWalApplyPoolConfiguration().getPoolName());
-        Assert.assertTrue(configuration.getWalApplyPoolConfiguration().getWorkerCount() > 0);
+        Assert.assertEquals(0, configuration.getWalApplyPoolConfiguration().getWorkerCount());
         Assert.assertEquals(10, configuration.getWalApplyPoolConfiguration().getSleepTimeout());
         Assert.assertEquals(7_000, configuration.getWalApplyPoolConfiguration().getNapThreshold());
         Assert.assertEquals(10_000, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
@@ -497,10 +497,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(50 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getPartitionO3SplitMinSize());
         Assert.assertFalse(configuration.getCairoConfiguration().getTextConfiguration().isUseLegacyStringDefault());
 
-        Assert.assertTrue(configuration.getMatViewRefreshPoolConfiguration().isEnabled());
+        Assert.assertFalse(configuration.getMatViewRefreshPoolConfiguration().isEnabled());
         Assert.assertFalse(configuration.getMatViewRefreshPoolConfiguration().haltOnError());
         Assert.assertEquals("mat-view-refresh", configuration.getMatViewRefreshPoolConfiguration().getPoolName());
-        Assert.assertTrue(configuration.getMatViewRefreshPoolConfiguration().getWorkerCount() > 0);
+        Assert.assertEquals(0, configuration.getMatViewRefreshPoolConfiguration().getWorkerCount());
         Assert.assertEquals(10, configuration.getMatViewRefreshPoolConfiguration().getSleepTimeout());
         Assert.assertEquals(7_000, configuration.getMatViewRefreshPoolConfiguration().getNapThreshold());
         Assert.assertEquals(10_000, configuration.getMatViewRefreshPoolConfiguration().getSleepThreshold());
@@ -707,7 +707,7 @@ public class PropServerConfigurationTest {
         properties.setProperty("shared.worker.count", "2");
         properties.setProperty("shared.worker.affinity", "2,3");
         env.put("QDB_SHARED_WORKER_COUNT", "3");
-        env.put("QDB_SHARED_WORKER_AFFINITY", "5,6,7");
+        env.put("QDB_IO_SHARED_WORKER_AFFINITY", "5,6,7");
 
         // int size
         properties.setProperty("http.send.buffer.size", "4k");
@@ -1065,8 +1065,14 @@ public class PropServerConfigurationTest {
     public void testMinimum4SharedWorkers() throws Exception {
         final Properties properties = new Properties();
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals("shared", configuration.getIOWorkerPoolConfiguration().getPoolName());
+        Assert.assertEquals("shared-io", configuration.getIOWorkerPoolConfiguration().getPoolName());
         Assert.assertTrue("must be minimum of 4 shared workers", configuration.getIOWorkerPoolConfiguration().getWorkerCount() >= 4);
+
+        Assert.assertEquals("shared-query", configuration.getQueryWorkerPoolConfiguration().getPoolName());
+        Assert.assertTrue("must be minimum of 4 shared workers", configuration.getQueryWorkerPoolConfiguration().getWorkerCount() >= 4);
+
+        Assert.assertEquals("shared-write", configuration.getWriteWorkerPoolConfiguration().getPoolName());
+        Assert.assertTrue("must be minimum of 6 shared workers", configuration.getWriteWorkerPoolConfiguration().getWorkerCount() >= 6);
     }
 
     @Test
