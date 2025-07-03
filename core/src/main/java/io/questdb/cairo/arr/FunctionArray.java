@@ -44,64 +44,64 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
     }
 
     @Override
-    public void appendToMemFlat(MemoryA mem) {
+    public void appendToMemFlat(MemoryA mem, int offset, int length) {
         final short elemType = getElemType();
-        int elemCount = getFlatViewLength();
         switch (elemType) {
             case ColumnType.BYTE:
-                for (int i = 0; i < elemCount; i++) {
-                    mem.putByte(functions.getQuick(i).getByte(record));
+                for (int i = 0; i < length; i++) {
+                    mem.putByte(functions.getQuick(offset + i).getByte(record));
                 }
                 break;
             case ColumnType.SHORT:
-                for (int i = 0; i < elemCount; i++) {
-                    mem.putShort(functions.getQuick(i).getShort(record));
+                for (int i = 0; i < length; i++) {
+                    mem.putShort(functions.getQuick(offset + i).getShort(record));
                 }
                 break;
             case ColumnType.INT:
-                for (int i = 0; i < elemCount; i++) {
-                    mem.putInt(functions.getQuick(i).getInt(record));
+                for (int i = 0; i < length; i++) {
+                    mem.putInt(functions.getQuick(offset + i).getInt(record));
                 }
                 break;
             case ColumnType.LONG:
-                for (int i = 0; i < elemCount; i++) {
-                    mem.putLong(functions.getQuick(i).getLong(record));
+                for (int i = 0; i < length; i++) {
+                    mem.putLong(functions.getQuick(offset + i).getLong(record));
                 }
                 break;
             case ColumnType.DATE:
-                for (int i = 0; i < elemCount; i++) {
-                    mem.putLong(functions.getQuick(i).getDate(record));
+                for (int i = 0; i < length; i++) {
+                    mem.putLong(functions.getQuick(offset + i).getDate(record));
                 }
                 break;
             case ColumnType.TIMESTAMP:
-                for (int i = 0; i < elemCount; i++) {
-                    mem.putLong(functions.getQuick(i).getTimestamp(record));
+                for (int i = 0; i < length; i++) {
+                    mem.putLong(functions.getQuick(offset + i).getTimestamp(record));
                 }
                 break;
             case ColumnType.FLOAT:
-                for (int i = 0; i < elemCount; i++) {
-                    mem.putFloat(functions.getQuick(i).getFloat(record));
+                for (int i = 0; i < length; i++) {
+                    mem.putFloat(functions.getQuick(offset + i).getFloat(record));
                 }
                 break;
             case ColumnType.DOUBLE:
-                for (int i = 0; i < elemCount; i++) {
-                    mem.putDouble(functions.getQuick(i).getDouble(record));
+                for (int i = 0; i < length; i++) {
+                    mem.putDouble(functions.getQuick(offset + i).getDouble(record));
                 }
                 break;
             case ColumnType.LONG256:
-                for (int i = 0; i < elemCount; i++) {
-                    Long256 v = functions.getQuick(i).getLong256A(record);
+                for (int i = 0; i < length; i++) {
+                    Long256 v = functions.getQuick(offset + i).getLong256A(record);
                     mem.putLong256(v.getLong0(), v.getLong1(), v.getLong2(), v.getLong3());
                 }
                 break;
             case ColumnType.UUID:
-                for (int i = 0; i < elemCount; i++) {
-                    mem.putLong128(functions.getQuick(i).getLong128Lo(record), functions.getQuick(i).getLong128Hi(record));
+                for (int i = 0; i < length; i++) {
+                    mem.putLong128(functions.getQuick(offset + i).getLong128Lo(record),
+                            functions.getQuick(offset + i).getLong128Hi(record));
                 }
                 break;
             case ColumnType.IPv4:
-                for (int i = 0; i < elemCount; i++) {
-                    mem.putInt(functions.getQuick(i).getIPv4(record));
+                for (int i = 0; i < length; i++) {
+                    mem.putInt(functions.getQuick(offset + i).getIPv4(record));
                 }
                 break;
             default:
