@@ -51,6 +51,7 @@ import java.time.temporal.ChronoUnit;
 import static io.questdb.cairo.PartitionBy.*;
 import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
+import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 import static io.questdb.std.datetime.microtime.TimestampFormatUtils.*;
 
 public class MicrosTimestampDriver implements TimestampDriver {
@@ -413,6 +414,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
             default:
                 return null;
         }
+    }
+
+    @Override
+    public int getTZRuleResolution() {
+        return RESOLUTION_MICROS;
     }
 
     @Override

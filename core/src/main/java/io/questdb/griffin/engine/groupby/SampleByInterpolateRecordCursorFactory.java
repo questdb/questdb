@@ -32,6 +32,7 @@ import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -61,9 +62,6 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
-
-import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
-import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
 public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursorFactory {
 
@@ -177,7 +175,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             entityColumnFilter.of(keyTypes.getColumnCount());
             this.mapSink2 = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter);
 
-            this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
+            this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
         } catch (Throwable th) {
             close();
             throw th;
@@ -260,6 +258,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private final Map dataMap;
         private final Function offsetFunc;
         private final int offsetFuncPos;
+        private final TimestampDriver timestampDriver;
         private final Function timezoneNameFunc;
         private final int timezoneNameFuncPos;
         private boolean areTimestampsInitialized;
@@ -284,6 +283,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 ObjList<GroupByFunction> groupByFunctions,
                 @Transient @NotNull ArrayColumnTypes keyTypes,
                 @Transient @NotNull ArrayColumnTypes valueTypes,
+                int timestampType,
                 Function timezoneNameFunc,
                 int timezoneNameFuncPos,
                 Function offsetFunc,
@@ -304,6 +304,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 this.timezoneNameFuncPos = timezoneNameFuncPos;
                 this.offsetFunc = offsetFunc;
                 this.offsetFuncPos = offsetFuncPos;
+                this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -742,11 +743,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                         // fixed rules means the timezone does not have historical or daylight time changes
                         rules = DateLocaleFactory.EN_LOCALE.getZoneRules(
                                 Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, tz.length())),
-                                RESOLUTION_MICROS
+                                timestampDriver.getTZRuleResolution()
                         );
                     } else {
                         // here timezone is in numeric offset format
-                        tzOffset = Numbers.decodeLowInt(opt) * MINUTE_MICROS;
+                        tzOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(opt));
                     }
                 } catch (NumericException e) {
                     throw SqlException.$(timezoneNameFuncPos, "invalid timezone: ").put(tz);
@@ -762,7 +763,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                     // bad value for offset
                     throw SqlException.$(offsetFuncPos, "invalid offset: ").put(offset);
                 }
-                fixedOffset = Numbers.decodeLowInt(val) * MINUTE_MICROS;
+                fixedOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(val));
             } else {
                 fixedOffset = Long.MIN_VALUE;
             }

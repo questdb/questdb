@@ -127,6 +127,8 @@ public interface TimestampDriver {
 
     TimestampFloorMethod getPartitionFloorMethod(int partitionBy);
 
+    int getTZRuleResolution();
+
     long getTicks();
 
     TimestampCeilMethod getTimestampCeilMethod(char c);

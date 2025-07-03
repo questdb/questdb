@@ -52,8 +52,6 @@ import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
-
 
 /**
  * Floors timestamps with modulo relative to a timestamp from 1970-01-01, as
@@ -83,6 +81,17 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        return newInstance(position, args, argPositions, configuration, sqlExecutionContext, ColumnType.TIMESTAMP_MICRO);
+    }
+
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext,
+            int timestampType
+    ) throws SqlException {
         final CharSequence unitStr = args.getQuick(0).getStrA(null);
         final int stride = CommonUtils.getStrideMultiple(unitStr);
         final char unit = CommonUtils.getStrideUnit(unitStr, argPositions.getQuick(0));
@@ -99,6 +108,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
         validateUnit(unit, unitPos);
         String offsetStr = null;
         long offset = 0;
+        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         if (offsetFunc.isConstant()) {
             final CharSequence o = offsetFunc.getStrA(null);
             if (o != null) {
@@ -107,7 +117,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
                     // bad value for offset
                     throw SqlException.$(offsetPos, "invalid offset: ").put(o);
                 }
-                offset = Numbers.decodeLowInt(val) * Timestamps.MINUTE_MICROS;
+                offset = timestampDriver.fromMinutes(Numbers.decodeLowInt(val));
             }
             offsetStr = Chars.toString(o);
         }
@@ -122,7 +132,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
                 if (l == Long.MIN_VALUE) {
                     try {
                         tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), timestampDriver.getTZRuleResolution()
                         );
                     } catch (NumericException e) {
                         Misc.free(timestampFunc);
@@ -134,7 +144,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
                         tzRules = null;
                     }
                 } else {
-                    tzOffset = Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS;
+                    tzOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
                 }
             }
 
@@ -142,29 +152,29 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
             if (tzRules == null) { // no timezone or fixed offset rules case
                 if (offsetFunc.isConstant()) {
-                    return createAllConstFunc(timestampFunc, stride, unit, from, offset, offsetStr, tzOffset, tzStr, ColumnType.TIMESTAMP_MICRO);
+                    return createAllConstFunc(timestampFunc, stride, unit, from, offset, offsetStr, tzOffset, tzStr, timestampType);
                 }
                 if (offsetFunc.isRuntimeConstant()) {
-                    return new RuntimeConstOffsetFunction(timestampFunc, stride, unit, from, offsetFunc, offsetPos, tzOffset, tzStr, ColumnType.TIMESTAMP_MICRO);
+                    return new RuntimeConstOffsetFunction(timestampFunc, stride, unit, from, offsetFunc, offsetPos, tzOffset, tzStr, timestampType);
                 }
                 throw SqlException.$(offsetPos, "const or runtime const expected");
             }
 
             if (offsetFunc.isConstant()) {
-                return createAllConstTzFunc(timestampFunc, stride, unit, from, offset, offsetStr, tzRules, tzStr, ColumnType.TIMESTAMP_MICRO);
+                return createAllConstTzFunc(timestampFunc, stride, unit, from, offset, offsetStr, tzRules, tzStr, timestampType);
             }
             if (offsetFunc.isRuntimeConstant()) {
-                return new RuntimeConstOffsetDstGapAwareFunc(timestampFunc, stride, unit, from, offsetFunc, offsetPos, tzRules, tzStr, ColumnType.TIMESTAMP_MICRO);
+                return new RuntimeConstOffsetDstGapAwareFunc(timestampFunc, stride, unit, from, offsetFunc, offsetPos, tzRules, tzStr, timestampType);
             }
             throw SqlException.$(offsetPos, "const or runtime const expected");
         }
 
         if (timezoneFunc.isRuntimeConstant()) {
             if (offsetFunc.isConstant()) {
-                return createRuntimeConstTzFunc(timestampFunc, stride, unit, from, offset, offsetStr, timezoneFunc, timezonePos, ColumnType.TIMESTAMP_MICRO);
+                return createRuntimeConstTzFunc(timestampFunc, stride, unit, from, offset, offsetStr, timezoneFunc, timezonePos, timestampType);
             }
             if (offsetFunc.isRuntimeConstant()) {
-                return new AllRuntimeConstDstGapAwareFunc(timestampFunc, stride, unit, from, offsetFunc, offsetPos, timezoneFunc, timezonePos, ColumnType.TIMESTAMP_MICRO);
+                return new AllRuntimeConstDstGapAwareFunc(timestampFunc, stride, unit, from, offsetFunc, offsetPos, timezoneFunc, timezonePos, timestampType);
             }
             throw SqlException.$(offsetPos, "const or runtime const expected");
         }
@@ -583,7 +593,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
                 if (l == Long.MIN_VALUE) {
                     try {
                         tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), timestampDriver.getTZRuleResolution()
                         );
                         tzOffset = 0;
                     } catch (NumericException e) {
@@ -687,7 +697,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
                 if (l == Long.MIN_VALUE) {
                     try {
                         tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), timestampDriver.getTZRuleResolution()
                         );
                         tzOffset = 0;
                     } catch (NumericException e) {
@@ -980,7 +990,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
                 if (l == Long.MIN_VALUE) {
                     try {
                         tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), timestampDriver.getTZRuleResolution()
                         );
                         tzOffset = 0;
                     } catch (NumericException e) {

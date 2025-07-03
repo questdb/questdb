@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.sql.BindVariableService;
@@ -1008,7 +1007,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL || argTypeTag == ColumnType.VARCHAR) && arg.isConstant()) {
                 if (sigArgTypeTag == ColumnType.TIMESTAMP) {
                     int position = argPositions.getQuick(k);
-                    long timestamp = parseTimestamp(arg.getStrA(null), position);
+                    long timestamp = parseTimestamp(sigArgType, arg.getStrA(null), position);
                     args.set(k, TimestampConstant.newInstance(timestamp, sigArgType));
                 } else if (sigArgTypeTag == ColumnType.DATE) {
                     int position = argPositions.getQuick(k);
@@ -1275,9 +1274,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
     }
 
-    private long parseTimestamp(CharSequence str, int position) throws SqlException {
+    private long parseTimestamp(int timestampType, CharSequence str, int position) throws SqlException {
         try {
-            return MicrosTimestampDriver.floor(str);
+            return ColumnType.getTimestampDriver(timestampType).parseFloorLiteral(str);
         } catch (NumericException e) {
             throw SqlException.invalidDate(str, position);
         }
