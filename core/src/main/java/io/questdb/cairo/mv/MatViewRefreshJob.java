@@ -232,21 +232,20 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
 
             try {
-                final LongList stateTxnIntervals = viewState.getCachedTxnIntervals();
-
                 txnIntervals.clear();
                 txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, txnIntervals, lastRefreshTxn, lastTxn);
                 if (txnIntervals.size() > 0) {
-                    final int dividerIndex = stateTxnIntervals.size();
-                    stateTxnIntervals.addAll(txnIntervals);
-                    IntervalUtils.unionInPlace(stateTxnIntervals, dividerIndex);
+                    final int dividerIndex = txnIntervals.size();
+                    txnIntervals.addAll(viewState.getCachedTxnIntervals());
+                    IntervalUtils.unionInPlace(txnIntervals, dividerIndex);
 
                     final int cacheCapacity = configuration.getMatViewTxnIntervalsCacheCapacity() << 1;
-                    if (stateTxnIntervals.size() > cacheCapacity) {
+                    if (txnIntervals.size() > cacheCapacity) {
                         // Squash the latest intervals into a single one.
-                        stateTxnIntervals.setQuick(cacheCapacity - 1, stateTxnIntervals.getQuick(stateTxnIntervals.size() - 1));
-                        stateTxnIntervals.setPos(cacheCapacity);
+                        txnIntervals.setQuick(cacheCapacity - 1, txnIntervals.getQuick(txnIntervals.size() - 1));
+                        txnIntervals.setPos(cacheCapacity);
                     }
+                    viewState.setCachedTxnIntervals(txnIntervals);
                 }
                 viewState.setCachedIntervalsBaseTxn(lastTxn);
 
@@ -256,11 +255,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         false,
                         null,
                         viewState.getLastPeriodHi(),
-                        stateTxnIntervals,
-                        lastTxn
+                        viewState.getCachedTxnIntervals(),
+                        viewState.getCachedIntervalsBaseTxn()
                 );
 
-                return stateTxnIntervals;
+                return viewState.getCachedTxnIntervals();
             } catch (CairoException ex) {
                 LOG.error().$("could not read WAL transactions, falling back to full refresh [view=").$(viewToken)
                         .$(", ex=").$safe(ex.getFlyweightMessage())

@@ -403,6 +403,11 @@ public class MatViewState implements QuietCloseable {
         this.cachedIntervalsBaseTxn = cachedIntervalsBaseTxn;
     }
 
+    public void setCachedTxnIntervals(LongList txnIntervals) {
+        cachedTxnIntervals.clear();
+        cachedTxnIntervals.addAll(txnIntervals);
+    }
+
     public void setLastPeriodHi(long lastPeriodHi) {
         this.lastPeriodHi = lastPeriodHi;
     }
