@@ -3056,8 +3056,9 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testManualRefreshFailsWhenCachingTxnIntervals() throws Exception {
+    public void testManualViewInvalidatedOnTxnIntervalsCachingFailure() throws Exception {
         Assume.assumeFalse(Os.isWindows());
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_TXN_INTERVALS_CACHE_TIMER_INTERVAL, "1s");
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price ( " +
@@ -3074,6 +3075,8 @@ public class MatViewTest extends AbstractCairoTest {
             execute("create materialized view price_1h refresh manual as select sym, last(price) as price, ts from base_price sample by 1h");
 
             currentMicros = parseFloorPartialTimestamp("2024-12-31T01:01:01.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
             drainQueues();
 
             execute(
@@ -3084,6 +3087,14 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('jpyusd', 103.51, '2024-09-10T14:02')"
             );
             drainWalQueue();
+
+            // make sure caching task is scheduled
+            currentMicros += Timestamps.MINUTE_MICROS;
+            drainMatViewTimerQueue(timerJob);
+
+            // this tick should be no-op
+            currentMicros += Timestamps.MINUTE_MICROS;
+            drainMatViewTimerQueue(timerJob);
 
             // delete _txn file, so that table reader can't reload
             final TableToken baseTableToken = engine.getTableTokenIfExists("base_price");
@@ -3096,9 +3107,10 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainQueues();
 
+            // the view should become invalid due to failed WAL txn interval caching
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tmanual\tbase_price\t2024-12-31T01:01:01.000000Z\t2024-12-31T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2\n",
+                            "price_1h\tmanual\tbase_price\t2024-12-31T01:01:01.000000Z\t2024-12-31T01:03:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2\n",
                     "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
                             "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
                             "from materialized_views",
@@ -4944,6 +4956,7 @@ public class MatViewTest extends AbstractCairoTest {
     public void testTxnIntervalsCachingCapacity() throws Exception {
         final int capacity = 10;
         setProperty(PropertyKey.CAIRO_MAT_VIEW_TXN_INTERVALS_CACHE_CAPACITY, capacity);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_TXN_INTERVALS_CACHE_TIMER_INTERVAL, "10s");
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
@@ -4974,6 +4987,7 @@ public class MatViewTest extends AbstractCairoTest {
             Assert.assertEquals(-1, viewState.getCachedIntervalsBaseTxn());
             Assert.assertEquals(0, viewState.getCachedTxnIntervals().size());
 
+            currentMicros += 11 * Timestamps.SECOND_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
@@ -5029,7 +5043,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tmanual\tbase_price\t2025-01-01T01:01:01.000000Z\t2025-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tvalid\t31\t31\n",
+                            "price_1h\tmanual\tbase_price\t2025-01-01T01:01:12.000000Z\t2025-01-01T01:01:12.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tvalid\t31\t31\n",
                     matViewsSql,
                     null
             );
@@ -5044,6 +5058,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testTxnIntervalsCachingSmoke() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_TXN_INTERVALS_CACHE_TIMER_INTERVAL, "5s");
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
@@ -5054,7 +5069,6 @@ public class MatViewTest extends AbstractCairoTest {
                     "create materialized view price_1h refresh manual as " +
                             "select sym, last(price) as price, ts from base_price sample by 1h;"
             );
-
             execute(
                     "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
                             ",('gbpusd', 1.323, '2024-09-10T12:02')" +
@@ -5088,6 +5102,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-12T03:01')" +
                             ",('jpyusd', 103.21, '2024-09-12T23:02')"
             );
+            currentMicros += 6 * Timestamps.SECOND_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
@@ -5140,7 +5155,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tmanual\tbase_price\t2099-01-01T01:01:01.000000Z\t2099-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tvalid\t4\t4\n",
+                            "price_1h\tmanual\tbase_price\t2099-01-01T01:01:07.000000Z\t2099-01-01T01:01:07.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tvalid\t4\t4\n",
                     matViewsSql,
                     null
             );

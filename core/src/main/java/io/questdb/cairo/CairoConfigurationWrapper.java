@@ -467,6 +467,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewTxnIntervalsCacheTimerInterval() {
+        return getDelegate().getMatViewTxnIntervalsCacheTimerInterval();
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return getDelegate().getMaxCrashFiles();
     }

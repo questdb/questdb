@@ -499,6 +499,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewTxnIntervalsCacheTimerInterval() {
+        return 15_000;
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return 1;
     }

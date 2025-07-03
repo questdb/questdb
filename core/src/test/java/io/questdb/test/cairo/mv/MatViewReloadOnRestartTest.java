@@ -567,11 +567,17 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     @Test
     public void testMatViewsTxnIntervalsReloadOnServerStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
+            final long now = TimestampFormatUtils.parseUTCTimestamp("2024-01-01T01:01:01.000001Z");
+            final TestMicrosecondClock testClock = new TestMicrosecondClock(now);
+
             final LongList expectedTxnIntervals = new LongList();
             expectedTxnIntervals.add(parseFloorPartialTimestamp("2024-09-11T12:01"), parseFloorPartialTimestamp("2024-09-11T12:02"));
             expectedTxnIntervals.add(parseFloorPartialTimestamp("2024-09-12T03:01"), parseFloorPartialTimestamp("2024-09-12T23:02"));
 
-            try (final TestServerMain main1 = startMainPortsDisabled()) {
+            try (final TestServerMain main1 = startMainPortsDisabled(
+                    testClock,
+                    PropertyKey.CAIRO_MAT_VIEW_TXN_INTERVALS_CACHE_TIMER_INTERVAL.getEnvVarName(), "10s"
+            )) {
                 execute(
                         main1,
                         "create table base_price (" +
@@ -592,6 +598,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                                 ",('gbpusd', 1.321, '2024-09-10T13:02')"
                 );
+
+                final MatViewTimerJob timerJob = new MatViewTimerJob(main1.getEngine());
+                drainMatViewTimerQueue(timerJob);
 
                 final TableToken viewToken = main1.getEngine().getTableTokenIfExists("price_1h");
                 Assert.assertNotNull(viewToken);
@@ -629,6 +638,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                             "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-12T03:01')" +
                                     ",('jpyusd', 103.21, '2024-09-12T23:02')"
                     );
+                    // tick timer job to enqueue caching task
+                    testClock.micros.addAndGet(Timestamps.MINUTE_MICROS);
+                    drainMatViewTimerQueue(timerJob);
                     drainWalAndMatViewQueues(refreshJob, main1.getEngine());
 
                     // the newly inserted intervals should be in the cache
@@ -641,7 +653,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 }
             }
 
-            try (final TestServerMain main2 = startMainPortsDisabled()) {
+            try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
                 final TableToken viewToken = main2.getEngine().getTableTokenIfExists("price_1h");
                 Assert.assertNotNull(viewToken);
                 final MatViewState viewState = main2.getEngine().getMatViewStateStore().getViewState(viewToken);
@@ -675,8 +687,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     @Test
     public void testPeriodMatViewsReloadOnServerStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final String startStr = "2024-12-12T00:00:00.000000Z";
-            final long start = TimestampFormatUtils.parseUTCTimestamp(startStr);
+            final long start = TimestampFormatUtils.parseUTCTimestamp("2024-12-12T00:00:00.000000Z");
             final TestMicrosecondClock testClock = new TestMicrosecondClock(start);
 
             final String firstExpected = "sym\tprice\tts\n" +
@@ -953,16 +964,29 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     }
 
     @NotNull
-    private static TestServerMain startMainPortsDisabled(MicrosecondClock microsecondClock) {
-        return startWithEnvVariables0(
-                microsecondClock,
+    private static TestServerMain startMainPortsDisabled(MicrosecondClock microsecondClock, String... extraEnvs) {
+        assert extraEnvs.length % 2 == 0;
+
+        final String[] disablePortsEnvs = new String[]{
                 PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
                 PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
                 PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "false",
                 PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
                 PropertyKey.HTTP_ENABLED.getEnvVarName(), "false",
                 PropertyKey.PG_ENABLED.getEnvVarName(), "false"
-        );
+        };
+
+        final String[] envs = new String[disablePortsEnvs.length + extraEnvs.length];
+        for (int i = 0; i < extraEnvs.length; i += 2) {
+            envs[i] = extraEnvs[i];
+            envs[i + 1] = extraEnvs[i + 1];
+        }
+        for (int i = disablePortsEnvs.length; i < envs.length; i += 2) {
+            envs[i] = disablePortsEnvs[i - disablePortsEnvs.length];
+            envs[i + 1] = disablePortsEnvs[i + 1 - disablePortsEnvs.length];
+        }
+
+        return startWithEnvVariables0(microsecondClock, envs);
     }
 
     private static TestServerMain startWithEnvVariables0(String... envs) {

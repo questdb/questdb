@@ -64,6 +64,9 @@ public class MatViewState implements QuietCloseable {
     // Used by MatViewTimerJob to avoid queueing redundant refresh tasks.
     private final AtomicLong refreshSeq = new AtomicLong();
     private final MatViewTelemetryFacade telemetryFacade;
+    // Incremented each time there's a base table transaction(s).
+    // Used by MatViewTimerJob to avoid queueing redundant WAL txn intervals caching tasks.
+    private final AtomicLong txnIntervalsCacheSeq = new AtomicLong();
     // Protected via latch.
     // Base table txn that corresponds to cachedTxnIntervals.
     private volatile long cachedIntervalsBaseTxn = -1;
@@ -249,12 +252,20 @@ public class MatViewState implements QuietCloseable {
         return refreshSeq.get();
     }
 
+    public long getTxnIntervalsCacheSeq() {
+        return txnIntervalsCacheSeq.get();
+    }
+
     public @NotNull MatViewDefinition getViewDefinition() {
         return viewDefinition;
     }
 
     public void incrementRefreshSeq() {
         refreshSeq.incrementAndGet();
+    }
+
+    public void incrementTxnIntervalsCacheSeq() {
+        txnIntervalsCacheSeq.incrementAndGet();
     }
 
     public void init() {

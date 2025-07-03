@@ -170,7 +170,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    private void cacheTxnIntervals(@NotNull TableToken viewToken) {
+    private void cacheTxnIntervals(@NotNull MatViewRefreshTask refreshTask) {
+        assert refreshTask.matViewToken != null;
+
+        final TableToken viewToken = refreshTask.matViewToken;
         final MatViewState viewState = stateStore.getViewState(viewToken);
         if (viewState != null && !viewState.isPendingInvalidation() && !viewState.isInvalid() && !viewState.isDropped()) {
             if (!viewState.tryLock()) {
@@ -1027,8 +1030,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     invalidate(refreshTask);
                     break;
                 case MatViewRefreshTask.CACHE_TXN_INTERVALS:
-                    assert refreshTask.matViewToken != null;
-                    cacheTxnIntervals(refreshTask.matViewToken);
+                    cacheTxnIntervals(refreshTask);
                     break;
                 default:
                     throw new RuntimeException("unexpected operation: " + operation);
@@ -1144,9 +1146,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             if (viewState != null && !viewState.isPendingInvalidation() && !viewState.isInvalid() && !viewState.isDropped()) {
                 if (viewState.getViewDefinition().getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
                     // The refresh is not immediate, i.e. manual or timer.
-                    // To avoid blocking WalPurgeJob's progress, read WAL txn intervals into state-local cache
-                    // to use them later, when a refresh is triggered.
-                    cacheTxnIntervals(viewToken);
+                    // Increment the sequence, so that mat view timer job knows it should enqueue a caching task
+                    // when the timer is triggered.
+                    viewState.incrementTxnIntervalsCacheSeq();
                     continue;
                 }
 

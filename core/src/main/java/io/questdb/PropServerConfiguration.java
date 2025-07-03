@@ -306,6 +306,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewRefreshWorkerYieldThreshold;
     private final int matViewRowsPerQueryEstimate;
     private final int matViewTxnIntervalsCacheCapacity;
+    private final long matViewTxnIntervalsCacheTimerInterval;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
     private final double maxRequiredDelimiterStdDev;
@@ -771,6 +772,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         // instead cairo.wal.enabled.default=true is added to the config, so only new QuestDB installations have WAL enabled by default
         this.walEnabledDefault = getBoolean(properties, env, PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
         this.walPurgeInterval = getMillis(properties, env, PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 30_000);
+        this.matViewTxnIntervalsCacheTimerInterval = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_TXN_INTERVALS_CACHE_TIMER_INTERVAL, walPurgeInterval / 2);
         this.walPurgeWaitBeforeDelete = getInt(properties, env, PropertyKey.DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE, 0);
         this.walTxnNotificationQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4096);
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
@@ -3009,6 +3011,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMatViewTxnIntervalsCacheCapacity() {
             return matViewTxnIntervalsCacheCapacity;
+        }
+
+        @Override
+        public long getMatViewTxnIntervalsCacheTimerInterval() {
+            return matViewTxnIntervalsCacheTimerInterval;
         }
 
         @Override
