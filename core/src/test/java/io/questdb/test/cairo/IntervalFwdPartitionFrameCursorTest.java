@@ -453,7 +453,16 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
             }
             final TestTableReaderRecord record = new TestTableReaderRecord();
             try (
-                    final IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(x, 0, new RuntimeIntervalModel(intervals), timestampIndex, metadata, ORDER_ASC);
+                    final IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(x,
+                            0,
+                            new RuntimeIntervalModel(
+                                    ColumnType.getTimestampDriver(metadata.getTimestampType()),
+                                    partitionBy,
+                                    intervals
+                            ),
+                            timestampIndex,
+                            metadata,
+                            ORDER_ASC);
                     final PartitionFrameCursor cursor = factory.getCursor(executionContext, ORDER_ASC)
             ) {
                 // assert that there is nothing to start with
@@ -776,7 +785,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
             }
             final TestTableReaderRecord record = new TestTableReaderRecord();
             try (
-                    final IntervalFwdPartitionFrameCursorFactory factory = new IntervalFwdPartitionFrameCursorFactory(
+                    final IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(
                             x,
                             0,
                             new RuntimeIntervalModel(
@@ -784,7 +793,9 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                                     PartitionBy.DAY,
                                     intervals
                             ),
-                            timestampIndex, metadata
+                            timestampIndex,
+                            metadata,
+                            ORDER_ASC
                     );
                     final PartitionFrameCursor cursor = factory.getCursor(executionContext, ORDER_ASC)
             ) {

@@ -422,7 +422,11 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                     final IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(
                             tableToken,
                             0,
-                            new RuntimeIntervalModel(intervals),
+                            new RuntimeIntervalModel(
+                                    ColumnType.getTimestampDriver(metadata.getTimestampType()),
+                                    partitionBy,
+                                    intervals
+                            ),
                             timestampIndex,
                             metadata,
                             ORDER_DESC
@@ -756,7 +760,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
             }
             final TestTableReaderRecord record = new TestTableReaderRecord();
             try (
-                    final IntervalBwdPartitionFrameCursorFactory factory = new IntervalBwdPartitionFrameCursorFactory(
+                    final IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(
                             tableToken,
                             0,
                             new RuntimeIntervalModel(
@@ -765,7 +769,8 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                                     intervals
                             ),
                             timestampIndex,
-                            metadata
+                            metadata,
+                            ORDER_DESC
                     );
                     final PartitionFrameCursor cursor = factory.getCursor(executionContext, ORDER_DESC)
             ) {
