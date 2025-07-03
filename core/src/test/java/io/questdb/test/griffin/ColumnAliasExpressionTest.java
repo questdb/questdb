@@ -42,7 +42,7 @@ public class ColumnAliasExpressionTest extends AbstractCairoTest {
     @Test
     public void testDots() throws Exception {
         assertGeneratedColumnEqual(
-                "floor(1.2)\t'Hello there.'\ti.o\n1.0\tHello there.\t1\n",
+                "\"floor(1.2)\"\t\"'Hello there.'\"\t\"i.o\"\n1.0\tHello there.\t1\n",
                 "select floor(1.2), 'Hello there.', 1 \"i.o\"",
                 0
         );
@@ -51,7 +51,7 @@ public class ColumnAliasExpressionTest extends AbstractCairoTest {
     @Test
     public void testFunctionCalls() throws Exception {
         assertGeneratedColumnEqual(
-                "trim(a)\tfloor(b * 1.5)\n",
+                "trim(a)\t\"floor(b * 1.5)\"\n",
                 "select trim(a), floor(b * 1.5) from tab",
                 "create table tab (a string, b double)",
                 0

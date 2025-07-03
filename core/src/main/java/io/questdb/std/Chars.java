@@ -803,6 +803,10 @@ public final class Chars {
         }
     }
 
+    public static boolean isDoubleQuote(char c) {
+        return c == '"';
+    }
+
     public static boolean isQuoted(CharSequence s) {
         if (s == null || s.length() < 2) {
             return false;
@@ -810,6 +814,14 @@ public final class Chars {
 
         char open = s.charAt(0);
         return isQuote(open) && open == s.charAt(s.length() - 1);
+    }
+
+    public static boolean isDoubleQuoted(CharSequence s) {
+        if (s == null || s.length() < 2) {
+            return false;
+        }
+
+        return isDoubleQuote(s.charAt(0)) && isDoubleQuote(s.charAt(s.length() - 1));
     }
 
     public static int lastIndexOf(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, @NotNull CharSequence term) {

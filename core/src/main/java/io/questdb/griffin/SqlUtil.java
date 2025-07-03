@@ -95,19 +95,26 @@ public class SqlUtil {
             int maxLength,
             boolean nonLiteral
     ) {
-        if (nonLiteral && disallowedAliases.contains(base)) {
-            base = "_" + base;
-        }
+        // We need to wrap disallowed aliases with double quotes to avoid later conflicts.
+        final boolean quote = !Chars.isDoubleQuoted(base) && (
+            Chars.indexOf(base, '.') > -1 ||
+            (nonLiteral && disallowedAliases.contains(base))
+        );
 
         int len = base.length();
         // early exit for simple cases
-        if (aliasToColumnMap.excludes(base) && len <= maxLength && base.charAt(len - 1) != ' ') {
+        if (!quote && aliasToColumnMap.excludes(base) && len > 0 && len <= maxLength && base.charAt(len - 1) != ' ') {
             return base;
         }
 
         final CharacterStoreEntry entry = store.newEntry();
         final int entryLen = entry.length();
-        entry.put(base);
+        if (quote) {
+            len += 2;
+            entry.putQuoted(base);
+        } else {
+            entry.put(base);
+        }
 
         int sequence = 1;
         int seqSize = 0;
@@ -115,23 +122,26 @@ public class SqlUtil {
             if (sequence > 1) {
                 seqSize = (int) Math.log10(sequence) + 2; // Remember the _
             }
-            len = Math.min(len, maxLength - seqSize);
+            len = Math.min(len, maxLength - seqSize - (quote ? 1 : 0));
 
             // We don't want the alias to finish with a space.
-            if (base.charAt(len - 1) == ' ') {
+            if (!quote && len > 0 && base.charAt(len - 1) == ' ') {
                 final int lastSpace = Chars.lastIndexOfDifferent(base, 0, len, ' ');
                 if (lastSpace > 0) {
                     len = lastSpace + 1;
                 }
             }
 
-            entry.trimTo(entryLen + len);
+            entry.trimTo(entryLen + len - ((sequence > 1 && quote) ? 1 : 0));
             if (sequence > 1) {
                 entry.put('_');
                 entry.put(sequence);
+                if (quote) {
+                    entry.put('"');
+                }
             }
             CharSequence alias = entry.toImmutable();
-            if (aliasToColumnMap.excludes(alias)) {
+            if (len > 0 && aliasToColumnMap.excludes(alias)) {
                 return alias;
             }
             sequence++;
