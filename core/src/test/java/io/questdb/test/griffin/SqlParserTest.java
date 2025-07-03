@@ -8237,7 +8237,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPipeConcatWithFunctionConcatOnLeft() throws SqlException {
         assertQuery(
-                "select-virtual 1 1, x, concat('2', x + 1::string, '3') concat from (select [x] from tab)",
+                "select-virtual 1 1, x, concat('2', (x + 1)::string, '3') concat from (select [x] from tab)",
                 "select 1, x, concat('2', cast(x + 1 as string)) || '3' from tab",
                 modelOf("tab").col("x", ColumnType.INT)
         );
@@ -8246,7 +8246,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPipeConcatWithFunctionConcatOnRight() throws SqlException {
         assertQuery(
-                "select-virtual 1 1, x, concat('2', x + 1::string, '3') concat from (select [x] from tab)",
+                "select-virtual 1 1, x, concat('2', (x + 1)::string, '3') concat from (select [x] from tab)",
                 "select 1, x, '2' || concat(cast(x + 1 as string), '3') from tab",
                 modelOf("tab").col("x", ColumnType.INT)
         );
