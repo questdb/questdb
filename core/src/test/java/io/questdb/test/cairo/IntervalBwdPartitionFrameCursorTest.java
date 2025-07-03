@@ -28,7 +28,7 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IntervalBwdPartitionFrameCursor;
-import io.questdb.cairo.IntervalBwdPartitionFrameCursorFactory;
+import io.questdb.cairo.IntervalPartitionFrameCursorFactory;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -413,12 +413,13 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
             }
             final TestTableReaderRecord record = new TestTableReaderRecord();
             try (
-                    final IntervalBwdPartitionFrameCursorFactory factory = new IntervalBwdPartitionFrameCursorFactory(
+                    final IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(
                             tableToken,
                             0,
                             new RuntimeIntervalModel(intervals),
                             timestampIndex,
-                            metadata
+                            metadata,
+                            ORDER_DESC
                     );
                     final PartitionFrameCursor cursor = factory.getCursor(executionContext, ORDER_DESC)
             ) {
