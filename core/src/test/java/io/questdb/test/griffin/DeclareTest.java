@@ -278,19 +278,19 @@ public class DeclareTest extends AbstractSqlParserTest {
 
     @Test
     public void testDeclareSelectCase() throws Exception {
-        assertModel("select-virtual case(1 = 1,5,2) case from (long_sequence(1))",
+        assertModel("select-virtual case(1 = 1, 5, 2) case from (long_sequence(1))",
                 "DECLARE @x := 1, @y := 5, @z := 2 SELECT CASE WHEN @x = @X THEN @y ELSE @z END", ExecutionModel.QUERY);
     }
 
     @Test
     public void testDeclareSelectCast1() throws Exception {
-        assertModel("select-virtual cast(2,timestamp) cast from (long_sequence(1))",
+        assertModel("select-virtual cast(2, timestamp) cast from (long_sequence(1))",
                 "DECLARE @x := 2::timestamp SELECT @x", ExecutionModel.QUERY);
     }
 
     @Test
     public void testDeclareSelectCast2() throws Exception {
-        assertModel("select-virtual cast(5,timestamp) cast from (long_sequence(1))",
+        assertModel("select-virtual cast(5, timestamp) cast from (long_sequence(1))",
                 "DECLARE @x := 5 SELECT CAST(@x AS timestamp)", ExecutionModel.QUERY);
     }
 
@@ -510,7 +510,7 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-group-by timestamp_floor('1h',timestamp,null,'00:00',null) timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) stride 1h) order by timestamp",
+            assertModel("select-group-by timestamp_floor('1h', timestamp, null, '00:00', null) timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) stride 1h) order by timestamp",
                     "DECLARE @unit := 1h SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY @unit", ExecutionModel.QUERY);
         });
     }
@@ -540,7 +540,7 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-group-by timestamp_floor('1h',timestamp,null,'10:00',null) timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) stride 1h) order by timestamp",
+            assertModel("select-group-by timestamp_floor('1h', timestamp, null, '10:00', null) timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) stride 1h) order by timestamp",
                     "DECLARE @offset := '10:00' SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY 1h ALIGN TO CALENDAR WITH OFFSET @offset", ExecutionModel.QUERY);
         });
     }
@@ -550,7 +550,7 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-virtual to_utc(timestamp,'Antarctica/McMurdo') timestamp, symbol, avg from (select-group-by [timestamp_floor('1h',timestamp,null,'00:00','Antarctica/McMurdo') timestamp, symbol, avg(price) avg] timestamp_floor('1h',timestamp,null,'00:00','Antarctica/McMurdo') timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) stride 1h)) timestamp (timestamp) order by timestamp",
+            assertModel("select-virtual to_utc(timestamp, 'Antarctica/McMurdo') timestamp, symbol, avg from (select-group-by [timestamp_floor('1h', timestamp, null, '00:00', 'Antarctica/McMurdo') timestamp, symbol, avg(price) avg] timestamp_floor('1h', timestamp, null, '00:00', 'Antarctica/McMurdo') timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) stride 1h)) timestamp (timestamp) order by timestamp",
                     "DECLARE @tz := 'Antarctica/McMurdo' SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE @tz", ExecutionModel.QUERY);
         });
     }
@@ -603,7 +603,7 @@ public class DeclareTest extends AbstractSqlParserTest {
 
     @Test
     public void testDeclareSelectWhereComplex() throws Exception {
-        assertModel("select-virtual cast(2,timestamp) + cast(5,timestamp) column from (long_sequence(1) where cast(2,timestamp) < cast(5,timestamp))",
+        assertModel("select-virtual cast(2, timestamp) + cast(5, timestamp) column from (long_sequence(1) where cast(2, timestamp) < cast(5, timestamp))",
                 "DECLARE @x := 2::timestamp, @y := 5::timestamp SELECT @x + @y FROM long_sequence(1) WHERE @x < @y", ExecutionModel.QUERY);
     }
 

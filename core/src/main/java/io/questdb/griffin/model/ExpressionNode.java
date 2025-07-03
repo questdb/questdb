@@ -253,6 +253,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                     sink.putAscii('(');
                     toSink(sink, lhs);
                     sink.putAscii(',');
+                    sink.putAscii(' ');
                     toSink(sink, rhs);
                     sink.putAscii(')');
                 }
@@ -269,6 +270,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                     for (int i = n - 2; i > -1; i--) {
                         if (i < n - 2) {
                             sink.putAscii(',');
+                            sink.putAscii(' ');
                         }
                         toSink(sink, args.getQuick(i));
                     }
@@ -279,6 +281,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                     for (int i = n - 1; i > -1; i--) {
                         if (i < n - 1) {
                             sink.putAscii(',');
+                            sink.putAscii(' ');
                         }
                         toSink(sink, args.getQuick(i));
                     }

@@ -81,7 +81,7 @@ public class ColumnAliasExpressionTest extends AbstractCairoTest {
     @Test
     public void testStringConcatenation() throws Exception {
         assertGeneratedColumnEqual(
-                "concat(a,'_',b)\n",
+                "concat(a, '_', b)\n",
                 "select a || '_' || b from tab",
                 "create table tab (a string, b string)",
                 0
@@ -101,7 +101,7 @@ public class ColumnAliasExpressionTest extends AbstractCairoTest {
     @Test
     public void testCaseExpressions() throws Exception {
         assertGeneratedColumnEqual(
-                "case(a > b,a + b,a - b)\n",
+                "case(a > b, a + b, a - b)\n",
                 "select CASE WHEN a > b THEN a + b ELSE a - b END from tab",
                 "create table tab (a int, b int)",
                 0
@@ -151,9 +151,19 @@ public class ColumnAliasExpressionTest extends AbstractCairoTest {
     @Test
     public void testMultiParams() throws Exception {
         assertGeneratedColumnEqual(
-                "replace(a,'a','b')\n",
+                "replace(a, 'a', 'b')\n",
                 "select replace(a, 'a', 'b') from tab",
                 "create table tab (a string)",
+                0
+        );
+    }
+
+    @Test
+    public void testArrayDereference() throws Exception {
+        assertGeneratedColumnEqual(
+                "[]([](arr, 10), 2)\n",
+                "select arr[10][2] from tab",
+                "create table tab (arr double[][])",
                 0
         );
     }
