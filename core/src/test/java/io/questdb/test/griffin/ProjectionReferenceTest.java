@@ -183,6 +183,48 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJsonProjectionInOrderByWithByte() throws SqlException {
+        testJsonProjectionInOrderByWith0("name\tval\tdoubled\n" +
+                        "A\t10\t20\n" +
+                        "B\t20\t40\n" +
+                        "C\t30\t60\n",
+                "QUERY PLAN\n" +
+                        "Radix sort light\n" +
+                        "  keys: [doubled]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [name,memoize(json_extract()::byte),val*2]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: items\n",
+                "byte");
+    }
+
+    @Test
+    public void testJsonProjectionInOrderByWithDouble() throws SqlException {
+        testJsonProjectionInOrderByWithF("double");
+    }
+
+    @Test
+    public void testJsonProjectionInOrderByWithFloat() throws SqlException {
+        testJsonProjectionInOrderByWithF("float");
+    }
+
+    @Test
+    public void testJsonProjectionInOrderByWithInt() throws SqlException {
+        testJsonProjectionInOrderByWithI("int");
+    }
+
+    @Test
+    public void testJsonProjectionInOrderByWithLong() throws SqlException {
+        testJsonProjectionInOrderByWithI("long");
+    }
+
+    @Test
+    public void testJsonProjectionInOrderByWithShort() throws SqlException {
+        testJsonProjectionInOrderByWithI("short");
+    }
+
+    @Test
     public void testMultipleLevelProjections() throws Exception {
         execute("create table data (x int)");
         execute("insert into data values (1), (2), (3)");
@@ -258,22 +300,6 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testProjectionInOrderByWithByte() throws Exception {
-        testProjectionInOrderByWithInt("byte");
-    }
-
-    @Test
-    public void testProjectionInOrderByWithDate() throws Exception {
-        testProjectionInOrderByWith0(
-                "name\tvalue\tdoubled\n" +
-                        "B\t1970-01-01T00:00:00.020Z\t1.6973928465121335\n" +
-                        "A\t1970-01-01T00:00:00.010Z\t2.246301342497259\n" +
-                        "C\t1970-01-01T00:00:00.030Z\t19.823333682561998\n",
-                "date"
-        );
-    }
-
-    @Test
     public void testProjectionInOrderByWithBoolean() throws Exception {
         execute("create table items (name string, value boolean)");
         execute("insert into items values ('C', true), ('A', false), ('B', false)");
@@ -290,13 +316,18 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testProjectionInOrderByWithTimestamp() throws Exception {
+    public void testProjectionInOrderByWithByte() throws Exception {
+        testProjectionInOrderByWithInt("byte");
+    }
+
+    @Test
+    public void testProjectionInOrderByWithDate() throws Exception {
         testProjectionInOrderByWith0(
                 "name\tvalue\tdoubled\n" +
-                        "B\t1970-01-01T00:00:00.000020Z\t1.6973928465121335\n" +
-                        "A\t1970-01-01T00:00:00.000010Z\t2.246301342497259\n" +
-                        "C\t1970-01-01T00:00:00.000030Z\t19.823333682561998\n",
-                "timestamp"
+                        "B\t1970-01-01T00:00:00.020Z\t1.6973928465121335\n" +
+                        "A\t1970-01-01T00:00:00.010Z\t2.246301342497259\n" +
+                        "C\t1970-01-01T00:00:00.030Z\t19.823333682561998\n",
+                "date"
         );
     }
 
@@ -323,6 +354,17 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     @Test
     public void testProjectionInOrderByWithShort() throws Exception {
         testProjectionInOrderByWithInt("short");
+    }
+
+    @Test
+    public void testProjectionInOrderByWithTimestamp() throws Exception {
+        testProjectionInOrderByWith0(
+                "name\tvalue\tdoubled\n" +
+                        "B\t1970-01-01T00:00:00.000020Z\t1.6973928465121335\n" +
+                        "A\t1970-01-01T00:00:00.000010Z\t2.246301342497259\n" +
+                        "C\t1970-01-01T00:00:00.000030Z\t19.823333682561998\n",
+                "timestamp"
+        );
     }
 
     @Test
@@ -612,6 +654,58 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                 false,
                 true
         );
+    }
+
+    private void testJsonProjectionInOrderByWith0(String expectedResult, String expectedPlan, String typeToExtract) throws SqlException {
+        execute("create table items (name string, value varchar)");
+        String json0 = "{ \"name\": \"C\", \"value\": 30 }";
+        String json1 = "{ \"name\": \"A\", \"value\": 10 }";
+        String json2 = "{ \"name\": \"B\", \"value\": 20 }";
+        execute("insert into items values ('C', '" + json0 + "'), ('A', '" + json1 + "'), ('B', '" + json2 + "')");
+
+        allowFunctionMemoization();
+        String query = "select name, json_extract(value, '.value')::" + typeToExtract + " as val, val * 2 as doubled from items order by doubled";
+        assertQuery(expectedResult,
+                query,
+                true,
+                true);
+
+        assertQuery(expectedPlan,
+                "EXPLAIN " + query,
+                false,
+                true);
+    }
+
+    private void testJsonProjectionInOrderByWithF(String type) throws SqlException {
+        testJsonProjectionInOrderByWith0("name\tval\tdoubled\n" +
+                        "A\t10.0\t20.0\n" +
+                        "B\t20.0\t40.0\n" +
+                        "C\t30.0\t60.0\n",
+                "QUERY PLAN\n" +
+                        "Sort light\n" +
+                        "  keys: [doubled]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [name,memoize(json_extract()),val*2]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: items\n",
+                type);
+    }
+
+    private void testJsonProjectionInOrderByWithI(String type) throws SqlException {
+        testJsonProjectionInOrderByWith0("name\tval\tdoubled\n" +
+                        "A\t10\t20\n" +
+                        "B\t20\t40\n" +
+                        "C\t30\t60\n",
+                "QUERY PLAN\n" +
+                        "Radix sort light\n" +
+                        "  keys: [doubled]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [name,memoize(json_extract()),val*2]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: items\n",
+                type);
     }
 
     private void testProjectionInOrderByWith0(String expected, String type) throws SqlException {
