@@ -359,6 +359,5 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
         metadata.add(new TableColumnMetadata("labels", ColumnType.VARCHAR));
         METADATA = metadata;
     }
-
 }
 

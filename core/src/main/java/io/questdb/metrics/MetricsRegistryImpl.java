@@ -71,8 +71,10 @@ public class MetricsRegistryImpl implements MetricsRegistry {
     @Override
     public CounterWithTwoLabels newCounter(
             CharSequence name,
-            CharSequence labelName0, CharSequence[] labelValues0,
-            CharSequence labelName1, CharSequence[] labelValues1
+            CharSequence labelName0,
+            CharSequence[] labelValues0,
+            CharSequence labelName1,
+            CharSequence[] labelValues1
     ) {
         CounterWithTwoLabels counter = new CounterWithTwoLabelsImpl(name, labelName0, labelValues0, labelName1, labelValues1);
         metrics.add(counter);

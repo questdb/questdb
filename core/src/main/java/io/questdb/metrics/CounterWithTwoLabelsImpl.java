@@ -37,6 +37,8 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
     private final CharSequence[] labelValues0;
     private final CharSequence[] labelValues1;
     private final CharSequence name;
+    private final int labelValues0Length;
+    private final int labelValues1Length;
 
     CounterWithTwoLabelsImpl(
             CharSequence name,
@@ -50,7 +52,9 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
         this.labelName1 = labelName1;
         this.labelValues0 = labelValues0;
         this.labelValues1 = labelValues1;
-        this.counters = new LongAdder[labelValues0.length * labelValues1.length];
+        this.labelValues0Length = labelValues0.length;
+        this.labelValues1Length = labelValues1.length;
+        this.counters = new LongAdder[labelValues0Length * labelValues0Length];
         for (int i = 0, n = this.counters.length; i < n; i++) {
             counters[i] = new LongAdder();
         }
@@ -63,21 +67,21 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
 
     @Override
     public void inc(int label0, int label1) {
-        counters[(label0 * labelValues0.length) + label1].increment();
+        counters[(label0 * labelValues0Length) + label1].increment();
     }
 
     @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         PrometheusFormatUtils.appendCounterType(name, sink);
-        for (int i = 0, n = labelValues0.length; i < n; i++) {
-            for (int j = 0, k = labelValues1.length; j < k; j++) {
+        for (int i = 0; i < labelValues0Length; i++) {
+            for (int j = 0; j < labelValues1Length; j++) {
                 PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
                 sink.put('{');
                 PrometheusFormatUtils.appendLabel(sink, labelName0, labelValues0[i]);
                 sink.put(',');
                 PrometheusFormatUtils.appendLabel(sink, labelName1, labelValues1[j]);
                 sink.put('}');
-                PrometheusFormatUtils.appendSampleLineSuffix(sink, counters[(i * labelValues0.length) + j].longValue());
+                PrometheusFormatUtils.appendSampleLineSuffix(sink, counters[(i * labelValues0Length) + j].longValue());
             }
         }
         PrometheusFormatUtils.appendNewLine(sink);
@@ -85,8 +89,8 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
 
     @Override
     public void scrapeIntoRecord(PrometheusMetricsRecord record, int label) {
-        int i1 = label / labelValues0.length;
-        int i2 = label % labelValues0.length;
+        int i1 = label / labelValues0Length;
+        int i2 = label % labelValues1Length;
         record
                 .setCounterName(getName())
                 .setType("counter")

@@ -26,7 +26,6 @@ package io.questdb.metrics;
 
 import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 abstract class AbstractLongGauge implements LongGauge {
