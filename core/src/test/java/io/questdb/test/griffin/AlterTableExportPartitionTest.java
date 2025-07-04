@@ -313,10 +313,6 @@ public class AlterTableExportPartitionTest extends AbstractCairoTest {
         assertPartitionOnDisk0(tableName, false, partition);
     }
 
-    private void assertParquetPartitionExists(String tableName, String partition) {
-        assertPartitionOnDisk0(tableName, true, partition);
-    }
-
     private void assertPartitionOnDisk0(String tableName, boolean exists, String partition) {
         Path path = Path.getThreadLocal(configuration.getDbRoot());
         path.concat(engine.verifyTableName(tableName));

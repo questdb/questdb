@@ -4079,8 +4079,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             return true;
         }
-
-
     }
 
     private int copyOverwrite(Path to) {
