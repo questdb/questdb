@@ -290,6 +290,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final DateLocale logTimestampLocale;
     private final String logTimestampTimezone;
     private final TimeZoneRules logTimestampTimezoneRules;
+    private final boolean matViewDebugEnabled;
     private final boolean matViewEnabled;
     private final long matViewInsertAsSelectBatchSize;
     private final int matViewMaxRefreshRetries;
@@ -305,7 +306,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewRefreshWorkerSleepThreshold;
     private final long matViewRefreshWorkerYieldThreshold;
     private final int matViewRowsPerQueryEstimate;
-    private final long matViewTimerStartEpsilon;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
     private final double maxRequiredDelimiterStdDev;
@@ -374,7 +374,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sharedWorkerYieldThreshold;
     private final String snapshotInstanceId;
     private final long spinLockTimeout;
+    private final int sqlAsOfJoinEvacuationThreshold;
     private final int sqlAsOfJoinLookahead;
+    private final int sqlAsOfJoinShortCircuitCacheCapacity;
     private final int sqlBindVariablePoolSize;
     private final int sqlCharacterStoreCapacity;
     private final int sqlCharacterStoreSequencePoolCapacity;
@@ -1289,7 +1291,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
             this.matViewRefreshOomRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 200);
             this.matViewMinRefreshInterval = getMicros(properties, env, PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL, Timestamps.MINUTE_MICROS);
-            this.matViewTimerStartEpsilon = getMicros(properties, env, PropertyKey.CAIRO_MAT_VIEW_TIMER_START_EPSILON, Timestamps.MINUTE_MICROS);
             this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
             this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
             this.matViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
@@ -1297,6 +1298,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewRefreshWorkerSleepThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD, 10_000);
             this.matViewRefreshSleepTimeout = getMillis(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT, 10);
             this.matViewRefreshWorkerYieldThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
+            this.matViewDebugEnabled = getBoolean(properties, env, PropertyKey.MAT_VIEW_DEBUG_ENABLED, false);
 
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
@@ -1340,6 +1342,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlHashJoinLightValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 128 * 1024);
             this.sqlHashJoinLightValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlAsOfJoinLookahead = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, 100);
+            this.sqlAsOfJoinShortCircuitCacheCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY, 10_000_000);
+            this.sqlAsOfJoinEvacuationThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD, 10_000_000);
             this.useFastAsOfJoin = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_FAST, true);
             this.sqlSortValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 16777216);
             this.sqlSortValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
@@ -3021,11 +3025,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getMatViewTimerStartEpsilon() {
-            return matViewTimerStartEpsilon;
-        }
-
-        @Override
         public int getMaxCrashFiles() {
             return cairoMaxCrashFiles;
         }
@@ -3268,6 +3267,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlAsOfJoinLookAhead() {
             return sqlAsOfJoinLookahead;
+        }
+
+        @Override
+        public int getSqlAsOfJoinMapEvacuationThreshold() {
+            return sqlAsOfJoinEvacuationThreshold;
+        }
+
+        @Override
+        public int getSqlAsOfJoinShortCircuitCacheCapacity() {
+            return sqlAsOfJoinShortCircuitCacheCapacity;
         }
 
         @Override
@@ -3768,6 +3777,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isIOURingEnabled() {
             return ioURingEnabled;
+        }
+
+        @Override
+        public boolean isMatViewDebugEnabled() {
+            return matViewDebugEnabled;
         }
 
         @Override

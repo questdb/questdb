@@ -260,6 +260,15 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareReuseVariable() throws Exception {
+        assertSql("interval\n('2025-07-02T13:00:00.000Z', '2025-07-02T13:00:00.000Z')\n",
+                "declare " +
+                        "@ts := '2025-07-02T13:00:00.000000Z', " +
+                        "@int := interval(@ts, @ts)" +
+                        "select @int");
+    }
+
+    @Test
     public void testDeclareSelectAsofJoin() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
@@ -907,5 +916,4 @@ public class DeclareTest extends AbstractSqlParserTest {
             );
         });
     }
-
 }

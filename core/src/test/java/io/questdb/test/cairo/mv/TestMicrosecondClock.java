@@ -22,35 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.table;
+package io.questdb.test.cairo.mv;
 
-import io.questdb.cairo.sql.PageFrame;
-import io.questdb.cairo.sql.PageFrameMemory;
-import io.questdb.cairo.sql.PartitionFrameCursorFactory;
-import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.RowCursorFactory;
-import io.questdb.griffin.PlanSink;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 
-public class FwdPageFrameRowCursorFactory implements RowCursorFactory {
-    private final PageFrameFwdRowCursor cursor = new PageFrameFwdRowCursor();
+import java.util.concurrent.atomic.AtomicLong;
 
-    @Override
-    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
-        cursor.of(pageFrame);
-        return cursor;
+class TestMicrosecondClock implements MicrosecondClock {
+    AtomicLong micros;
+
+    public TestMicrosecondClock(long micros) {
+        this.micros = new AtomicLong(micros);
     }
 
     @Override
-    public boolean isEntity() {
-        return true;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        if (sink.getOrder() == PartitionFrameCursorFactory.ORDER_DESC) {
-            sink.type("Row backward scan");
-        } else {
-            sink.type("Row forward scan");
-        }
+    public long getTicks() {
+        return micros.get();
     }
 }

@@ -47,6 +47,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -58,6 +59,12 @@ import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
 
 public class SqlParserTest extends AbstractSqlParserTest {
     private static final List<String> frameTypes = Arrays.asList("rows  ", "groups", "range ");
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        setProperty(PropertyKey.MAT_VIEW_DEBUG_ENABLED, "true");
+    }
 
     @Test
     public void test2Between() throws Exception {
@@ -1128,6 +1135,108 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testAsOfJoinTolerance() throws Exception {
+        assertQuery(
+                "select-choose t.timestamp timestamp, t.tag tag, q.timestamp timestamp1, q.tag tag1 from (select [timestamp, tag] from trades t timestamp (timestamp) asof join select [timestamp, tag] from quotes q timestamp (timestamp) on q.tag = t.tag tolerance 10m post-join-where q.tag = null) t",
+                "select * from trades t ASOF JOIN quotes q on tag TOLERANCE 10m WHERE q.tag is null",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL),
+                modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL)
+        );
+
+
+        execute("create table trades (timestamp timestamp, tag symbol) timestamp(timestamp)");
+        execute("create table quotes (timestamp timestamp, tag symbol) timestamp(timestamp)");
+        assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE 10",
+                61,
+                "expected interval qualifier");
+
+        assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE 10X",
+                59,
+                "unsupported TOLERANCE unit [unit=X]");
+
+        assertException("select * from trades t JOIN quotes q on tag TOLERANCE 10s",
+                44,
+                "TOLERANCE is only supported for ASOF and LT joins");
+
+        assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE",
+                49,
+                "ASOF JOIN TOLERANCE period expected");
+
+        assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE -5m",
+                60,
+                "ASOF JOIN TOLERANCE must be positive");
+
+        assertException("select * from trades t ASOF JOIN quotes q on tag TOLERANCE $1",
+                59,
+                "ASOF JOIN TOLERANCE must be a constant");
+    }
+
+    @Test
+    public void testAsOfToleranceMaximum() throws Exception {
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "U",
+                48,
+                "invalid tolerance value [value=2147483648U, maximum=2147483647U]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // millis
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "T",
+                48,
+                "invalid tolerance value [value=2147483648T, maximum=2147483647T]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // seconds
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "s",
+                48,
+                "invalid tolerance value [value=2147483648s, maximum=2147483647s]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // minutes
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "m",
+                48,
+                "invalid tolerance value [value=2147483648m, maximum=2147483647m]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // hours
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "h",
+                48,
+                "invalid tolerance value [value=2147483648h, maximum=2147483647h]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // days - int overflow
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "d",
+                48,
+                "invalid tolerance value [value=2147483648d, maximum=106751991d]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // days - overflow in micros
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance 106751992d",
+                48,
+                "tolerance value too high for given units [value=106751992d, maximum=106751991d]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // weeks - int overflow
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance " + (Integer.MAX_VALUE + 1L) + "w",
+                48,
+                "invalid tolerance value [value=2147483648w, maximum=15250284w]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+
+        // weeks - overflow in micros
+        assertSyntaxError("select * from tab t1 asof join tab t2 tolerance 15250285w",
+                48,
+                "tolerance value too high for given units [value=15250285w, maximum=15250284w]",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
+        );
+    }
+
+    @Test
     public void testAtAsColumnAlias() throws Exception {
         assertQuery(
                 "select-choose l at from (select [l] from testat timestamp (ts))",
@@ -1807,14 +1916,23 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateMatView10() throws Exception {
         assertSyntaxError(
-                "CREATE MATERIALIZED VIEW 'myview' REFRESH INCREMENTAL refresh",
-                54,
-                "'refresh' or 'as' expected"
+                "CREATE MATERIALIZED VIEW 'myview' WITH BASE 'mytable' REFRESH INCREMENTAL",
+                73,
+                "'as' expected"
         );
     }
 
     @Test
     public void testCreateMatView11() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' REFRESH INCREMENTAL refresh",
+                54,
+                "'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView12() throws Exception {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' with base 'mytable2'",
                 55,
@@ -1823,7 +1941,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateMatView12() throws Exception {
+    public void testCreateMatView13() throws Exception {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh incremental",
                 74,
@@ -1832,46 +1950,37 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateMatView13() throws Exception {
+    public void testCreateMatView14() throws Exception {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh incremental foobar",
                 75,
-                "'refresh' or 'as' expected"
-        );
-    }
-
-    @Test
-    public void testCreateMatView14() throws Exception {
-        assertSyntaxError(
-                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh incremental start",
-                80,
-                "START timestamp expected"
+                "'as' expected"
         );
     }
 
     @Test
     public void testCreateMatView15() throws Exception {
         assertSyntaxError(
-                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh incremental start foobar",
-                81,
-                "invalid START timestamp value"
+                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh immediate start",
+                73,
+                "'as' expected"
         );
     }
 
     @Test
     public void testCreateMatView16() throws Exception {
         assertSyntaxError(
-                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh start '2010-01-01'",
-                81,
-                "'every' expected"
+                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh manual start",
+                70,
+                "'as' expected"
         );
     }
 
     @Test
     public void testCreateMatView17() throws Exception {
         assertSyntaxError(
-                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh start '2010-01-01' every",
-                87,
+                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh every",
+                68,
                 "interval expected"
         );
     }
@@ -1879,18 +1988,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateMatView18() throws Exception {
         assertSyntaxError(
-                "create materialized view myview WITH BASE mytable1 REFRESH INCREMENTAL START '2010-01-01' EVERY foobar",
-                96,
-                "Invalid unit: foobar"
+                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' refresh every;",
+                68,
+                "Invalid unit: ;"
         );
     }
 
     @Test
     public void testCreateMatView19() throws Exception {
         assertSyntaxError(
-                "CREATE MATERIALIZED VIEW myview REFRESH START '2010-01-01' EVERY 42U",
+                "create materialized view myview WITH BASE mytable1 REFRESH EVERY 4f",
                 65,
-                "unsupported interval unit: U, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
+                "Invalid unit: 4f"
         );
     }
 
@@ -1906,17 +2015,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateMatView20() throws Exception {
         assertSyntaxError(
-                "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL START '2010-01-01' EVERY 2T;",
-                77,
-                "unsupported interval unit: T, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
+                "CREATE MATERIALIZED VIEW myview REFRESH EVERY 42U START '2010-01-01'",
+                46,
+                "unsupported interval unit: U, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
         );
     }
 
     @Test
     public void testCreateMatView21() throws Exception {
         assertSyntaxError(
-                "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL EVERY 2T;",
-                58,
+                "CREATE MATERIALIZED VIEW myview REFRESH EVERY 2T START '2010-01-01';",
+                46,
                 "unsupported interval unit: T, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
         );
     }
@@ -1924,27 +2033,72 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateMatView22() throws Exception {
         assertSyntaxError(
-                "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL START '2010-01-01' EVERY 1s;",
-                77,
-                "unsupported interval unit: s, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
+                "CREATE MATERIALIZED VIEW myview REFRESH EVERY 2T START '2010-01-01' AS SELECT 42 FROM long_sequence(1);",
+                46,
+                "unsupported interval unit: T, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
         );
     }
 
     @Test
     public void testCreateMatView23() throws Exception {
         assertSyntaxError(
-                "CREATE MATERIALIZED VIEW myview REFRESH INCREMENTAL EVERY 1s;",
-                58,
-                "unsupported interval unit: s, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
+                "CREATE MATERIALIZED VIEW myview REFRESH EVERY 2T AS SELECT 42 FROM long_sequence(1);",
+                46,
+                "unsupported interval unit: T, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
         );
     }
 
     @Test
     public void testCreateMatView24() throws Exception {
         assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH EVERY 1s START '2010-01-01' AS SELECT 42 FROM long_sequence(1)",
+                46,
+                "unsupported interval unit: s, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
+        );
+    }
+
+    @Test
+    public void testCreateMatView25() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH EVERY 1s AS SELECT 42 FROM long_sequence(1)",
+                46,
+                "unsupported interval unit: s, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
+        );
+    }
+
+    @Test
+    public void testCreateMatView26() throws Exception {
+        assertSyntaxError(
                 "CREATE MATERIALIZED VIEW myview REFRESH EVERY 1s;",
                 46,
                 "unsupported interval unit: s, supported units are 'm', 'h', 'd', 'w', 'y', 'M'"
+        );
+    }
+
+    @Test
+    public void testCreateMatView27() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH",
+                39,
+                "'immediate' or 'manual' or 'period' or 'start' or 'every' or 'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView28() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period",
+                46,
+                "'(' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView29() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period foobar",
+                47,
+                "'(' expected"
         );
     }
 
@@ -1958,6 +2112,96 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateMatView30() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh manual period length",
+                54,
+                "'(' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView31() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh every 2h period (start)",
+                57,
+                "'length' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView32() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period( length",
+                54,
+                "LENGTH interval expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView33() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period ( length 1d )",
+                60,
+                "'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView34() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period ( length 2h time foobar )",
+                64,
+                "'zone' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView35() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period(length 30m time zone)",
+                67,
+                "TIME ZONE name expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView36() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 1h time zone 'Europe/Sofia')",
+                83,
+                "'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView37() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 1h time zone delay)",
+                68,
+                "TIME ZONE name expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView38() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 1h time zone 'Europe/Sofia' foobar)",
+                83,
+                "')' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView39() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 1h time zone 'Europe/Berlin' delay)",
+                89,
+                "Invalid unit: )"
+        );
+    }
+
+    @Test
     public void testCreateMatView4() throws Exception {
         assertSyntaxError(
                 "create materialized view 'myview' foobar",
@@ -1967,11 +2211,214 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateMatView40() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 1y)",
+                55,
+                "unsupported length unit: 1y, supported units are 'm', 'h', 'd'"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 1w)",
+                55,
+                "unsupported length unit: 1w, supported units are 'm', 'h', 'd'"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 1M)",
+                55,
+                "unsupported length unit: 1M, supported units are 'm', 'h', 'd'"
+        );
+    }
+
+    @Test
+    public void testCreateMatView41() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 2d time zone 'Europe/Sofia')",
+                55,
+                "maximum supported length interval is 24 hours: 2d"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 25h time zone 'Europe/Sofia')",
+                55,
+                "maximum supported length interval is 24 hours: 25h"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 1441m time zone 'Europe/Sofia')",
+                55,
+                "maximum supported length interval is 24 hours: 1441m"
+        );
+    }
+
+    @Test
+    public void testCreateMatView42() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 1d time zone 'Europe/Sofia'",
+                82,
+                "'delay' or ')' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView43() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 1d time zone 'Europe/Sofia' delay 1h)",
+                92,
+                "'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView44() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 1d time zone 'Europe/Sofia' delay 1y)",
+                89,
+                "unsupported delay unit: 1y, supported units are 'm', 'h', 'd'"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 1d delay 1w)",
+                64,
+                "unsupported delay unit: 1w, supported units are 'm', 'h', 'd'"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 1d delay 1M)",
+                64,
+                "unsupported delay unit: 1M, supported units are 'm', 'h', 'd'"
+        );
+    }
+
+    @Test
+    public void testCreateMatView45() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 1d delay 24h)",
+                64,
+                "delay cannot be equal to or greater than length"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 24h time zone 'Europe/Sofia' delay 2d)",
+                90,
+                "delay cannot be equal to or greater than length"
+        );
+    }
+
+    @Test
+    public void testCreateMatView46() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh immediate period (length 8h time zone 'Europe/Sofia' delay 2h) foobar",
+                103,
+                "'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView47() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh immediate period (length 8h time zone 'foobar' delay 2h)",
+                78,
+                "invalid timezone: foobar"
+        );
+    }
+
+    @Test
+    public void testCreateMatView48() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh every 1h start",
+                54,
+                "START timestamp expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView49() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh every 1h start foobar",
+                55,
+                "invalid START timestamp value"
+        );
+    }
+
+    @Test
     public void testCreateMatView5() throws Exception {
         assertSyntaxError(
                 "create materialized view 'myview' refresh with",
                 42,
-                "'incremental' or 'start' or 'every' or 'as' expected"
+                "'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView50() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh every 1h start '2020-09-10T20:00:00.000000'",
+                83,
+                "'time zone' or 'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView51() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh every 1h start '2020-09-10T20:00:00.000000' time",
+                88,
+                "'zone' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView52() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh every 1h start '2020-09-10T20:00:00.000000' time zone",
+                93,
+                "TIME ZONE name expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView53() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh every 1h start '2020-09-10T20:00:00.000000' time zone 'Europe/Paris'",
+                108,
+                "'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView54() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh immediate start '2020-09-10T20:00:00.000000' time zone 'Europe/Paris'",
+                50,
+                "'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView55() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh every 3d",
+                48,
+                "'start' or 'period' or 'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView56() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh every 3d deferred",
+                57,
+                "'start' or 'period' or 'as' expected"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh immediate deferred",
+                58,
+                "'period' or 'as' expected"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh deferred",
+                48,
+                "'period' or 'as' expected"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh manual deferred",
+                55,
+                "'period' or 'as' expected"
         );
     }
 
@@ -1988,8 +2435,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateMatView7() throws Exception {
         assertSyntaxError(
                 "create materialized view 'myview' refresh manual",
-                42,
-                "'incremental' or 'start' or 'every' or 'as' expected"
+                48,
+                "'as' expected"
         );
     }
 
@@ -1998,15 +2445,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create materialized view 'myview' refresh incremental",
                 53,
-                "'start' or 'every' or 'as' expected"
+                "'as' expected"
         );
     }
 
     @Test
     public void testCreateMatView9() throws Exception {
         assertSyntaxError(
-                "CREATE MATERIALIZED VIEW 'myview' WITH BASE 'mytable' REFRESH INCREMENTAL",
-                73,
+                "create materialized view 'myview' refresh immediate",
+                51,
                 "'as' expected"
         );
     }
@@ -6553,6 +7000,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose x1.a a, x1.s s, x2.a a1, x2.s s1 from (select [a, s] from (select-virtual [rnd_int() a, rnd_symbol(4, 4, 4, 2) s] rnd_int() a, rnd_symbol(4, 4, 4, 2) s from (long_sequence(10))) x1 join select [a, s] from (select-virtual [rnd_int() a, rnd_symbol(4, 4, 4, 2) s] rnd_int() a, rnd_symbol(4, 4, 4, 2) s from (long_sequence(10))) x2 on x2.s = x1.s) x1",
                 "with x as (select rnd_int() a, rnd_symbol(4,4,4,2) s from long_sequence(10)) " +
                         "select * from x x1 join x x2 on (s)"
+        );
+    }
+
+    @Test
+    public void testJoin_ToleranceAndOnClausesSwitched() throws Exception {
+        assertSyntaxError("select * from tab asof join tab TOLERANCE 1h on sym;",
+                45,
+                "'ON' clause must precede 'TOLERANCE' clause. Hint: put the ON condition right after the JOIN, then add TOLERANCE, e.g. … ASOF JOIN t2 ON t1.ts = t2.ts TOLERANCE 1h",
+                modelOf("tab").col("sym", ColumnType.SYMBOL).timestamp("ts")
         );
     }
 

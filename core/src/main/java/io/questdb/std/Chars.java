@@ -828,6 +828,10 @@ public final class Chars {
         return indexOf(sequence, sequenceLo, sequenceHi, term, -1);
     }
 
+    public static int lastIndexOf(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, char c) {
+        return indexOf(sequence, sequenceLo, sequenceHi, c, -1);
+    }
+
     /**
      * Returns the index of the last character that isn't c between sequenceLo and sequenceHi.
      *

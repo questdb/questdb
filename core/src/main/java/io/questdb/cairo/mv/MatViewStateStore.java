@@ -27,6 +27,7 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -47,7 +48,7 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
     @Override
     void clear();
 
-    // Creates the view state, initiates refresh (only for incremental mat views), logs telemetry event.
+    // Creates the view state and logs telemetry event.
     void createViewState(MatViewDefinition viewDefinition);
 
     void enqueueFullRefresh(TableToken matViewToken);
@@ -76,4 +77,6 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
     void removeViewState(TableToken matViewToken);
 
     boolean tryDequeueRefreshTask(MatViewRefreshTask task);
+
+    void updateViewDefinition(@NotNull TableToken matViewToken, @NotNull MatViewDefinition newDefinition);
 }

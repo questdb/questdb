@@ -38,10 +38,11 @@ public final class TimestampSamplerFactory {
      *
      * @param cs       input string
      * @param position position in SQL text to report error against
+     * @param kind     kind of an interval we are parsing, used for error reporting
      * @return index of the first character after the interval token
      * @throws SqlException when input string is not a valid interval token
      */
-    public static int findIntervalEndIndex(CharSequence cs, int position) throws SqlException {
+    public static int findIntervalEndIndex(CharSequence cs, int position, CharSequence kind) throws SqlException {
         int k = -1;
 
         if (cs == null) {
@@ -54,16 +55,26 @@ public final class TimestampSamplerFactory {
         }
 
         // look for end of digits
+        boolean allZeros = true;
+        boolean atLeastOneDigit = false;
         for (int i = 0; i < len; i++) {
             char c = cs.charAt(i);
             if (c < '0' || c > '9') {
                 k = i;
                 break;
             }
+            atLeastOneDigit = true;
+            if (c != '0') {
+                allZeros = false;
+            }
         }
 
         if (k == 0 && cs.charAt(0) == '-') {
             throw SqlException.$(position, "negative interval is not allowed");
+        }
+
+        if (allZeros && atLeastOneDigit) {
+            throw SqlException.$(position, "zero is not a valid ").put(kind).put(" value");
         }
 
         if (k == -1) {
@@ -131,24 +142,27 @@ public final class TimestampSamplerFactory {
      * @throws SqlException when input string is invalid
      */
     public static TimestampSampler getInstance(CharSequence cs, int position) throws SqlException {
-        int k = findIntervalEndIndex(cs, position);
+        int k = findIntervalEndIndex(cs, position, "sample");
         assert cs.length() > k;
 
-        long n = parseInterval(cs, k, position);
+        long n = parseInterval(cs, k, position, "sample", Numbers.INT_NULL, '?');
         return getInstance(n, cs.charAt(k), position + k);
     }
 
     /**
-     * Parse interval value from string. Expected to be called after {@link #findIntervalEndIndex(CharSequence, int)}
+     * Parse interval value from string. Expected to be called after {@link #findIntervalEndIndex(CharSequence, int, CharSequence)}
      * has been called and returned a valid index. Behavior is undefined if called with invalid index.
      *
      * @param cs          token to parse interval from
      * @param intervalEnd end of interval token, exclusive
      * @param position    position in SQL text to report error against
+     * @param kind        kind of an interval we are parsing, used for error reporting
+     * @param maxValue    maximum value for the interval, used for error reporting
+     * @param unit        unit qualifier, used for error reporting
      * @return parsed interval value
      * @throws SqlException when input string is invalid
      */
-    public static long parseInterval(CharSequence cs, int intervalEnd, int position) throws SqlException {
+    public static long parseInterval(CharSequence cs, int intervalEnd, int position, String kind, int maxValue, char unit) throws SqlException {
         if (intervalEnd == 0) {
             // 'SAMPLE BY m' is the same as 'SAMPLE BY 1m' etc.
             return 1;
@@ -156,11 +170,19 @@ public final class TimestampSamplerFactory {
         try {
             int n = Numbers.parseInt(cs, 0, intervalEnd);
             if (n == 0) {
-                throw SqlException.$(position, "zero is not a valid sample value");
+                throw SqlException.$(position, "zero is not a valid ").put(kind).put(" value");
+            }
+            if (maxValue != Numbers.INT_NULL && n > maxValue) {
+                throw SqlException.$(position, kind).put(" value too high for given units [value=").put(cs).put(", maximum=").put(maxValue).put(unit).put(']');
             }
             return n;
         } catch (NumericException e) {
-            throw SqlException.$(position, "invalid sample value [value=").put(cs).put(']');
+            SqlException ex = SqlException.$(position, "invalid ").put(kind).put(" value [value=").put(cs);
+            if (maxValue != Numbers.INT_NULL) {
+                ex.put(", maximum=").put(maxValue).put(unit);
+            }
+            ex.put(']');
+            throw ex;
         }
     }
 }

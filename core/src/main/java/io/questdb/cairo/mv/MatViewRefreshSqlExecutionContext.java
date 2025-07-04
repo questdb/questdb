@@ -42,11 +42,11 @@ import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
+public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
     private TableReader baseTableReader;
     private TableToken viewTableToken;
 
-    public MatViewRefreshExecutionContext(CairoEngine engine, int workerCount, int sharedWorkerCount) {
+    public MatViewRefreshSqlExecutionContext(CairoEngine engine, int workerCount, int sharedWorkerCount) {
         super(engine, workerCount, sharedWorkerCount);
         if (!engine.getConfiguration().isMatViewParallelSqlEnabled()) {
             setParallelFilterEnabled(false);

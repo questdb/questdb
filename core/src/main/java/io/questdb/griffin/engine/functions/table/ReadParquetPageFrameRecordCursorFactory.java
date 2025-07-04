@@ -32,13 +32,14 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.FwdPageFrameRowCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 /**
@@ -59,7 +60,7 @@ public class ReadParquetPageFrameRecordCursorFactory extends AbstractRecordCurso
         this.cursor = new PageFrameRecordCursorImpl(
                 configuration,
                 metadata,
-                new FwdPageFrameRowCursorFactory(),
+                new PageFrameRowCursorFactory(ORDER_ASC),
                 true,
                 null
         );

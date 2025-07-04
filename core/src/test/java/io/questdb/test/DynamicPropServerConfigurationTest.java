@@ -96,6 +96,42 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testAsOfJoinEvacuationThreshold() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.sql.asof.join.evacuation.threshold=1000\n");
+                }
+
+                assertReloadConfigEventually();
+
+                int threshold = serverMain.getConfiguration().getCairoConfiguration().getSqlAsOfJoinMapEvacuationThreshold();
+                Assert.assertEquals(1000, threshold);
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinShortCircuitCacheCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.sql.asof.join.short.circuit.cache.capacity=1000\n");
+                }
+
+                assertReloadConfigEventually();
+
+                int capacity = serverMain.getConfiguration().getCairoConfiguration().getSqlAsOfJoinShortCircuitCacheCapacity();
+                Assert.assertEquals(1000, capacity);
+            }
+        });
+    }
+
+    @Test
     public void testHttpConnectionLimitReload() throws Exception {
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
