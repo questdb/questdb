@@ -188,6 +188,11 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public long size() {
             return -1;
         }

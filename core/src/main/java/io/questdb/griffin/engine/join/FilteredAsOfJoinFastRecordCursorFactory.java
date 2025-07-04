@@ -305,6 +305,11 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public void toTop() {
             super.toTop();
             slaveRecordFilter.toTop();

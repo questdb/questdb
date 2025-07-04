@@ -103,6 +103,11 @@ class OrderedMapVarSizeCursor implements OrderedMapCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return 0;
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
         ((OrderedMapVarSizeRecord) record).of(atRowId);
     }
