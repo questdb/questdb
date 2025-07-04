@@ -64,12 +64,12 @@ public class FixedOffsetIntervalIterator extends SampleByIntervalIterator {
     public FixedOffsetIntervalIterator of(
             @NotNull TimestampSampler sampler,
             long offset,
-            @Nullable LongList txnIntervals,
+            @Nullable LongList intervals,
             long minTs,
             long maxTs,
             int step
     ) {
-        super.of(sampler, txnIntervals);
+        super.of(sampler, intervals);
 
         sampler.setStart(offset);
         minTimestamp = sampler.round(minTs);

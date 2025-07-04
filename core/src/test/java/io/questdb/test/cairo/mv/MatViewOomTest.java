@@ -27,17 +27,10 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Before;
 import org.junit.Test;
 
 
 public class MatViewOomTest extends AbstractCairoTest {
-
-    @Before
-    public void setUp() {
-        super.setUp();
-        setProperty(PropertyKey.MAT_VIEW_DEBUG_ENABLED, "true");
-    }
 
     @Test
     public void testOom() throws Exception {

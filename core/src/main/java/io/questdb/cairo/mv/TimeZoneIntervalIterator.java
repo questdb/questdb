@@ -100,12 +100,12 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
             @NotNull TimestampSampler sampler,
             @NotNull TimeZoneRules tzRules,
             long fixedOffset,
-            @Nullable LongList txnIntervals,
+            @Nullable LongList intervals,
             long minTs,
             long maxTs,
             int step
     ) {
-        super.of(sampler, txnIntervals);
+        super.of(sampler, intervals);
         this.tzRules = tzRules;
 
         sampler.setStart(fixedOffset);

@@ -87,9 +87,9 @@ public class MatViewGraph implements Mutable {
                 list.unlockAfterWrite();
             }
         }
-        // Publish a timer task for any non-manually refreshed mat view.
-        // We need a dedicated timer in two cases: timer and period refresh.
-        if (viewDefinition.getRefreshType() != MatViewDefinition.REFRESH_TYPE_MANUAL) {
+        // Publish a timer creation task.
+        // We need timer(s) in all cases, but immediate non-period view.
+        if (viewDefinition.getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE || viewDefinition.getPeriodLength() > 0) {
             final MatViewTimerTask timerTask = tlTimerTask.get();
             timerTaskQueue.enqueue(timerTask.ofAdd(matViewToken));
         }

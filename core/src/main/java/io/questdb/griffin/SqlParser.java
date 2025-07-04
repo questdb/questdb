@@ -974,9 +974,6 @@ public class SqlParser {
             } else if (isImmediateKeyword(tok)) {
                 tok = tok(lexer, "'deferred' or 'period' or 'as'");
             } else if (isManualKeyword(tok)) {
-                if (!configuration.isMatViewDebugEnabled()) {
-                    throw SqlException.position(lexer.lastTokenPosition()).put("manual refresh is in beta and disabled by default");
-                }
                 refreshType = MatViewDefinition.REFRESH_TYPE_MANUAL;
                 tok = tok(lexer, "'deferred' or 'period' or 'as'");
             } else if (isEveryKeyword(tok)) {

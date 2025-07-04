@@ -68,7 +68,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
-        setProperty(PropertyKey.MAT_VIEW_DEBUG_ENABLED, "true");
     }
 
     @Test
@@ -571,21 +570,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertFalse(metadata.isDedupKey(0));
                 assertFalse(metadata.isDedupKey(1));
             }
-        });
-    }
-
-    @Test
-    public void testCreateMatViewManualDisabled() throws Exception {
-        setProperty(PropertyKey.MAT_VIEW_DEBUG_ENABLED, "false");
-        assertMemoryLeak(() -> {
-            createTable(TABLE1);
-
-            assertException(
-                    "CREATE MATERIALIZED VIEW test REFRESH MANUAL AS " +
-                            "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 30s",
-                    38,
-                    "manual refresh is in beta and disabled by default"
-            );
         });
     }
 

@@ -275,9 +275,13 @@ public interface CairoConfiguration {
 
     long getMatViewMinRefreshInterval();
 
+    long getMatViewRefreshIntervalsUpdateInterval();
+
     long getMatViewRefreshOomRetryTimeout();
 
     int getMatViewRowsPerQueryEstimate();
+
+    int getMatViewMaxRefreshIntervals();
 
     int getMaxCrashFiles();
 
@@ -668,8 +672,6 @@ public interface CairoConfiguration {
     boolean isGroupByPresizeEnabled();
 
     boolean isIOURingEnabled();
-
-    boolean isMatViewDebugEnabled();
 
     boolean isMatViewEnabled();
 

@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectByteSequenceView;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.StringSink;
@@ -443,10 +444,12 @@ public class WalEventCursor {
 
     public class MatViewInvalidationInfo {
         private final StringSink error = new StringSink();
+        private final LongList refreshIntervals = new LongList();
         private boolean invalid;
         private long lastPeriodHi;
         private long lastRefreshBaseTableTxn;
         private long lastRefreshTimestamp;
+        private long refreshIntervalsBaseTxn;
 
         public CharSequence getInvalidationReason() {
             return error;
@@ -464,6 +467,14 @@ public class WalEventCursor {
             return lastRefreshTimestamp;
         }
 
+        public LongList getRefreshIntervals() {
+            return refreshIntervals;
+        }
+
+        public long getRefreshIntervalsBaseTxn() {
+            return refreshIntervalsBaseTxn;
+        }
+
         public boolean isInvalid() {
             return invalid;
         }
@@ -474,10 +485,22 @@ public class WalEventCursor {
             invalid = readBool();
             error.clear();
             error.put(readStr());
+
             if (nextOffset - offset >= Long.BYTES) {
                 lastPeriodHi = readLong();
             } else {
                 lastPeriodHi = Numbers.LONG_NULL;
+            }
+
+            refreshIntervals.clear();
+            if (nextOffset - offset >= Long.BYTES + Integer.BYTES) {
+                refreshIntervalsBaseTxn = readLong();
+                final int intervalsLen = readInt();
+                for (int i = 0; i < intervalsLen; i++) {
+                    refreshIntervals.add(readLong());
+                }
+            } else {
+                refreshIntervalsBaseTxn = -1;
             }
         }
     }
