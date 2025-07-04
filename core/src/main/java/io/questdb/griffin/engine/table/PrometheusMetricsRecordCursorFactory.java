@@ -107,7 +107,6 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
 
         @Override
         public void close() {
-
         }
 
         @Override
@@ -155,6 +154,11 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
             this.registry = registry;
             this.size = registry.getSize();
             this.toTop();
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
         }
 
         @Override
