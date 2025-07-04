@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
@@ -104,6 +105,9 @@ public class QueryColumn implements Mutable, Sinkable {
     }
 
     public void setAlias(CharSequence alias) {
+        if (this.alias == alias || Chars.equalsNc(alias, this.alias)) {
+            return;
+        }
         this.alias = alias;
     }
 
