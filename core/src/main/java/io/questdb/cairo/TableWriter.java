@@ -88,6 +88,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
@@ -2857,6 +2858,43 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void setLifecycleManager(LifecycleManager lifecycleManager) {
         this.lifecycleManager = lifecycleManager;
+    }
+
+    @Override
+    public void setMatViewRefresh(
+            int refreshType,
+            int timerInterval,
+            char timerUnit,
+            long timerStart,
+            @Nullable CharSequence timerTimeZone,
+            int periodLength,
+            char periodLengthUnit,
+            int periodDelay,
+            char periodDelayUnit
+    ) {
+        assert tableToken.isMatView();
+
+        try {
+            final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+            if (oldDefinition == null) {
+                throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
+            }
+
+            final MatViewDefinition newDefinition = oldDefinition.updateRefreshParams(
+                    refreshType,
+                    timerInterval,
+                    timerUnit,
+                    timerStart,
+                    Chars.toString(timerTimeZone),
+                    periodLength,
+                    periodLengthUnit,
+                    periodDelay,
+                    periodDelayUnit
+            );
+            updateMatViewDefinition(newDefinition);
+        } finally {
+            path.trimTo(pathSize);
+        }
     }
 
     @Override

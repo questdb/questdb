@@ -73,6 +73,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short CHANGE_SYMBOL_CAPACITY = SET_TTL + 1; // 22
     public final static short SET_MAT_VIEW_REFRESH_LIMIT = CHANGE_SYMBOL_CAPACITY + 1; // 23
     public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
+    public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -222,7 +223,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     setMatViewRefreshLimit(svc);
                     break;
                 case SET_MAT_VIEW_REFRESH_TIMER:
+                    // legacy operation, kept for compat purposes
                     setMatViewRefreshTimer(svc);
+                    break;
+                case SET_MAT_VIEW_REFRESH:
+                    setMatViewRefresh(svc);
                     break;
                 default:
                     LOG.error()
@@ -684,6 +689,30 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private boolean enableDeduplication(MetadataService svc) {
         assert extraInfo.size() > 0;
         return svc.enableDeduplicationWithUpsertKeys(extraInfo);
+    }
+
+    private void setMatViewRefresh(MetadataService svc) {
+        final int refreshType = (int) extraInfo.get(0);
+        final int timerInterval = (int) extraInfo.get(2);
+        final char timerUnit = (char) extraInfo.get(3);
+        final long timerStart = extraInfo.get(4);
+        final int periodLength = (int) extraInfo.get(5);
+        final char periodLengthUnit = (char) extraInfo.get(6);
+        final int periodDelay = (int) extraInfo.get(7);
+        final char periodDelayUnit = (char) extraInfo.get(8);
+        final CharSequence timerTimeZone = activeExtraStrInfo.getStrA(0);
+
+        svc.setMatViewRefresh(
+                refreshType,
+                timerInterval,
+                timerUnit,
+                timerStart,
+                timerTimeZone,
+                periodLength,
+                periodLengthUnit,
+                periodDelay,
+                periodDelayUnit
+        );
     }
 
     private void setMatViewRefreshLimit(MetadataService svc) {

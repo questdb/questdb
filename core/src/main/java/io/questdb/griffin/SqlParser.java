@@ -933,7 +933,7 @@ public class SqlParser {
         boolean deferred = false;
         if (isRefreshKeyword(tok)) {
             refreshDefined = true;
-            tok = tok(lexer, "'immediate' or 'manual' or 'period' or 'start' or 'every' or 'as'");
+            tok = tok(lexer, "'immediate' or 'manual' or 'period' or 'every' or 'as'");
             int every = 0;
             char everyUnit = 0;
             // 'incremental' is obsolete, replaced with 'immediate'
@@ -963,7 +963,7 @@ public class SqlParser {
             }
 
             if (isPeriodKeyword(tok)) {
-                // REFRESH [IMMEDIATE | MANUAL | EVERY <interval>] PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
+                // REFRESH ... PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
                 expectTok(lexer, "(");
                 expectTok(lexer, "length");
                 tok = tok(lexer, "LENGTH interval");
@@ -1019,7 +1019,7 @@ public class SqlParser {
                 }
                 // Use the current time as the start timestamp if it wasn't specified.
                 long start = configuration.getMicrosecondClock().getTicks();
-                String timeZone = null;
+                String tz = null;
                 if (isStartKeyword(tok)) {
                     tok = tok(lexer, "START timestamp");
                     try {
@@ -1032,11 +1032,11 @@ public class SqlParser {
                     if (isTimeKeyword(tok)) {
                         expectTok(lexer, "zone");
                         tok = tok(lexer, "TIME ZONE name");
-                        timeZone = unquote(tok).toString();
+                        tz = unquote(tok).toString();
                         tok = tok(lexer, "'as'");
                     }
                 }
-                mvOpBuilder.setTimer(timeZone, start, every, everyUnit);
+                mvOpBuilder.setTimer(tz, start, every, everyUnit);
             } else if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
                 // REFRESH EVERY <interval> AS
                 // Don't forget to set timer params.
