@@ -240,9 +240,12 @@ public class SqlKeywordsTest {
         specialCases.put("isUTC", "'UTC'");
         specialCases.put("isZeroOffset", "'00:00'");
         specialCases.put("isJsonExtract", "json_extract");
-        specialCases.put("isRespectWord", "respect");
-        specialCases.put("isIgnoreWord", "ignore");
-        specialCases.put("isNullsWord", "nulls");
+        specialCases.put("isRespectKeyword", "respect");
+        specialCases.put("isIgnoreKeyword", "ignore");
+        specialCases.put("isNullsKeyword", "nulls");
+        specialCases.put("isComma", ",");
+        specialCases.put("isLeftParen", "(");
+        specialCases.put("isRightParen", ")");
 
         excludedCases.add("isPublicKeyword");
     }

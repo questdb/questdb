@@ -3480,6 +3480,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final CharSequence column = orderByColumnNames.getQuick(i);
                     int index = metadata.getColumnIndexQuiet(column);
 
+                    if (index < 0) {
+                        ObjList<ExpressionNode> nodes = model.getOrderBy();
+                        int position = 0;
+                        for (int j = 0, y = nodes.size(); j < y; j++) {
+                            if (Chars.equals(column, nodes.getQuick(i).token)) {
+                                position = nodes.getQuick(i).position;
+                                break;
+                            }
+                        }
+                        throw SqlException.$(position, "ORDER BY column is not present in select fields [name=").put(column).put(']');
+                    }
+
                     // check if the column type is supported
                     final int columnType = metadata.getColumnType(index);
                     if (!ColumnType.isComparable(columnType)) {
@@ -3633,26 +3645,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateQuery0(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
-        return generateLimit(
-                generateOrderBy(
-                        generateLatestBy(
-                                generateFilter(
-                                        generateSelect(
-                                                model,
-                                                executionContext,
-                                                processJoins
-                                        ),
-                                        model,
-                                        executionContext
-                                ),
-                                model
-                        ),
-                        model,
-                        executionContext
-                ),
-                model,
-                executionContext
-        );
+        RecordCursorFactory factory;
+        factory = generateSelect(model, executionContext, processJoins);
+        factory = generateFilter(factory, model, executionContext);
+        factory = generateLatestBy(factory, model);
+        factory = generateOrderBy(factory, model, executionContext);
+        factory = generateLimit(factory, model, executionContext);
+        return factory;
     }
 
     @NotNull
@@ -4138,6 +4137,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 QueryColumn queryColumn = columns.getQuick(i);
                 CharSequence columnName = queryColumn.getAlias();
                 int index = metadata.getColumnIndexQuiet(queryColumn.getAst().token);
+
                 assert index > -1 : "wtf? " + queryColumn.getAst().token;
 
                 int updateColumnIndex = updateColumnNames.indexOf(columnName);
@@ -4234,6 +4234,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
             selectMetadata.setTimestampIndex(selectMetadata.getColumnCount() - 1);
             columnCrossIndex.add(timestampIndex);
+        }
+
+        if (selectMetadata.getColumnCount() == 0) {
+            // fall out
+            return factory;
         }
 
         return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);

@@ -111,8 +111,15 @@ public class QueryColumn implements Mutable, Sinkable {
         this.includeIntoWildcard = includeIntoWildcard;
     }
 
+    public void setAst(ExpressionNode ast) {
+        this.ast = ast;
+    }
+
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.put(ast).putAscii(" as ").put(alias);
+        sink.put(ast);
+        if (alias != null) {
+            sink.putAscii(" as ").put(alias);
+        }
     }
 }
