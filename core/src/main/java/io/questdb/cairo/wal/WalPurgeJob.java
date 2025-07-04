@@ -395,22 +395,19 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         for (int v = 0, n = childViewSink.size(); v < n; v++) {
             final TableToken viewToken = childViewSink.get(v);
             final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+
             if (state != null && !state.isDropped()) {
-                // The first incremental refresh reads full table, without having to read WAL txn intervals.
-                // Don't purge WAL segments when the first incremental refresh is running on a mat view.
-                // That's to avoid a race between this job and a mat view refresh job leading to full refresh
-                // executed multiple times. Namely, the first incremental refresh on a view may be about to finish
-                // when the purge job checks the txn numbers. If so, the purge job may delete WAL segments required
-                // for the second incremental refresh. Yet the refresh job is able to recover from this by falling
-                // back to a full table scan, we don't want that to happen.
-                long appliedToViewTxn = Math.max(state.getLastRefreshBaseTxn(), state.getRefreshIntervalsBaseTxn());
-                if (state.isPendingInvalidation() || state.isInvalid()) {
-                    // If the view is invalid with locked state, there must be a full refresh running on it.
-                    // Don't purge WAL segments in that case.
-                    appliedToViewTxn = state.isLocked() ? 0 : safeToPurgeTxn;
+                final boolean invalid = state.isPendingInvalidation() || state.isInvalid();
+                if (state.isLocked() && (state.getLastRefreshBaseTxn() == -1 || invalid)) {
+                    // We cannot purge segments, an initial refresh is running...
+                    return 0;
                 }
-                if (appliedToViewTxn > -1 || state.isLocked()) {
-                    safeToPurgeTxn = Math.min(safeToPurgeTxn, Math.max(appliedToViewTxn, 0));
+
+                if (!invalid) {
+                    final long appliedToViewTxn = Math.max(state.getLastRefreshBaseTxn(), state.getRefreshIntervalsBaseTxn());
+                    if (appliedToViewTxn > -1) {
+                        safeToPurgeTxn = Math.min(safeToPurgeTxn, appliedToViewTxn);
+                    }
                 }
             }
         }
