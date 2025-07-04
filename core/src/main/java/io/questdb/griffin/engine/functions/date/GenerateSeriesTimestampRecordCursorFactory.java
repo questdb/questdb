@@ -82,7 +82,6 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
             return recordB;
         }
 
-
         @Override
         public boolean hasNext() {
             recordA.curr += step;
@@ -113,6 +112,11 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             ((GenerateSeriesTimestampRecord) record).curr = start + step * (atRowId - 1);
         }
@@ -121,7 +125,6 @@ public class GenerateSeriesTimestampRecordCursorFactory extends AbstractGenerate
         public long size() {
             return (Math.abs(end - start) / Math.abs(step)) + 1;
         }
-
 
         @Override
         public void skipRows(Counter rowCount) throws DataUnavailableException {

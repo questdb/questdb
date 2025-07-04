@@ -74,7 +74,6 @@ public final class GenerateSeriesDoubleRecordCursorFactory extends AbstractGener
             return recordA;
         }
 
-
         @Override
         public boolean hasNext() {
             recordA.kahanInc(step);
@@ -105,6 +104,11 @@ public final class GenerateSeriesDoubleRecordCursorFactory extends AbstractGener
                 end = temp;
             }
             toTop();
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
         }
 
         @Override

@@ -161,6 +161,11 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFact
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public long size() {
             return masterCursor.size();
         }
