@@ -25,6 +25,7 @@
 package io.questdb.cairo.map;
 
 import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -159,6 +160,11 @@ public class ShardedMapCursor implements MapRecordCursor {
         @Override
         public void copyValue(MapValue destValue) {
             baseRecord.copyValue(destValue);
+        }
+
+        @Override
+        public ArrayView getArray(int col, int columnType) {
+            return baseRecord.getArray(col, columnType);
         }
 
         @Override
