@@ -737,67 +737,6 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testArrayShift() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
-            execute("INSERT INTO tango VALUES " +
-                    "(ARRAY[1.0, 9, 10, 12, 8, null, 20, 12], ARRAY[[1.0, 9, 10],[12, 8, null]]), " +
-                    "(ARRAY[], ARRAY[[],[]])," +
-                    "(null, null)"
-            );
-            assertSql("shift\tshift1\tshift2\tshift3\n" +
-                            "[999.0,999.0,999.0,1.0,9.0,10.0,12.0,8.0]\t[999.0,9.0,10.0,12.0,8.0,NaN,20.0]\t[999.0,999.0]\t[NaN,NaN,NaN,1.0,9.0,10.0,12.0,8.0]\n" +
-                            "[]\t[]\t[]\t[]\n" +
-                            "null\tnull\tnull\tnull\n",
-                    "SELECT shift(arr1, 3, 999.0), shift(arr1[2:], 1, 999.0), shift(arr1[1:3], 10, 999.0), shift(arr1, 3) FROM tango");
-            assertSql("shift\tshift1\tshift2\tshift3\n" +
-                            "[12.0,8.0,NaN,20.0,12.0,999.0,999.0,999.0]\t[10.0,12.0,8.0,NaN,20.0,12.0,999.0]\t[999.0,999.0]\t[12.0,8.0,NaN,20.0,12.0,NaN,NaN,NaN]\n" +
-                            "[]\t[]\t[]\t[]\n" +
-                            "null\tnull\tnull\tnull\n",
-                    "SELECT shift(arr1, -3, 999.0), shift(arr1[2:], -1, 999.0), shift(arr1[1:3], -10, 999.0), shift(arr1, -3) FROM tango");
-            assertSql("shift\tshift1\tshift2\tshift3\n" +
-                            "[[999.0,1.0,9.0],[999.0,12.0,8.0]]\t[[9.0,10.0,999.0],[8.0,NaN,999.0]]\t[[999.0,999.0,999.0],[999.0,999.0,999.0]]\t[[10.0,NaN,NaN],[NaN,NaN,NaN]]\n" +
-                            "[]\t[]\t[]\t[]\n" +
-                            "null\tnull\tnull\tnull\n",
-                    "SELECT shift(arr2, 1, 999.0), shift(arr2[1:], -1, 999.0), shift(arr2, 5, 999.0), shift(arr2, -2) FROM tango");
-        });
-    }
-
-    @Test
-    public void testArrayShiftNonVanilla() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (arr DOUBLE[][])");
-            execute("INSERT INTO tango VALUES " +
-                    "(ARRAY[[1.0, 9], [10, 12], [8, null], [20, 12]]), " +
-                    "(ARRAY[[]])," +
-                    "(null)"
-            );
-            assertSql("transpose\n" +
-                            "[[1.0,10.0,8.0,20.0],[9.0,12.0,NaN,12.0]]\n" +
-                            "[]\n" +
-                            "null\n",
-                    "SELECT transpose(arr) FROM tango");
-
-            assertSql("shift\tshift1\tshift2\tshift3\n" +
-                            "[999.0,999.0,1.0,10.0]\t[999.0,10.0,8.0]\t[999.0,999.0]\t[NaN,NaN,NaN,1.0]\n" +
-                            "null\tnull\tnull\tnull\n" +
-                            "null\tnull\tnull\tnull\n",
-                    "SELECT shift(transpose(arr)[1], 2, 999.0), shift(transpose(arr)[1, 2:], 1, 999.0), shift(transpose(arr)[1, 1:3], 10, 999.0), shift(transpose(arr)[1], 3) FROM tango");
-
-            assertSql("shift\tshift1\tshift2\tshift3\n" +
-                            "[8.0,20.0,999.0,999.0]\t[8.0,20.0,999.0]\t[999.0,999.0]\t[20.0,NaN,NaN,NaN]\n" +
-                            "null\tnull\tnull\tnull\n" +
-                            "null\tnull\tnull\tnull\n",
-                    "SELECT shift(transpose(arr)[1], -2, 999.0), shift(transpose(arr)[1, 2:], -1, 999.0), shift(transpose(arr)[1, 1:3], -10, 999.0), shift(transpose(arr)[1], -3) FROM tango");
-            assertSql("shift\tshift1\tshift2\tshift3\n" +
-                            "[[999.0,1.0,10.0,8.0],[999.0,9.0,12.0,NaN]]\t[[10.0,8.0,20.0,999.0],[12.0,NaN,12.0,999.0]]\t[[999.0,999.0,999.0,999.0],[999.0,999.0,999.0,999.0]]\t[[8.0,20.0,NaN,NaN],[NaN,12.0,NaN,NaN]]\n" +
-                            "[]\t[]\t[]\t[]\n" +
-                            "null\tnull\tnull\tnull\n",
-                    "SELECT shift(transpose(arr), 1, 999.0), shift(transpose(arr)[1:], -1, 999.0), shift(transpose(arr), 5, 999.0), shift(transpose(arr), -2) FROM tango");
-        });
-    }
-
-    @Test
     public void testArraySubtractScalarValue() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[][])");
@@ -2230,6 +2169,76 @@ public class ArrayTest extends AbstractCairoTest {
                     25, "sub-arrays don't match in number of dimensions");
             assertExceptionNoLeakCheck("SELECT ARRAY[[[a], [a]], [a, a]] FROM tango",
                     25, "sub-arrays don't match in number of dimensions");
+        });
+    }
+
+    @Test
+    public void testShift() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[1.0, 9, 10, 12, 8, null, 20, 12], ARRAY[[1.0, 9, 10],[12, 8, null]]), " +
+                    "(ARRAY[], ARRAY[[],[]])," +
+                    "(null, null)"
+            );
+            assertSql("shift\tshift1\tshift2\tshift3\n" +
+                            "[999.0,999.0,999.0,1.0,9.0,10.0,12.0,8.0]\t[999.0,9.0,10.0,12.0,8.0,NaN,20.0]\t[999.0,999.0]\t[NaN,NaN,NaN,1.0,9.0,10.0,12.0,8.0]\n" +
+                            "[]\t[]\t[]\t[]\n" +
+                            "null\tnull\tnull\tnull\n",
+                    "SELECT shift(arr1, 3, 999.0), shift(arr1[2:], 1, 999.0), shift(arr1[1:3], 10, 999.0), shift(arr1, 3) FROM tango");
+            assertSql("shift\tshift1\tshift2\tshift3\n" +
+                            "[12.0,8.0,NaN,20.0,12.0,999.0,999.0,999.0]\t[10.0,12.0,8.0,NaN,20.0,12.0,999.0]\t[999.0,999.0]\t[12.0,8.0,NaN,20.0,12.0,NaN,NaN,NaN]\n" +
+                            "[]\t[]\t[]\t[]\n" +
+                            "null\tnull\tnull\tnull\n",
+                    "SELECT shift(arr1, -3, 999.0), shift(arr1[2:], -1, 999.0), shift(arr1[1:3], -10, 999.0), shift(arr1, -3) FROM tango");
+            assertSql("shift\tshift1\tshift2\tshift3\n" +
+                            "[[999.0,1.0,9.0],[999.0,12.0,8.0]]\t[[9.0,10.0,999.0],[8.0,NaN,999.0]]\t[[999.0,999.0,999.0],[999.0,999.0,999.0]]\t[[10.0,NaN,NaN],[NaN,NaN,NaN]]\n" +
+                            "[]\t[]\t[]\t[]\n" +
+                            "null\tnull\tnull\tnull\n",
+                    "SELECT shift(arr2, 1, 999.0), shift(arr2[1:], -1, 999.0), shift(arr2, 5, 999.0), shift(arr2, -2) FROM tango");
+        });
+    }
+
+    @Test
+    public void testShiftNonConst() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[], distance INT, filler DOUBLE)");
+            execute("INSERT INTO tango VALUES (ARRAY[1.0, 2.0, 3.0], 1, 6.0)");
+            assertSql("shift\n[6.0,1.0,2.0]\n", "SELECT shift(arr, distance, filler) FROM tango");
+        });
+    }
+
+    @Test
+    public void testShiftNonVanilla() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0, 9], [10, 12], [8, null], [20, 12]]), " +
+                    "(ARRAY[[]])," +
+                    "(null)"
+            );
+            assertSql("transpose\n" +
+                            "[[1.0,10.0,8.0,20.0],[9.0,12.0,NaN,12.0]]\n" +
+                            "[]\n" +
+                            "null\n",
+                    "SELECT transpose(arr) FROM tango");
+
+            assertSql("shift\tshift1\tshift2\tshift3\n" +
+                            "[999.0,999.0,1.0,10.0]\t[999.0,10.0,8.0]\t[999.0,999.0]\t[NaN,NaN,NaN,1.0]\n" +
+                            "null\tnull\tnull\tnull\n" +
+                            "null\tnull\tnull\tnull\n",
+                    "SELECT shift(transpose(arr)[1], 2, 999.0), shift(transpose(arr)[1, 2:], 1, 999.0), shift(transpose(arr)[1, 1:3], 10, 999.0), shift(transpose(arr)[1], 3) FROM tango");
+
+            assertSql("shift\tshift1\tshift2\tshift3\n" +
+                            "[8.0,20.0,999.0,999.0]\t[8.0,20.0,999.0]\t[999.0,999.0]\t[20.0,NaN,NaN,NaN]\n" +
+                            "null\tnull\tnull\tnull\n" +
+                            "null\tnull\tnull\tnull\n",
+                    "SELECT shift(transpose(arr)[1], -2, 999.0), shift(transpose(arr)[1, 2:], -1, 999.0), shift(transpose(arr)[1, 1:3], -10, 999.0), shift(transpose(arr)[1], -3) FROM tango");
+            assertSql("shift\tshift1\tshift2\tshift3\n" +
+                            "[[999.0,1.0,10.0,8.0],[999.0,9.0,12.0,NaN]]\t[[10.0,8.0,20.0,999.0],[12.0,NaN,12.0,999.0]]\t[[999.0,999.0,999.0,999.0],[999.0,999.0,999.0,999.0]]\t[[8.0,20.0,NaN,NaN],[NaN,12.0,NaN,NaN]]\n" +
+                            "[]\t[]\t[]\t[]\n" +
+                            "null\tnull\tnull\tnull\n",
+                    "SELECT shift(transpose(arr), 1, 999.0), shift(transpose(arr)[1:], -1, 999.0), shift(transpose(arr), 5, 999.0), shift(transpose(arr), -2) FROM tango");
         });
     }
 
