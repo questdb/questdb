@@ -24,13 +24,6 @@ stages:
     jobs:
       - template: templates/check-changes-job.yml
 
-  - stage: RustTestAndLint
-    displayName: "Rust Test and Lint"
-    dependsOn:
-      - CheckChanges
-    jobs:
-      - template: rust-test-and-lint.yaml
-
   - stage: SelfHostedRunGriffin
     displayName: "SelfHosted Griffin And Fuzz tests"
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
@@ -40,7 +33,7 @@ stages:
       - template: templates/start-self-hosted-job.yml
       - template: templates/self-hosted-jobs.yml
     variables:
-      includeTests: "**/griffin/**,**/cairo/fuzz/**"
+      includeTests: "**/griffin/**,**/cairo/**"
 
   - stage: SelfHostedRunOther
     displayName: "SelfHosted Other tests"
@@ -51,7 +44,7 @@ stages:
       - template: templates/start-self-hosted-job.yml
       - template: templates/self-hosted-jobs.yml
     variables:
-      excludeTests: "**/griffin/**,**/cairo/fuzz/**"
+      excludeTests: "**/griffin/**,**/cairo/**"
 
   - stage: HostedRunTestsBranches
     displayName: "Hosted Running tests"
@@ -67,19 +60,12 @@ stages:
     jobs:
       - template: templates/hosted-cover-jobs.yml
 
-  - stage: JavaCodeFormatting
-    displayName: "Check Java Code Formatting with IntelliJ"
+  - stage: JavaAndRustLint
+    displayName: "Rust Test and Lint"
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/java-code-formatting-intellij.yml
-
-  - stage: HostedRunCompatTestsBranches
-    displayName: "Hosted Running CLI util and compat tests"
-    dependsOn:
-      - CheckChanges
-    jobs:
-      - template: templates/hosted-compat-jobs.yml
+      - template: templates/aux-job.yml
 
   - stage: CoverageReports
     displayName: "Coverage Report"

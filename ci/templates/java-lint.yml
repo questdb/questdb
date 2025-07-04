@@ -1,0 +1,19 @@
+steps:
+  - bash: |
+      wget "https://download.jetbrains.com/product?code=IIC&latest&distribution=linux" -O intellij.tar.gz
+      mkdir -p /opt/intellij
+      tar xvz -C /opt/intellij -f intellij.tar.gz
+      rm intellij.tar.gz
+      cd /opt/intellij
+      ln -s idea-* idea
+      echo "JAVA_HOME: $JAVA_HOME"
+      echo "java --version"
+      java --version
+    displayName: "Install IntelliJ"
+  - bash: /opt/intellij/idea/bin/idea.sh format -s .idea/codeStyles/Project.xml -m "*.java" -r .
+    displayName: "Applying formatting"
+  - bash: git status -s
+    displayName: "List of affected files"
+  - bash: git diff --exit-code
+    displayName: "List of required changes"
+
