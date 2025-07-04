@@ -352,18 +352,6 @@ public final class ColumnType {
         return columnType == ColumnType.INT;
     }
 
-    public static boolean isIntegralType(int columnType) {
-        switch (columnType) {
-            case BYTE:
-            case SHORT:
-            case INT:
-            case LONG:
-                return true;
-            default:
-                return false;
-        }
-    }
-
     public static boolean isInterval(int columnType) {
         return columnType == INTERVAL;
     }

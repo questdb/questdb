@@ -2034,6 +2034,8 @@ public class ArrayTest extends AbstractCairoTest {
     public void testRndDoubleArray() throws Exception {
         assertMemoryLeak(() -> {
             assertSql("rnd_double_array\n[NaN]\n",
+                    "SELECT rnd_double_array('1', '1', '1', '1')");
+            assertSql("rnd_double_array\n[NaN]\n",
                     "SELECT rnd_double_array(1::byte, 1::byte, 0::byte, 1::byte)");
             assertSql("rnd_double_array\n[NaN]\n",
                     "SELECT rnd_double_array(1::short, 1::short, 0::short, 1::short)");
@@ -2048,22 +2050,22 @@ public class ArrayTest extends AbstractCairoTest {
     public void testRndDoubleFunctionEdgeCases() throws Exception {
         assertMemoryLeak(() -> {
             assertExceptionNoLeakCheck(
-                    "SELECT rnd_double_array(1::char)",
+                    "SELECT rnd_double_array('1'::char)",
                     25,
                     "nDims must be an integer"
             );
             assertExceptionNoLeakCheck(
-                    "SELECT rnd_double_array(1, 1::char)",
+                    "SELECT rnd_double_array(1, '1'::char)",
                     28,
                     "nanRate must be an integer"
             );
             assertExceptionNoLeakCheck(
-                    "SELECT rnd_double_array(1, 1, 1::char)",
+                    "SELECT rnd_double_array(1, 1, '1'::char)",
                     31,
                     "maxDimLength must be an integer"
             );
             assertExceptionNoLeakCheck(
-                    "SELECT rnd_double_array(1, 1, 0, 1::char)",
+                    "SELECT rnd_double_array(1, 1, 0, '1'::char)",
                     34,
                     "dimLength must be an integer"
             );

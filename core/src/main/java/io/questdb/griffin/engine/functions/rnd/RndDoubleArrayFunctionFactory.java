@@ -117,7 +117,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         Function arg = args.getQuick(argIndex);
         int argPosition = argPositions.getQuick(argIndex);
-        if (!ColumnType.isIntegralType(arg.getType())) {
+        if (!ColumnType.isAssignableFrom(arg.getType(), ColumnType.LONG)) {
             throw SqlException.$(argPosition, argName).put(" must be an integer");
         }
         final long valueLong = arg.getLong(null);
