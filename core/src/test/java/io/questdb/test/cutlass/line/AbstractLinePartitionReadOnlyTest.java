@@ -40,7 +40,7 @@ import java.util.concurrent.TimeUnit;
 
 
 public class AbstractLinePartitionReadOnlyTest extends AbstractBootstrapTest {
-    protected static final String TABLE_START_CONTENT = "min\tmax\tcount\n" +
+    protected static final String TABLE_START_CONTENT = "min(ts)\tmax(ts)\tcount()\n" +
             "2022-12-08T00:05:11.070207Z\t2022-12-08T23:56:06.447339Z\t277\n" +
             "2022-12-09T00:01:17.517546Z\t2022-12-09T23:57:23.964885Z\t278\n" +
             "2022-12-10T00:02:35.035092Z\t2022-12-10T23:58:41.482431Z\t278\n" +
