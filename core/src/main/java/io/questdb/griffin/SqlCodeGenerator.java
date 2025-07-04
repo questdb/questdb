@@ -4254,11 +4254,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         asm
                 );
             }
+
+            final Function limitLoFunc;
+            final Function limitHiFunc;
+            if (model.getOrderBy().size() == 0) {
+                limitLoFunc = getLoFunction(model, executionContext);
+                limitHiFunc = getHiFunction(model, executionContext);
+            } else {
+                limitLoFunc = null;
+                limitHiFunc = null;
+            }
+
             return new DistinctRecordCursorFactory(
                     configuration,
                     factory,
                     entityColumnFilter,
-                    asm
+                    asm,
+                    limitLoFunc,
+                    limitHiFunc
             );
         } catch (Throwable e) {
             factory.close();

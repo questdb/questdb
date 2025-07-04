@@ -33,6 +33,112 @@ import org.junit.Test;
 public class DistinctTest extends AbstractCairoTest {
 
     @Test
+    public void testDistinctImplementsLimitLoPositive() throws Exception {
+        execute(
+                "create table x as (" +
+                        "  select" +
+                        "    rnd_symbol('foo') sym," +
+                        "    rnd_int() origin," +
+                        "    rnd_int() event," +
+                        "    timestamp_sequence(0, 0) created" +
+                        "  from long_sequence(100)" +
+                        ") timestamp(created);"
+        );
+        assertQueryAndPlan(
+                "sym\torigin\tlag\n" +
+                        "foo\t315515118\tnull\n" +
+                        "foo\t73575701\t315515118\n" +
+                        "foo\t592859671\t73575701\n" +
+                        "foo\t-1191262516\t592859671\n" +
+                        "foo\t-1575378703\t-1191262516\n",
+                "Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
+                        "    Distinct\n" +
+                        "      keys: sym,origin,lag\n" +
+                        "      earlyExit: 5\n" +
+                        "        Window\n" +
+                        "          functions: [lag(origin, 1, NULL) over ()]\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: x\n",
+                "SELECT DISTINCT sym, origin, lag(origin) over() from x limit 5",
+                null,
+                false,
+                true
+        );
+
+        assertQueryAndPlan(
+                "sym\torigin\tlag\n" +
+                        "foo\t2137969456\t264240638\n" +
+                        "foo\t68265578\t2137969456\n" +
+                        "foo\t44173540\t68265578\n" +
+                        "foo\t-2144581835\t44173540\n" +
+                        "foo\t-1162267908\t-2144581835\n" +
+                        "foo\t-1575135393\t-1162267908\n" +
+                        "foo\t326010667\t-1575135393\n" +
+                        "foo\t-2034804966\t326010667\n",
+                "Limit lo: 20 hi: 28 skip-over-rows: 20 limit: 8\n" +
+                        "    Distinct\n" +
+                        "      keys: sym,origin,lag\n" +
+                        "      earlyExit: 28\n" +
+                        "        Window\n" +
+                        "          functions: [lag(origin, 1, NULL) over ()]\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: x\n",
+                "SELECT DISTINCT sym, origin, lag(origin) over() from x limit 20, 28",
+                null,
+                false,
+                true
+        );
+
+        // no early exit
+        assertQueryAndPlan(
+                "sym\torigin\tlag\n" +
+                        "foo\t874367915\t-1775036711\n" +
+                        "foo\t1431775887\t874367915\n" +
+                        "foo\t-1822590290\t1431775887\n" +
+                        "foo\t957075831\t-1822590290\n" +
+                        "foo\t-2043541236\t957075831\n",
+                "Limit lo: -5 skip-over-rows: 95 limit: 5\n" +
+                        "    Distinct\n" +
+                        "      keys: sym,origin,lag\n" +
+                        "        Window\n" +
+                        "          functions: [lag(origin, 1, NULL) over ()]\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: x\n",
+                "SELECT DISTINCT sym, origin, lag(origin) over() from x limit -5",
+                null,
+                false,
+                true
+        );
+
+        // no early exit
+        assertQueryAndPlan(
+                "sym\torigin\tlag\n" +
+                        "foo\t315515118\tnull\n" +
+                        "foo\t73575701\t315515118\n" +
+                        "foo\t592859671\t73575701\n" +
+                        "foo\t-1191262516\t592859671\n" +
+                        "foo\t-1575378703\t-1191262516\n",
+                "Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
+                        "    Sort\n" +
+                        "      keys: [sym]\n" +
+                        "        Distinct\n" +
+                        "          keys: sym,origin,lag\n" +
+                        "            Window\n" +
+                        "              functions: [lag(origin, 1, NULL) over ()]\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: x\n",
+                "SELECT DISTINCT sym, origin, lag(origin) over() from x order by 1 limit 5",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testDuplicateColumn() throws Exception {
         assertQuery(
                 "e1\te2\n" +
