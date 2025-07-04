@@ -115,6 +115,11 @@ public class PgExtensionFunctionFactory implements FunctionFactory {
             }
 
             @Override
+            public long preComputedStateSize() {
+                return 0;
+            }
+
+            @Override
             public void toTop() {
                 index = -1;
             }

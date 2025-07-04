@@ -112,6 +112,11 @@ public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public long size() {
             return -1;
         }
