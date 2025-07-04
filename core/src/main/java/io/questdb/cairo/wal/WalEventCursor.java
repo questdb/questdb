@@ -443,21 +443,13 @@ public class WalEventCursor {
     }
 
     public class MatViewInvalidationInfo {
-        private final LongList cachedTxnIntervals = new LongList();
         private final StringSink error = new StringSink();
-        private long cachedIntervalsBaseTxn;
+        private final LongList refreshIntervals = new LongList();
         private boolean invalid;
         private long lastPeriodHi;
         private long lastRefreshBaseTableTxn;
         private long lastRefreshTimestamp;
-
-        public long getCachedIntervalsBaseTxn() {
-            return cachedIntervalsBaseTxn;
-        }
-
-        public LongList getCachedTxnIntervals() {
-            return cachedTxnIntervals;
-        }
+        private long refreshIntervalsBaseTxn;
 
         public CharSequence getInvalidationReason() {
             return error;
@@ -473,6 +465,14 @@ public class WalEventCursor {
 
         public long getLastRefreshTimestamp() {
             return lastRefreshTimestamp;
+        }
+
+        public LongList getRefreshIntervals() {
+            return refreshIntervals;
+        }
+
+        public long getRefreshIntervalsBaseTxn() {
+            return refreshIntervalsBaseTxn;
         }
 
         public boolean isInvalid() {
@@ -492,15 +492,15 @@ public class WalEventCursor {
                 lastPeriodHi = Numbers.LONG_NULL;
             }
 
-            cachedTxnIntervals.clear();
+            refreshIntervals.clear();
             if (nextOffset - offset >= Long.BYTES + Integer.BYTES) {
-                cachedIntervalsBaseTxn = readLong();
+                refreshIntervalsBaseTxn = readLong();
                 final int intervalsLen = readInt();
                 for (int i = 0; i < intervalsLen; i++) {
-                    cachedTxnIntervals.add(readLong());
+                    refreshIntervals.add(readLong());
                 }
             } else {
-                cachedIntervalsBaseTxn = -1;
+                refreshIntervalsBaseTxn = -1;
             }
         }
     }

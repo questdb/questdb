@@ -484,6 +484,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewRefreshIntervalsUpdateInterval() {
+        return 15_000;
+    }
+
+    @Override
     public long getMatViewRefreshOomRetryTimeout() {
         return 200;
     }
@@ -494,13 +499,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getMatViewTxnIntervalsCacheCapacity() {
+    public int getMatViewMaxRefreshIntervals() {
         return 100;
-    }
-
-    @Override
-    public long getMatViewTxnIntervalsCacheTimerInterval() {
-        return 15_000;
     }
 
     @Override

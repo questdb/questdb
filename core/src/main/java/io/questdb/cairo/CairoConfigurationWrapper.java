@@ -452,6 +452,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewRefreshIntervalsUpdateInterval() {
+        return getDelegate().getMatViewRefreshIntervalsUpdateInterval();
+    }
+
+    @Override
     public long getMatViewRefreshOomRetryTimeout() {
         return getDelegate().getMatViewRefreshOomRetryTimeout();
     }
@@ -462,13 +467,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getMatViewTxnIntervalsCacheCapacity() {
-        return getDelegate().getMatViewTxnIntervalsCacheCapacity();
-    }
-
-    @Override
-    public long getMatViewTxnIntervalsCacheTimerInterval() {
-        return getDelegate().getMatViewTxnIntervalsCacheTimerInterval();
+    public int getMatViewMaxRefreshIntervals() {
+        return getDelegate().getMatViewMaxRefreshIntervals();
     }
 
     @Override

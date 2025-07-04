@@ -101,7 +101,7 @@ public class MatViewTimerJob extends SynchronizedJob {
                 // but that might create many redundant WAL MAT_VIEW_INVALIDATE transactions with mat view state
                 // values. To throttle txn intervals caching, we have this special timer.
                 // The end goal of this caching is unblocking WalPurgeJob to delete old WAL segments.
-                createTxnIntervalsCacheTimer(viewDefinition, now);
+                createUpdateRefreshIntervalsTimer(viewDefinition, now);
             }
 
             long timerStart = viewDefinition.getTimerStart();
@@ -194,9 +194,9 @@ public class MatViewTimerJob extends SynchronizedJob {
                 .I$();
     }
 
-    private void createTxnIntervalsCacheTimer(@NotNull MatViewDefinition viewDefinition, long now) {
+    private void createUpdateRefreshIntervalsTimer(@NotNull MatViewDefinition viewDefinition, long now) {
         final TableToken viewToken = viewDefinition.getMatViewToken();
-        final long intervalMs = configuration.getMatViewTxnIntervalsCacheTimerInterval();
+        final long intervalMs = configuration.getMatViewRefreshIntervalsUpdateInterval();
         final TimestampSampler sampler;
         try {
             sampler = TimestampSamplerFactory.getInstance(intervalMs, 'T', -1);
@@ -256,10 +256,10 @@ public class MatViewTimerJob extends SynchronizedJob {
                         case Timer.TXN_INTERVALS_CACHE_TYPE:
                             // Enqueue WAL txn intervals caching only if the base table had new transactions
                             // since the last caching.
-                            final long txnIntervalsCacheSeq = state.getTxnIntervalsCacheSeq();
-                            if (timer.getKnownSeq() != txnIntervalsCacheSeq) {
-                                matViewStateStore.enqueueCacheTxnIntervals(viewToken);
-                                timer.setKnownSeq(txnIntervalsCacheSeq);
+                            final long refreshIntervalsSeq = state.getRefreshIntervalsSeq();
+                            if (timer.getKnownSeq() != refreshIntervalsSeq) {
+                                matViewStateStore.enqueueUpdateRefreshIntervals(viewToken);
+                                timer.setKnownSeq(refreshIntervalsSeq);
                             }
                             break;
                         default:

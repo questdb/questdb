@@ -1952,9 +1952,9 @@ public class WalWriterTest extends AbstractCairoTest {
                 TestUtils.assertEquals("test", mvInfo.getInvalidationReason());
                 // last period and cached txn intervals values should be ignored
                 assertEquals(Numbers.LONG_NULL, mvInfo.getLastPeriodHi());
-                assertNotNull(mvInfo.getCachedTxnIntervals());
-                assertEquals(0, mvInfo.getCachedTxnIntervals().size());
-                assertEquals(-1, mvInfo.getCachedIntervalsBaseTxn());
+                assertNotNull(mvInfo.getRefreshIntervals());
+                assertEquals(0, mvInfo.getRefreshIntervals().size());
+                assertEquals(-1, mvInfo.getRefreshIntervalsBaseTxn());
 
                 assertFalse(eventCursor.hasNext());
             }
@@ -4228,12 +4228,12 @@ public class WalWriterTest extends AbstractCairoTest {
             assertTrue(matViewStateReader.isInvalid());
             assertEquals(45, matViewStateReader.getLastRefreshBaseTxn()); // invalidate commit
 
-            final LongList txnIntervals = new LongList();
-            txnIntervals.add(1L, 2L);
-            txnIntervals.add(3L, 4L);
+            final LongList intervals = new LongList();
+            intervals.add(1L, 2L);
+            intervals.add(3L, 4L);
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 // reset invalidation
-                walWriter.resetMatViewState(43, 43, false, "test_invalidate", 43, txnIntervals, 48);
+                walWriter.resetMatViewState(43, 43, false, "test_invalidate", 43, intervals, 48);
             }
 
             drainWalQueue();
@@ -4244,8 +4244,8 @@ public class WalWriterTest extends AbstractCairoTest {
             success = WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
             assertTrue(success);
             assertEquals(43, matViewStateReader.getLastRefreshBaseTxn()); // no _event file, state file
-            TestUtils.assertEquals(txnIntervals, matViewStateReader.getCachedTxnIntervals());
-            assertEquals(48, matViewStateReader.getCachedIntervalsBaseTxn());
+            TestUtils.assertEquals(intervals, matViewStateReader.getRefreshIntervals());
+            assertEquals(48, matViewStateReader.getRefreshIntervalsBaseTxn());
 
             path.trimTo(tableLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
             ff.remove(path.$());

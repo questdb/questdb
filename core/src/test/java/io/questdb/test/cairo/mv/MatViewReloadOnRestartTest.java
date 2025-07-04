@@ -162,6 +162,126 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testMatViewsRefreshIntervalsReloadOnServerStart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long now = TimestampFormatUtils.parseUTCTimestamp("2024-01-01T01:01:01.000001Z");
+            final TestMicrosecondClock testClock = new TestMicrosecondClock(now);
+
+            final LongList expectedIntervals = new LongList();
+            expectedIntervals.add(parseFloorPartialTimestamp("2024-09-11T12:01"), parseFloorPartialTimestamp("2024-09-11T12:02"));
+            expectedIntervals.add(parseFloorPartialTimestamp("2024-09-12T03:01"), parseFloorPartialTimestamp("2024-09-12T23:02"));
+
+            try (final TestServerMain main1 = startMainPortsDisabled(
+                    testClock,
+                    PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_INTERVAL.getEnvVarName(), "10s"
+            )) {
+                execute(
+                        main1,
+                        "create table base_price (" +
+                                "sym varchar, price double, ts timestamp" +
+                                ") timestamp(ts) partition by DAY WAL"
+                );
+
+                execute(
+                        main1,
+                        "create materialized view price_1h refresh manual as " +
+                                "select sym, last(price) as price, ts from base_price sample by 1h;"
+                );
+
+                execute(
+                        main1,
+                        "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                                ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                                ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                                ",('gbpusd', 1.321, '2024-09-10T13:02')"
+                );
+
+                final MatViewTimerJob timerJob = new MatViewTimerJob(main1.getEngine());
+                drainMatViewTimerQueue(timerJob);
+
+                final TableToken viewToken = main1.getEngine().getTableTokenIfExists("price_1h");
+                Assert.assertNotNull(viewToken);
+                final MatViewState viewState = main1.getEngine().getMatViewStateStore().getViewState(viewToken);
+                Assert.assertNotNull(viewState);
+
+                try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
+
+                    // nothing is cached after a successful refresh
+                    Assert.assertEquals(-1, viewState.getRefreshIntervalsBaseTxn());
+                    Assert.assertEquals(0, viewState.getRefreshIntervals().size());
+
+                    assertSql(
+                            main1,
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                            "price_1h order by ts, sym"
+                    );
+
+                    execute(
+                            main1,
+                            "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-11T12:01')" +
+                                    ",('jpyusd', 103.21, '2024-09-11T12:02')"
+                    );
+                    execute(
+                            main1,
+                            "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-12T13:01')" +
+                                    ",('jpyusd', 103.21, '2024-09-12T13:02')"
+                    );
+                    execute(
+                            main1,
+                            "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-12T03:01')" +
+                                    ",('jpyusd', 103.21, '2024-09-12T23:02')"
+                    );
+                    // tick timer job to enqueue caching task
+                    testClock.micros.addAndGet(Timestamps.MINUTE_MICROS);
+                    drainMatViewTimerQueue(timerJob);
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
+
+                    // the newly inserted intervals should be in the cache
+                    Assert.assertEquals(4, viewState.getRefreshIntervalsBaseTxn());
+                    TestUtils.assertEquals(expectedIntervals, viewState.getRefreshIntervals());
+
+                    // range refresh shouldn't mess up txn intervals
+                    execute(main1, "refresh materialized view price_1h range from '2024-09-11' to '2024-09-12';");
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
+                }
+            }
+
+            try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
+                final TableToken viewToken = main2.getEngine().getTableTokenIfExists("price_1h");
+                Assert.assertNotNull(viewToken);
+                final MatViewState viewState = main2.getEngine().getMatViewStateStore().getViewState(viewToken);
+                Assert.assertNotNull(viewState);
+
+                // the txn intervals should stay as they are
+                Assert.assertEquals(4, viewState.getRefreshIntervalsBaseTxn());
+                TestUtils.assertEquals(expectedIntervals, viewState.getRefreshIntervals());
+
+                execute(main2, "refresh materialized view price_1h incremental;");
+
+                drainWalAndMatViewQueues(main2.getEngine());
+
+                final String expected = "sym\tprice\tts\n" +
+                        "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                        "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                        "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                        "gbpusd\t1.32\t2024-09-11T12:00:00.000000Z\n" +
+                        "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n" +
+                        "gbpusd\t1.32\t2024-09-12T03:00:00.000000Z\n" +
+                        "gbpusd\t1.32\t2024-09-12T13:00:00.000000Z\n" +
+                        "jpyusd\t103.21\t2024-09-12T13:00:00.000000Z\n" +
+                        "jpyusd\t103.21\t2024-09-12T23:00:00.000000Z\n";
+
+                assertSql(main2, expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                assertSql(main2, expected, "price_1h order by ts, sym");
+            }
+        });
+    }
+
+    @Test
     public void testMatViewsReloadOnServerStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain main1 = startMainPortsDisabled()) {
@@ -560,126 +680,6 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 "price_1h\tinvalid\n",
                         "select view_name, view_status from materialized_views();"
                 );
-            }
-        });
-    }
-
-    @Test
-    public void testMatViewsTxnIntervalsReloadOnServerStart() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final long now = TimestampFormatUtils.parseUTCTimestamp("2024-01-01T01:01:01.000001Z");
-            final TestMicrosecondClock testClock = new TestMicrosecondClock(now);
-
-            final LongList expectedTxnIntervals = new LongList();
-            expectedTxnIntervals.add(parseFloorPartialTimestamp("2024-09-11T12:01"), parseFloorPartialTimestamp("2024-09-11T12:02"));
-            expectedTxnIntervals.add(parseFloorPartialTimestamp("2024-09-12T03:01"), parseFloorPartialTimestamp("2024-09-12T23:02"));
-
-            try (final TestServerMain main1 = startMainPortsDisabled(
-                    testClock,
-                    PropertyKey.CAIRO_MAT_VIEW_TXN_INTERVALS_CACHE_TIMER_INTERVAL.getEnvVarName(), "10s"
-            )) {
-                execute(
-                        main1,
-                        "create table base_price (" +
-                                "sym varchar, price double, ts timestamp" +
-                                ") timestamp(ts) partition by DAY WAL"
-                );
-
-                execute(
-                        main1,
-                        "create materialized view price_1h refresh manual as " +
-                                "select sym, last(price) as price, ts from base_price sample by 1h;"
-                );
-
-                execute(
-                        main1,
-                        "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                                ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                                ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                                ",('gbpusd', 1.321, '2024-09-10T13:02')"
-                );
-
-                final MatViewTimerJob timerJob = new MatViewTimerJob(main1.getEngine());
-                drainMatViewTimerQueue(timerJob);
-
-                final TableToken viewToken = main1.getEngine().getTableTokenIfExists("price_1h");
-                Assert.assertNotNull(viewToken);
-                final MatViewState viewState = main1.getEngine().getMatViewStateStore().getViewState(viewToken);
-                Assert.assertNotNull(viewState);
-
-                try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
-                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
-
-                    // nothing is cached after a successful refresh
-                    Assert.assertEquals(-1, viewState.getCachedIntervalsBaseTxn());
-                    Assert.assertEquals(0, viewState.getCachedTxnIntervals().size());
-
-                    assertSql(
-                            main1,
-                            "sym\tprice\tts\n" +
-                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
-                            "price_1h order by ts, sym"
-                    );
-
-                    execute(
-                            main1,
-                            "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-11T12:01')" +
-                                    ",('jpyusd', 103.21, '2024-09-11T12:02')"
-                    );
-                    execute(
-                            main1,
-                            "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-12T13:01')" +
-                                    ",('jpyusd', 103.21, '2024-09-12T13:02')"
-                    );
-                    execute(
-                            main1,
-                            "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-12T03:01')" +
-                                    ",('jpyusd', 103.21, '2024-09-12T23:02')"
-                    );
-                    // tick timer job to enqueue caching task
-                    testClock.micros.addAndGet(Timestamps.MINUTE_MICROS);
-                    drainMatViewTimerQueue(timerJob);
-                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
-
-                    // the newly inserted intervals should be in the cache
-                    Assert.assertEquals(4, viewState.getCachedIntervalsBaseTxn());
-                    TestUtils.assertEquals(expectedTxnIntervals, viewState.getCachedTxnIntervals());
-
-                    // range refresh shouldn't mess up txn intervals
-                    execute(main1, "refresh materialized view price_1h range from '2024-09-11' to '2024-09-12';");
-                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
-                }
-            }
-
-            try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
-                final TableToken viewToken = main2.getEngine().getTableTokenIfExists("price_1h");
-                Assert.assertNotNull(viewToken);
-                final MatViewState viewState = main2.getEngine().getMatViewStateStore().getViewState(viewToken);
-                Assert.assertNotNull(viewState);
-
-                // the txn intervals should stay as they are
-                Assert.assertEquals(4, viewState.getCachedIntervalsBaseTxn());
-                TestUtils.assertEquals(expectedTxnIntervals, viewState.getCachedTxnIntervals());
-
-                execute(main2, "refresh materialized view price_1h incremental;");
-
-                drainWalAndMatViewQueues(main2.getEngine());
-
-                final String expected = "sym\tprice\tts\n" +
-                        "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                        "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                        "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                        "gbpusd\t1.32\t2024-09-11T12:00:00.000000Z\n" +
-                        "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n" +
-                        "gbpusd\t1.32\t2024-09-12T03:00:00.000000Z\n" +
-                        "gbpusd\t1.32\t2024-09-12T13:00:00.000000Z\n" +
-                        "jpyusd\t103.21\t2024-09-12T13:00:00.000000Z\n" +
-                        "jpyusd\t103.21\t2024-09-12T23:00:00.000000Z\n";
-
-                assertSql(main2, expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
-                assertSql(main2, expected, "price_1h order by ts, sym");
             }
         });
     }

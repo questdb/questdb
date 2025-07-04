@@ -331,8 +331,8 @@ class WalEventWriter implements Closeable {
             boolean invalid,
             @Nullable CharSequence invalidationReason,
             long lastPeriodHi,
-            @Nullable LongList cachedTxnIntervals,
-            long cachedIntervalsBaseTxn
+            @Nullable LongList refreshIntervals,
+            long refreshIntervalsBaseTxn
     ) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
@@ -343,11 +343,11 @@ class WalEventWriter implements Closeable {
         eventMem.putStr(invalidationReason);
         if (!legacyMatViewFormat) {
             eventMem.putLong(lastPeriodHi);
-            eventMem.putLong(cachedIntervalsBaseTxn);
-            if (cachedTxnIntervals != null) {
-                eventMem.putInt(cachedTxnIntervals.size());
-                for (int i = 0, n = cachedTxnIntervals.size(); i < n; i++) {
-                    eventMem.putLong(cachedTxnIntervals.getQuick(i));
+            eventMem.putLong(refreshIntervalsBaseTxn);
+            if (refreshIntervals != null) {
+                eventMem.putInt(refreshIntervals.size());
+                for (int i = 0, n = refreshIntervals.size(); i < n; i++) {
+                    eventMem.putLong(refreshIntervals.getQuick(i));
                 }
             } else {
                 eventMem.putInt(-1);

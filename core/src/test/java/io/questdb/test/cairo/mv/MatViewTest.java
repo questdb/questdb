@@ -3984,6 +3984,229 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshIntervalsCachingSmoke() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_INTERVAL, "5s");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh manual as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2099-01-01T01:01:01.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(viewState);
+
+            // nothing is cached after a successful refresh
+            Assert.assertEquals(-1, viewState.getRefreshIntervalsBaseTxn());
+            Assert.assertEquals(0, viewState.getRefreshIntervals().size());
+
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-11T12:01')" +
+                            ",('jpyusd', 103.21, '2024-09-11T12:02')"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-12T13:01')" +
+                            ",('jpyusd', 103.21, '2024-09-12T13:02')"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-12T03:01')" +
+                            ",('jpyusd', 103.21, '2024-09-12T23:02')"
+            );
+            currentMicros += 6 * Timestamps.SECOND_MICROS;
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // the newly inserted intervals should be in the cache
+            Assert.assertEquals(4, viewState.getRefreshIntervalsBaseTxn());
+            final LongList expectedIntervals = new LongList();
+            expectedIntervals.add(parseFloorPartialTimestamp("2024-09-11T12:01"), parseFloorPartialTimestamp("2024-09-11T12:02"));
+            expectedIntervals.add(parseFloorPartialTimestamp("2024-09-12T03:01"), parseFloorPartialTimestamp("2024-09-12T23:02"));
+            TestUtils.assertEquals(expectedIntervals, viewState.getRefreshIntervals());
+
+            // at this point, new rows shouldn't be reflected in the view
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+            final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views";
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tmanual\tbase_price\t2099-01-01T01:01:01.000000Z\t2099-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tvalid\t1\t4\n",
+                    matViewsSql,
+                    null
+            );
+
+            // WalPurgeJob should be able to delete WAL segments freely
+            final TableToken baseTableToken = engine.getTableTokenIfExists("base_price");
+            Assert.assertNotNull(baseTableToken);
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
+                Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
+
+                engine.releaseInactiveTableSequencers();
+                drainPurgeJob();
+
+                Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
+            }
+
+            // the new rows should be reflected in the view after an explicit incremental refresh call
+            execute("refresh materialized view price_1h incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // nothing is cached after a successful refresh
+            Assert.assertEquals(-1, viewState.getRefreshIntervalsBaseTxn());
+            Assert.assertEquals(0, viewState.getRefreshIntervals().size());
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tmanual\tbase_price\t2099-01-01T01:01:07.000000Z\t2099-01-01T01:01:07.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tvalid\t4\t4\n",
+                    matViewsSql,
+                    null
+            );
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                            "gbpusd\t1.32\t2024-09-11T12:00:00.000000Z\n" +
+                            "gbpusd\t1.32\t2024-09-12T03:00:00.000000Z\n" +
+                            "gbpusd\t1.32\t2024-09-12T13:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-12T13:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-12T23:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshIntervalsCapacity() throws Exception {
+        final int capacity = 10;
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS, capacity);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_INTERVAL, "10s");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh manual as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-10T12:01')");
+
+            currentMicros = parseFloorPartialTimestamp("2025-01-01T01:01:01.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            for (int i = 0; i < 3 * capacity; i++) {
+                execute("insert into base_price(sym, price, ts) values ('gbpusd', " + i + ", (" + i + "*1000000)::timestamp)");
+            }
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(viewState);
+
+            // nothing is cached after a successful refresh
+            Assert.assertEquals(-1, viewState.getRefreshIntervalsBaseTxn());
+            Assert.assertEquals(0, viewState.getRefreshIntervals().size());
+
+            currentMicros += 11 * Timestamps.SECOND_MICROS;
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // the newly inserted intervals should be in the cache
+            Assert.assertEquals(3 * capacity + 1, viewState.getRefreshIntervalsBaseTxn());
+            final int intervalsSize = viewState.getRefreshIntervals().size();
+            Assert.assertEquals(2 * capacity, intervalsSize);
+            for (int i = 0; i < capacity - 1; i++) {
+                Assert.assertEquals(Timestamps.SECOND_MICROS * i, viewState.getRefreshIntervals().getQuick(2 * i));
+                Assert.assertEquals(Timestamps.SECOND_MICROS * i, viewState.getRefreshIntervals().getQuick(2 * i + 1));
+            }
+            // The latest intervals should be squashed into the last one.
+            Assert.assertEquals(Timestamps.SECOND_MICROS * (capacity - 1), viewState.getRefreshIntervals().getQuick(intervalsSize - 2));
+            Assert.assertEquals(Timestamps.SECOND_MICROS * (3 * capacity - 1), viewState.getRefreshIntervals().getQuick(intervalsSize - 1));
+
+            // at this point, new rows shouldn't be reflected in the view
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.32\t2024-09-10T12:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+            final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "from materialized_views";
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tmanual\tbase_price\t2025-01-01T01:01:01.000000Z\t2025-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tvalid\t1\t31\n",
+                    matViewsSql,
+                    null
+            );
+
+            // WalPurgeJob should be able to delete WAL segments freely
+            final TableToken baseTableToken = engine.getTableTokenIfExists("base_price");
+            Assert.assertNotNull(baseTableToken);
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
+                Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
+
+                engine.releaseInactiveTableSequencers();
+                drainPurgeJob();
+
+                Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
+            }
+
+            // the new rows should be reflected in the view after an explicit incremental refresh call
+            execute("refresh materialized view price_1h incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // nothing is cached after a successful refresh
+            Assert.assertEquals(-1, viewState.getRefreshIntervalsBaseTxn());
+            Assert.assertEquals(0, viewState.getRefreshIntervals().size());
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
+                            "price_1h\tmanual\tbase_price\t2025-01-01T01:01:12.000000Z\t2025-01-01T01:01:12.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tvalid\t31\t31\n",
+                    matViewsSql,
+                    null
+            );
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t29.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "gbpusd\t1.32\t2024-09-10T12:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+        });
+    }
+
+    @Test
     public void testRefreshSkipsUnchangedBuckets() throws Exception {
         // Verify that incremental refresh skips unchanged SAMPLE BY buckets.
         assertMemoryLeak(() -> {
@@ -4969,229 +5192,6 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTxnIntervalsCachingCapacity() throws Exception {
-        final int capacity = 10;
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_TXN_INTERVALS_CACHE_CAPACITY, capacity);
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_TXN_INTERVALS_CACHE_TIMER_INTERVAL, "10s");
-        assertMemoryLeak(() -> {
-            execute(
-                    "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
-                            ") timestamp(ts) partition by DAY WAL"
-            );
-            execute(
-                    "create materialized view price_1h refresh manual as " +
-                            "select sym, last(price) as price, ts from base_price sample by 1h;"
-            );
-            execute("insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-10T12:01')");
-
-            currentMicros = parseFloorPartialTimestamp("2025-01-01T01:01:01.000000Z");
-            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
-            drainMatViewTimerQueue(timerJob);
-            drainQueues();
-
-            for (int i = 0; i < 3 * capacity; i++) {
-                execute("insert into base_price(sym, price, ts) values ('gbpusd', " + i + ", (" + i + "*1000000)::timestamp)");
-            }
-
-            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
-            Assert.assertNotNull(viewToken);
-            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
-            Assert.assertNotNull(viewState);
-
-            // nothing is cached after a successful refresh
-            Assert.assertEquals(-1, viewState.getCachedIntervalsBaseTxn());
-            Assert.assertEquals(0, viewState.getCachedTxnIntervals().size());
-
-            currentMicros += 11 * Timestamps.SECOND_MICROS;
-            drainMatViewTimerQueue(timerJob);
-            drainQueues();
-
-            // the newly inserted intervals should be in the cache
-            Assert.assertEquals(3 * capacity + 1, viewState.getCachedIntervalsBaseTxn());
-            final int txnIntervalsSize = viewState.getCachedTxnIntervals().size();
-            Assert.assertEquals(2 * capacity, txnIntervalsSize);
-            for (int i = 0; i < capacity - 1; i++) {
-                Assert.assertEquals(Timestamps.SECOND_MICROS * i, viewState.getCachedTxnIntervals().getQuick(2 * i));
-                Assert.assertEquals(Timestamps.SECOND_MICROS * i, viewState.getCachedTxnIntervals().getQuick(2 * i + 1));
-            }
-            // The latest intervals should be squashed into the last one.
-            Assert.assertEquals(Timestamps.SECOND_MICROS * (capacity - 1), viewState.getCachedTxnIntervals().getQuick(txnIntervalsSize - 2));
-            Assert.assertEquals(Timestamps.SECOND_MICROS * (3 * capacity - 1), viewState.getCachedTxnIntervals().getQuick(txnIntervalsSize - 1));
-
-            // at this point, new rows shouldn't be reflected in the view
-            assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.32\t2024-09-10T12:00:00.000000Z\n",
-                    "price_1h order by sym"
-            );
-            final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                    "from materialized_views";
-            assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tmanual\tbase_price\t2025-01-01T01:01:01.000000Z\t2025-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tvalid\t1\t31\n",
-                    matViewsSql,
-                    null
-            );
-
-            // WalPurgeJob should be able to delete WAL segments freely
-            final TableToken baseTableToken = engine.getTableTokenIfExists("base_price");
-            Assert.assertNotNull(baseTableToken);
-            try (Path path = new Path()) {
-                path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
-                Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
-
-                engine.releaseInactiveTableSequencers();
-                drainPurgeJob();
-
-                Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
-            }
-
-            // the new rows should be reflected in the view after an explicit incremental refresh call
-            execute("refresh materialized view price_1h incremental;");
-            drainMatViewTimerQueue(timerJob);
-            drainQueues();
-
-            // nothing is cached after a successful refresh
-            Assert.assertEquals(-1, viewState.getCachedIntervalsBaseTxn());
-            Assert.assertEquals(0, viewState.getCachedTxnIntervals().size());
-
-            assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tmanual\tbase_price\t2025-01-01T01:01:12.000000Z\t2025-01-01T01:01:12.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tvalid\t31\t31\n",
-                    matViewsSql,
-                    null
-            );
-            assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t29.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "gbpusd\t1.32\t2024-09-10T12:00:00.000000Z\n",
-                    "price_1h order by sym"
-            );
-        });
-    }
-
-    @Test
-    public void testTxnIntervalsCachingSmoke() throws Exception {
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_TXN_INTERVALS_CACHE_TIMER_INTERVAL, "5s");
-        assertMemoryLeak(() -> {
-            execute(
-                    "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
-                            ") timestamp(ts) partition by DAY WAL"
-            );
-            execute(
-                    "create materialized view price_1h refresh manual as " +
-                            "select sym, last(price) as price, ts from base_price sample by 1h;"
-            );
-            execute(
-                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
-            );
-
-            currentMicros = parseFloorPartialTimestamp("2099-01-01T01:01:01.000000Z");
-            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
-            drainMatViewTimerQueue(timerJob);
-            drainQueues();
-
-            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
-            Assert.assertNotNull(viewToken);
-            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
-            Assert.assertNotNull(viewState);
-
-            // nothing is cached after a successful refresh
-            Assert.assertEquals(-1, viewState.getCachedIntervalsBaseTxn());
-            Assert.assertEquals(0, viewState.getCachedTxnIntervals().size());
-
-            execute(
-                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-11T12:01')" +
-                            ",('jpyusd', 103.21, '2024-09-11T12:02')"
-            );
-            execute(
-                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-12T13:01')" +
-                            ",('jpyusd', 103.21, '2024-09-12T13:02')"
-            );
-            execute(
-                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-12T03:01')" +
-                            ",('jpyusd', 103.21, '2024-09-12T23:02')"
-            );
-            currentMicros += 6 * Timestamps.SECOND_MICROS;
-            drainMatViewTimerQueue(timerJob);
-            drainQueues();
-
-            // the newly inserted intervals should be in the cache
-            Assert.assertEquals(4, viewState.getCachedIntervalsBaseTxn());
-            final LongList expectedTxnIntervals = new LongList();
-            expectedTxnIntervals.add(parseFloorPartialTimestamp("2024-09-11T12:01"), parseFloorPartialTimestamp("2024-09-11T12:02"));
-            expectedTxnIntervals.add(parseFloorPartialTimestamp("2024-09-12T03:01"), parseFloorPartialTimestamp("2024-09-12T23:02"));
-            TestUtils.assertEquals(expectedTxnIntervals, viewState.getCachedTxnIntervals());
-
-            // at this point, new rows shouldn't be reflected in the view
-            assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
-                    "price_1h order by sym"
-            );
-            final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                    "from materialized_views";
-            assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tmanual\tbase_price\t2099-01-01T01:01:01.000000Z\t2099-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tvalid\t1\t4\n",
-                    matViewsSql,
-                    null
-            );
-
-            // WalPurgeJob should be able to delete WAL segments freely
-            final TableToken baseTableToken = engine.getTableTokenIfExists("base_price");
-            Assert.assertNotNull(baseTableToken);
-            try (Path path = new Path()) {
-                path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
-                Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
-
-                engine.releaseInactiveTableSequencers();
-                drainPurgeJob();
-
-                Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
-            }
-
-            // the new rows should be reflected in the view after an explicit incremental refresh call
-            execute("refresh materialized view price_1h incremental;");
-            drainMatViewTimerQueue(timerJob);
-            drainQueues();
-
-            // nothing is cached after a successful refresh
-            Assert.assertEquals(-1, viewState.getCachedIntervalsBaseTxn());
-            Assert.assertEquals(0, viewState.getCachedTxnIntervals().size());
-
-            assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tmanual\tbase_price\t2099-01-01T01:01:07.000000Z\t2099-01-01T01:01:07.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tvalid\t4\t4\n",
-                    matViewsSql,
-                    null
-            );
-            assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                            "gbpusd\t1.32\t2024-09-11T12:00:00.000000Z\n" +
-                            "gbpusd\t1.32\t2024-09-12T03:00:00.000000Z\n" +
-                            "gbpusd\t1.32\t2024-09-12T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-12T13:00:00.000000Z\n" +
-                            "jpyusd\t103.21\t2024-09-12T23:00:00.000000Z\n",
-                    "price_1h order by sym"
-            );
-        });
-    }
-
-    @Test
     public void testViewInvalidatedOnRefreshAfterBaseTableRename() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -5250,8 +5250,8 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testViewInvalidatedOnTxnIntervalsCachingAfterBaseTableRename() throws Exception {
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_TXN_INTERVALS_CACHE_TIMER_INTERVAL, "5s");
+    public void testViewInvalidatedOnRefreshIntervalsUpdateAfterBaseTableRename() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_INTERVAL, "5s");
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +

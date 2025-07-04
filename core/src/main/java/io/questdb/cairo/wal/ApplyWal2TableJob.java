@@ -626,8 +626,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             info.isInvalid(),
                             info.getInvalidationReason(),
                             info.getLastPeriodHi(),
-                            info.getCachedTxnIntervals(),
-                            info.getCachedIntervalsBaseTxn()
+                            info.getRefreshIntervals(),
+                            info.getRefreshIntervalsBaseTxn()
                     );
                 } catch (CairoException e) {
                     LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
@@ -748,8 +748,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             boolean invalid,
             @Nullable CharSequence invalidationReason,
             long lastPeriodHi,
-            @Nullable LongList cachedTxnIntervals,
-            long cachedIntervalsBaseTxn
+            @Nullable LongList refreshIntervals,
+            long refreshIntervalsBaseTxn
     ) {
         try (BlockFileWriter stateWriter = mvStateWriter) {
             stateWriter.of(tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
@@ -759,8 +759,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     invalid,
                     invalidationReason,
                     lastPeriodHi,
-                    cachedTxnIntervals,
-                    cachedIntervalsBaseTxn,
+                    refreshIntervals,
+                    refreshIntervalsBaseTxn,
                     stateWriter
             );
         }

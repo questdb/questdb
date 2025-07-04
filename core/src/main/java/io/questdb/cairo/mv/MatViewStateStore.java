@@ -51,10 +51,6 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
     // Creates the view state and logs telemetry event.
     void createViewState(MatViewDefinition viewDefinition);
 
-    // Used to cache WAL txn intervals for manual and timer mat views.
-    // That's to let WalPurgeJob make progress.
-    void enqueueCacheTxnIntervals(TableToken matViewToken);
-
     void enqueueFullRefresh(TableToken matViewToken);
 
     void enqueueIncrementalRefresh(TableToken matViewToken);
@@ -64,6 +60,10 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
     void enqueueInvalidateDependentViews(TableToken baseTableToken, String invalidationReason);
 
     void enqueueRangeRefresh(TableToken matViewToken, long rangeFrom, long rangeTo);
+
+    // Used to cache WAL txn intervals for manual and timer mat views.
+    // That's to let WalPurgeJob make progress.
+    void enqueueUpdateRefreshIntervals(TableToken matViewToken);
 
     @Nullable
     MatViewState getViewState(TableToken matViewToken);

@@ -120,7 +120,7 @@ public class MatViewStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMatViewStateResetTxnIntervals() throws Exception {
+    public void testMatViewStateResetRefreshIntervals() throws Exception {
         assertMemoryLeak(ff, () -> {
             execute(
                     "create table base_price (" +
@@ -137,11 +137,11 @@ public class MatViewStateTest extends AbstractCairoTest {
             int iterations = 10;
             TableToken tableToken = engine.verifyTableName("price_1h");
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                final LongList txnIntervals = new LongList();
+                final LongList intervals = new LongList();
                 for (int i = 0; i < iterations; i++) {
-                    txnIntervals.add((long) i, i);
-                    walWriter.resetMatViewState(i, i, false, null, i, txnIntervals, i);
-                    assertState(tableToken, i, i, false, null, i, txnIntervals, i);
+                    intervals.add((long) i, i);
+                    walWriter.resetMatViewState(i, i, false, null, i, intervals, i);
+                    assertState(tableToken, i, i, false, null, i, intervals, i);
                 }
             }
         });
@@ -191,8 +191,8 @@ public class MatViewStateTest extends AbstractCairoTest {
             boolean invalid,
             String invalidationReason,
             long lastPeriodHi,
-            @Nullable LongList cachedTxnIntervals,
-            long cachedIntervalsBaseTxn
+            @Nullable LongList refreshIntervals,
+            long refreshIntervalsBaseTxn
     ) {
         drainWalQueue();
         try (Path path = new Path(); BlockFileReader reader = new BlockFileReader(configuration)) {
@@ -203,12 +203,12 @@ public class MatViewStateTest extends AbstractCairoTest {
             assertEquals(lastRefreshTimestamp, viewState.getLastRefreshTimestamp());
             TestUtils.assertEquals(invalidationReason, viewState.getInvalidationReason());
             assertEquals(lastPeriodHi, viewState.getLastPeriodHi());
-            if (cachedTxnIntervals != null) {
-                TestUtils.assertEquals(cachedTxnIntervals, viewState.getCachedTxnIntervals());
+            if (refreshIntervals != null) {
+                TestUtils.assertEquals(refreshIntervals, viewState.getRefreshIntervals());
             } else {
-                assertTrue(viewState.getCachedTxnIntervals() == null || viewState.getCachedTxnIntervals().size() == 0);
+                assertTrue(viewState.getRefreshIntervals() == null || viewState.getRefreshIntervals().size() == 0);
             }
-            assertEquals(cachedIntervalsBaseTxn, viewState.getCachedIntervalsBaseTxn());
+            assertEquals(refreshIntervalsBaseTxn, viewState.getRefreshIntervalsBaseTxn());
         }
     }
 }

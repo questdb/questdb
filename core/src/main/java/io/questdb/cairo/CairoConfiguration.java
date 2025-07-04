@@ -275,13 +275,13 @@ public interface CairoConfiguration {
 
     long getMatViewMinRefreshInterval();
 
+    long getMatViewRefreshIntervalsUpdateInterval();
+
     long getMatViewRefreshOomRetryTimeout();
 
     int getMatViewRowsPerQueryEstimate();
 
-    int getMatViewTxnIntervalsCacheCapacity();
-
-    long getMatViewTxnIntervalsCacheTimerInterval();
+    int getMatViewMaxRefreshIntervals();
 
     int getMaxCrashFiles();
 

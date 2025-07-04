@@ -295,6 +295,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int matViewMaxRefreshRetries;
     private final long matViewMinRefreshInterval;
     private final boolean matViewParallelExecutionEnabled;
+    private final long matViewRefreshIntervalsUpdateInterval;
     private final long matViewRefreshOomRetryTimeout;
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewRefreshPoolConfiguration();
     private final long matViewRefreshSleepTimeout;
@@ -305,8 +306,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewRefreshWorkerSleepThreshold;
     private final long matViewRefreshWorkerYieldThreshold;
     private final int matViewRowsPerQueryEstimate;
-    private final int matViewTxnIntervalsCacheCapacity;
-    private final long matViewTxnIntervalsCacheTimerInterval;
+    private final int matViewMaxRefreshIntervals;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
     private final double maxRequiredDelimiterStdDev;
@@ -772,7 +772,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         // instead cairo.wal.enabled.default=true is added to the config, so only new QuestDB installations have WAL enabled by default
         this.walEnabledDefault = getBoolean(properties, env, PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
         this.walPurgeInterval = getMillis(properties, env, PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 30_000);
-        this.matViewTxnIntervalsCacheTimerInterval = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_TXN_INTERVALS_CACHE_TIMER_INTERVAL, walPurgeInterval / 2);
+        this.matViewRefreshIntervalsUpdateInterval = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_INTERVAL, walPurgeInterval / 2);
         this.walPurgeWaitBeforeDelete = getInt(properties, env, PropertyKey.DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE, 0);
         this.walTxnNotificationQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4096);
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
@@ -1358,7 +1358,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlInsertModelBatchSize = getLong(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_BATCH_SIZE, 1_000_000);
             this.matViewInsertAsSelectBatchSize = getLong(properties, env, PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, sqlInsertModelBatchSize);
             this.matViewRowsPerQueryEstimate = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
-            this.matViewTxnIntervalsCacheCapacity = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_TXN_INTERVALS_CACHE_CAPACITY, 100);
+            this.matViewMaxRefreshIntervals = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS, 100);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
             this.columnPurgeTaskPoolCapacity = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY, 256);
@@ -2999,6 +2999,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getMatViewRefreshIntervalsUpdateInterval() {
+            return matViewRefreshIntervalsUpdateInterval;
+        }
+
+        @Override
         public long getMatViewRefreshOomRetryTimeout() {
             return matViewRefreshOomRetryTimeout;
         }
@@ -3009,13 +3014,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getMatViewTxnIntervalsCacheCapacity() {
-            return matViewTxnIntervalsCacheCapacity;
-        }
-
-        @Override
-        public long getMatViewTxnIntervalsCacheTimerInterval() {
-            return matViewTxnIntervalsCacheTimerInterval;
+        public int getMatViewMaxRefreshIntervals() {
+            return matViewMaxRefreshIntervals;
         }
 
         @Override

@@ -396,7 +396,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             final TableToken viewToken = childViewSink.get(v);
             final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
             if (state != null && !state.isPendingInvalidation() && !state.isInvalid() && !state.isDropped()) {
-                final long appliedToViewTxn = Math.max(state.getLastRefreshBaseTxn(), state.getCachedIntervalsBaseTxn());
+                final long appliedToViewTxn = Math.max(state.getLastRefreshBaseTxn(), state.getRefreshIntervalsBaseTxn());
                 // If both txn numbers are equal to -1, the first incremental refresh will read full table,
                 // without having to read WAL txn intervals.
                 //

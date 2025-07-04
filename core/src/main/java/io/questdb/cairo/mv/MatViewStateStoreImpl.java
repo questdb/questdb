@@ -127,11 +127,6 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     }
 
     @Override
-    public void enqueueCacheTxnIntervals(TableToken matViewToken) {
-        enqueueTaskIfStateExists(matViewToken, MatViewRefreshTask.CACHE_TXN_INTERVALS, null);
-    }
-
-    @Override
     public void enqueueFullRefresh(TableToken matViewToken) {
         enqueueTaskIfStateExists(matViewToken, MatViewRefreshTask.FULL_REFRESH, null);
     }
@@ -174,6 +169,11 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         if (state != null && !state.isDropped()) {
             enqueueMatViewTask(matViewToken, null, operation, invalidationReason, rangeFrom, rangeTo);
         }
+    }
+
+    @Override
+    public void enqueueUpdateRefreshIntervals(TableToken matViewToken) {
+        enqueueTaskIfStateExists(matViewToken, MatViewRefreshTask.UPDATE_REFRESH_INTERVALS, null);
     }
 
     @Override
