@@ -1370,4 +1370,14 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public boolean useWithinLatestByOptimisation() {
         return false;
     }
+
+    @Override
+    public boolean isColumnAliasExpressionEnabled() {
+        return true;
+    }
+
+    @Override
+    public int getColumnAliasGeneratedMaxSize() {
+        return 64;
+    }
 }

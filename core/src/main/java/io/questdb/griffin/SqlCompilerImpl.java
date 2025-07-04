@@ -225,7 +225,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
             this.functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser, sqlNodePool);
+            this.codeGenerator = new SqlCodeGenerator(configuration, functionParser, sqlNodePool);
             this.vacuumColumnVersions = new VacuumColumnVersions(engine);
 
             // we have cyclical dependency here

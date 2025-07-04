@@ -355,6 +355,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         }
 
         @Override
+        public long preComputedStateSize() {
+            return isMapBuilt ? 1 : 0;
+        }
+
+        @Override
         public long size() {
             return isMapBuilt ? super.size() : -1;
         }

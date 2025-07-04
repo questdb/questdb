@@ -72,6 +72,11 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
     }
 
     @Override
+    public long preComputedStateSize() {
+        return super.preComputedStateSize();
+    }
+
+    @Override
     public boolean hasNext() {
         initTimestamps();
         return baseRecord != null && notKeyedLoop(simpleMapValue);

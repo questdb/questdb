@@ -151,6 +151,11 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public void toTop() {
             super.toTop();
             slaveTimestamp = Numbers.LONG_NULL;

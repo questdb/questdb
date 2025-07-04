@@ -762,6 +762,11 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return delegate.preComputedStateSize();
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             delegate.recordAt(record, atRowId);
         }

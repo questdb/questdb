@@ -254,6 +254,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public long size() {
             // Can be improved, potentially we know the size if both TO and FROM are set
             return -1;

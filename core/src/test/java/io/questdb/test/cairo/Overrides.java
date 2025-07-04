@@ -314,6 +314,7 @@ public class Overrides {
         properties.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT.getPropertyPath(), "false");
         properties.setProperty(PropertyKey.CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT.getPropertyPath(), "false");
         properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getPropertyPath(), "false");
     }
 
     private CairoConfiguration getDefaultConfiguration(String root) {

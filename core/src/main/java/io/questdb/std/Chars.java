@@ -803,6 +803,10 @@ public final class Chars {
         }
     }
 
+    public static boolean isDoubleQuote(char c) {
+        return c == '"';
+    }
+
     public static boolean isQuoted(CharSequence s) {
         if (s == null || s.length() < 2) {
             return false;
@@ -812,12 +816,38 @@ public final class Chars {
         return isQuote(open) && open == s.charAt(s.length() - 1);
     }
 
+    public static boolean isDoubleQuoted(CharSequence s) {
+        if (s == null || s.length() < 2) {
+            return false;
+        }
+
+        return isDoubleQuote(s.charAt(0)) && isDoubleQuote(s.charAt(s.length() - 1));
+    }
+
     public static int lastIndexOf(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, @NotNull CharSequence term) {
         return indexOf(sequence, sequenceLo, sequenceHi, term, -1);
     }
 
     public static int lastIndexOf(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, char c) {
         return indexOf(sequence, sequenceLo, sequenceHi, c, -1);
+    }
+
+    /**
+     * Returns the index of the last character that isn't c between sequenceLo and sequenceHi.
+     *
+     * @param sequence   the sequence to find the last index of.
+     * @param sequenceLo the low limit to start searching through the sequence.
+     * @param sequenceHi the hi limit to end searching through the sequence.
+     * @param c          the character to stop matching.
+     * @return the index of the last character that isn't c or -1 if there aren't any.
+     */
+    public static int lastIndexOfDifferent(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, char c) {
+        for (int i = sequenceHi - 1; i >= sequenceLo; i--) {
+            if (sequence.charAt(i) != c) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**

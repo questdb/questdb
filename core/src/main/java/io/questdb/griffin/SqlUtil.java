@@ -92,6 +92,73 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, fromColumnType, toTimestampType);
     }
 
+    public static CharSequence createExprColumnAlias(
+            CharacterStore store,
+            CharSequence base,
+            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
+            int maxLength
+    ) {
+        return createExprColumnAlias(store, base, aliasToColumnMap, maxLength, false);
+    }
+
+    public static CharSequence createExprColumnAlias(
+            CharacterStore store,
+            CharSequence base,
+            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
+            int maxLength,
+            boolean nonLiteral
+    ) {
+        // We need to wrap disallowed aliases with double quotes to avoid later conflicts.
+        final boolean quote = nonLiteral && !Chars.isDoubleQuoted(base) && (
+                Chars.indexOf(base, '.') > -1 || disallowedAliases.contains(base)
+        );
+
+        int len = base.length();
+        // early exit for simple cases
+        if (!quote && aliasToColumnMap.excludes(base) && len > 0 && len <= maxLength && base.charAt(len - 1) != ' ') {
+            return base;
+        }
+
+        final CharacterStoreEntry entry = store.newEntry();
+        final int entryLen = entry.length();
+        if (quote) {
+            entry.put('"');
+            len += 2;
+        }
+        entry.put(base);
+
+        int sequence = 1;
+        int seqSize = 0;
+        while (true) {
+            if (sequence > 1) {
+                seqSize = (int) Math.log10(sequence) + 2; // Remember the _
+            }
+            len = Math.min(len, maxLength - seqSize - (quote ? 1 : 0));
+
+            // We don't want the alias to finish with a space.
+            if (!quote && len > 0 && base.charAt(len - 1) == ' ') {
+                final int lastSpace = Chars.lastIndexOfDifferent(base, 0, len, ' ');
+                if (lastSpace > 0) {
+                    len = lastSpace + 1;
+                }
+            }
+
+            entry.trimTo(entryLen + len - (quote ? 1 : 0));
+            if (sequence > 1) {
+                entry.put('_');
+                entry.put(sequence);
+            }
+            if (quote) {
+                entry.put('"');
+            }
+            CharSequence alias = entry.toImmutable();
+            if (len > 0 && aliasToColumnMap.excludes(alias)) {
+                return alias;
+            }
+            sequence++;
+        }
+    }
+
     public static long expectMicros(CharSequence tok, int position) throws SqlException {
         int k = -1;
 
