@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
