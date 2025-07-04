@@ -451,6 +451,9 @@ public final class Timestamps {
     }
 
     public static long floorWW(long micros, int stride, long offset) {
+        if (offset == 0) {
+            return floorWW(micros, stride);
+        }
         if (micros < offset) {
             return offset;
         }
@@ -790,7 +793,7 @@ public final class Timestamps {
         return 1;
     }
 
-    public static char getStrideUnit(CharSequence str) throws SqlException {
+    public static char getStrideUnit(CharSequence str, int position) throws SqlException {
         assert str.length() > 0;
         final char unit = str.charAt(str.length() - 1);
         switch (unit) {
@@ -805,7 +808,7 @@ public final class Timestamps {
             case 'U':
                 return unit;
             default:
-                throw SqlException.position(-1).put("Invalid unit: ").put(unit);
+                throw SqlException.position(position).put("Invalid unit: ").put(str);
         }
     }
 

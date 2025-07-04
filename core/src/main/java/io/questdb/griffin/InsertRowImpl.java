@@ -81,7 +81,7 @@ public final class InsertRowImpl implements QuietCloseable {
     @Override
     public void close() {
         Misc.free(timestampFunction);
-        Misc.freeObjList(virtualRecord.getFunctions());
+        Misc.free(virtualRecord);
     }
 
     public void initContext(SqlExecutionContext executionContext) throws SqlException {

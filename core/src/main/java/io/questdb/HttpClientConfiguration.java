@@ -69,6 +69,10 @@ public interface HttpClientConfiguration {
         return SelectFacadeImpl.INSTANCE;
     }
 
+    default String getSettingsPath() {
+        return "/settings";
+    }
+
     default int getTimeout() {
         return 60_000;
     }

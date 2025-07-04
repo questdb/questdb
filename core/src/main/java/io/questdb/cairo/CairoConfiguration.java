@@ -142,9 +142,7 @@ public interface CairoConfiguration {
 
     int getColumnPurgeTaskPoolCapacity();
 
-    default long getCommitLatency() {
-        return 30_000_000; // 30s
-    }
+    long getCommitLatency();
 
     int getCommitMode();
 
@@ -438,6 +436,10 @@ public interface CairoConfiguration {
 
     int getSqlAsOfJoinLookAhead();
 
+    int getSqlAsOfJoinMapEvacuationThreshold();
+
+    int getSqlAsOfJoinShortCircuitCacheCapacity();
+
     int getSqlCharacterStoreCapacity();
 
     int getSqlCharacterStoreSequencePoolCapacity();
@@ -667,6 +669,8 @@ public interface CairoConfiguration {
 
     boolean isIOURingEnabled();
 
+    boolean isMatViewDebugEnabled();
+
     boolean isMatViewEnabled();
 
     boolean isMatViewParallelSqlEnabled();
@@ -741,7 +745,24 @@ public interface CairoConfiguration {
      */
     boolean mangleTableDirNames();
 
+    int maxArrayElementCount();
+
     boolean useFastAsOfJoin();
 
     boolean useWithinLatestByOptimisation();
+
+    /**
+     * This is a flag to enable/disable the generation of column alias based on the expression passed as a query.
+     *
+     * @return true if SqlParser should return the expression normalized instead of the default behavior.
+     */
+    boolean isColumnAliasExpressionEnabled();
+
+    /**
+     * Maximum size for a generated alias, the column will be truncated if it's longer than that. Note
+     * that this flag only works if isColumnAliasExpressionEnabled is enabled.
+     *
+     * @return the maximum size of a generated alias.
+     */
+    int getColumnAliasGeneratedMaxSize();
 }

@@ -31,6 +31,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -61,7 +62,8 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 0.1,
                 0.1 * rnd.nextDouble(),
                 0.0,
-                0.4
+                0.4,
+                0.0
         );
 
         partitionCount = 5 + rnd.nextInt(10);
@@ -98,7 +100,8 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 0.1,
                 0.1 * rnd.nextDouble(),
                 0.0,
-                0.4
+                0.4,
+                0.0
         );
 
         partitionCount = 5 + rnd.nextInt(10);
@@ -128,10 +131,6 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
 
     private void mergeAllPartitions(TableToken merged) {
         FilesFacade ff = configuration.getFilesFacade();
-        try (TableWriter writer = getWriter(merged)) {
-            writer.squashAllPartitionsIntoOne();
-        }
-
         engine.releaseInactive();
 
         // Force overwrite partitioning to by YEAR
@@ -147,6 +146,10 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
 
         Unsafe.free(addr, 4, MemoryTag.NATIVE_DEFAULT);
         ff.close(metaFd);
+
+        try (TableWriter writer = getWriter(merged)) {
+            writer.squashAllPartitionsIntoOne();
+        }
     }
 
     @Override
@@ -156,27 +159,30 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
 
         String tableName = testName.getMethodName();
         String tableNameMerged = testName.getMethodName() + "_merged";
-        TableToken merged = fuzzer.createInitialTable(tableNameMerged, false, 0);
+        TableToken merged = fuzzer.createInitialTableEmptyNonWal(tableNameMerged);
 
         assertMemoryLeak(() -> {
-            TableToken src = fuzzer.createInitialTable(tableName, false);
+            TableToken src = fuzzer.createInitialTableNonWal(tableName, null);
             ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd);
+            try {
+                fuzzer.applyNonWal(transactions, tableName, rnd);
+                engine.releaseInactive();
 
-            fuzzer.applyNonWal(transactions, tableName, rnd);
-            engine.releaseInactive();
+                copyTableDir(src, merged);
+                mergeAllPartitions(merged);
 
-            copyTableDir(src, merged);
-            mergeAllPartitions(merged);
-
-            String limit = ""; // For debugging
-            TestUtils.assertSqlCursors(
-                    engine,
-                    sqlExecutionContext,
-                    tableName + limit,
-                    tableNameMerged + limit,
-                    LOG
-            );
-            fuzzer.assertRandomIndexes(tableName, tableNameMerged, rnd);
+                String limit = ""; // For debugging
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        tableName + limit,
+                        tableNameMerged + limit,
+                        LOG
+                );
+                fuzzer.assertRandomIndexes(tableName, tableNameMerged, rnd);
+            } finally {
+                Misc.freeObjListAndClear(transactions);
+            }
         });
     }
 }

@@ -357,7 +357,7 @@ public class CleartextPasswordPgWireAuthenticator implements SocketAuthenticator
         try {
             registry.cancel(pid, secret);
         } catch (CairoException e) { // error message should not be sent to client
-            LOG.error().$(e.getFlyweightMessage()).$();
+            LOG.error().$safe(e.getFlyweightMessage()).$();
         }
     }
 
@@ -462,9 +462,14 @@ public class CleartextPasswordPgWireAuthenticator implements SocketAuthenticator
                 }
             }
             if (parsed) {
-                LOG.debug().$("property [name=").$(dus.of(nameLo, nameHi, false)).$(", value=").$(dus.of(valueLo, valueHi, false)).$(']').$();
+                LOG.debug()
+                        .$("property [name=").$(dus.of(nameLo, nameHi, false))
+                        .$(", value=").$(dus.of(valueLo, valueHi, false))
+                        .$(']').$();
             } else {
-                LOG.info().$("invalid property [name=").$(dus.of(nameLo, nameHi, false)).$(", value=").$(dus.of(valueLo, valueHi, false)).$(']').$();
+                LOG.info().$("invalid property [name=").$safe(dus.of(nameLo, nameHi, false))
+                        .$(", value=").$(dus.of(valueLo, valueHi, false))
+                        .$(']').$();
             }
         }
         characterStore.clear();

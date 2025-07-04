@@ -273,6 +273,18 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         try {
             pathToNewPartition.trimTo(pplen);
             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+            if (srcDataTop > 0 && tableWriter.isCommitReplaceMode()) {
+                long dataMax = 0;
+                if (prefixType == O3_BLOCK_DATA && prefixHi >= prefixLo) {
+                    dataMax = prefixHi + 1;
+                }
+                if (suffixType == O3_BLOCK_DATA && suffixHi >= suffixLo) {
+                    dataMax = suffixHi + 1;
+                }
+                srcDataMax = Math.min(srcDataMax, dataMax);
+                srcDataTop = Math.min(srcDataTop, dataMax);
+            }
+
             if (srcDataTop > 0) {
                 // srcDataMax is the row count in the existing column data
                 final long auxRowCount = srcDataMax - srcDataTop;
@@ -352,22 +364,26 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         // And the new partition will not have any column top since srcDataTop <= prefixHi.
                     }
 
-                    newAuxSize = columnTypeDriver.getAuxVectorSize(auxRowCount);
-                    srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
-                    ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
                     srcDataFixOffset = 0;
+                    if (auxRowCount > 0) {
+                        newAuxSize = columnTypeDriver.getAuxVectorSize(auxRowCount);
+                        srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
+                        ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
 
-                    srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCount - 1);
-                    srcDataAddr = srcDataSize > 0 ? mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : 0;
-                    ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
+                        srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCount - 1);
+                        srcDataAddr = srcDataSize > 0 ? mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : 0;
+                        ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
+                    }
                 }
             } else {
-                newAuxSize = columnTypeDriver.getAuxVectorSize(srcDataMax);
-                srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
-                ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
                 srcDataFixOffset = 0;
-                srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, srcDataMax - 1);
-                srcDataAddr = srcDataSize > 0 ? mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : 0;
+                if (srcDataMax > 0) {
+                    newAuxSize = columnTypeDriver.getAuxVectorSize(srcDataMax);
+                    srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
+                    srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, srcDataMax - 1);
+                    srcDataAddr = srcDataSize > 0 ? mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : 0;
+                }
                 ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
             }
 
@@ -432,6 +448,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     );
 
                     mergeDataSize = o3size + dataSize;
+                } else if (tableWriter.isCommitReplaceMode() && mergeType == O3_BLOCK_O3) {
+                    mergeDataSize = columnTypeDriver.getDataVectorSize(o3AuxAddr, mergeOOOLo, mergeOOOHi);
                 } else {
                     // Deduplication happens, some rows are eliminated.
                     // Dedup eliminates some rows, there is no way to know the append offset of var file beforehand.
@@ -447,7 +465,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // 'long long value'
                     // 'long long value'
                     // Which is longer than oooLen + dataLen
-                    // To deal with unpredicatability of the dedup var col size run the dedup merged size calculation
+                    // To deal with unpredictability of the dedup var col size run the dedup merged size calculation
                     mergeDataSize = timestampMergeIndexAddr > 0 ? columnTypeDriver.dedupMergeVarColumnSize(
                             timestampMergeIndexAddr,
                             mergeRowCount,
@@ -493,7 +511,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 partCount++;
             }
         } catch (Throwable e) {
-            LOG.error().$("merge var error [table=").utf8(tableWriter.getTableToken().getTableName())
+            LOG.error().$("merge var error [table=").$safe(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
             tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
@@ -1338,7 +1356,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstDataAdjust = dstDataMem.getAppendOffset();
             }
         } catch (Throwable e) {
-            LOG.error().$("append var error [table=").utf8(tableWriter.getTableToken().getTableName())
+            LOG.error().$("append var error [table=").$safe(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
             O3Utils.unmapAndClose(ff, activeFixFd, dstAuxAddr, dstAuxSize);
@@ -1463,6 +1481,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long mergeRowCount;
         if (mergeType == O3_BLOCK_MERGE) {
             mergeRowCount = timestampMergeIndexSize / TIMESTAMP_MERGE_ENTRY_BYTES;
+        } else if (mergeType == O3_BLOCK_O3) {
+            // This can happen in replace commit mode
+            mergeRowCount = mergeOOOHi - mergeOOOLo + 1;
+        } else if (mergeType == O3_BLOCK_NONE) {
+            // This can happen in replace commit mode
+            mergeRowCount = 0;
         } else {
             mergeRowCount = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
         }
@@ -1471,13 +1495,14 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         int plen = pathToOldPartition.size();
 
         final Path pathToNewPartition = Path.getThreadLocal2(pathToTable);
-        boolean partitionAppend = openColumnMode == OPEN_MID_PARTITION_FOR_APPEND || openColumnMode == OPEN_NEW_PARTITION_FOR_APPEND;
+        boolean partitionAppend = isOpenColumnModeForAppend(openColumnMode);
         TableUtils.setPathForNativePartition(pathToNewPartition, tableWriter.getPartitionBy(), partitionTimestamp, partitionAppend ? srcNameTxn : txn);
         int pplen = pathToNewPartition.size();
         final long colTopSinkAddr = columnTopAddress(partitionUpdateSinkAddr, columnIndex);
 
         // append jobs do not set value of part counter, we do it here for those
         switch (openColumnMode) {
+            case OPEN_LAST_PARTITION_FOR_APPEND:
             case OPEN_MID_PARTITION_FOR_APPEND:
                 appendMidPartition(
                         pathToNewPartition,
@@ -1637,6 +1662,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 );
                 break;
             default:
+                assert false;
                 break;
         }
     }
@@ -1803,7 +1829,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstVFd = openRW(ff, BitmapIndexUtils.valueFileName(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             }
         } catch (Throwable e) {
-            LOG.error().$("append fix error [table=").utf8(tableWriter.getTableToken().getTableName())
+            LOG.error().$("append fix error [table=").$safe(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
             if (dstFixSize > 0) {
@@ -1952,7 +1978,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 // open data file now
                 dstVarFd = openRW(ff, dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             } catch (Throwable e) {
-                LOG.error().$("append mid partition error 2 [table=").utf8(tableWriter.getTableToken().getTableName())
+                LOG.error().$("append mid partition error 2 [table=").$safe(tableWriter.getTableToken().getTableName())
                         .$(", e=").$(e)
                         .I$();
                 O3Utils.close(ff, dstFixFd);
@@ -2025,7 +2051,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             try {
                 dstFixFd = openRW(ff, dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             } catch (Throwable e) {
-                LOG.error().$("append mid partition error 3 [table=").utf8(tableWriter.getTableToken().getTableName())
+                LOG.error().$("append mid partition error 3 [table=").$safe(tableWriter.getTableToken().getTableName())
                         .$(", e=").$(e)
                         .I$();
                 O3Utils.close(ff, dstFixFd);
@@ -2133,7 +2159,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 }
             }
         } catch (Throwable e) {
-            LOG.error().$("append new partition error [table=").utf8(tableWriter.getTableToken().getTableName())
+            LOG.error().$("append new partition error [table=").$safe(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
             tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
@@ -2249,7 +2275,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixSize = -dstFixSize;
             }
         } catch (Throwable e) {
-            LOG.error().$("append ts error [table=").utf8(tableWriter.getTableToken().getTableName())
+            LOG.error().$("append ts error [table=").$safe(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
             O3Utils.close(ff, dstFixFd);
@@ -2390,6 +2416,18 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final boolean mixedIOFlag = tableWriter.allowMixedIO();
 
         try {
+            if (srcDataTop > 0 && tableWriter.isCommitReplaceMode()) {
+                long dataMax = 0;
+                if (prefixType == O3_BLOCK_DATA && prefixHi >= prefixLo) {
+                    dataMax = prefixHi + 1;
+                }
+                if (suffixType == O3_BLOCK_DATA && suffixHi >= suffixLo) {
+                    dataMax = suffixHi + 1;
+                }
+                srcDataMax = Math.min(srcDataMax, dataMax);
+                srcDataTop = Math.min(srcDataTop, dataMax);
+            }
+
             if (srcDataTop > 0) {
                 // Size of data actually in the file.
                 final long srcDataActualBytes = (srcDataMax - srcDataTop) << shl;
@@ -2418,14 +2456,18 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         // New partition will have 0 column top, since srcDataTop <= prefixHi.
                     }
                     srcDataFixSize = srcDataActualBytes;
-                    srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
-                    ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
+                    if (srcDataFixSize != 0) {
+                        srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
+                        ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
+                    }
                     srcDataFixOffset = 0;
                 }
             } else {
                 srcDataFixSize = srcDataMax << shl;
-                srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
-                ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
+                if (srcDataFixSize != 0) {
+                    srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
+                }
                 srcDataFixOffset = 0;
             }
 
@@ -2483,7 +2525,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 partCount++;
             }
         } catch (Throwable e) {
-            LOG.error().$("merge fix error [table=").utf8(tableWriter.getTableToken().getTableName())
+            LOG.error().$("merge fix error [table=").$safe(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
             O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
@@ -2755,7 +2797,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             try {
                 srcDataTop = Math.min(tableWriter.getColumnTop(oldPartitionTimestamp, columnIndex, srcDataMax), srcDataMax);
             } catch (Throwable e) {
-                LOG.error().$("merge mid partition error 1 [table=").utf8(tableWriter.getTableToken().getTableName())
+                LOG.error().$("merge mid partition error 1 [table=").$safe(tableWriter.getTableToken().getTableName())
                         .$(", e=").$(e)
                         .I$();
                 freeTimestampIndex(
@@ -2780,7 +2822,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 srcDataFixFd = openRW(ff, iFile(pathToOldPartition.trimTo(plen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 srcDataVarFd = openRW(ff, dFile(pathToOldPartition.trimTo(plen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             } catch (Throwable e) {
-                LOG.error().$("merge mid partition error 2 [table=").utf8(tableWriter.getTableToken().getTableName())
+                LOG.error().$("merge mid partition error 2 [table=").$safe(tableWriter.getTableToken().getTableName())
                         .$(", e=").$(e)
                         .I$();
                 O3Utils.close(ff, srcDataFixFd);
@@ -2852,7 +2894,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataFixFd = openRW(ff, dFile(pathToOldPartition.trimTo(plen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 }
             } catch (Throwable e) {
-                LOG.error().$("merge mid partition error 3 [table=").utf8(tableWriter.getTableToken().getTableName())
+                LOG.error().$("merge mid partition error 3 [table=").$safe(tableWriter.getTableToken().getTableName())
                         .$(", e=").$(e)
                         .I$();
                 freeTimestampIndex(

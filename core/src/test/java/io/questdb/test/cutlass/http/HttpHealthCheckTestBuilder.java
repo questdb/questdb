@@ -51,10 +51,11 @@ public class HttpHealthCheckTestBuilder {
     public void run(HttpClientCode code) throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
+            DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
                     .withBaseDir(baseDir)
                     .withPessimisticHealthCheck(pessimisticHealthCheck)
-                    .build();
+                    .build(cairoConfiguration);
             WorkerPool workerPool = new TestWorkerPool(1, httpConfiguration.getMetrics());
 
             if (injectUnhandledError) {
@@ -67,7 +68,6 @@ public class HttpHealthCheckTestBuilder {
                 });
             }
 
-            DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration);
                     HttpServer ignored = Services.INSTANCE.createMinHttpServer(httpConfiguration, workerPool)

@@ -49,8 +49,9 @@ public class PageFrameBwdRowCursor implements RowCursor {
         return current--;
     }
 
-    void of(PageFrame frame) {
+    PageFrameBwdRowCursor of(PageFrame frame) {
         this.hi = frame.getPartitionHi() - frame.getPartitionLo() - 1;
         this.current = hi;
+        return this;
     }
 }

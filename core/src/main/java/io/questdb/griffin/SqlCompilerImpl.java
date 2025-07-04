@@ -224,7 +224,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
             this.functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-            this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser, sqlNodePool);
+            this.codeGenerator = new SqlCodeGenerator(configuration, functionParser, sqlNodePool);
             this.vacuumColumnVersions = new VacuumColumnVersions(engine);
 
             // we have cyclical dependency here
@@ -435,7 +435,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         if (retries == maxRecompileAttempts) {
                             throw e;
                         }
-                        LOG.info().$(e.getFlyweightMessage()).$();
+                        LOG.info().$safe(e.getFlyweightMessage()).$();
                         // will recompile
                         lexer.restart();
                     }
@@ -684,7 +684,31 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok;
         tok = expectToken(lexer, "column type");
 
-        int columnType = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
+        short typeTag = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
+        int typePosition = lexer.lastTokenPosition();
+
+        int dim = SqlUtil.parseArrayDimensionality(lexer);
+        int columnType;
+        if (dim > 0) {
+            if (!ColumnType.isSupportedArrayElementType(typeTag)) {
+                throw SqlException.position(typePosition)
+                        .put("unsupported array element type [type=")
+                        .put(ColumnType.nameOf(typeTag))
+                        .put(']');
+            }
+            columnType = ColumnType.encodeArrayType(typeTag, dim);
+        } else {
+            columnType = typeTag;
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+
+        // check for an unmatched bracket
+        if (tok != null && Chars.equals(tok, ']')) {
+            throw SqlException.position(typePosition).put(columnName).put(" has an unmatched `]` - were you trying to define an array?");
+        } else {
+            lexer.unparseLast();
+        }
 
         if (columnType == ColumnType.GEOHASH) {
             tok = SqlUtil.fetchNext(lexer);
@@ -1222,6 +1246,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(pos, "table is not partitioned");
             }
 
+            // Tables with ARRAYS cannot be converter to Parquet, for now
+            if (action == PartitionAction.CONVERT_TO_PARQUET) {
+                for (int i = 0, n = tableMetadata.getColumnCount(); i < n; i++) {
+                    if (ColumnType.isArray(tableMetadata.getColumnType(i))) {
+                        throw SqlException.$(pos, "tables with array columns cannot be converted to Parquet partitions yet [table=").put(tableToken.getTableName()).put(", column=").put(tableMetadata.getColumnName(i)).put(']');
+                    }
+                }
+            }
+
             final CharSequence tok = expectToken(lexer, "'list' or 'where'");
             if (isListKeyword(tok)) {
                 alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, reader, pos, action);
@@ -1431,7 +1464,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compiledQuery.ofTableResume();
         } catch (CairoException ex) {
             LOG.critical().$("table resume failed [table=").$(tableToken)
-                    .$(", msg=").$(ex.getFlyweightMessage())
+                    .$(", msg=").$safe(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             ex.position(tableNamePosition);
@@ -1499,7 +1532,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compiledQuery.ofTableSuspend();
         } catch (CairoException ex) {
             LOG.critical().$("table suspend failed [table=").$(tableToken)
-                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", error=").$safe(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             ex.position(tableNamePosition);
@@ -1567,8 +1600,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final int matViewNamePosition = lexer.getPosition();
         tok = expectToken(lexer, "materialized view name");
-        assertTableNameIsQuotedOrNotAKeyword(tok, matViewNamePosition);
+        assertNameIsQuotedOrNotAKeyword(tok, matViewNamePosition);
         final TableToken matViewToken = tableExistsOrFail(matViewNamePosition, GenericLexer.unquote(tok), executionContext);
+        if (!matViewToken.isMatView()) {
+            throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected");
+        }
         final SecurityContext securityContext = executionContext.getSecurityContext();
         final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
         if (viewDefinition == null) {
@@ -1603,10 +1639,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (isTtlKeyword(tok)) {
                     final int ttlValuePos = lexer.getPosition();
                     final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
-                    try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
-                        CairoTable table = metadataRO.getTable(matViewToken);
-                        assert table != null : "CairoTable == null after we already checked it exists";
-                        PartitionBy.validateTtlGranularity(table.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
+                    try (TableMetadata matViewMeta = engine.getTableMetadata(matViewToken)) {
+                        PartitionBy.validateTtlGranularity(matViewMeta.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
                     }
                     final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtl(
                             matViewNamePosition,
@@ -1616,44 +1650,52 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     );
                     compiledQuery.ofAlter(setTtl.build());
                 } else if (isRefreshKeyword(tok)) {
-                    tok = expectToken(lexer, "'start' or 'every' or 'limit'");
-                    if (isStartKeyword(tok) || isEveryKeyword(tok)) {
-                        if (viewDefinition.getRefreshType() != MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
+                    tok = expectToken(lexer, "'every' or 'limit'");
+                    if (isEveryKeyword(tok)) {
+                        if (viewDefinition.getRefreshType() != MatViewDefinition.REFRESH_TYPE_TIMER) {
                             throw SqlException.$(lexer.lastTokenPosition(), "materialized view must be of timer refresh type");
                         }
 
-                        long start = Numbers.LONG_NULL;
-                        if (isStartKeyword(tok)) {
+                        final long periodLength = viewDefinition.getPeriodLength();
+                        final long oldStart = viewDefinition.getTimerStart();
+                        // Use the current time as the start timestamp if it wasn't specified.
+                        long start = configuration.getMicrosecondClock().getTicks();
+
+                        tok = expectToken(lexer, "interval");
+                        final int interval = Timestamps.getStrideMultiple(tok);
+                        final char unit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                        SqlParser.validateMatViewEveryUnit(unit, lexer.lastTokenPosition());
+                        tok = SqlUtil.fetchNext(lexer);
+
+                        if (tok != null && isStartKeyword(tok)) {
+                            if (periodLength > 0) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "changing start timestamp is not allowed on period materialized views");
+                            }
                             tok = expectToken(lexer, "START timestamp");
                             try {
                                 start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
                             } catch (NumericException e) {
                                 throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                             }
-                            tok = expectToken(lexer, "'every'");
+                            tok = SqlUtil.fetchNext(lexer);
+                        } else if (periodLength > 0) {
+                            // Start can't be changed on period mat views, so keep it unchanged.
+                            start = oldStart;
                         }
 
-                        if (isEveryKeyword(tok)) {
-                            if (start == Numbers.LONG_NULL) {
-                                // Use the current time as the start timestamp if it wasn't specified.
-                                start = configuration.getMicrosecondClock().getTicks();
-                            }
-                            tok = expectToken(lexer, "interval");
-                            final int interval = Timestamps.getStrideMultiple(tok);
-                            final char unit = Timestamps.getStrideUnit(tok);
-                            SqlParser.validateMatViewIntervalUnit(unit, lexer.lastTokenPosition());
-                            final AlterOperationBuilder setTimer = alterOperationBuilder.ofSetMatViewRefreshTimer(
-                                    matViewNamePosition,
-                                    matViewToken,
-                                    tableMetadata.getTableId(),
-                                    start,
-                                    interval,
-                                    unit
-                            );
-                            compiledQuery.ofAlter(setTimer.build());
-                        } else if (start != Numbers.LONG_NULL) {
-                            throw SqlException.position(lexer.lastTokenPosition()).put("'every' expected");
+                        if (tok != null && !isSemicolon(tok)) {
+                            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
                         }
+
+                        final AlterOperationBuilder setTimer = alterOperationBuilder.ofSetMatViewRefreshTimer(
+                                matViewNamePosition,
+                                matViewToken,
+                                tableMetadata.getTableId(),
+                                start,
+                                interval,
+                                unit
+                        );
+                        compiledQuery.ofAlter(setTimer.build());
                     } else if (isLimitKeyword(tok)) {
                         final int limitHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
                         final AlterOperationBuilder setRefreshLimit = alterOperationBuilder.ofSetMatViewRefreshLimit(
@@ -1664,7 +1706,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         );
                         compiledQuery.ofAlter(setRefreshLimit.build());
                     } else {
-                        throw SqlException.$(lexer.lastTokenPosition(), "'start' or 'every' or 'limit' expected");
+                        throw SqlException.$(lexer.lastTokenPosition(), "'every' or 'limit' expected");
                     }
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' or 'start' expected");
@@ -1678,7 +1720,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } catch (CairoException e) {
             LOG.info().$("could not alter materialized view [view=").$(matViewToken.getTableName())
-                    .$(", msg=").$(e.getFlyweightMessage())
+                    .$(", msg=").$safe(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();
             if (e.getPosition() == 0) {
@@ -1691,7 +1733,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void compileAlterTable(SqlExecutionContext executionContext) throws SqlException {
         final int tableNamePosition = lexer.getPosition();
         CharSequence tok = expectToken(lexer, "table name");
-        assertTableNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
+        assertNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
         final TableToken tableToken = tableExistsOrFail(tableNamePosition, GenericLexer.unquote(tok), executionContext);
         checkMatViewModification(tableToken);
         final SecurityContext securityContext = executionContext.getSecurityContext();
@@ -1953,7 +1995,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } catch (CairoException e) {
             LOG.info().$("could not alter table [table=").$(tableToken.getTableName())
-                    .$(", msg=").$(e.getFlyweightMessage())
+                    .$(", msg=").$safe(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();
             if (e.getPosition() == 0) {
@@ -2099,7 +2141,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
 
                 tok = expectToken(lexer, "table name");
-                assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 final CharSequence tableName = GenericLexer.unquote(tok);
                 // define operation to make sure we generate correct errors in case
@@ -2141,7 +2183,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
 
                 tok = expectToken(lexer, "view name");
-                assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 final CharSequence matViewName = GenericLexer.unquote(tok);
                 // define operation to make sure we generate correct errors in case
@@ -2269,13 +2311,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // executor might decide that SQL contains secret, otherwise we're logging it
                 this.sqlText = executionContext.containsSecret() ? "** redacted for privacy **" : sqlText;
                 QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos);
-            } catch (Throwable e) {
+            } catch (Throwable th) {
                 // Executor is all-in-one, it parses SQL text and executes it right away. The convention is
                 // that before parsing secrets the executor will notify the execution context. In that, even if
                 // executor fails, the secret SQL text must not be logged
                 this.sqlText = executionContext.containsSecret() ? "** redacted for privacy** " : sqlText;
-                QueryProgress.logError(e, -1, this.sqlText, executionContext, beginNanos);
-                throw e;
+                QueryProgress.logError(th, -1, this.sqlText, executionContext, beginNanos);
+                throw th;
             }
         } else {
             this.sqlText = sqlText;
@@ -2611,7 +2653,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected");
         }
-        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
         final CharSequence matViewName = GenericLexer.unquote(tok);
         final TableToken matViewToken = executionContext.getTableTokenIfExists(matViewName);
@@ -2623,7 +2665,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         tok = expectToken(lexer, "'full' or 'incremental' or 'range'");
-        final boolean full = isFullKeyword(tok);
+        final boolean fullRefresh = isFullKeyword(tok);
         long from = Numbers.LONG_NULL;
         long to = Numbers.LONG_NULL;
         if (isRangeKeyword(tok)) {
@@ -2644,7 +2686,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (from > to) {
                 throw SqlException.$(lexer.lastTokenPosition(), "TO timestamp must not be earlier than FROM timestamp");
             }
-        } else if (!full && !isIncrementalKeyword(tok)) {
+        } else if (!fullRefresh && !isIncrementalKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "'full' or 'incremental' or 'range' expected");
         }
 
@@ -2655,7 +2697,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
         executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
-        if (full) {
+        if (fullRefresh) {
             matViewStateStore.enqueueFullRefresh(matViewToken);
         } else if (from != Numbers.LONG_NULL) {
             matViewStateStore.enqueueRangeRefresh(matViewToken, from, to);
@@ -2877,10 +2919,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     );
                     break;
                 case ExecutionModel.CREATE_TABLE:
-                    compiledQuery.ofCreateTable(((CreateTableOperationBuilder) executionModel).build(this, executionContext, sqlText));
+                    compiledQuery.ofCreateTable(((CreateTableOperationBuilder) executionModel)
+                            .build(this, executionContext, sqlText));
                     break;
                 case ExecutionModel.CREATE_MAT_VIEW:
-                    compiledQuery.ofCreateMatView(((CreateMatViewOperationBuilder) executionModel).build(this, executionContext, sqlText));
+                    compiledQuery.ofCreateMatView(((CreateMatViewOperationBuilder) executionModel)
+                            .build(this, executionContext, sqlText));
                     break;
                 case ExecutionModel.COPY:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
@@ -2901,6 +2945,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             renamePath,
                             GenericLexer.unquote(rtm.getTo().token)
                     );
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     compiledQuery.ofRenameTable();
                     break;
                 case ExecutionModel.UPDATE:
@@ -2932,7 +2977,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         compiledQuery.ofInsert(compileInsert(insertModel, executionContext), false);
                         QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     }
-
                     break;
             }
 
@@ -2960,7 +3004,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         boolean partitionsKeyword = isPartitionsKeyword(tok);
         if (partitionsKeyword || isTableKeyword(tok)) {
             tok = expectToken(lexer, "table name");
-            assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+            assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
             CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
             int tableNamePos = lexer.lastTokenPosition();
             CharSequence eol = SqlUtil.fetchNext(lexer);
@@ -3098,8 +3142,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
-        if (createMatViewOp.getRefreshType() != MatViewDefinition.INCREMENTAL_REFRESH_TYPE
-                && createMatViewOp.getRefreshType() != MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
+        if (createMatViewOp.getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE
+                && createMatViewOp.getRefreshType() != MatViewDefinition.REFRESH_TYPE_TIMER
+                && createMatViewOp.getRefreshType() != MatViewDefinition.REFRESH_TYPE_MANUAL) {
             throw SqlException.$(createMatViewOp.getTableNamePosition(), "unexpected refresh type: ").put(createMatViewOp.getRefreshType());
         }
 
@@ -3253,9 +3298,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         } catch (TableReferenceOutOfDateException e) {
                             if (retryCount == maxRecompileAttempts) {
                                 Misc.free(newFactory);
-                                throw SqlException.$(0, e.getFlyweightMessage());
+                                throw SqlException.$(createTableOp.getSelectTextPosition(), e.getFlyweightMessage());
                             }
                             LOG.info().$("retrying plan [q=`").$(createTableOp.getSelectText()).$("`]").$();
+                        } catch (SqlException e) {
+                            e.setPosition(e.getPosition() + createTableOp.getSelectTextPosition());
+                            Misc.free(newFactory);
+                            throw e;
                         } catch (Throwable th) {
                             Misc.free(newFactory);
                             throw th;
@@ -3295,7 +3344,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         } catch (CairoException e) {
                             e.position(position);
                             LogRecord record = LOG.error()
-                                    .$("could not create table as select [message=").$(e.getFlyweightMessage());
+                                    .$("could not create table as select [message=").$safe(e.getFlyweightMessage());
                             if (!e.isCancellation()) {
                                 record.$(", errno=").$(e.getErrno());
                             }
@@ -3346,7 +3395,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     } catch (CairoException e) {
                         if (e.isAuthorizationError() || e.isCancellation()) {
                             // No point printing stack trace for authorization or cancellation errors
-                            LOG.error().$("could not create table [error=").$(e.getFlyweightMessage()).I$();
+                            LOG.error().$("could not create table [error=").$safe(e.getFlyweightMessage()).I$();
                         } else {
                             LOG.error().$("could not create table [error=").$((Throwable) e).I$();
                         }
@@ -3479,29 +3528,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void executeWithRetries(
-            ExecutableMethod method,
-            ExecutionModel executionModel,
-            int retries,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        int attemptsLeft = retries;
-        do {
-            try {
-                method.execute(executionModel, executionContext);
-                return;
-            } catch (TableReferenceOutOfDateException e) {
-                attemptsLeft--;
-                clearExceptSqlText();
-                lexer.restart();
-                executionModel = compileExecutionModel(executionContext);
-                if (attemptsLeft < 0) {
-                    throw SqlException.position(0).put("too many ").put(e.getFlyweightMessage());
-                }
-            }
-        } while (true);
-    }
-
     private int filterApply(
             Function filter,
             int functionPosition,
@@ -3531,13 +3557,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long firstPartition = reader.getTxFile().getPartitionFloor(reader.getPartitionTimestampByIndex(0));
             long lastPartition = reader.getTxFile().getPartitionFloor(reader.getPartitionTimestampByIndex(partitionCount - 1));
 
+            long lastLogicalPartition = Long.MIN_VALUE;
             for (int partitionIndex = 1; partitionIndex < partitionCount - 1; partitionIndex++) {
                 long physicalTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
                 long logicalTimestamp = reader.getTxFile().getPartitionFloor(physicalTimestamp);
-                if (physicalTimestamp != logicalTimestamp || logicalTimestamp == firstPartition || logicalTimestamp == lastPartition) {
-                    continue;
+                if (logicalTimestamp != lastLogicalPartition && logicalTimestamp != firstPartition && logicalTimestamp != lastPartition) {
+                    if (filterApply(filter, filterPosition, changePartitionStatement, logicalTimestamp) > 0) {
+                        affectedPartitions++;
+                        lastLogicalPartition = logicalTimestamp;
+                    }
                 }
-                affectedPartitions += filterApply(filter, filterPosition, changePartitionStatement, logicalTimestamp);
             }
 
             // perform the action on the first and last partition, dropping them have to read min/max timestamp of the next first/last partition
@@ -3701,7 +3730,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             BindVariableService bindVariableService
     ) throws SqlException {
         final int columnType = metadata.getColumnType(metadataColumnIndex);
-        if (function.isUndefined()) {
+        if (ColumnType.isUnderdefined(function.getType())) {
             function.assignType(columnType, bindVariableService);
         }
 
@@ -3976,11 +4005,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @FunctionalInterface
-    private interface ExecutableMethod {
-        void execute(ExecutionModel model, SqlExecutionContext sqlExecutionContext) throws SqlException;
-    }
-
-    @FunctionalInterface
     public interface KeywordBasedExecutor {
         void execute(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException;
     }
@@ -4229,7 +4253,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     break;
                                 } catch (TableReferenceOutOfDateException ex) {
                                     // Sometimes table can be out of data when a DDL is committed concurrently, we need to retry
-                                    LOG.info().$("retrying backup due to concurrent metadata update [table=").utf8(tableName)
+                                    LOG.info().$("retrying backup due to concurrent metadata update [table=").$safe(tableName)
                                             .$(", ex=").$(ex.getFlyweightMessage())
                                             .I$();
                                 }
@@ -4243,14 +4267,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 try {
                     dstPath.trimTo(renameRootLen).concat(tableToken);
                     TableUtils.renameOrFail(ff, auxPath.trimTo(tableRootLen).$(), dstPath.$());
-                    LOG.info().$("backup complete [table=").utf8(tableName).$(", to=").$(dstPath).I$();
+                    LOG.info().$("backup complete [table=").$safe(tableName).$(", to=").$(dstPath).I$();
                 } finally {
                     dstPath.trimTo(renameRootLen).$();
                 }
             } catch (CairoException e) {
                 LOG.info()
-                        .$("could not backup [table=").utf8(tableName)
-                        .$(", msg=").$(e.getFlyweightMessage())
+                        .$("could not backup [table=").$safe(tableName)
+                        .$(", msg=").$safe(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
                         .I$();
                 auxPath.of(cachedBackupTmpRoot).concat(tableToken).slash$();

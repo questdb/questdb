@@ -47,8 +47,7 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.wal.WalTxnType.NONE;
-import static io.questdb.cairo.wal.WalUtils.MIN_WAL_ID;
-import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalTxnDetails implements QuietCloseable {
     public static final long FORCE_FULL_COMMIT = Long.MAX_VALUE;
@@ -67,7 +66,10 @@ public class WalTxnDetails implements QuietCloseable {
     private static final int WAL_TXN_SYMBOL_DIFF_OFFSET = WAL_TXN_ROW_IN_ORDER_DATA_TYPE + 1;
     private static final int WAL_TXN_MAT_VIEW_REFRESH_TXN = WAL_TXN_SYMBOL_DIFF_OFFSET + 1;
     private static final int WAL_TXN_MAT_VIEW_REFRESH_TS = WAL_TXN_MAT_VIEW_REFRESH_TXN + 1;
-    public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_MAT_VIEW_REFRESH_TS + 1;
+    private static final int WAL_TXN_REPLACE_RANGE_TS_LOW = WAL_TXN_MAT_VIEW_REFRESH_TS + 1;
+    private static final int WAL_TXN_REPLACE_RANGE_TS_HI = WAL_TXN_REPLACE_RANGE_TS_LOW + 1;
+    private static final int WAL_TXN_MAT_VIEW_PERIOD_HI = WAL_TXN_REPLACE_RANGE_TS_HI + 1;
+    public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_MAT_VIEW_PERIOD_HI + 1;
     private static final int SYMBOL_MAP_COLUMN_RECORD_HEADER_INTS = 6;
     private static final int SYMBOL_MAP_RECORD_HEADER_INTS = 4;
     private final CairoConfiguration config;
@@ -93,7 +95,7 @@ public class WalTxnDetails implements QuietCloseable {
     // 4 bytes - low 32bits of offset into stored symbol strings in symbolStringsMem
     // 4 bytes - high 32bits of offset into stored symbol strings in symbolStringsMem
     private DirectIntList symbolIndexes = new DirectIntList(4, MemoryTag.NATIVE_TABLE_WRITER);
-    // Stores all symbol strings for the stored transactions. The format is usula STRING format 4 bytes length + string in chars
+    // Stores all symbol strings for the stored transactions. The format is STRING format (4 bytes length + string in chars)
     private MemoryCARW symbolStringsMem = null;
     private long totalRowsLoadedToApply = 0;
     private DirectLongList txnOrder = new DirectLongList(10 * 4L, MemoryTag.NATIVE_TABLE_WRITER);
@@ -232,28 +234,34 @@ public class WalTxnDetails implements QuietCloseable {
         long minTs = Long.MAX_VALUE;
         long maxTs = Long.MIN_VALUE;
 
-        for (long nextTxn = seqTxn + 1; nextTxn <= lastSeqTxn; nextTxn++) {
-            long currentWalSegment = getWalSegment(nextTxn);
-            if (allInOrder) {
-                if (currentWalSegment != lastWalSegment) {
-                    if (totalRowCount >= maxBlockRecordCount / 10) {
-                        // Big enough chunk of all in order data in same segment
-                        break;
+        if (getCommitToTimestamp(seqTxn) != FORCE_FULL_COMMIT && getDedupMode(seqTxn) != WAL_DEDUP_MODE_REPLACE_RANGE) {
+            for (long nextTxn = seqTxn + 1; nextTxn <= lastSeqTxn; nextTxn++) {
+                long currentWalSegment = getWalSegment(nextTxn);
+                if (allInOrder) {
+                    if (currentWalSegment != lastWalSegment) {
+                        if (totalRowCount >= maxBlockRecordCount / 10) {
+                            // Big enough chunk of all in order data in same segment
+                            break;
+                        }
+                        allInOrder = false;
+                    } else {
+                        allInOrder = getTxnInOrder(nextTxn) && maxTs <= getMinTimestamp(nextTxn);
+                        minTs = Math.min(minTs, getMinTimestamp(nextTxn));
+                        maxTs = Math.max(maxTs, getMaxTimestamp(nextTxn));
                     }
-                    allInOrder = false;
-                } else {
-                    allInOrder = getTxnInOrder(nextTxn) && maxTs <= getMinTimestamp(nextTxn);
-                    minTs = Math.min(minTs, getMinTimestamp(nextTxn));
-                    maxTs = Math.max(maxTs, getMaxTimestamp(nextTxn));
                 }
-            }
-            totalRowCount += getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
-            lastWalSegment = currentWalSegment;
+                totalRowCount += getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
+                lastWalSegment = currentWalSegment;
 
-            if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT || totalRowCount > maxBlockRecordCount) {
-                break;
+                if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT || totalRowCount > maxBlockRecordCount) {
+                    break;
+                }
+                if (getDedupMode(nextTxn) == WAL_DEDUP_MODE_REPLACE_RANGE) {
+                    // If there is a deduplication mode, we need to commit the transaction one by one
+                    break;
+                }
+                blockSize++;
             }
-            blockSize++;
         }
 
         // Find reasonable block size that will not cause O3
@@ -294,6 +302,11 @@ public class WalTxnDetails implements QuietCloseable {
         return value == LAST_ROW_COMMIT ? FORCE_FULL_COMMIT : value;
     }
 
+    public byte getDedupMode(long seqTxn) {
+        int flags = Numbers.decodeLowInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE)));
+        return (byte) (flags >> 24);
+    }
+
     public long getFullyCommittedTxn(long fromSeqTxn, long toSeqTxn, long maxCommittedTimestamp) {
         for (long seqTxn = fromSeqTxn + 1; seqTxn <= toSeqTxn; seqTxn++) {
             long maxTimestamp = getCommitMaxTimestamp(seqTxn);
@@ -306,6 +319,10 @@ public class WalTxnDetails implements QuietCloseable {
 
     public long getLastSeqTxn() {
         return startSeqTxn + transactionMeta.size() / TXN_METADATA_LONGS_SIZE - 1;
+    }
+
+    public long getMatViewPeriodHi(long seqTxn) {
+        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_MAT_VIEW_PERIOD_HI);
     }
 
     public long getMatViewRefreshTimestamp(long seqTxn) {
@@ -322,6 +339,14 @@ public class WalTxnDetails implements QuietCloseable {
 
     public long getMinTimestamp(long seqTxn) {
         return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_MIN_TIMESTAMP_OFFSET);
+    }
+
+    public long getReplaceRangeTsHi(long seqTxn) {
+        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_REPLACE_RANGE_TS_HI);
+    }
+
+    public long getReplaceRangeTsLow(long seqTxn) {
+        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_REPLACE_RANGE_TS_LOW);
     }
 
     public int getSegmentId(long seqTxn) {
@@ -440,13 +465,12 @@ public class WalTxnDetails implements QuietCloseable {
         final long lastLoadedSeqTxn = getLastSeqTxn();
         long loadFromSeqTxn = appliedSeqTxn + 1;
 
-        if (lastLoadedSeqTxn >= loadFromSeqTxn && startSeqTxn < loadFromSeqTxn) {
+        if (lastLoadedSeqTxn >= loadFromSeqTxn && startSeqTxn <= loadFromSeqTxn) {
             int shift = (int) (loadFromSeqTxn - startSeqTxn);
             long newSymbolsOffset = getMinSymbolIndexOffsetFromTxn(loadFromSeqTxn);
             assert newSymbolsOffset >= currentSymbolIndexesStartOffset;
 
             if (newSymbolsOffset > currentSymbolIndexesStartOffset) {
-
                 if (symbolStringsMem != null && symbolStringsMem.getAppendOffset() > 0) {
                     long newSymbolStringMemStartOffset = findFirstSymbolStringMemOffset(newSymbolsOffset);
                     shiftSymbolStringsDataLeft(newSymbolStringMemStartOffset - currentSymbolStringMemStartOffset);
@@ -476,6 +500,7 @@ public class WalTxnDetails implements QuietCloseable {
         int txnLoadCount = maxLookaheadTxn;
         long rowsToLoad;
 
+        int initialSize = transactionMeta.size();
         do {
             long rowsLoaded = loadTransactionDetails(tempPath, transactionLogCursor, loadFromSeqTxn, rootLen, txnLoadCount);
             totalRowsLoadedToApply += rowsLoaded;
@@ -492,36 +517,38 @@ public class WalTxnDetails implements QuietCloseable {
             }
         } while (rowsToLoad > 0 && getLastSeqTxn() < transactionLogCursor.getMaxTxn());
 
+        if (transactionMeta.size() == initialSize) {
+            // No transactions loaded, no need to do anything
+            return;
+        }
+
         // set commit to timestamp moving backwards
         long runningMinTimestamp = LAST_ROW_COMMIT;
         for (int i = transactionMeta.size() - TXN_METADATA_LONGS_SIZE; i > -1; i -= TXN_METADATA_LONGS_SIZE) {
 
             long commitToTimestamp = runningMinTimestamp;
             long currentMinTimestamp = transactionMeta.getQuick(i + WAL_TXN_MIN_TIMESTAMP_OFFSET);
-
-            // Find out if the wal/segment is not used anymore for future transactions.
-            // Since we're moving backwards, if this is the first time this combination occurs
-            // it means that it's the last transaction from this wal/segment.
             runningMinTimestamp = Math.min(runningMinTimestamp, currentMinTimestamp);
 
             if (transactionMeta.get(i + COMMIT_TO_TIMESTAMP_OFFSET) != FORCE_FULL_COMMIT) {
                 transactionMeta.set(i + COMMIT_TO_TIMESTAMP_OFFSET, commitToTimestamp);
             } else {
                 // Force full commit before this record
-                runningMinTimestamp = FORCE_FULL_COMMIT;
+                // when this is newly loaded record with FORCE_FULL_COMMIT value
+                if (i >= initialSize) {
+                    runningMinTimestamp = FORCE_FULL_COMMIT;
+                }
             }
         }
 
         // Avoid O3 commits with existing data. Start from beginning and set commit to timestamp to be min infinity until
         // the all future min timestamp are greater than current max timestamp.
         for (int i = 0, n = transactionMeta.size(); i < n; i += TXN_METADATA_LONGS_SIZE) {
-
             long commitToTimestamp = transactionMeta.get(i + COMMIT_TO_TIMESTAMP_OFFSET);
             if (commitToTimestamp < maxCommittedTimestamp) {
                 transactionMeta.set(i + COMMIT_TO_TIMESTAMP_OFFSET, Long.MIN_VALUE);
             }
         }
-
     }
 
     public void setIncrementRowsCommitted(long rowsCommitted) {
@@ -586,30 +613,9 @@ public class WalTxnDetails implements QuietCloseable {
             WalEventCursor walEventCursor = null;
 
             txnOrder.clear();
-            int txnsToLoad = (int) Math.min(maxLoadTxnCount, transactionLogCursor.getMaxTxn() - loadFromSeqTxn + 1);
-            if (txnsToLoad > 0) {
-                txnOrder.setCapacity(txnsToLoad * 4L);
-
-                // Load the map of outstanding WAL transactions to load necessary details from WAL-E files efficiently.
-                long max = Long.MIN_VALUE, min = Long.MAX_VALUE;
-                int txn;
-                for (txn = 0; txn < txnsToLoad && transactionLogCursor.hasNext(); txn++) {
-                    long long1 = Numbers.encodeLowHighInts(transactionLogCursor.getSegmentId(), transactionLogCursor.getWalId() - MIN_WAL_ID);
-                    max = Math.max(max, long1);
-                    min = Math.min(min, long1);
-                    txnOrder.add(long1);
-                    txnOrder.add(Numbers.encodeLowHighInts(transactionLogCursor.getSegmentTxn(), txn));
-                }
-                txnsToLoad = txn;
-
-                // We specify min as 0, so we expect the highest bit to be 0
-                Vect.radixSortLongIndexAscChecked(
-                        txnOrder.getAddress(),
-                        txnsToLoad,
-                        txnOrder.getAddress() + txnsToLoad * 2L * Long.BYTES,
-                        min,
-                        max
-                );
+            int txnCount = (int) Math.min(maxLoadTxnCount, transactionLogCursor.getMaxTxn() - loadFromSeqTxn + 1);
+            if (txnCount > 0) {
+                txnCount = loadTxns(transactionLogCursor, txnCount, txnOrder);
 
                 int lastWalId = -1;
                 int lastSegmentId = -1;
@@ -617,9 +623,9 @@ public class WalTxnDetails implements QuietCloseable {
 
                 int incrementalLoadStartIndex = transactionMeta.size();
 
-                transactionMeta.setPos(incrementalLoadStartIndex + txnsToLoad * TXN_METADATA_LONGS_SIZE);
+                transactionMeta.setPos(incrementalLoadStartIndex + txnCount * TXN_METADATA_LONGS_SIZE);
 
-                for (int i = 0; i < txnsToLoad; i++) {
+                for (int i = 0; i < txnCount; i++) {
                     long long1 = txnOrder.get(2L * i);
                     long long2 = txnOrder.get(2L * i + 1);
 
@@ -664,7 +670,7 @@ public class WalTxnDetails implements QuietCloseable {
                             int flags = commitInfo.isOutOfOrder() ? FLAG_IS_OOO : 0x0;
                             // The records are sorted by WAL ID, segment ID.
                             // If the next record is not from the same segment it means it's the last txn from the segment.
-                            if (i + 1 < txnsToLoad) {
+                            if (i + 1 < txnCount) {
                                 int nextWalId = Numbers.decodeHighInt(txnOrder.get(2L * (i + 1))) + MIN_WAL_ID;
                                 int nextSegmentId = Numbers.decodeLowInt(txnOrder.get(2L * (i + 1)));
                                 if (nextSegmentId != segmentId || nextWalId != walId) {
@@ -673,15 +679,24 @@ public class WalTxnDetails implements QuietCloseable {
                             } else {
                                 flags |= FLAG_IS_LAST_SEGMENT_USAGE;
                             }
+                            flags |= (commitInfo.getDedupMode() << 24);
                             transactionMeta.set(txnMetaOffset + WAL_TXN_ROW_IN_ORDER_DATA_TYPE, Numbers.encodeLowHighInts(flags, walTxnType));
                             transactionMeta.set(txnMetaOffset + WAL_TXN_SYMBOL_DIFF_OFFSET, saveSymbols(commitInfo, seqTxn));
                             if (walTxnType == WalTxnType.MAT_VIEW_DATA) {
                                 WalEventCursor.MatViewDataInfo matViewDataInfo = walEventCursor.getMatViewDataInfo();
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, matViewDataInfo.getLastRefreshBaseTableTxn());
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, matViewDataInfo.getLastRefreshTimestamp());
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_PERIOD_HI, matViewDataInfo.getLastPeriodHi());
                             } else {
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, -1);
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, -1);
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_PERIOD_HI, -1);
+                            }
+                            transactionMeta.set(txnMetaOffset + WAL_TXN_REPLACE_RANGE_TS_LOW, commitInfo.getReplaceRangeTsLow());
+                            transactionMeta.set(txnMetaOffset + WAL_TXN_REPLACE_RANGE_TS_HI, commitInfo.getReplaceRangeTsHi());
+                            if (commitInfo.getDedupMode() != WAL_DEDUP_MODE_DEFAULT) {
+                                // If it is a replace range commit, we need to commit everything and not store it in the lag.
+                                transactionMeta.set(txnMetaOffset + COMMIT_TO_TIMESTAMP_OFFSET, FORCE_FULL_COMMIT);
                             }
                             continue;
                         }
@@ -700,6 +715,9 @@ public class WalTxnDetails implements QuietCloseable {
                     transactionMeta.set(txnMetaOffset + WAL_TXN_SYMBOL_DIFF_OFFSET, -1); // symbols diff offset
                     transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, -1); // mat view refresh txn
                     transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, -1); // mat view refresh timestamp
+                    transactionMeta.set(txnMetaOffset + WAL_TXN_REPLACE_RANGE_TS_LOW, -1); // replace range low boundary
+                    transactionMeta.set(txnMetaOffset + WAL_TXN_REPLACE_RANGE_TS_HI, -1); // replace range high boundary
+                    transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_PERIOD_HI, -1); // mat view last period high boundary
                 }
             }
         } finally {
@@ -707,6 +725,29 @@ public class WalTxnDetails implements QuietCloseable {
             txnOrder.resetCapacity();
         }
         return totalRowsLoaded;
+    }
+
+    public static int loadTxns(TransactionLogCursor transactionLogCursor, int txnCount, DirectLongList txnList) {
+        txnList.setCapacity(txnCount * 4L);
+
+        // Load the map of outstanding WAL transactions to load necessary details from WAL-E files efficiently.
+        long max = Long.MIN_VALUE, min = Long.MAX_VALUE;
+        int txn;
+        for (txn = 0; txn < txnCount && transactionLogCursor.hasNext(); txn++) {
+            long long1 = Numbers.encodeLowHighInts(transactionLogCursor.getSegmentId(), transactionLogCursor.getWalId() - MIN_WAL_ID);
+            max = Math.max(max, long1);
+            min = Math.min(min, long1);
+            txnList.add(long1);
+            txnList.add(Numbers.encodeLowHighInts(transactionLogCursor.getSegmentTxn(), txn));
+        }
+        Vect.radixSortLongIndexAscChecked(
+                txnList.getAddress(),
+                txn,
+                txnList.getAddress() + txn * 2L * Long.BYTES,
+                min,
+                max
+        );
+        return txn;
     }
 
     private long saveSymbols(SymbolMapDiffCursor commitInfo, long seqTxn) {

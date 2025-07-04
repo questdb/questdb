@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -58,7 +59,8 @@ public class ReaderReloadFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0,
                 0,
-                0.0
+                0.0,
+                0.1
         );
 
         // Basic load to keep the test lite, we just want to fuzz different transaction types, not intensive inserting
@@ -97,7 +99,7 @@ public class ReaderReloadFuzzTest extends AbstractFuzzTest {
             node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
 
             String tableName = testName.getMethodName();
-            TableToken tableToken = fuzzer.createInitialTable(tableName, true, 100);
+            TableToken tableToken = fuzzer.createInitialTableWal(tableName, 100);
 
             execute("insert into " + tableName + " (ts) values ('2000-01-01')");
             drainWalQueue();
@@ -107,17 +109,21 @@ public class ReaderReloadFuzzTest extends AbstractFuzzTest {
                 reader.goPassive();
 
                 ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd);
-                fuzzer.applyToWal(transactions, tableName, 1 + rnd.nextInt(2), rnd);
-                drainWalQueue();
+                try {
+                    fuzzer.applyToWal(transactions, tableName, 1 + rnd.nextInt(2), rnd);
+                    drainWalQueue();
 
-                Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
-                long openFiles = openFileCount.get();
+                    Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+                    long openFiles = openFileCount.get();
 
-                reader.goActive();
-                reader.openPartition(0);
-                Assert.assertEquals(
-                        "unaffected partition should not be reloaded, file open count should stay the same",
-                        openFiles, openFileCount.get());
+                    reader.goActive();
+                    reader.openPartition(0);
+                    Assert.assertEquals(
+                            "unaffected partition should not be reloaded, file open count should stay the same",
+                            openFiles, openFileCount.get());
+                } finally {
+                    Misc.freeObjListAndClear(transactions);
+                }
             }
         });
     }

@@ -41,10 +41,13 @@ import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cutlass.http.TestHttpClient;
 import io.questdb.test.tools.TestUtils;
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -69,7 +72,15 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static org.junit.Assert.assertFalse;
 
 public class DynamicPropServerConfigurationTest extends AbstractTest {
+    private static final TestHttpClient testHttpClient = new TestHttpClient();
     private File serverConf;
+
+    @AfterClass
+    public static void tearDownStatic() {
+        testHttpClient.close();
+        AbstractTest.tearDownStatic();
+        assert Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) == 0;
+    }
 
     @Before
     public void setUp() {
@@ -82,6 +93,42 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             Assert.fail(e.getMessage());
         }
         Assert.assertTrue(serverConf.exists());
+    }
+
+    @Test
+    public void testAsOfJoinEvacuationThreshold() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.sql.asof.join.evacuation.threshold=1000\n");
+                }
+
+                assertReloadConfigEventually();
+
+                int threshold = serverMain.getConfiguration().getCairoConfiguration().getSqlAsOfJoinMapEvacuationThreshold();
+                Assert.assertEquals(1000, threshold);
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinShortCircuitCacheCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.sql.asof.join.short.circuit.cache.capacity=1000\n");
+                }
+
+                assertReloadConfigEventually();
+
+                int capacity = serverMain.getConfiguration().getCairoConfiguration().getSqlAsOfJoinShortCircuitCacheCapacity();
+                Assert.assertEquals(1000, capacity);
+            }
+        });
     }
 
     @Test
@@ -183,7 +230,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 querySink.put(Chars.repeat("q", 150));
                 querySink.put("');");
                 final String query = querySink.toString();
-                try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                try {
                     testHttpClient.assertGet(
                             "/exec",
                             "",
@@ -204,10 +251,10 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 // second reload should not reload (no changes)
                 assertReloadConfig(false);
 
-                try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                try {
                     testHttpClient.assertGet(
                             "/exec",
-                            "{\"query\":\"select length('qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq');\",\"columns\":[{\"name\":\"length\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[150]],\"count\":1}",
+                            "{\"query\":\"select length('qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq');\",\"columns\":[{\"name\":\"length('qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[150]],\"count\":1}",
                             query
                     );
                     Assert.fail();
@@ -227,13 +274,11 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 // second reload should not reload (no changes)
                 assertReloadConfig(false);
 
-                try (TestHttpClient testHttpClient = new TestHttpClient()) {
-                    testHttpClient.assertGet(
-                            "/exec",
-                            "{\"query\":\"select length('qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq');\",\"columns\":[{\"name\":\"length\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[150]],\"count\":1}",
-                            query
-                    );
-                }
+                testHttpClient.assertGet(
+                        "/exec",
+                        "{\"query\":\"select length('qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq');\",\"columns\":[{\"name\":\"length('qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[150]],\"count\":1}",
+                        query
+                );
             }
         });
     }
@@ -251,7 +296,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 serverMain.start();
 
                 final String query = "select rpad('QuestDB', 150, '0');";
-                try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                try {
                     testHttpClient.assertGet(
                             "/exec",
                             "",
@@ -268,13 +313,11 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
                 assertReloadConfigEventually();
 
-                try (TestHttpClient testHttpClient = new TestHttpClient()) {
-                    testHttpClient.assertGet(
-                            "/exec",
-                            "{\"query\":\"select rpad('QuestDB', 150, '0');\",\"columns\":[{\"name\":\"rpad\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"QuestDB00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"]],\"count\":1}",
-                            query
-                    );
-                }
+                testHttpClient.assertGet(
+                        "/exec",
+                        "{\"query\":\"select rpad('QuestDB', 150, '0');\",\"columns\":[{\"name\":\"rpad('QuestDB', 150, '0')\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"QuestDB00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"]],\"count\":1}",
+                        query
+                );
             }
         });
     }

@@ -68,6 +68,11 @@ public class BooleanFunctionTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetArray() {
+        functionA.getArray(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
         functionA.getBin(null);
     }

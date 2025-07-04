@@ -151,6 +151,11 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return isDataMapBuilt ? 1 : 0;
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
         if (mapCursor != null) {
             mapCursor.recordAt(((VirtualRecord) record).getBaseRecord(), atRowId);
@@ -197,7 +202,10 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     if (task.hasError()) {
                         throw CairoException.nonCritical()
                                 .position(task.getErrorMessagePosition())
-                                .put(task.getErrorMsg());
+                                .put(task.getErrorMsg())
+                                .setCancellation(task.isCancelled())
+                                .setInterruption(task.isCancelled())
+                                .setOutOfMemory(task.isOutOfMemory());
                     }
 
                     allFramesActive &= frameSequence.isActive();

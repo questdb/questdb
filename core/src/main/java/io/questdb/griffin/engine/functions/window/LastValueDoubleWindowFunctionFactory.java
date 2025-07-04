@@ -83,7 +83,8 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                     rowsLo,
                     rowsHi,
                     windowContext.getFramingMode() == WindowColumn.FRAMING_RANGE,
-                    windowContext.getPartitionByRecord());
+                    windowContext.getPartitionByRecord()
+            );
         }
         return windowContext.isIgnoreNulls() ?
                 this.generateIgnoreNullsFunction(position, args, configuration) :
@@ -124,7 +125,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                             LAST_VALUE_COLUMN_TYPES
                     );
 
-                    //same as for rows because calculation stops at current rows even if there are 'equal' following rows
+                    // same as for rows because calculation stops at current rows even if there are 'equal' following rows
                     return new LastNotNullValueOverUnboundedPartitionRowsFrameFunction(
                             map,
                             partitionByRecord,
@@ -161,7 +162,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                     );
                 }
             } else if (framingMode == WindowColumn.FRAMING_ROWS) {
-                //between unbounded preceding and current row
+                // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
@@ -193,7 +194,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                             args.get(0)
                     );
                 }
-                //between [unbounded | x] preceding and [x preceding | current row] (but not unbounded preceding to current row )
+                // between [unbounded | x] preceding and [x preceding | current row] (but not unbounded preceding to current row )
                 else {
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
@@ -515,7 +516,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
     // handle last_value() ignore nulls (rows between current row and current row) processes 1-element-big set, so simply it returns expression value
     static class LastNotNullValueOverCurrentRowFunction extends BaseWindowFunction implements WindowDoubleFunction {
 
-        private double value;
+        private double value = Double.NaN;
 
         LastNotNullValueOverCurrentRowFunction(Function arg) {
             super(arg);
@@ -557,8 +558,6 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
     // handles last_value() ignore nulls over (partition by x)
     // order by is absent so default frame mode includes all rows in the partition
     static class LastNotNullValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
-
-        private double lastValue;
 
         public LastNotNullValueOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -750,7 +749,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         private final int frameSize;
         // holds fixed-size ring buffers of double values
         private final MemoryARW memory;
-        private double lastValue;
+        private double lastValue = Double.NaN;
 
         public LastNotNullValueOverPartitionRowsFrameFunction(
                 Map map,
@@ -898,6 +897,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         public void toTop() {
             super.toTop();
             memory.truncate();
+            lastValue = Double.NaN;
         }
     }
 
@@ -1001,7 +1001,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         private final boolean frameLoBounded;
         private final int frameSize;
         private double cacheValue = Double.NaN;
-        private double lastValue;
+        private double lastValue = Double.NaN;
         private int loIdx = 0;
 
         public LastNotNullValueOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory) {
@@ -1104,6 +1104,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             super.reset();
             buffer.close();
             lastValue = Double.NaN;
+            cacheValue = Double.NaN;
             loIdx = 0;
         }
 
@@ -1127,6 +1128,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         public void toTop() {
             super.toTop();
             lastValue = Double.NaN;
+            cacheValue = Double.NaN;
             loIdx = 0;
             initBuffer();
         }
@@ -1143,7 +1145,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
     // - last_value(a) ignore nulls over (partition by x order by ts range between unbounded preceding and [current row | x preceding])
     public static class LastNotNullValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
-        private double value;
+        private double value = Double.NaN;
 
         public LastNotNullValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -1349,7 +1351,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
 
         private final boolean isRange;
         private final long rowsLo;
-        private double value;
+        private double value = Double.NaN;
 
         public LastValueIncludeCurrentPartitionRowsFrameFunction(long rowsLo, boolean isRange, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(null, partitionByRecord, partitionBySink, arg);
@@ -1460,7 +1462,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         protected final RingBufferDesc memoryDesc = new RingBufferDesc();
         protected final long minDiff;
         protected final int timestampIndex;
-        protected double lastValue;
+        protected double lastValue = Double.NaN;
 
         public LastValueOverPartitionRangeFrameFunction(
                 Map map,
@@ -1645,6 +1647,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             super.toTop();
             memory.truncate();
             freeList.clear();
+            lastValue = Double.NaN;
         }
     }
 
@@ -1658,7 +1661,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         // holds fixed-size ring buffers of double values
         private final MemoryARW memory;
         private final long rowLo;
-        private double lastValue;
+        private double lastValue = Double.NaN;
 
         public LastValueOverPartitionRowsFrameFunction(
                 Map map,
@@ -1731,6 +1734,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         public void reopen() {
             super.reopen();
             // memory will allocate on first use
+            lastValue = Double.NaN;
         }
 
         @Override
@@ -1764,6 +1768,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         public void toTop() {
             super.toTop();
             memory.truncate();
+            lastValue = Double.NaN;
         }
     }
 
@@ -1781,7 +1786,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         protected final int timestampIndex;
         protected long capacity;
         protected long firstIdx;
-        protected double lastValue;
+        protected double lastValue = Double.NaN;
         protected long size;
         protected long startOffset;
 
@@ -1953,7 +1958,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         private final MemoryARW buffer;
         private final int bufferSize;
         private final long rowsLo;
-        private double lastValue;
+        private double lastValue = Double.NaN;
         private int loIdx = 0;
 
         public LastValueOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory) {

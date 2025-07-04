@@ -236,9 +236,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return isDataMapBuilt ? 1 : 0;
+        }
+
+        @Override
         public void toTop() {
             super.toTop();
-            isDataMapBuilt = false;
             rowId = 0;
         }
 

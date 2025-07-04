@@ -27,7 +27,5 @@ package io.questdb.cairo.frm;
 import java.io.Closeable;
 
 public interface FrameColumnPool extends Closeable {
-    FrameColumnTypePool getPoolRO(int columnType);
-
-    FrameColumnTypePool getPoolRW(int columnType);
+    FrameColumnTypePool getPool(int columnType);
 }

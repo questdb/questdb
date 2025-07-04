@@ -1,6 +1,6 @@
 use std::slice;
 
-use crate::parquet::error::ParquetResult;
+use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_META_KEY};
 use parquet2::encoding::Encoding;
 use parquet2::metadata::KeyValue;
@@ -187,6 +187,10 @@ pub fn column_type_to_parquet_type(
             None,
             Some(column_id),
         )?),
+        ColumnTypeTag::Array => Err(fmt_err!(
+            InvalidType,
+            "tables with array columns cannot be converted to Parquet partitions yet"
+        )),
     }
 }
 

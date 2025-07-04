@@ -131,7 +131,7 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
             row.append();
         } catch (CairoException e) {
             LOG.error().$("Could not insert a new ").$(TABLE_NAME).$(" row [errno=").$(e.getErrno())
-                    .$(", error=").$(e.getFlyweightMessage())
+                    .$(", error=").$safe(e.getFlyweightMessage())
                     .$(']').$();
         }
     }

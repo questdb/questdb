@@ -37,7 +37,7 @@ public class CmdUtils {
         try {
             ri.reindex(params.partition, params.column);
         } catch (CairoException ex) {
-            log.error().$(ex.getFlyweightMessage()).$();
+            log.error().$safe(ex.getFlyweightMessage()).$();
         }
     }
 }

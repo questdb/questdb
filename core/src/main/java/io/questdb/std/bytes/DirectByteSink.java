@@ -31,6 +31,11 @@ import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.Mutable;
+import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByteSink, QuietCloseable, Mutable {
@@ -40,6 +45,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     private static final int BYTE_SINK_OVERFLOW_OFFSET = BYTE_SINK_HI_OFFSET + 8;  // 24
     private static final int BYTE_SINK_ASCII_OFFSET = BYTE_SINK_OVERFLOW_OFFSET + 4;  // 28
     private final long initialCapacity;
+    private final int memoryTag;
     /**
      * Pointer to the C `questdb_byte_sink_t` structure. See `byte_sink.h`.
      * <p>
@@ -53,7 +59,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
      * These indirect fields are get/set by {@link #getImplPtr()},
      * {@link #setImplPtr(long)}, {@link #getImplLo()}, {@link #getImplHi()}.
      * <p>
-     * The {@link #checkCapacity(long)} method updates `impl`'s `lo` and `hi` fields.
+     * The {@link #ensureCapacity(long)} method updates `impl`'s `lo` and `hi` fields.
      */
     private long impl;
     /**
@@ -72,15 +78,16 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         }
     };
 
-    public DirectByteSink(long initialCapacity) {
-        this(initialCapacity, true);
+    public DirectByteSink(long initialCapacity, int memoryTag) {
+        this(initialCapacity, true, memoryTag);
     }
 
-    public DirectByteSink(long initialCapacity, boolean alloc) {
+    public DirectByteSink(long initialCapacity, boolean alloc, int memoryTag) {
         assert initialCapacity >= 0;
         assert initialCapacity <= Integer.MAX_VALUE;
         // this will allocate a minimum of 32 bytes of "allocated capacity"
         this.initialCapacity = initialCapacity;
+        this.memoryTag = memoryTag;
         if (alloc) {
             inflate();
         } else {
@@ -96,7 +103,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
 
     /**
      * Low-level access to advance the internal write cursor by `written` bytes.
-     * Use in conjunction with {@link #checkCapacity(long)}.
+     * Use in conjunction with {@link #ensureCapacity(long)}.
      */
     public void advance(long written) {
         setImplPtr(getImplPtr() + written);
@@ -113,12 +120,23 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         return byteSink;
     }
 
+    @Override
+    public void clear() {
+        setImplPtr(getImplLo());
+        setAscii(true);
+    }
+
+    @Override
+    public void close() {
+        deflate();
+    }
+
     /**
      * Low-level access to ensure that at least `required` bytes are available for writing.
      * Returns the address of the first writable byte.
      * Use in conjunction with {@link #advance(long)}.
      */
-    public long checkCapacity(long required) {
+    public long ensureCapacity(long required) {
         assert required >= 0;
         long p = getImplPtr();
         final long available = getImplHi() - p;
@@ -137,20 +155,9 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         final long newCapacity = allocatedCapacity();
         if (newCapacity > initCapacity) {
             Unsafe.incrReallocCount();
-            Unsafe.recordMemAlloc(newCapacity - initCapacity, memoryTag());
+            Unsafe.recordMemAlloc(newCapacity - initCapacity, memoryTag);
         }
         return p;
-    }
-
-    @Override
-    public void clear() {
-        setImplPtr(getImplLo());
-        setAscii(true);
-    }
-
-    @Override
-    public void close() {
-        deflate();
     }
 
     /**
@@ -177,7 +184,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     }
 
     public DirectByteSink put(byte b) {
-        final long dest = checkCapacity(1);
+        final long dest = ensureCapacity(1);
         Unsafe.getUnsafe().putByte(dest, b);
         advance(1);
         return this;
@@ -186,7 +193,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     public DirectByteSink put(ByteSequence bs) {
         if (bs != null) {
             final int bsSize = bs.size();
-            final long dest = checkCapacity(bsSize);
+            final long dest = ensureCapacity(bsSize);
             for (int i = 0; i < bsSize; i++) {
                 Unsafe.getUnsafe().putByte(dest + i, bs.byteAt(i));
             }
@@ -204,9 +211,45 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
 
     public DirectByteSink put(long lo, long hi) {
         final long len = hi - lo;
-        final long dest = checkCapacity(len);
+        final long dest = ensureCapacity(len);
         Vect.memcpy(dest, lo, len);
         advance(len);
+        return this;
+    }
+
+    public DirectByteSink putByte(byte value) {
+        Unsafe.getUnsafe().putByte(ensureCapacity(Byte.BYTES), value);
+        advance(Byte.BYTES);
+        return this;
+    }
+
+    public DirectByteSink putDouble(double value) {
+        Unsafe.getUnsafe().putDouble(ensureCapacity(Double.BYTES), value);
+        advance(Double.BYTES);
+        return this;
+    }
+
+    public DirectByteSink putFloat(float value) {
+        Unsafe.getUnsafe().putFloat(ensureCapacity(Float.BYTES), value);
+        advance(Float.BYTES);
+        return this;
+    }
+
+    public DirectByteSink putInt(int value) {
+        Unsafe.getUnsafe().putInt(ensureCapacity(Integer.BYTES), value);
+        advance(Integer.BYTES);
+        return this;
+    }
+
+    public DirectByteSink putLong(long value) {
+        Unsafe.getUnsafe().putLong(ensureCapacity(Long.BYTES), value);
+        advance(Long.BYTES);
+        return this;
+    }
+
+    public DirectByteSink putShort(short value) {
+        Unsafe.getUnsafe().putShort(ensureCapacity(Short.BYTES), value);
+        advance(Short.BYTES);
         return this;
     }
 
@@ -223,7 +266,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
      */
     public void reserve(long minCapacity) {
         if (minCapacity > allocatedCapacity()) {
-            checkCapacity(minCapacity);
+            ensureCapacity(minCapacity);
         }
     }
 
@@ -256,7 +299,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         final long capacityChange = allocatedCapacity() - lastAllocatedCapacity;
         if (capacityChange != 0) {
             Unsafe.incrReallocCount();
-            Unsafe.recordMemAlloc(capacityChange, memoryTag());
+            Unsafe.recordMemAlloc(capacityChange, memoryTag);
         }
     }
 
@@ -267,7 +310,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         final long capAdjustment = -1 * allocatedCapacity();
         implDestroy(impl);
         Unsafe.incrFreeCount();
-        Unsafe.recordMemAlloc(capAdjustment, memoryTag());
+        Unsafe.recordMemAlloc(capAdjustment, memoryTag);
         impl = 0;
     }
 
@@ -294,16 +337,12 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         if (impl == 0) {
             throw CairoException.nonCritical().setOutOfMemory(true).put("could not allocate direct byte sink [maxCapacity=").put(initialCapacity).put(']');
         }
-        Unsafe.recordMemAlloc(this.allocatedCapacity(), memoryTag());
+        Unsafe.recordMemAlloc(this.allocatedCapacity(), memoryTag);
         Unsafe.incrMallocCount();
     }
 
     private void setImplPtr(long ptr) {
         Unsafe.getUnsafe().putLong(impl + BYTE_SINK_PTR_OFFSET, ptr);
-    }
-
-    protected int memoryTag() {
-        return MemoryTag.NATIVE_DIRECT_BYTE_SINK;
     }
 
     static {

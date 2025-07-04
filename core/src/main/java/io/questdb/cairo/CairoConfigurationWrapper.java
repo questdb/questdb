@@ -172,6 +172,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getCommitLatency() {
+        return getDelegate().getCommitLatency();
+    }
+
+    @Override
     public int getCommitMode() {
         return getDelegate().getCommitMode();
     }
@@ -707,6 +712,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlAsOfJoinMapEvacuationThreshold() {
+        return getDelegate().getSqlAsOfJoinMapEvacuationThreshold();
+    }
+
+    @Override
+    public int getSqlAsOfJoinShortCircuitCacheCapacity() {
+        return getDelegate().getSqlAsOfJoinShortCircuitCacheCapacity();
+    }
+
+    @Override
     public int getSqlCharacterStoreCapacity() {
         return getDelegate().getSqlCharacterStoreCapacity();
     }
@@ -1207,6 +1222,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewDebugEnabled() {
+        return getDelegate().isMatViewDebugEnabled();
+    }
+
+    @Override
     public boolean isMatViewEnabled() {
         return getDelegate().isMatViewEnabled();
     }
@@ -1315,6 +1335,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
         return getDelegate().mangleTableDirNames();
     }
 
+    @Override
+    public int maxArrayElementCount() {
+        return getDelegate().maxArrayElementCount();
+    }
+
     public void setDelegate(CairoConfiguration delegate) {
         this.delegate.set(delegate);
     }
@@ -1327,6 +1352,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean useWithinLatestByOptimisation() {
         return getDelegate().useWithinLatestByOptimisation();
+    }
+
+    @Override
+    public boolean isColumnAliasExpressionEnabled() {
+        return getDelegate().isColumnAliasExpressionEnabled();
+    }
+
+    @Override
+    public int getColumnAliasGeneratedMaxSize() {
+        return getDelegate().getColumnAliasGeneratedMaxSize();
     }
 
     protected CairoConfiguration getDelegate() {

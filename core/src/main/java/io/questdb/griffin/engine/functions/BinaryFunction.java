@@ -25,31 +25,25 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 
 public interface BinaryFunction extends Function {
 
     @Override
     default void close() {
-        getLeft().close();
-        getRight().close();
+        Misc.free(getLeft());
+        Misc.free(getRight());
     }
 
     @Override
     default void cursorClosed() {
         getLeft().cursorClosed();
         getRight().cursorClosed();
-    }
-
-    @Override
-    default void offerStateTo(Function that) {
-        if (that instanceof BinaryFunction) {
-            getLeft().offerStateTo(((BinaryFunction) that).getLeft());
-            getRight().offerStateTo(((BinaryFunction) that).getRight());
-        }
     }
 
     Function getLeft();
@@ -78,6 +72,11 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
+    default boolean isRandom() {
+        return getLeft().isRandom() || getRight().isRandom();
+    }
+
+    @Override
     default boolean isRuntimeConstant() {
         final Function l = getLeft();
         final Function r = getRight();
@@ -90,8 +89,32 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
+    default void memoize(Record recordA) {
+        getLeft().memoize(recordA);
+        getRight().memoize(recordA);
+    }
+
+    @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof BinaryFunction) {
+            getLeft().offerStateTo(((BinaryFunction) that).getLeft());
+            getRight().offerStateTo(((BinaryFunction) that).getRight());
+        }
+    }
+
+    @Override
+    default boolean shouldMemoize() {
+        return getLeft().shouldMemoize() || getRight().shouldMemoize();
+    }
+
+    @Override
     default boolean supportsParallelism() {
         return getLeft().supportsParallelism() && getRight().supportsParallelism();
+    }
+
+    @Override
+    default boolean supportsRandomAccess() {
+        return getLeft().supportsRandomAccess() && getRight().supportsRandomAccess();
     }
 
     @Override

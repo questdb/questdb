@@ -152,7 +152,7 @@ public class MetricsIODispatcherTest {
 
         new HttpMinTestBuilder()
                 .withTempFolder(temp)
-                .withScrapable(metrics)
+                .withScrappable(metrics)
                 .run((engine, sqlExecutionContext) -> {
                     metrics.markQueryStart();
                     metrics.markSyntaxError();
@@ -301,7 +301,7 @@ public class MetricsIODispatcherTest {
         final HttpQueryTestBuilder.HttpClientCode clientCode = buildClientCode(parallelRequestBatches, repeatedConnections, makeRequest);
         new HttpMinTestBuilder()
                 .withTempFolder(temp)
-                .withScrapable(metrics)
+                .withScrappable(metrics)
                 .withTcpSndBufSize(tcpSndBufSize)
                 .withSendBufferSize(sendBufferSize)
                 .withWorkerCount(workerCount)

@@ -243,7 +243,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         try {
             context.init();
         } catch (CairoException e) {
-            LOG.error().$("could not initialize connection context [fd=").$(fd).$(", e=").$(e.getFlyweightMessage()).I$();
+            LOG.error().$("could not initialize connection context [fd=").$(fd).$(", e=").$safe(e.getFlyweightMessage()).I$();
             ioContextFactory.done(context);
             return;
         }
@@ -302,7 +302,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                     this.port
             );
         }
-        LOG.advisory().$("listening on ").$ip(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
+        LOG.advisory().$("listening on ").$ip(configuration.getBindIPv4Address()).$(':').$(this.port)
                 .$(" [fd=").$(serverFd)
                 .$(" backlog=").$(backlog)
                 .I$();

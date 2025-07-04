@@ -322,10 +322,10 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             }
 
             serverMain.awaitTxn("good", 1);
-            assertSql(serverMain.getEngine(), "select count() from good", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from good", "count()\n" +
                     "1\n");
             serverMain.awaitTable("drop");
-            assertSql(serverMain.getEngine(), "select count() from \"drop\"", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from \"drop\"", "count()\n" +
                     "1\n");
         }
     }

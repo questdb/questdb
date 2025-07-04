@@ -84,7 +84,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
 
             serverMain.awaitTable("m1");
 
-            assertSql(serverMain.getEngine(), "select count() from m1", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from m1", "count()\n" +
                     totalCount + "\n");
         }
     }
@@ -128,7 +128,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
             }
 
             serverMain.awaitTable("line");
-            assertSql(serverMain.getEngine(), "select count() from line", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from line", "count()\n" +
                     totalCount + "\n");
         }
     }
@@ -170,7 +170,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
             }
 
             serverMain.awaitTable("m1");
-            assertSql(serverMain.getEngine(), "select count() from m1", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from m1", "count()\n" +
                     totalCount + "\n");
         }
     }
@@ -204,7 +204,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
             }
 
             serverMain.awaitTable("m1");
-            assertSql(serverMain.getEngine(), "select count() from m1", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from m1", "count()\n" +
                     "4096\n");
         }
     }
@@ -229,7 +229,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
             }
             serverMain.awaitTable("m1");
 
-            assertSql(serverMain.getEngine(), "select count() from m1", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from m1", "count()\n" +
                     "2048\n");
         }
     }
@@ -304,7 +304,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
             }
 
             serverMain.awaitTable("line");
-            assertSql(serverMain.getEngine(), "select count() from line", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from line", "count()\n" +
                     totalCount + "\n");
         }
     }

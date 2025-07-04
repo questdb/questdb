@@ -40,7 +40,7 @@ public class PartitionOverwriteControl {
 
     public void acquirePartitions(TableReader reader) {
         if (enabled) {
-            LOG.info().$("acquiring partitions [table=").$(reader.getTableToken().getTableName())
+            LOG.info().$("acquiring partitions [table=").$safe(reader.getTableToken().getTableName())
                     .$(", readerTxn=").$(reader.getTxn())
                     .I$();
             assert reader.isActive();
@@ -105,7 +105,7 @@ public class PartitionOverwriteControl {
 
     public void releasePartitions(TableReader reader) {
         if (enabled) {
-            LOG.info().$("releasing partitions [table=").$(reader.getTableToken().getTableName())
+            LOG.info().$("releasing partitions [table=").$safe(reader.getTableToken().getTableName())
                     .$(", readerTxn=").$(reader.getTxn())
                     .I$();
 
@@ -123,7 +123,7 @@ public class PartitionOverwriteControl {
                 }
             }
 
-            LOG.error().$("reader not found in partition usage map [table=").$(reader.getTableToken().getTableName())
+            LOG.error().$("reader not found in partition usage map [table=").$safe(reader.getTableToken().getTableName())
                     .$(", readerTxn=").$(reader.getTxn())
                     .I$();
         }

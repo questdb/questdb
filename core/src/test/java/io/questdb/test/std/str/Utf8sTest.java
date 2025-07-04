@@ -428,6 +428,118 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testPutSafeInvalid() {
+        final Utf8StringSink source = new Utf8StringSink();
+        final Utf8StringSink sink = new Utf8StringSink();
+        final byte[][] testBufs = {
+                {b(0b1101_0101)},
+                {b(0b1101_0101), b(0b0011_1100)},
+                {b(0b1100_0100), b(0b1100_1101)},
+
+                {b(0b1110_0100), b(0b1011_1101)},
+                {b(0b1110_0100), b(0b1011_1101), b(0b1110_0000)},
+                {b(0b1110_0100), b(0b1011_1101), b(0b0110_0000)},
+                {b(0b1110_0100), b(0b0110_0000), b(0b1011_1101)},
+
+                {b(0b1111_0000)},
+                {b(0b1111_0000), b(0b1001_1111)},
+                {b(0b1111_0000), b(0b1001_1111), b(0b1001_0010)},
+
+                {b(0b1111_0000), b(0b0101_1111), b(0b1001_0010), b(0b1010_1001)},
+                {b(0b1111_0000), b(0b1001_1111), b(0b0101_0010), b(0b1010_1001)},
+                {b(0b1111_0000), b(0b1001_1111), b(0b1001_0010), b(0b0110_1001)},
+
+                {b(0b1111_1000)},
+                {b(0b1111_1000), b(0b1000_0000)},
+                {b(0b1111_1000), b(0b1000_0000), b(0b1000_0001)},
+                {b(0b1111_1000), b(0b1000_0000), b(0b1000_0001), b(0b1000_0010)},
+                {b(0b1111_1000), b(0b1000_0000), b(0b1000_0001), b(0b1000_0010), b(0b1000_0011)},
+                {b(0b1111_1110), b(0b1100_0000)},
+                {b(0b1111_1000), b(0b1100_0000)},
+                {b(0b1111_1000), b(0b1111_0000)},
+                {b(0b1111_1000), b(0b1111_1111)},
+        };
+        final String[] expectedStrs = {
+                "\\xD5",
+                "\\xD5<",
+                "\\xC4\\xCD",
+
+                "\\xE4\\xBD",
+                "\\xE4\\xBD\\xE0",
+                "\\xE4\\xBD`",
+                "\\xE4`\\xBD",
+
+                "\\xF0",
+                "\\xF0\\x9F",
+                "\\xF0\\x9F\\x92",
+
+                "\\xF0_\\x92\\xA9",
+                "\\xF0\\x9FR\\xA9",
+                "\\xF0\\x9F\\x92i",
+
+                "\\xF8",
+                "\\xF8\\x80",
+                "\\xF8\\x80\\x81",
+                "\\xF8\\x80\\x81\\x82",
+                "\\xF8\\x80\\x81\\x82\\x83",
+                "\\xFE\\xC0",
+                "\\xF8\\xC0",
+                "\\xF8\\xF0",
+                "\\xF8\\xFF",
+        };
+        final long buf = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int n = testBufs.length, i = 0; i < n; i++) {
+                byte[] bytes = testBufs[i];
+
+                long hi = copyBytes(buf, bytes);
+                sink.clear();
+                Utf8s.putSafe(buf, hi, sink);
+                Assert.assertEquals(expectedStrs[i], sink.toString());
+
+                source.clear();
+                for (byte b : bytes) {
+                    source.putAny(b);
+                }
+                sink.clear();
+                Utf8s.putSafe(source, sink);
+                Assert.assertEquals(expectedStrs[i], sink.toString());
+            }
+        } finally {
+            Unsafe.free(buf, 128, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testPutSafeValid() {
+        final Utf8StringSink sink = new Utf8StringSink();
+        final String[] testStrs = {
+                "abc",
+                "čćžšđ",
+                "ČĆŽŠĐ",
+                "фубар",
+                "ФУБАР",
+                "你好世界",
+        };
+        final long buf = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (String testStr : testStrs) {
+                byte[] bytes = testStr.getBytes(StandardCharsets.UTF_8);
+                long hi = copyBytes(buf, bytes);
+                sink.clear();
+                Utf8s.putSafe(buf, hi, sink);
+                String actual = sink.toString();
+                for (long ptr = buf; ptr < hi; ptr++) {
+                    int b = Unsafe.getUnsafe().getByte(ptr) & 0xFF;
+                }
+                Assert.assertEquals(testStr, actual);
+            }
+        } finally {
+            Unsafe.free(buf, 128, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testQuotedTextParsing() {
         StringSink query = new StringSink();
 
@@ -993,6 +1105,17 @@ public class Utf8sTest {
         Assert.assertEquals(inputString, Utf8s.stringFromUtf8Bytes(utf8Sink.lo(), utf8Sink.hi()));
 
         Assert.assertEquals(inputString, utf8Sink.toString());
+    }
+
+    private static byte b(int n) {
+        return (byte) n;
+    }
+
+    private static long copyBytes(long buf, byte[] bytes) {
+        for (int n = bytes.length, i = 0; i < n; i++) {
+            Unsafe.getUnsafe().putByte(buf + i, bytes[i]);
+        }
+        return buf + bytes.length;
     }
 
     private static void testUtf8Char(String x, MutableUtf8Sink sink, boolean failExpected) {

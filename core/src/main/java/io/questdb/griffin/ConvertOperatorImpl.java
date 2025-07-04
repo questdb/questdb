@@ -90,7 +90,15 @@ public class ConvertOperatorImpl implements Closeable {
     private final TableWriter.ColumnTaskHandler cthConvertPartitionHandler = this::cthConvertPartitionHandler;
     private long varFd;
 
-    public ConvertOperatorImpl(CairoConfiguration configuration, TableWriter tableWriter, ColumnVersionWriter columnVersionWriter, Path path, int rootLen, PurgingOperator purgingOperator, MessageBus messageBus) {
+    public ConvertOperatorImpl(
+            CairoConfiguration configuration,
+            TableWriter tableWriter,
+            ColumnVersionWriter columnVersionWriter,
+            Path path,
+            int rootLen,
+            PurgingOperator purgingOperator,
+            MessageBus messageBus
+    ) {
         this.configuration = configuration;
         this.tableWriter = tableWriter;
         this.columnVersionWriter = columnVersionWriter;
@@ -109,7 +117,14 @@ public class ConvertOperatorImpl implements Closeable {
     public void close() {
     }
 
-    public void convertColumn(@NotNull String columnName, int existingColIndex, int existingType, boolean existingIndexed, int columnIndex, int newType) {
+    public void convertColumn(
+            @NotNull String columnName,
+            int existingColIndex,
+            int existingType,
+            boolean existingIndexed,
+            int columnIndex,
+            int newType
+    ) {
         clear();
         partitionUpdated = 0;
         convertColumn0(columnName, existingColIndex, existingType, existingIndexed, columnIndex, newType);
@@ -136,7 +151,11 @@ public class ConvertOperatorImpl implements Closeable {
     }
 
     private void closeFds(long srcFixFd, long srcVarFd, long dstFixFd, long dstVarFd) {
-        LOG.debug().$("closing fds[srcFixFd=").$(srcFixFd).$(", srcVarFd=").$(srcVarFd).$(", dstFixFd=").$(dstFixFd).$(", dstVarFd=").$(dstVarFd).I$();
+        LOG.debug().$("closing fds[srcFixFd=").$(srcFixFd)
+                .$(", srcVarFd=").$(srcVarFd)
+                .$(", dstFixFd=").$(dstFixFd)
+                .$(", dstVarFd=").$(dstVarFd)
+                .I$();
         ff.close(srcFixFd);
         ff.close(srcVarFd);
         ff.close(dstFixFd);
@@ -157,14 +176,21 @@ public class ConvertOperatorImpl implements Closeable {
 
         if (checkStatus && asyncProcessingErrorCount.get() > 0) {
             throw CairoException.critical(0)
-                    .put("column conversion failed, see logs for details [table=").put(tableWriter.getTableToken().getTableName())
+                    .put("column conversion failed, see logs for details [table=").put(tableWriter.getTableToken())
                     .put(", tableDir=").put(tableWriter.getTableToken().getDirName())
                     .put(", column=").put(columnName)
                     .put(']');
         }
     }
 
-    private void convertColumn0(@NotNull String columnName, int existingColIndex, int existingType, boolean existingIndexed, int columnIndex, int newType) {
+    private void convertColumn0(
+            @NotNull String columnName,
+            int existingColIndex,
+            int existingType,
+            boolean existingIndexed,
+            int columnIndex,
+            int newType
+    ) {
         try {
             this.columnName = columnName;
             if (ColumnType.isSymbol(newType)) {
@@ -202,7 +228,8 @@ public class ConvertOperatorImpl implements Closeable {
 
                             if (rowCount > 0) {
                                 path.trimTo(rootLen);
-                                TableUtils.setPathForNativePartition(path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
+                                TableUtils.setPathForNativePartition(
+                                        path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
                                 int pathTrimToLen = path.size();
 
                                 long srcFixFd = -1, srcVarFd = -1, dstFixFd = -1, dstVarFd = -1;
@@ -215,8 +242,8 @@ public class ConvertOperatorImpl implements Closeable {
                                     dstFixFd = this.fixedFd;
                                     dstVarFd = this.varFd;
 
-                                    LOG.info().$("converting column [at=").$(path.trimTo(pathTrimToLen))
-                                            .$(", column=").utf8(columnName)
+                                    LOG.info().$("converting column [at=").$safe(path.trimTo(pathTrimToLen))
+                                            .$(", column=").$safe(columnName)
                                             .$(", from=").$(ColumnType.nameOf(existingType))
                                             .$(", to=").$(ColumnType.nameOf(newType))
                                             .$(", rowCount=").$(rowCount)
@@ -227,22 +254,33 @@ public class ConvertOperatorImpl implements Closeable {
                                     throw th;
                                 }
 
-                                if (dispatchConvertColumnPartitionTask(existingType, newType, srcFixFd, srcVarFd, dstFixFd, dstVarFd, rowCount, partitionTimestamp)) {
+                                if (dispatchConvertColumnPartitionTask(
+                                        existingType, newType, srcFixFd, srcVarFd, dstFixFd, dstVarFd, rowCount, partitionTimestamp)
+                                ) {
                                     queueCount++;
                                 }
                             }
 
                             long existingColTxnVer = tableWriter.getColumnNameTxn(partitionTimestamp, existingColIndex);
-                            purgingOperator.add(existingColIndex, columnName, existingType, existingIndexed, existingColTxnVer, partitionTimestamp, partitionNameTxn);
+                            purgingOperator.add(
+                                    existingColIndex,
+                                    columnName,
+                                    existingType,
+                                    existingIndexed,
+                                    existingColTxnVer,
+                                    partitionTimestamp,
+                                    partitionNameTxn);
                             partitionUpdated++;
                         }
                         if (columnTop != tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1)) {
-                            long partTs = tableWriter.getPartitionBy() != PartitionBy.NONE ? partitionTimestamp : TxReader.DEFAULT_PARTITION_TIMESTAMP;
+                            long partTs = tableWriter.getPartitionBy() != PartitionBy.NONE
+                                    ? partitionTimestamp
+                                    : TxReader.DEFAULT_PARTITION_TIMESTAMP;
                             columnVersionWriter.upsertColumnTop(partTs, columnIndex, columnTop > -1 ? columnTop : maxRow);
                         }
                     } catch (Throwable th) {
-                        LOG.error().$("error converting column [at=").$(tableWriter.getTableToken().getDirNameUtf8())
-                                .$(", column=").utf8(columnName).$(", from=").$(ColumnType.nameOf(existingType))
+                        LOG.error().$("error converting column [at=").$(tableWriter.getTableToken())
+                                .$(", column=").$safe(columnName).$(", from=").$(ColumnType.nameOf(existingType))
                                 .$(", to=").$(ColumnType.nameOf(newType))
                                 .$(", error=").$(th).I$();
                         asyncProcessingErrorCount.incrementAndGet();
@@ -254,8 +292,8 @@ public class ConvertOperatorImpl implements Closeable {
             }
             consumeConversionTasks(messageBus.getColumnTaskQueue(), queueCount, true);
             long elapsed = timer.getTicks() - start;
-            LOG.info().$("completed column conversion [at=").$(tableWriter.getTableToken().getDirNameUtf8())
-                    .$(", column=").utf8(columnName).$(", from=").$(ColumnType.nameOf(existingType))
+            LOG.info().$("completed column conversion [at=").$(tableWriter.getTableToken())
+                    .$(", column=").$safe(columnName).$(", from=").$(ColumnType.nameOf(existingType))
                     .$(", to=").$(ColumnType.nameOf(newType))
                     .$(", partitions=").$(partitionUpdated)
                     .$(", rows=").$(totalRows)
@@ -265,7 +303,16 @@ public class ConvertOperatorImpl implements Closeable {
         }
     }
 
-    private void cthConvertPartitionHandler(int existingType, int newType, long srcFixFd, long srcVarFd, long dstFixFd, long dstVarFd, long partitionTimestamp, long rowCount) {
+    private void cthConvertPartitionHandler(
+            int existingType,
+            int newType,
+            long srcFixFd,
+            long srcVarFd,
+            long dstFixFd,
+            long dstVarFd,
+            long partitionTimestamp,
+            long rowCount
+    ) {
         try {
             if (asyncProcessingErrorCount.get() == 0) {
 
@@ -276,21 +323,23 @@ public class ConvertOperatorImpl implements Closeable {
                         ff, appendPageSize, noopConversionOffsetSink);
 
                 if (!ok) {
-                    LOG.critical().$("failed to convert column, column is corrupt [at=").$(tableWriter.getTableToken().getDirNameUtf8())
-                            .$(", column=").utf8(columnName).$(", from=").$(ColumnType.nameOf(existingType))
+                    LOG.critical().$("failed to convert column, column is corrupt [at=")
+                            .$(tableWriter.getTableToken())
+                            .$(", column=").$safe(columnName).$(", from=").$(ColumnType.nameOf(existingType))
                             .$(", to=").$(ColumnType.nameOf(newType)).$(", srcFixFd=").$(srcFixFd)
-                            .$(", srcVarFd=").$(srcVarFd).$(", partition").$ts(partitionTimestamp)
+                            .$(", srcVarFd=").$(srcVarFd).$(", partition ").$ts(partitionTimestamp)
                             .I$();
                     asyncProcessingErrorCount.incrementAndGet();
                 }
             }
         } catch (Throwable th) {
             asyncProcessingErrorCount.incrementAndGet();
-            LogRecord log = LOG.critical().$("failed to convert column, column is corrupt [at=").$(tableWriter.getTableToken().getDirNameUtf8())
-                    .$(", column=").utf8(columnName).$(", from=").$(ColumnType.nameOf(existingType))
+            LogRecord log = LOG.critical().$("failed to convert column, column is corrupt [at=")
+                    .$(tableWriter.getTableToken())
+                    .$(", column=").$safe(columnName).$(", from=").$(ColumnType.nameOf(existingType))
                     .$(", to=").$(ColumnType.nameOf(newType))
                     .$(", srcFixFd=").$(srcFixFd).$(", srcVarFd=")
-                    .$(srcVarFd).$(", partition").$ts(partitionTimestamp);
+                    .$(srcVarFd).$(", partition ").$ts(partitionTimestamp);
             if (th instanceof CairoException) {
                 log.$(", errno=").$(((CairoException) th).getErrno());
             }
@@ -300,7 +349,16 @@ public class ConvertOperatorImpl implements Closeable {
         }
     }
 
-    private boolean dispatchConvertColumnPartitionTask(int existingType, int newType, long srcFixFd, long srcVarFd, long dstFixFd, long dstVarFd, long rowCount, long partitionTimestamp) {
+    private boolean dispatchConvertColumnPartitionTask(
+            int existingType,
+            int newType,
+            long srcFixFd,
+            long srcVarFd,
+            long dstFixFd,
+            long dstVarFd,
+            long rowCount,
+            long partitionTimestamp
+    ) {
         if (!ColumnType.isSymbol(newType)) {
             final Sequence pubSeq = this.messageBus.getColumnTaskPubSeq();
             final RingQueue<ColumnTask> queue = this.messageBus.getColumnTaskQueue();
@@ -309,7 +367,17 @@ public class ConvertOperatorImpl implements Closeable {
             if (cursor > -1) {
                 try {
                     final ColumnTask task = queue.get(cursor);
-                    task.of(countDownLatch, existingType, newType, srcFixFd, srcVarFd, dstFixFd, dstVarFd, partitionTimestamp, rowCount, cthConvertPartitionHandler);
+                    task.of(
+                            countDownLatch,
+                            existingType,
+                            newType,
+                            srcFixFd,
+                            srcVarFd,
+                            dstFixFd,
+                            dstVarFd,
+                            partitionTimestamp,
+                            rowCount,
+                            cthConvertPartitionHandler);
                     return true;
                 } finally {
                     pubSeq.done(cursor);

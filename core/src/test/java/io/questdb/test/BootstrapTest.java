@@ -26,6 +26,8 @@ package io.questdb.test;
 
 import io.questdb.Bootstrap;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogFileWriter;
@@ -58,6 +60,16 @@ public class BootstrapTest extends AbstractBootstrapTest {
         assertFail("Root directory name expected (-d <root-path>)", "-d");
         assertFail("Root directory name expected (-d <root-path>)", "does not exist");
         assertFail("Root directory does not exist: nope", "-d", "nope");
+    }
+
+
+    @Test
+    public void testDirectoryWithSpaces() throws Exception {
+        auxPath.of(root + "\\spaced path").$();
+        java.nio.file.Files.createDirectories(java.nio.file.Path.of(auxPath.toString()));
+        CairoConfiguration configuration = new DefaultCairoConfiguration(auxPath.toString());
+        CairoEngine engine = new CairoEngine(configuration);
+        engine.close();
     }
 
     @Test

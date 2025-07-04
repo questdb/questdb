@@ -229,6 +229,11 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return RecordCursor.fromBool(isMapBuilt) + baseCursor.preComputedStateSize();
+        }
+
+        @Override
         public long size() {
             return isMapBuilt ? rowIndexes.size() : -1;
         }

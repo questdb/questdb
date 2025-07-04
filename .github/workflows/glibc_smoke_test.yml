@@ -43,7 +43,7 @@ jobs:
       - name: Install Apache Maven
         # Amazon Linux 2 has too old version of Maven, so we need to install a newer one
         run: |
-          wget https://dlcdn.apache.org/maven/maven-3/3.9.6/binaries/apache-maven-3.9.6-bin.tar.gz
+          wget https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.6/apache-maven-3.9.6-bin.tar.gz
           tar xf apache-maven-3.9.6-bin.tar.gz -C /opt
           ln -sf /opt/apache-maven-3.9.6 /opt/maven
           echo "MAVEN_HOME=/opt/maven" >> $GITHUB_ENV
@@ -74,9 +74,17 @@ jobs:
       image: almalinux:8
     steps:
       - name: Install dependencies
-        run: dnf install -y curl maven git
+        run: dnf install -y curl zip unzip git bash wget
       - name: Print GLIBC version
         run: ldd --version
+      - name: Install Maven - the version in AlmaLinux 8 is too old
+        run: |
+          cd /opt
+          wget https://archive.apache.org/dist/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.zip
+          unzip apache-maven-3.9.9-bin.zip
+          ln -s /opt/apache-maven-3.9.9 /opt/maven
+          echo "MAVEN_HOME=/opt/maven" >> $GITHUB_ENV
+          echo "/opt/maven/bin" >> $GITHUB_PATH
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:

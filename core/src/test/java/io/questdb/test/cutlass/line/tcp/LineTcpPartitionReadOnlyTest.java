@@ -25,9 +25,16 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.ServerMain;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.cutlass.line.AbstractLineTcpSender;
+import io.questdb.cutlass.line.LineTcpSenderV2;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
@@ -47,6 +54,7 @@ import static io.questdb.test.tools.TestUtils.*;
 
 public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyTest {
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();
@@ -66,7 +74,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 tableName,
                 () -> {
                     long[] timestampNano = {lastPartitionTs};
-                    try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
+                    try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
                         for (int tick = 0; tick < 5000; tick++) {
                             int tickerId = 0;
                             timestampNano[tickerId] += lineTsStep;
@@ -95,7 +103,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 tableName,
                 () -> {
                     long[] timestampNano = {firstPartitionTs, lastPartitionTs, futurePartitionTs};
-                    try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
+                    try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
                         for (int tick = 0; tick < 5000; tick++) {
                             int tickerId = tick % timestampNano.length;
                             timestampNano[tickerId] += lineTsStep;
@@ -111,7 +119,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                     }
                 },
                 sendComplete,
-                "min\tmax\tcount\n" +
+                "min(ts)\tmax(ts)\tcount()\n" +
                         "2022-12-08T00:00:00.001000Z\t2022-12-08T23:56:06.447339Z\t1944\n" + // +1667
                         "2022-12-09T00:01:17.517546Z\t2022-12-09T23:57:23.964885Z\t278\n" +
                         "2022-12-10T00:02:35.035092Z\t2022-12-10T23:58:41.482431Z\t278\n" +
@@ -129,7 +137,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 tableName,
                 () -> {
                     long[] timestampNano = {firstPartitionTs, secondPartitionTs, lastPartitionTs};
-                    try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
+                    try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
                         for (int tick = 0; tick < 4; tick++) {
                             int tickerId = tick % timestampNano.length;
                             timestampNano[tickerId] += lineTsStep;
@@ -145,7 +153,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                     }
                 },
                 sendComplete,
-                "min\tmax\tcount\n" +
+                "min(ts)\tmax(ts)\tcount()\n" +
                         "2022-12-08T00:05:11.070207Z\t2022-12-08T23:56:06.447339Z\t277\n" +
                         "2022-12-09T00:00:00.001000Z\t2022-12-09T23:57:23.964885Z\t279\n" + // +1
                         "2022-12-10T00:02:35.035092Z\t2022-12-10T23:58:41.482431Z\t278\n" +
@@ -162,7 +170,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 tableName,
                 () -> {
                     long[] timestampNano = {secondPartitionTs, lastPartitionTs};
-                    try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
+                    try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
                         for (int tick = 0; tick < 4; tick++) {
                             int tickerId = tick % timestampNano.length;
                             timestampNano[tickerId] += lineTsStep;

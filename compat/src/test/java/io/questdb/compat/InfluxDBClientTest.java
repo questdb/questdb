@@ -118,7 +118,7 @@ public class InfluxDBClientTest extends AbstractTest {
 
             serverMain.awaitTable("wal_low_max_uncomitted");
             serverMain.getEngine().print("SELECT count() FROM wal_low_max_uncomitted", sink);
-            Assert.assertTrue(Chars.equals(sink, "count\n0\n"));
+            Assert.assertTrue(Chars.equals(sink, "count()\n0\n"));
         }
     }
 
@@ -218,8 +218,8 @@ public class InfluxDBClientTest extends AbstractTest {
             sendIlp(tableName, count, serverMain);
 
             serverMain.awaitTxn(tableName, 2);
-            assertSql(serverMain.getEngine(), "SELECT count() FROM h2o_feet", "count\n" + count + "\n");
-            assertSql(serverMain.getEngine(), "SELECT sum(water_level) FROM h2o_feet", "sum\n" + (count * (count - 1) / 2) + "\n");
+            assertSql(serverMain.getEngine(), "SELECT count() FROM h2o_feet", "count()\n" + count + "\n");
+            assertSql(serverMain.getEngine(), "SELECT sum(water_level) FROM h2o_feet", "sum(water_level)\n" + (count * (count - 1) / 2) + "\n");
         }
     }
 
@@ -263,8 +263,8 @@ public class InfluxDBClientTest extends AbstractTest {
             for (int i = 0; i < threads; i++) {
                 String tn = "h2o_feet" + i;
                 serverMain.awaitTxn(tn, 2);
-                assertSql(serverMain.getEngine(), "SELECT count() FROM " + tn, "count\n" + count + "\n");
-                assertSql(serverMain.getEngine(), "SELECT sum(water_level) FROM " + tn, "sum\n" + (count * (count - 1) / 2) + "\n");
+                assertSql(serverMain.getEngine(), "SELECT count() FROM " + tn, "count()\n" + count + "\n");
+                assertSql(serverMain.getEngine(), "SELECT sum(water_level) FROM " + tn, "sum(water_level)\n" + (count * (count - 1) / 2) + "\n");
             }
         }
     }
@@ -306,8 +306,8 @@ public class InfluxDBClientTest extends AbstractTest {
             }
 
             serverMain.awaitTxn(tableName, threads * 2);
-            assertSql(serverMain.getEngine(), "SELECT count() FROM " + tableName, "count\n" + count * threads + "\n");
-            assertSql(serverMain.getEngine(), "SELECT sum(water_level) FROM " + tableName, "sum\n" + (count * (count - 1) / 2) * threads + "\n");
+            assertSql(serverMain.getEngine(), "SELECT count() FROM " + tableName, "count()\n" + count * threads + "\n");
+            assertSql(serverMain.getEngine(), "SELECT sum(water_level) FROM " + tableName, "sum(water_level)\n" + (count * (count - 1) / 2) * threads + "\n");
         }
     }
 
@@ -325,8 +325,8 @@ public class InfluxDBClientTest extends AbstractTest {
             sendIlp(tableName, count, serverMain);
 
             serverMain.awaitTxn(tableName, 2);
-            assertSql(serverMain.getEngine(), "SELECT count() FROM h2o_feet", "count\n" + count + "\n");
-            assertSql(serverMain.getEngine(), "SELECT sum(water_level) FROM h2o_feet", "sum\n" + (count * (count - 1) / 2) + "\n");
+            assertSql(serverMain.getEngine(), "SELECT count() FROM h2o_feet", "count()\n" + count + "\n");
+            assertSql(serverMain.getEngine(), "SELECT sum(water_level) FROM h2o_feet", "sum(water_level)\n" + (count * (count - 1) / 2) + "\n");
         }
     }
 
@@ -356,14 +356,15 @@ public class InfluxDBClientTest extends AbstractTest {
 
             serverMain.awaitTable("wal_low_max_uncomitted");
             serverMain.getEngine().print("SELECT count() FROM wal_low_max_uncomitted", sink);
-            Assert.assertTrue(Chars.equals(sink, "count\n10001\n"));
+            Assert.assertTrue(Chars.equals(sink, "count()\n10001\n"));
         }
     }
 
     @Test
     public void testLineDoesNotFitBuffer() throws Exception {
         try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
-            put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512");
+            put(PropertyKey.LINE_HTTP_MAX_RECV_BUFFER_SIZE.getEnvVarName(), "512");
+            put(PropertyKey.HTTP_RECV_BUFFER_SIZE.getEnvVarName(), "128");
             put(PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "15");
         }})) {
             serverMain.start();
@@ -388,7 +389,8 @@ public class InfluxDBClientTest extends AbstractTest {
                         "very_long_field=92827791";
 
                 assertRequestErrorContains(influxDB, points, line, "{\"code\":\"request too large\"," +
-                        "\"message\":\"failed to parse line protocol:errors encountered on line(s):unable to read data: ILP line does not fit QuestDB ILP buffer size\"," +
+                        "\"message\":\"failed to parse line protocol:errors encountered on line(s):transaction is too large, " +
+                        "either flush more frequently or increase buffer size \\\"line.http.max.recv.buffer.size\\\" [maxBufferSize=512 B]\"," +
                         "\"line\":1,\"errorId\":");
 
                 // Fail on second line
@@ -408,7 +410,8 @@ public class InfluxDBClientTest extends AbstractTest {
                         "very_long_field=92827791";
 
                 assertRequestErrorContains(influxDB, points, line2, "{\"code\":\"request too large\"," +
-                        "\"message\":\"failed to parse line protocol:errors encountered on line(s):unable to read data: ILP line does not fit QuestDB ILP buffer size\"," +
+                        "\"message\":\"failed to parse line protocol:errors encountered on line(s):transaction is too large," +
+                        " either flush more frequently or increase buffer size \\\"line.http.max.recv.buffer.size\\\" [maxBufferSize=512 B]\"," +
                         "\"line\":2,\"errorId\":");
             }
         }
@@ -480,7 +483,7 @@ public class InfluxDBClientTest extends AbstractTest {
                         "error in line 1: Could not parse entire line, field value is invalid. Field: tag1; value: aasdf\",\"line\":1,\"errorId\":");
             }
 
-            assertSql(serverMain.getEngine(), "SELECT count() FROM good_point", "count\n0\n");
+            assertSql(serverMain.getEngine(), "SELECT count() FROM good_point", "count()\n0\n");
             assertSql(serverMain.getEngine(), "select table_name from tables() where table_name='badPoint'", "table_name\n");
         }
     }
@@ -501,7 +504,7 @@ public class InfluxDBClientTest extends AbstractTest {
                 influxDB.write(points);
             }
             serverMain.awaitTable("m1");
-            assertSql(serverMain.getEngine(), "SELECT count() FROM m1", "count\n2\n");
+            assertSql(serverMain.getEngine(), "SELECT count() FROM m1", "count()\n2\n");
         }
     }
 
@@ -550,7 +553,7 @@ public class InfluxDBClientTest extends AbstractTest {
             }
 
             serverMain.awaitTable("wal_low_max_uncomitted");
-            assertSql(serverMain.getEngine(), "SELECT count() FROM wal_low_max_uncomitted", "count\n0\n");
+            assertSql(serverMain.getEngine(), "SELECT count() FROM wal_low_max_uncomitted", "count()\n0\n");
         }
     }
 
@@ -582,7 +585,7 @@ public class InfluxDBClientTest extends AbstractTest {
             }
 
             serverMain.awaitTable("wal_tbl");
-            assertSql(serverMain.getEngine(), "SELECT count() FROM wal_tbl", "count\n" + 2 * count + "\n");
+            assertSql(serverMain.getEngine(), "SELECT count() FROM wal_tbl", "count()\n" + 2 * count + "\n");
         }
     }
 

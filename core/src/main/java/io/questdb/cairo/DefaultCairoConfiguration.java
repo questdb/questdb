@@ -201,6 +201,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getCommitLatency() {
+        return 30_000_000; // 30s
+    }
+
+    @Override
     public int getCommitMode() {
         return CommitMode.NOSYNC;
     }
@@ -730,6 +735,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlAsOfJoinMapEvacuationThreshold() {
+        return 10_000_000;
+    }
+
+    @Override
+    public int getSqlAsOfJoinShortCircuitCacheCapacity() {
+        return 10_000_000;
+    }
+
+    @Override
     public int getSqlCharacterStoreCapacity() {
         // 1024 seems like a good fit, but tests need
         // smaller capacity so that resize is tested correctly
@@ -1231,6 +1246,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewDebugEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isMatViewEnabled() {
         return true;
     }
@@ -1336,6 +1356,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int maxArrayElementCount() {
+        return 1_000_000;
+    }
+
+    @Override
     public boolean useFastAsOfJoin() {
         return true;
     }
@@ -1343,5 +1368,15 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean useWithinLatestByOptimisation() {
         return false;
+    }
+
+    @Override
+    public boolean isColumnAliasExpressionEnabled() {
+        return true;
+    }
+
+    @Override
+    public int getColumnAliasGeneratedMaxSize() {
+        return 64;
     }
 }
