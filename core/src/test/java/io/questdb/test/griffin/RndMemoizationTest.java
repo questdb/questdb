@@ -31,6 +31,27 @@ import org.junit.Test;
 public class RndMemoizationTest extends AbstractCairoTest {
 
     @Test
+    public void insertRndValues() throws Exception {
+        allowFunctionMemoization();
+
+        execute("create table t(b byte, c char, dt date, d double, f float, i int, ip ipv4, l256 long256, l long, s short, ts timestamp, u uuid, bool boolean)");
+        for (int j = 0; j < 5; j++) {
+            execute("insert into t values (rnd_byte(), rnd_char(), rnd_date(), rnd_double(), rnd_float(), rnd_int(), rnd_ipv4(), rnd_long256(), rnd_long(), rnd_short(), rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'),0), rnd_uuid4(), rnd_boolean())");
+        }
+
+        assertSql(
+                "b\tc\tdt\td\tf\ti\tip\tl256\tl\ts\tts\tu\tbool\n" +
+                        "76\tT\t1970-01-01T01:45:29.025Z\t0.12966659791573354\t0.28455776\t1326447242\t35.86.82.23\t0x322a2198864beb14797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fa\t7513930126251977934\t-24335\t2015-02-03T06:25:32.160816Z\t716de3d2-5dcc-4d91-9fa2-397a5d8c84c4\tfalse\n" +
+                        "74\tS\t1970-01-01T01:02:34.893Z\t0.7611029514995744\t0.5243723\t-1849627000\t170.161.43.222\t0x38b73d329210d2774cdfb9e29522133c87aa0968faec6879a0d8cea7196b33a0\t7039584373105579285\t-30872\t2015-07-29T12:16:46.224603Z\t05374f5f-bcef-4819-923e-b59d99c647af\tfalse\n" +
+                        "77\tY\t1970-01-01T00:55:56.086Z\t0.0035983672154330515\t0.5249321\t1699553881\t66.56.51.126\t0x63eb3740c80f661e9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b\t-8889930662239044040\t12941\t2015-08-14T03:10:00.784479Z\tbccb30ed-7795-4bc8-9f20-a35e80e154f4\ttrue\n" +
+                        "103\tO\t1970-01-01T01:54:23.064Z\t0.9038068796506872\t0.12026119\t-1272693194\t4.17.166.106\t0xbacd57f41b59057caa237cfb02a208e494cfe42988a633de738bab883dc7e332\t-7885528361265853230\t18229\t2015-07-05T05:27:40.318830Z\t336dc434-790e-4331-abbf-cf66bab932fc\tfalse\n" +
+                        "31\tJ\t1970-01-01T02:24:01.409Z\t0.022965637512889825\t0.24593449\t-2034804966\t10.52.79.142\t0x60802a2ca499f211b771e27f939096b9c356f99ae70523b585b80cec619f9178\t7585187984144261203\t25296\t2015-04-13T22:30:14.635949Z\t9a77e857-727e-451a-bd67-d36a09a1b5bb\tfalse\n",
+                "select * from t limit 10"
+        );
+
+    }
+
+    @Test
     public void testIPv4() throws SqlException {
         allowFunctionMemoization();
         assertSql(

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.memoization;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NullRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
@@ -68,8 +69,8 @@ public final class DoubleFunctionMemoizer extends DoubleFunction implements Unar
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        recordLeft = null;
-        recordRight = null;
+        recordLeft = NullRecord.INSTANCE;
+        recordRight = NullRecord.INSTANCE;
         UnaryFunction.super.init(symbolTableSource, executionContext);
     }
 
@@ -84,10 +85,10 @@ public final class DoubleFunctionMemoizer extends DoubleFunction implements Unar
             valueLeft = fn.getDouble(record);
         } else if (recordRight == record) {
             valueRight = fn.getDouble(record);
-        } else if (recordLeft == null) {
+        } else if (recordLeft == NullRecord.INSTANCE) {
             recordLeft = record;
             valueLeft = fn.getDouble(record);
-        } else if (recordRight == null) {
+        } else if (recordRight == NullRecord.INSTANCE) {
             assert supportsRandomAccess();
             recordRight = record;
             valueRight = fn.getDouble(record);
