@@ -2255,6 +2255,51 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShardedMapCursorArrayAccess() throws Exception {
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE AAPL_orderbook (\n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tasks DOUBLE[][]\n" +
+                    ") timestamp(timestamp)\n" +
+                    "PARTITION BY HOUR WAL;");
+            execute("INSERT INTO AAPL_orderbook (timestamp, asks) \n" +
+                    "SELECT dateadd('s', x::int, '2023-08-25T08:00:02.264552Z') as timestamp, ARRAY[\n" +
+                    "  [176.8,177.27,182.0,182.3,183.7,185.0,190.0,null, null, null],\n" +
+                    "  [26.0,400.0,7.0,15.0,10.0,5.0,2.0,0.0,0.0,0.0],\n" +
+                    "  [1.0,1.0,1.0, 1.0,1.0,1.0,1.0,0.0,0.0,0.0]\n" +
+                    " ] as asks\n" +
+                    "\tFROM long_sequence(3_000_000)\n" +
+                    ";");
+
+            drainWalQueue();
+
+            assertQueryNoLeakCheck(
+                    "timestamp\tavg_price\tbest_price\tdrift\n" +
+                            "2023-08-25T08:00:00.000000Z\t176.79999999999998\t176.8\t-2.8421709430404007E-14\n" +
+                            "2023-08-25T08:01:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14\n" +
+                            "2023-08-25T08:02:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14\n" +
+                            "2023-08-25T08:03:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14\n" +
+                            "2023-08-25T08:04:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14\n",
+                    "SELECT * FROM (DECLARE\n" +
+                            "\t@price := 1,\n" +
+                            "\t@size := 2,\n" +
+                            "\t@avg_price := avg(l2price(0.1, asks[@size], asks[@price])),\n" +
+                            "\t@best_price := asks[@price, 1]\n" +
+                            "\tSELECT \n" +
+                            "\t\ttimestamp,\n" +
+                            "\t\t@avg_price as avg_price,\n" +
+                            "\t\t@best_price as best_price,\n" +
+                            "\t\t@avg_price - @best_price as drift\n" +
+                            "\tFROM AAPL_orderbook\n" +
+                            "\tSAMPLE BY 1m) LIMIT 5;",
+                    "timestamp",
+                    true,
+                    true);
+        });
+    }
+
+    @Test
     public void testShift() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][])");
