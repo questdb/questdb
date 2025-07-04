@@ -69,7 +69,7 @@ public final class ColumnType {
     public static final int MIGRATION_VERSION = 427;
     public static final short OVERLOAD_FULL = -1; // akin to no distance
     public static final short OVERLOAD_NONE = 10000; // akin to infinite distance
-    public static final int TIMESTAMP_TYPE_MASK = 0x0001FFFF;
+    public static final int TIMESTAMP_TYPE_MASK = 0x000FFFFF;
     // our type system is absolutely ordered ranging
     // - from UNDEFINED: index 0, represents lack of type, an internal parsing concept.
     // - to NULL: index must be last, other parts of the codebase rely on this fact.
@@ -120,6 +120,10 @@ public final class ColumnType {
     private static final short OVERLOAD_PRIORITY_N = (short) Math.pow(2.0, Numbers.msb(NULL) + 1.0);
     private static final int[] OVERLOAD_PRIORITY_MATRIX = new int[OVERLOAD_PRIORITY_N * OVERLOAD_PRIORITY_N]; // NULL to any is 0
     public static final int INTERVAL_RAW = INTERVAL;
+    public static final int INTERVAL_TIMESTAMP_MICRO = INTERVAL | 1 << 17;
+    public static final int INTERVAL_TIMESTAMP_NANO = INTERVAL | 1 << 18;
+    public static final int TIMESTAMP_MICRO = TIMESTAMP;
+    public static final int TIMESTAMP_NANO = 1 << 18 | TIMESTAMP;
     public static final int VARCHAR_AUX_SHL = 4;
     // column type version as written to the metadata file
     public static final int VERSION = 426;
@@ -130,15 +134,7 @@ public final class ColumnType {
     private static final int ARRAY_NDIMS_FIELD_MASK = ARRAY_NDIMS_LIMIT - 1;
     private static final int ARRAY_NDIMS_FIELD_POS = 14;
     private static final int BYTE_BITS = 8;
-    private static final int INTERVAL_TIMESTAMP_MICRO_TYPE_FLAG = 1 << 17;
-    public static final int INTERVAL_TIMESTAMP_MICRO = INTERVAL | INTERVAL_TIMESTAMP_MICRO_TYPE_FLAG;
-    private static final int INTERVAL_TIMESTAMP_NANO_TYPE_FLAG = 1 << 18;
-    public static final int INTERVAL_TIMESTAMP_NANO = INTERVAL | INTERVAL_TIMESTAMP_NANO_TYPE_FLAG;
     private static final short[][] OVERLOAD_PRIORITY;
-    private static final int TIMESTAMP_MICRO_PRECISION_FLAG = 0;
-    public static final int TIMESTAMP_MICRO = TIMESTAMP_MICRO_PRECISION_FLAG | TIMESTAMP;
-    private static final int TIMESTAMP_NANO_PRECISION_FLAG = 1 << 16;
-    public static final int TIMESTAMP_NANO = TIMESTAMP_NANO_PRECISION_FLAG | TIMESTAMP;
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
     private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
     private static final IntHashSet arrayTypeSet = new IntHashSet();
@@ -740,7 +736,9 @@ public final class ColumnType {
         typeNameMap.put(REGPROCEDURE, "regprocedure");
         typeNameMap.put(ARRAY_STRING, "text[]");
         typeNameMap.put(IPv4, "IPv4");
-        typeNameMap.put(INTERVAL, "INTERVAL");
+        typeNameMap.put(INTERVAL_RAW, "INTERVAL");
+        typeNameMap.put(INTERVAL_TIMESTAMP_MICRO, "INTERVAL");
+        typeNameMap.put(INTERVAL_TIMESTAMP_NANO, "INTERVAL");
         typeNameMap.put(NULL, "NULL");
 
 //        arrayTypeSet.add(BOOLEAN);
@@ -787,7 +785,7 @@ public final class ColumnType {
         nameTypeMap.put("regprocedure", REGPROCEDURE);
         nameTypeMap.put("text[]", ARRAY_STRING);
         nameTypeMap.put("IPv4", IPv4);
-        nameTypeMap.put("interval", INTERVAL);
+        nameTypeMap.put("interval", INTERVAL_TIMESTAMP_MICRO);
         nameTypeMap.put("timestamp_ns", TIMESTAMP_NANO);
 
         StringSink sink = new StringSink();
