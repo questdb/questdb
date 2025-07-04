@@ -2033,6 +2033,8 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testRndDoubleArray() throws Exception {
         assertMemoryLeak(() -> {
+            assertSql("rnd_double_array\n[0.8043224099968393]\n",
+                    "SELECT rnd_double_array(1)");
             assertSql("rnd_double_array\n[NaN]\n",
                     "SELECT rnd_double_array('1', '1', '1', '1')");
             assertSql("rnd_double_array\n[NaN]\n",
@@ -2050,31 +2052,32 @@ public class ArrayTest extends AbstractCairoTest {
     public void testRndDoubleFunctionEdgeCases() throws Exception {
         assertMemoryLeak(() -> {
             assertExceptionNoLeakCheck(
-                    "SELECT rnd_double_array('1'::char)",
-                    25,
-                    "nDims must be an integer"
-            );
-            assertExceptionNoLeakCheck(
-                    "SELECT rnd_double_array(1, '1'::char)",
-                    28,
-                    "nanRate must be an integer"
-            );
-            assertExceptionNoLeakCheck(
-                    "SELECT rnd_double_array(1, 1, '1'::char)",
-                    31,
-                    "maxDimLength must be an integer"
-            );
-            assertExceptionNoLeakCheck(
-                    "SELECT rnd_double_array(1, 1, 0, '1'::char)",
-                    34,
-                    "dimLength must be an integer"
-            );
-
-            assertExceptionNoLeakCheck(
                     "SELECT rnd_double_array()",
                     7,
                     "`rnd_double_array` requires arguments: rnd_double_array(LONG constant, VARARG constant)"
             );
+            assertExceptionNoLeakCheck(
+                    "SELECT rnd_double_array(true)",
+                    7,
+                    "wrong number of arguments for function `rnd_double_array`; expected: 2, provided: 1"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "SELECT rnd_double_array(1, true)",
+                    27,
+                    "nanRate must be an integer"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT rnd_double_array(1, 1, true)",
+                    30,
+                    "maxDimLength must be an integer"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT rnd_double_array(1, 1, 0, true)",
+                    33,
+                    "dimLength must be an integer"
+            );
+
 
             assertExceptionNoLeakCheck(
                     "select rnd_double_array(10, 0, 1000)",
