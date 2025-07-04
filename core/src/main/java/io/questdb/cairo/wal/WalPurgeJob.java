@@ -401,13 +401,14 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 // without having to read WAL txn intervals.
                 //
                 // Note:
-                //   Technically, there may be a race between this job and a mat view refresh job.
-                //   The first incremental refresh on a view may be about to finish when the purge job checks
-                //   the txn numbers. If so, the purge job may delete WAL segments required for the second
-                //   incremental refresh - yet, the refresh job is able to recover from this by falling back
-                //   to a full table scan. Also, the subsequent refreshes should be properly incremental.
-                if (appliedToViewTxn > -1) {
-                    safeToPurgeTxn = Math.min(safeToPurgeTxn, appliedToViewTxn);
+                //   Don't purge WAL segments when the first incremental refresh is running. That's to avoid a race
+                //   between this job and a mat view refresh job leading to full refresh executed multiple times.
+                //   Namely, the first incremental refresh on a view may be about to finish when the purge job
+                //   checks the txn numbers. If so, the purge job may delete WAL segments required for the second
+                //   incremental refresh. Yet the refresh job is able to recover from this by falling back
+                //   to a full table scan, we don't want that to happen.
+                if (appliedToViewTxn > -1 || state.isLocked()) {
+                    safeToPurgeTxn = Math.min(safeToPurgeTxn, Math.max(appliedToViewTxn, 0));
                 }
             }
         }
