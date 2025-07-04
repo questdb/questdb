@@ -1246,7 +1246,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(pos, "table is not partitioned");
             }
 
-            // Tables with ARRAYS cannot be converter to Parquet, for now
+            // Tables with ARRAYS cannot be converted to Parquet, for now
             if (action == PartitionAction.CONVERT_TO_PARQUET) {
                 for (int i = 0, n = tableMetadata.getColumnCount(); i < n; i++) {
                     if (ColumnType.isArray(tableMetadata.getColumnType(i))) {

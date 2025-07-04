@@ -4046,7 +4046,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 copyPartitionIndexFiles(partitionTimestamp, partitionDirLen, lastSlashOther);
 
                 setPathForParquetPartition(path, partitionBy, partitionTimestamp, getTxn());
-
                 return true;
             } finally {
 
@@ -4055,11 +4054,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     LOG.error().$("could not remove parquet file [path=").$(path).I$();
                 }
 
-                setPathForNativePartition(path.trimTo(pathSize), partitionBy, partitionTimestamp, partitionNameTxn);
+                path.trimTo(pathSize);
                 other.trimTo(0).put(path);
-
-
-                rollback();
             }
         } else {
             final long originalSize = txWriter.getPartitionSize(partitionIndex);

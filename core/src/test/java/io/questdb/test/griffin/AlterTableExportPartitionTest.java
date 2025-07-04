@@ -68,9 +68,9 @@ public class AlterTableExportPartitionTest extends AbstractCairoTest {
             assertExportedPartitionExists(tableName, "2024-06-12.6");
 
             // partitions should stay in place too
-            assertPartitionDoesNotExist(tableName, "2024-06-10.6");
-            assertPartitionDoesNotExist(tableName, "2024-06-11.6");
-            assertPartitionDoesNotExist(tableName, "2024-06-12.6");
+            assertParquetPartitionDoesNotExist(tableName, "2024-06-10.6");
+            assertParquetPartitionDoesNotExist(tableName, "2024-06-11.6");
+            assertParquetPartitionDoesNotExist(tableName, "2024-06-12.6");
             // last partition is not converted
         });
     }
@@ -93,15 +93,24 @@ public class AlterTableExportPartitionTest extends AbstractCairoTest {
 
             execute("alter table " + tableName + " export partition to parquet where timestamp > 0");
 
-            assertPartitionDoesNotExist(tableName, "2024-06-10.6");
-            assertPartitionDoesNotExist(tableName, "2024-06-11.6");
-            assertPartitionDoesNotExist(tableName, "2024-06-12.6");
+            assertParquetPartitionDoesNotExist(tableName, "2024-06-10.6");
+            assertParquetPartitionDoesNotExist(tableName, "2024-06-11.6");
+            assertParquetPartitionDoesNotExist(tableName, "2024-06-12.6");
 
             assertExportedPartitionExists(tableName, "2024-06-10.6");
             assertExportedPartitionExists(tableName, "2024-06-11.6");
             assertExportedPartitionExists(tableName, "2024-06-12.6");
 
             execute("alter table " + tableName + " drop partition where timestamp between '2024-06-10' AND '2024-06-13'");
+            drainWalQueue();
+
+            assertSql("id\tstr\ttimestamp\n" +
+                            "5\tabc\t2024-06-15T00:00:00.000000Z\n",
+                    tableName);
+
+            assertSql("index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
+                            "0\tDAY\t2024-06-15\t2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z\t1\t8388608\t8.0 MiB\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n",
+                    "table_partitions('" + tableName + "')");
 
             execute("insert into " + tableName + " select id, str, timestamp from read_parquet('testExportAllPartitionsToParquetAndBack~/2024-06-10.6/data.parquet') timestamp(timestamp)");
             execute("insert into " + tableName + " select id, str, timestamp from read_parquet('testExportAllPartitionsToParquetAndBack~/2024-06-11.6/data.parquet') timestamp(timestamp)");
@@ -133,15 +142,15 @@ public class AlterTableExportPartitionTest extends AbstractCairoTest {
             );
 
             execute("alter table x export partition to parquet list '2024-06'");
-            assertPartitionDoesNotExist("x", "2024-06.1");
+            assertParquetPartitionDoesNotExist("x", "2024-06.1");
 
             assertExportedPartitionDoesNotExist("x", "2024-06.1");
 
             execute("insert into x(designated_ts) values('1970-01')");
             execute("alter table x export partition to parquet list '1970-01'");
-            assertPartitionDoesNotExist("x", "1970-01.2");
+            assertParquetPartitionDoesNotExist("x", "1970-01.2");
 
-            assertExportedPartitionExists("x", "2024-06.1");
+            assertExportedPartitionExists("x", "1970-01.2");
         });
     }
 
@@ -165,11 +174,11 @@ public class AlterTableExportPartitionTest extends AbstractCairoTest {
             assertExportedPartitionExists(tableName, "2024-06-11.6");
             assertExportedPartitionExists(tableName, "2024-06-12.6");
 
-            assertPartitionDoesNotExist(tableName, "2024-06-10.6");
-            assertPartitionDoesNotExist(tableName, "2024-06-11.6");
-            assertPartitionDoesNotExist(tableName, "2024-06-12.6");
+            assertParquetPartitionDoesNotExist(tableName, "2024-06-10.6");
+            assertParquetPartitionDoesNotExist(tableName, "2024-06-11.6");
+            assertParquetPartitionDoesNotExist(tableName, "2024-06-12.6");
 
-            assertPartitionDoesNotExist(tableName, "2024-06-15.3");
+            assertParquetPartitionDoesNotExist(tableName, "2024-06-15.3");
         });
     }
 
@@ -185,7 +194,7 @@ public class AlterTableExportPartitionTest extends AbstractCairoTest {
 
             execute("insert into x(a_varchar, a_ts) values('', '2024-08')");
             execute("alter table x export partition to parquet where a_ts > 0");
-            assertPartitionDoesNotExist("x", "2024-07.2");
+            assertParquetPartitionDoesNotExist("x", "2024-07.2");
             assertExportedPartitionExists("x", "2024-07.2");
         });
     }
@@ -226,8 +235,8 @@ public class AlterTableExportPartitionTest extends AbstractCairoTest {
             assertException("alter table x export partition to parquet list '2024-06'", 0, "cannot convert partition to parquet, partition does not exist");
 
             execute("alter table x export partition to parquet list '1970-01', '1970-02'");
-            assertPartitionDoesNotExist("x", "1970-01.1");
-            assertPartitionDoesNotExist("x", "1970-02.1");
+            assertParquetPartitionDoesNotExist("x", "1970-01.1");
+            assertParquetPartitionDoesNotExist("x", "1970-02.1");
             assertExportedPartitionExists("x", "1970-01.1");
             assertExportedPartitionExists("x", "1970-02.1");
         });
@@ -263,21 +272,19 @@ public class AlterTableExportPartitionTest extends AbstractCairoTest {
             assertQuery("index\tname\treadOnly\tisParquet\tparquetFileSize\tminTimestamp\tmaxTimestamp\n"
                             + "0\t2024-06-10\tfalse\tfalse\t-1\t2024-06-10T00:00:00.000000Z\t2024-06-10T00:00:00.000000Z\n"
                             + "1\t2024-06-11\tfalse\tfalse\t-1\t2024-06-11T00:00:00.000000Z\t2024-06-11T00:00:00.000000Z\n"
-                            + "2\t2024-06-12\tfalse\ttrue\t658\t\t\n" +
+                            + "2\t2024-06-12\tfalse\tfalse\t-1\t2024-06-12T00:00:00.000000Z\t2024-06-12T00:00:02.000000Z\n" +
                             "3\t2024-06-15\tfalse\tfalse\t-1\t2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z\n",
                     "select index, name, readOnly, isParquet, parquetFileSize, minTimestamp, maxTimestamp from table_partitions('" + tableName + "')",
                     false,
                     true
             );
 
-            assertPartitionExists(tableName, "2024-06-10");
-            assertPartitionExists(tableName, "2024-06-11.0");
-            assertPartitionDoesNotExist(tableName, "2024-06-12.6");
-            assertPartitionExists(tableName, "2024-06-15.3");
+            assertParquetPartitionDoesNotExist(tableName, "2024-06-10");
+            assertParquetPartitionDoesNotExist(tableName, "2024-06-11.0");
+            assertParquetPartitionDoesNotExist(tableName, "2024-06-12.6");
+            assertParquetPartitionDoesNotExist(tableName, "2024-06-15.3");
 
-            assertExportedPartitionExists(tableName, "2024-06-10");
-            assertExportedPartitionExists(tableName, "2024-06-11.0");
-            assertExportedPartitionExists(tableName, "2024-06-15.3");
+            assertExportedPartitionExists(tableName, "2024-06-12.6");
         });
     }
 
@@ -302,11 +309,11 @@ public class AlterTableExportPartitionTest extends AbstractCairoTest {
         assertExportedPartition0(tableName, true, partition);
     }
 
-    private void assertPartitionDoesNotExist(String tableName, String partition) {
+    private void assertParquetPartitionDoesNotExist(String tableName, String partition) {
         assertPartitionOnDisk0(tableName, false, partition);
     }
 
-    private void assertPartitionExists(String tableName, String partition) {
+    private void assertParquetPartitionExists(String tableName, String partition) {
         assertPartitionOnDisk0(tableName, true, partition);
     }
 
