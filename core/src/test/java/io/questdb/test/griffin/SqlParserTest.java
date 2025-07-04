@@ -8720,7 +8720,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testProjectionCanReferenceOwnFunctions2() throws SqlException {
         assertQuery(
-                "select-virtual rnd_double_array(2,0,0,2,10) a from (long_sequence(100))",
+                "select-virtual rnd_double_array(2, 0, 0, 2, 10) a from (long_sequence(100))",
                 "select rnd_double_array(2, 0, 0, 2, 10) a from long_sequence(100);"
         );
     }
@@ -8737,7 +8737,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testProjectionCanReferenceOwnFunctionsGroupByKey() throws SqlException {
         assertQuery(
-                "select-group-by rnd_double_array(2,0,0,2,10) a, []([](a,0),0) c, sum(x) sum from (select [x] from long_sequence(100))",
+                "select-group-by rnd_double_array(2, 0, 0, 2, 10) a, a[0][0] c, sum(x) sum from (select [x] from long_sequence(100))",
                 "select rnd_double_array(2, 0, 0, 2, 10) a, a[0][0] c, sum(x) from long_sequence(100);"
         );
     }
@@ -8754,7 +8754,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testProjectionCanReferenceOwnFunctionsOrderBy() throws SqlException {
         assertQuery(
-                "select-virtual rnd_double_array(2,0,0,2,10) a, a + 3 c from (long_sequence(100)) order by c, a",
+                "select-virtual rnd_double_array(2, 0, 0, 2, 10) a, a + 3 c from (long_sequence(100)) order by c, a",
                 "select rnd_double_array(2, 0, 0, 2, 10) a, a + 3 c from long_sequence(100) order by c, a;"
         );
     }
@@ -8764,8 +8764,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-choose c, column, sum" +
                         " from (select-group-by" +
-                        " [f(a) c, c + 1 column, sum(b) sum, timestamp_floor('1h',ts,null,'00:00',null) ts]" +
-                        " f(a) c, c + 1 column, sum(b) sum, timestamp_floor('1h',ts,null,'00:00',null) ts" +
+                        " [f(a) c, c + 1 column, sum(b) sum, timestamp_floor('1h', ts, null, '00:00', null) ts]" +
+                        " f(a) c, c + 1 column, sum(b) sum, timestamp_floor('1h', ts, null, '00:00', null) ts" +
                         " from (select [a, b, ts] from tab timestamp (ts) stride 1h) order by ts)",
                 "select f(a) c, c + 1, sum(b) from tab sample by 1h",
                 modelOf("tab")
@@ -8778,7 +8778,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testProjectionCanReferenceOwnFunctionsVanilla() throws SqlException {
         assertQuery(
-                "select-virtual rnd_double_array(2,0,0,2,10) a, []([](a,0),0) c from (long_sequence(100))",
+                "select-virtual rnd_double_array(2, 0, 0, 2, 10) a, a[0][0] c from (long_sequence(100))",
                 "select rnd_double_array(2, 0, 0, 2, 10) a, a[0][0] c from long_sequence(100);"
         );
     }
