@@ -1294,18 +1294,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     return;
                 }
 
-                try {
-                    final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
-                    final long lastTxn = baseSeqTracker.getWriterTxn();
-                    updateRefreshIntervals0(lastTxn, baseTableToken, viewState, walWriter);
-                } catch (Throwable th) {
-                    LOG.error()
-                            .$("could not update refresh intervals for view [view=").$(viewToken)
-                            .$(", baseTable=").$(baseTableToken)
-                            .$(", ex=").$(th)
-                            .I$();
-                    refreshFailState(viewState, walWriter, th);
-                }
+                final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
+                final long lastTxn = baseSeqTracker.getWriterTxn();
+                updateRefreshIntervals0(lastTxn, baseTableToken, viewState, walWriter);
             } catch (Throwable th) {
                 // If we're here, we couldn't obtain the WAL writer.
                 // Update the in-memory state and call it a day.
@@ -1334,13 +1325,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long lastRefreshTxn = Math.max(viewState.getLastRefreshBaseTxn(), viewState.getRefreshIntervalsBaseTxn());
 
         if (lastRefreshTxn > -1) {
-            if (lastRefreshTxn > lastBaseTxn) {
-                throw CairoException.nonCritical().put("unexpected txn numbers, base table may have been renamed [view=").put(viewToken.getTableName())
-                        .put(", lastRefreshTxn=").put(lastRefreshTxn)
-                        .put(", lastTxn=").put(lastBaseTxn)
-                        .put(']');
-            }
-            if (lastRefreshTxn == lastBaseTxn) {
+            // lastBaseTxn may originate from a SeqTxnTracker in which case it may be behind
+            // the readable base txn and the last refresh txn. If so or if the txn hasn't changed
+            // since the last refresh, we don't need to update the intervals.
+            if (lastRefreshTxn >= lastBaseTxn) {
                 return viewState.getRefreshIntervals();
             }
 

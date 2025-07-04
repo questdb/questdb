@@ -5392,10 +5392,10 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainQueues();
 
-            // the view must be marked as invalid as the result of WAL txn intervals caching attempt
+            // the view must be marked as invalid since the base table was dropped
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\tinvalidation_reason\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tmanual\tbase_price\t2099-01-01T01:01:01.000000Z\t2099-01-01T01:01:07.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tinvalid\t[-1]: unexpected txn numbers, base table may have been renamed [view=price_1h, lastRefreshTxn=2, lastTxn=1]\t2\t1\n",
+                            "price_1h\tmanual\tbase_price\t2099-01-01T01:01:07.000000Z\t2099-01-01T01:01:07.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tinvalid\tbase table is dropped or renamed\t2\t1\n",
                     "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
                             "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
                             "from materialized_views",
