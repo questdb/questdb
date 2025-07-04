@@ -132,9 +132,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         return flags;
     }
 
-    @Override
     // todo: supply bitset to indicate which ops are supported and which arent
     //     "structural changes" doesn't cover is as "add column" is supported
+    @Override
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         final QueryRegistry queryRegistry = sqlExecutionContext != null ? sqlExecutionContext.getCairoEngine().getQueryRegistry() : null;
         keepMatViewsValid = false;
@@ -223,10 +223,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     changeSymbolCapacity(svc);
                     break;
                 case SET_MAT_VIEW_REFRESH_LIMIT:
-                    applyMatViewRefreshLimit(svc);
+                    setMatViewRefreshLimit(svc);
                     break;
                 case SET_MAT_VIEW_REFRESH_TIMER:
-                    applyMatViewRefreshTimer(svc);
+                    setMatViewRefreshTimer(svc);
                     break;
                 default:
                     LOG.error()
@@ -728,6 +728,28 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private boolean enableDeduplication(MetadataService svc) {
         assert extraInfo.size() > 0;
         return svc.enableDeduplicationWithUpsertKeys(extraInfo);
+    }
+
+    private void setMatViewRefreshLimit(MetadataService svc) {
+        final int limitHoursOrMonths = (int) extraInfo.get(0);
+        try {
+            svc.setMatViewRefreshLimit(limitHoursOrMonths);
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
+    }
+
+    private void setMatViewRefreshTimer(MetadataService svc) {
+        final long start = extraInfo.get(0);
+        final int interval = (int) extraInfo.get(1);
+        final char unit = (char) extraInfo.get(2);
+        try {
+            svc.setMatViewRefreshTimer(start, interval, unit);
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
     }
 
     private void squashPartitions(MetadataService svc) {

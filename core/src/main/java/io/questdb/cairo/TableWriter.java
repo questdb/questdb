@@ -28,13 +28,16 @@ import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
@@ -137,9 +140,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.tasks.TableWriterTask.*;
@@ -198,7 +201,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final int fileOperationRetryCount;
-    private final FrameFactory frameFactory;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
     private final ObjList<ColumnIndexer> indexers;
@@ -262,7 +264,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private TxReader attachTxReader;
     private long avgRecordSize;
     private boolean avoidIndexOnCommit = false;
+    private BlockFileWriter blockFileWriter;
     private int columnCount;
+    private long commitRowCount;
     private long committedMasterRef;
     private ConvertOperatorImpl convertOperatorImpl;
     private DedupColumnCommitAddresses dedupColumnCommitAddresses;
@@ -371,7 +375,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.configuration = configuration;
         this.ddlListener = ddlListener;
         this.checkpointStatus = checkpointStatus;
-        this.frameFactory = new FrameFactory(configuration);
         this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
         this.metrics = configuration.getMetrics();
         this.ownMessageBus = ownMessageBus;
@@ -1578,7 +1581,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 attachDetachStatus = AttachDetachStatus.OK;
                 LOG.info().$("detaching partition via unlink [path=").$substr(pathRootSize, path).I$();
             } else {
-
                 detachedPath.of(configuration.getDbRoot()).concat(tableToken.getDirName());
                 int detachedRootLen = detachedPath.size();
                 // detachedPath: detached partition folder
@@ -2640,20 +2642,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void setMetaMatViewRefreshLimit(int limitHoursOrMonths) {
-        commit();
-        metadata.setMatViewRefreshLimitHoursOrMonths(limitHoursOrMonths);
-        writeMetadataToDisk();
+    public void setMatViewRefreshLimit(int limitHoursOrMonths) {
+        assert tableToken.isMatView();
+
+        try {
+            final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+            if (oldDefinition == null) {
+                throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
+            }
+
+            final MatViewDefinition newDefinition = oldDefinition.updateRefreshLimit(limitHoursOrMonths);
+            updateMatViewDefinition(newDefinition);
+        } finally {
+            path.trimTo(pathSize);
+        }
     }
 
     @Override
-    public void setMetaMatViewRefreshTimer(long start, int interval, char unit) {
-        commit();
-        metadata.setMatViewTimerStart(start);
-        metadata.setMatViewTimerInterval(interval);
-        metadata.setMatViewTimerIntervalUnit(unit);
-        writeMetadataToDisk();
-        engine.getMatViewGraph().onAlterRefreshTimer(tableToken);
+    public void setMatViewRefreshTimer(long start, int interval, char unit) {
+        assert tableToken.isMatView();
+
+        try {
+            final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+            if (oldDefinition == null) {
+                throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
+            }
+
+            final MatViewDefinition newDefinition = oldDefinition.updateTimer(interval, unit, start);
+            updateMatViewDefinition(newDefinition);
+        } finally {
+            path.trimTo(pathSize);
+        }
     }
 
     @Override
@@ -5069,6 +5088,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(parquetColumnIdsAndTypes);
         Misc.free(segmentCopyInfo);
         Misc.free(walTxnDetails);
+        Misc.free(blockFileWriter);
         tempDirectMemList = Misc.free(tempDirectMemList);
         if (segmentFileCache != null) {
             segmentFileCache.closeWalFiles();
@@ -5079,7 +5099,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         noOpRowCount = 0L;
         lastOpenPartitionTs = Long.MIN_VALUE;
         lastOpenPartitionIsReadOnly = false;
-        Misc.free(frameFactory);
         assert !truncate || distressed || assertColumnPositionIncludeWalLag();
         freeColumns(truncate & !distressed);
         try {
@@ -6035,6 +6054,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final boolean partitionMutates = Numbers.decodeLowInt(flags) != 0;
                 final boolean isLastWrittenPartition = o3PartitionUpdateSink.nextBlockIndex(blockIndex) == -1;
                 final long o3SplitPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 5 * Long.BYTES);
+                if (!partitionMutates && srcDataNewPartitionSize < 0) {
+                    // noop
+                    continue;
+                }
 
                 boolean isMinPartitionUpdate = partitionTimestamp == txWriter.getPartitionTimestampByTimestamp(txWriter.getMinTimestamp())
                         && partitionTimestamp == txWriter.getPartitionTimestampByTimestamp(timestampMin);
@@ -6349,6 +6372,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$();
 
                         int insertPartitionIndex = i;
+                        FrameFactory frameFactory = engine.getFrameFactory();
                         try (Frame sourceFrame = frameFactory.openRO(path, prevPartitionTimestamp, metadata, columnVersionWriter, prevPartitionSize)) {
                             // Create the source frame and then manipulate partitions in txWriter
                             // When newSplitPartitionTimestamp == partitionTimestamp it is the only way
@@ -6860,6 +6884,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         partitionRemoveCandidates.clear();
         o3ColumnCounters.clear();
         o3BasketPool.clear();
+        commitRowCount = srcOooMax;
 
         // move uncommitted is liable to change max timestamp,
         // however, we need to identify the last partition before max timestamp skips to NULL, for example
@@ -9283,10 +9308,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putBool(metadata.isWalEnabled());
             ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
-            ddlMem.putInt(metadata.getMatViewRefreshLimitHoursOrMonths());
-            ddlMem.putLong(metadata.getMatViewTimerStart());
-            ddlMem.putInt(metadata.getMatViewTimerInterval());
-            ddlMem.putChar(metadata.getMatViewTimerIntervalUnit());
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
@@ -9646,6 +9667,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         boolean rw = !copyTargetFrame;
         Frame targetFrame = null;
+        FrameFactory frameFactory = engine.getFrameFactory();
         Frame firstPartitionFrame = frameFactory.open(rw, path, targetPartition, metadata, columnVersionWriter, originalSize);
         try {
             if (copyTargetFrame) {
@@ -10030,6 +10052,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void updateMatViewDefinition(MatViewDefinition newDefinition) {
+        if (blockFileWriter == null) {
+            blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
+        }
+        try (BlockFileWriter definitionWriter = blockFileWriter) {
+            definitionWriter.of(path.concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+            MatViewDefinition.append(newDefinition, definitionWriter);
+        }
+
+        // Unlike mat view state write-through behavior, we update the in-memory definition
+        // object here, after updating the definition file.
+        engine.getMatViewStateStore().updateViewDefinition(tableToken, newDefinition);
+        engine.getMatViewGraph().updateViewDefinition(tableToken, newDefinition);
+    }
+
     private void updateMaxTimestamp(long timestamp) {
         txWriter.updateMaxTimestamp(timestamp);
         this.timestampSetter.accept(timestamp);
@@ -10172,6 +10209,119 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     boolean allowMixedIO() {
         return mixedIOFlag;
+    }
+
+    /**
+     * This method is thread safe, e.g. can be triggered from multiple partition merge tasks
+     *
+     * @param partitionTimestamp timestamp of the partition to check
+     * @param partitionNameTxn   transaction name of the partition to check
+     * @param partitionRowCount  row count of the partition to check
+     * @param partitionLo        starting row index of the partition to check
+     * @param partitionHi        ending row index of the partition to check, inclusive
+     * @param commitLo           starting row index of the commit to check
+     * @param commitHi           ending row index of the commit to check, inclusive
+     * @param mergeIndexAddr     address of the merge index
+     * @param mergeIndexRows     number of rows in the merge index
+     * @return true if the commit is identical to the partition, false otherwise
+     */
+    boolean checkDedupCommitIdenticalToPartition(
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long partitionRowCount,
+            long partitionLo,
+            long partitionHi,
+            long commitLo,
+            long commitHi,
+            long mergeIndexAddr,
+            long mergeIndexRows
+    ) {
+        TableRecordMetadata metadata = getMetadata();
+        FrameFactory frameFactory = engine.getFrameFactory();
+        try (Frame partitionFrame = frameFactory.openRO(path, partitionTimestamp, partitionNameTxn, partitionBy, metadata, columnVersionWriter, partitionRowCount)) {
+            try (Frame commitFrame = engine.getFrameFactory().openROFromMemoryColumns(o3Columns, this.metadata, commitRowCount)) {
+                for (int i = 0; i < metadata.getColumnCount(); i++) {
+                    // Do not compare dedup keys, already a match
+                    if (!metadata.isDedupKey(i) && !FrameAlgebra.isColumnReplaceIdentical(
+                            i,
+                            partitionFrame,
+                            partitionLo,
+                            partitionHi + 1,
+                            commitFrame,
+                            commitLo,
+                            commitHi + 1,
+                            mergeIndexAddr,
+                            mergeIndexRows
+                    )) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * This method is thread safe, e.g. can be triggered from multiple partition merge tasks
+     *
+     * @param partitionTimestamp timestamp of the partition to check
+     * @param partitionNameTxn   transaction name of the partition to check
+     * @param partitionRowCount  row count of the partition to check
+     * @param partitionLo        starting row index of the partition to check
+     * @param partitionHi        ending row index of the partition to check, inclusive
+     * @param commitLo           starting row index of the commit to check
+     * @param commitHi           ending row index of the commit to check, inclusive
+     * @return true if the commit is identical to the partition, false otherwise
+     */
+    boolean checkReplaceCommitIdenticalToPartition(
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long partitionRowCount,
+            long partitionLo,
+            long partitionHi,
+            long commitLo,
+            long commitHi
+    ) {
+        TableRecordMetadata metadata = getMetadata();
+        FrameFactory frameFactory = engine.getFrameFactory();
+        try (Frame partitionFrame = frameFactory.openRO(path, partitionTimestamp, partitionNameTxn, partitionBy, metadata, columnVersionWriter, partitionRowCount)) {
+            try (Frame commitFrame = engine.getFrameFactory().openROFromMemoryColumns(o3Columns, this.metadata, commitRowCount)) {
+                for (int i = 0; i < metadata.getColumnCount(); i++) {
+
+                    // Compare all columns, dedup keys and non-keys
+                    if (i != metadata.getTimestampIndex()) {
+                        // Non-designated timestamp
+                        if (!FrameAlgebra.isColumnReplaceIdentical(
+                                i,
+                                partitionFrame,
+                                partitionLo,
+                                partitionHi + 1,
+                                commitFrame,
+                                commitLo,
+                                commitHi + 1,
+                                0,
+                                commitHi + 1 - commitLo
+                        )) {
+                            return false;
+                        }
+                    } else {
+                        // Designated timestamp
+                        if (!FrameAlgebra.isDesignatedTimestampColumnReplaceIdentical(
+                                i,
+                                partitionFrame,
+                                partitionLo,
+                                partitionHi + 1,
+                                commitFrame,
+                                commitLo,
+                                commitHi + 1
+                        )) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        return true;
     }
 
     void closeActivePartition(long size) {

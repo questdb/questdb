@@ -22,32 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.table;
+package io.questdb.griffin.engine.functions.date;
 
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.PlanSink;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public class BwdPageFrameRowCursorFactory implements RowCursorFactory {
-    private final PageFrameBwdRowCursor cursor = new PageFrameBwdRowCursor();
-
+public class GenerateSeriesLongDefaultFunctionFactory implements FunctionFactory {
     @Override
-    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
-        cursor.of(pageFrame);
-        return cursor;
+    public String getSignature() {
+        return "generate_series(LL)";
     }
 
-    @Override
-    public boolean isEntity() {
-        return true;
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return new CursorFunction(new GenerateSeriesLongRecordCursorFactory(args.getQuick(0), args.getQuick(1), LongConstant.ONE, argPositions));
     }
 
-    @Override
-    public void toPlan(PlanSink sink) {
-        if (sink.getOrder() == PartitionFrameCursorFactory.ORDER_ASC) {
-            sink.type("Row forward scan");
-        } else {
-            sink.type("Row backward scan");
-        }
-    }
 }
-

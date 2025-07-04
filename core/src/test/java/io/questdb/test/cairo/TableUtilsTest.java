@@ -253,7 +253,7 @@ public class TableUtilsTest extends AbstractTest {
                             Assert.assertEquals(
                                     type,
                                     Unsafe.getUnsafe().getByte(mem1 + b),
-                                    Unsafe.getUnsafe().getByte(mem1 + b)
+                                    Unsafe.getUnsafe().getByte(mem2 + b)
                             );
                         }
                     }

@@ -31,6 +31,7 @@ import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
@@ -175,6 +176,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WriterPool writerPool;
     private @NotNull ConfigReloader configReloader = () -> false; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
+    private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
@@ -206,6 +208,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.rootExecutionContext = createRootExecutionContext();
             this.matViewTimerQueue = createMatViewTimerQueue();
             this.matViewGraph = new MatViewGraph(matViewTimerQueue);
+            this.frameFactory = new FrameFactory(configuration);
 
             settingsStore = new SettingsStore(configuration);
             settingsStore.init();
@@ -408,8 +411,8 @@ public class CairoEngine implements Closeable, WriterSource {
                                         .$(", baseTableTxn=").$(baseTableLastTxn)
                                         .I$();
                                 matViewStateStore.enqueueInvalidate(tableToken, "materialized view is ahead of base table and cannot be synchronized");
-                            } else if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_REFRESH_TYPE) {
-                                // Kickstart incremental refresh.
+                            } else if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
+                                // Kickstart immediate refresh.
                                 matViewStateStore.enqueueIncrementalRefresh(tableToken);
                             }
                         }
@@ -462,6 +465,7 @@ public class CairoEngine implements Closeable, WriterSource {
         boolean b6 = tableMetadataPool.releaseAll();
         scoreboardPool.clear();
         partitionOverwriteControl.clear();
+        frameFactory.clear();
         return b1 & b2 & b3 & b4 & b5 & b6;
     }
 
@@ -483,6 +487,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(scoreboardPool);
         Misc.free(matViewStateStore);
         Misc.free(settingsStore);
+        Misc.free(frameFactory);
     }
 
     @TestOnly
@@ -511,6 +516,9 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             if (matViewGraph.addView(matViewDefinition)) {
                 matViewStateStore.createViewState(matViewDefinition);
+                if (!matViewDefinition.isDeferred()) {
+                    matViewStateStore.enqueueIncrementalRefresh(matViewToken);
+                }
             }
         } catch (CairoException e) {
             dropTableOrMatView(path, matViewToken);
@@ -659,6 +667,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public Job getEngineMaintenanceJob() {
         return engineMaintenanceJob;
+    }
+
+    public FrameFactory getFrameFactory() {
+        return frameFactory;
     }
 
     public FunctionFactoryCache getFunctionFactoryCache() {
@@ -1383,6 +1395,12 @@ public class CairoEngine implements Closeable, WriterSource {
             LOG.error().$("cannot rename, table does not exist [table=").$safe(fromTableName).I$();
             throw CairoException.nonCritical().put("cannot rename, table does not exist [table=").put(fromTableName).put(']');
         }
+    }
+
+    @TestOnly
+    public void resetFrameFactory() {
+        frameFactory.close();
+        frameFactory = new FrameFactory(configuration);
     }
 
     @TestOnly

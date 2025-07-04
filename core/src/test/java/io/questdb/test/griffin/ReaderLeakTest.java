@@ -26,10 +26,11 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
-import io.questdb.cairo.FullFwdPartitionFrameCursorFactory;
+import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -38,7 +39,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.QueryProgress;
-import io.questdb.griffin.engine.table.FwdPageFrameRowCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Rnd;
@@ -74,12 +75,13 @@ public class ReaderLeakTest extends AbstractCairoTest {
                                         new PageFrameRecordCursorFactory(
                                                 engine.getConfiguration(),
                                                 metadata,
-                                                new FullFwdPartitionFrameCursorFactory(
+                                                new FullPartitionFrameCursorFactory(
                                                         token,
                                                         TableUtils.ANY_TABLE_VERSION,
-                                                        metadata
+                                                        metadata,
+                                                        PartitionFrameCursorFactory.ORDER_ASC
                                                 ),
-                                                new FwdPageFrameRowCursorFactory(),
+                                                new PageFrameRowCursorFactory(PartitionFrameCursorFactory.ORDER_ASC),
                                                 false,
                                                 null,
                                                 true,

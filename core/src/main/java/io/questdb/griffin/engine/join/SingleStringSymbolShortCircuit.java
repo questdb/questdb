@@ -22,35 +22,34 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.table;
+package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.sql.PageFrame;
-import io.questdb.cairo.sql.PageFrameMemory;
-import io.questdb.cairo.sql.PartitionFrameCursorFactory;
-import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.RowCursorFactory;
-import io.questdb.griffin.PlanSink;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.TimeFrameRecordCursor;
 
-public class FwdPageFrameRowCursorFactory implements RowCursorFactory {
-    private final PageFrameFwdRowCursor cursor = new PageFrameFwdRowCursor();
+public final class SingleStringSymbolShortCircuit implements SymbolShortCircuit {
+    private final int masterStringIndex;
+    private final int slaveSymbolIndex;
+    private StaticSymbolTable slaveSymbolTable;
 
-    @Override
-    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
-        cursor.of(pageFrame);
-        return cursor;
+    public SingleStringSymbolShortCircuit(int masterStringIndex, int slaveSymbolIndex) {
+        this.masterStringIndex = masterStringIndex;
+        this.slaveSymbolIndex = slaveSymbolIndex;
     }
 
     @Override
-    public boolean isEntity() {
-        return true;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        if (sink.getOrder() == PartitionFrameCursorFactory.ORDER_DESC) {
-            sink.type("Row backward scan");
-        } else {
-            sink.type("Row forward scan");
+    public boolean isShortCircuit(Record masterRecord) {
+        CharSequence strA = masterRecord.getStrA(masterStringIndex);
+        if (strA == null) {
+            return slaveSymbolTable.containsNullValue();
         }
+        int key = slaveSymbolTable.keyOf(strA);
+        return key == StaticSymbolTable.VALUE_NOT_FOUND;
+    }
+
+    @Override
+    public void of(TimeFrameRecordCursor slaveCursor) {
+        this.slaveSymbolTable = slaveCursor.getSymbolTable(slaveSymbolIndex);
     }
 }

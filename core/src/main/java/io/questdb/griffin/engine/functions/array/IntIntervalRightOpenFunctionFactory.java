@@ -35,7 +35,6 @@ import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -71,7 +70,7 @@ public class IntIntervalRightOpenFunctionFactory implements FunctionFactory {
 
         @Override
         public @NotNull Interval getInterval(Record rec) {
-            interval.of(arg.getInt(rec), Numbers.LONG_NULL);
+            interval.of(arg.getInt(rec), Long.MAX_VALUE);
             return interval;
         }
 
@@ -83,6 +82,11 @@ public class IntIntervalRightOpenFunctionFactory implements FunctionFactory {
         @Override
         public boolean isOperator() {
             return true;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Override

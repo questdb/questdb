@@ -31,6 +31,7 @@ import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.mp.NoOpQueue;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -215,14 +216,24 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
     private MatViewDefinition createDefinition(TableToken viewToken, TableToken baseTableToken) {
         MatViewDefinition viewDefinition = new MatViewDefinition();
         viewDefinition.init(
-                MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
+                MatViewDefinition.REFRESH_TYPE_IMMEDIATE,
+                false,
                 viewToken,
                 "x",
                 baseTableToken.getTableName(),
                 0,
                 'm',
                 null,
-                null
+                null,
+                0,
+                0,
+                (char) 0,
+                Numbers.LONG_NULL,
+                null,
+                0,
+                (char) 0,
+                0,
+                (char) 0
         );
         return viewDefinition;
     }

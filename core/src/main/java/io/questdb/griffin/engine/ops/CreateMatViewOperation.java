@@ -51,6 +51,8 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
 
     boolean ignoreIfExists();
 
+    boolean isDeferred();
+
     void updateOperationFutureTableToken(TableToken tableToken);
 
     void validateAndUpdateMetadataFromModel(SqlExecutionContext sqlExecutionContext, FunctionFactoryCache functionFactoryCache, QueryModel queryModel) throws SqlException;
