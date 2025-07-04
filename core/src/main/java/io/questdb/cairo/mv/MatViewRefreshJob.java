@@ -188,8 +188,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     return;
                 }
 
-                try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
-                    cacheTxnIntervals0(baseTableReader, viewState, walWriter);
+                try {
+                    final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
+                    final long lastTxn = baseSeqTracker.getWriterTxn();
+                    cacheTxnIntervals0(lastTxn, baseTableToken, viewState, walWriter);
                 } catch (Throwable th) {
                     LOG.error()
                             .$("could not cache WAL txn intervals for view [view=").$(viewToken)
@@ -214,32 +216,31 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private LongList cacheTxnIntervals0(
-            @NotNull TableReader baseTableReader,
+            long lastBaseTxn,
+            @NotNull TableToken baseTableToken,
             @NotNull MatViewState viewState,
             @NotNull WalWriter walWriter
     ) {
         assert viewState.isLocked();
 
-        final long lastTxn = baseTableReader.getSeqTxn();
-        final TableToken baseTableToken = baseTableReader.getTableToken();
         final MatViewDefinition viewDefinition = viewState.getViewDefinition();
         final TableToken viewToken = viewDefinition.getMatViewToken();
         final long lastRefreshTxn = Math.max(viewState.getLastRefreshBaseTxn(), viewState.getCachedIntervalsBaseTxn());
 
         if (lastRefreshTxn > -1) {
-            if (lastRefreshTxn > lastTxn) {
+            if (lastRefreshTxn > lastBaseTxn) {
                 throw CairoException.nonCritical().put("unexpected txn numbers, base table may have been renamed [view=").put(viewToken.getTableName())
                         .put(", lastRefreshTxn=").put(lastRefreshTxn)
-                        .put(", lastTxn=").put(lastTxn)
+                        .put(", lastTxn=").put(lastBaseTxn)
                         .put(']');
             }
-            if (lastRefreshTxn == lastTxn) {
+            if (lastRefreshTxn == lastBaseTxn) {
                 return viewState.getCachedTxnIntervals();
             }
 
             try {
                 txnIntervals.clear();
-                txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, txnIntervals, lastRefreshTxn, lastTxn);
+                txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, txnIntervals, lastRefreshTxn, lastBaseTxn);
                 if (txnIntervals.size() > 0) {
                     final int dividerIndex = txnIntervals.size();
                     txnIntervals.addAll(viewState.getCachedTxnIntervals());
@@ -253,7 +254,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
                     viewState.setCachedTxnIntervals(txnIntervals);
                 }
-                viewState.setCachedIntervalsBaseTxn(lastTxn);
+                viewState.setCachedIntervalsBaseTxn(lastBaseTxn);
 
                 walWriter.resetMatViewState(
                         viewState.getLastRefreshBaseTxn(),
@@ -409,7 +410,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Let's find min/max timestamps in the new WAL transactions.
             if (lastRefreshTxn > -1) {
                 // It's a subsequent incremental refresh, so WalPurgeJob must be aware of us.
-                txnIntervals = cacheTxnIntervals0(baseTableReader, viewState, walWriter);
+                txnIntervals = cacheTxnIntervals0(lastTxn, baseTableToken, viewState, walWriter);
                 if (txnIntervals != null) {
                     if (txnIntervals.size() > 0) {
                         // BAU incremental refresh.

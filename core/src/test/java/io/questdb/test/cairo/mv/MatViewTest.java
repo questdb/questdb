@@ -46,7 +46,6 @@ import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.LongList;
-import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -59,7 +58,6 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -71,7 +69,6 @@ import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
-import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.EVENT_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
@@ -3136,70 +3133,6 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testManualPeriodWithTzMatViewIncrementalRefreshNoTimerJob() throws Exception {
         testPeriodWithTzRefresh("manual deferred", "incremental", false);
-    }
-
-    @Test
-    public void testManualViewInvalidatedOnTxnIntervalsCachingFailure() throws Exception {
-        Assume.assumeFalse(Os.isWindows());
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_TXN_INTERVALS_CACHE_TIMER_INTERVAL, "1s");
-        assertMemoryLeak(() -> {
-            execute(
-                    "create table base_price ( " +
-                            "sym varchar, price double, ts timestamp " +
-                            ") timestamp(ts) partition by DAY WAL"
-            );
-            execute(
-                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                            ",('gbpusd', 1.321, '2024-09-10T13:02')" +
-                            ",('jpyusd', 103.21, '2024-09-10T14:02')"
-            );
-            execute("create materialized view price_1h refresh manual as select sym, last(price) as price, ts from base_price sample by 1h");
-
-            currentMicros = parseFloorPartialTimestamp("2024-12-31T01:01:01.000000Z");
-            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
-            drainMatViewTimerQueue(timerJob);
-            drainQueues();
-
-            execute(
-                    "insert into base_price(sym, price, ts) values('gbpusd', 1.420, '2024-09-10T12:01')" +
-                            ",('gbpusd', 1.423, '2024-09-10T12:02')" +
-                            ",('jpyusd', 103.31, '2024-09-10T12:02')" +
-                            ",('gbpusd', 1.521, '2024-09-10T13:02')" +
-                            ",('jpyusd', 103.51, '2024-09-10T14:02')"
-            );
-            drainWalQueue();
-
-            // make sure caching task is scheduled
-            currentMicros += Timestamps.MINUTE_MICROS;
-            drainMatViewTimerQueue(timerJob);
-
-            // this tick should be no-op
-            currentMicros += Timestamps.MINUTE_MICROS;
-            drainMatViewTimerQueue(timerJob);
-
-            // delete _txn file, so that table reader can't reload
-            final TableToken baseTableToken = engine.getTableTokenIfExists("base_price");
-            Assert.assertNotNull(baseTableToken);
-            try (Path path = new Path()) {
-                path.of(engine.getConfiguration().getDbRoot()).concat(baseTableToken).concat(TXN_FILE_NAME);
-                engine.getConfiguration().getFilesFacade().removeQuiet(path.$());
-            }
-            engine.releaseAllReaders();
-
-            drainQueues();
-
-            // the view should become invalid due to failed WAL txn interval caching
-            assertQueryNoLeakCheck(
-                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\n" +
-                            "price_1h\tmanual\tbase_price\t2024-12-31T01:01:01.000000Z\t2024-12-31T01:03:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
-                            "from materialized_views",
-                    null
-            );
-        });
     }
 
     @Test
