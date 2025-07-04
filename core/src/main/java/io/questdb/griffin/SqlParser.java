@@ -3019,11 +3019,13 @@ public class SqlParser {
                         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                         CharSequence aliasTok = GenericLexer.immutableOf(tok);
                         validateIdentifier(lexer, aliasTok);
-                        alias = unquote(aliasTok);
+                        boolean unquoting =Chars.indexOf(aliasTok, '.') == -1;
+                        alias = unquoting ? unquote(aliasTok) : aliasTok;
                     } else {
                         validateIdentifier(lexer, tok);
                         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-                        alias = GenericLexer.immutableOf(unquote(tok));
+                        boolean unquoting = Chars.indexOf(tok, '.') == -1;
+                        alias = GenericLexer.immutableOf(unquoting ? unquote(tok) : tok);
                     }
 
                     if (col.getAst().isWildcard()) {
@@ -3104,7 +3106,8 @@ public class SqlParser {
                     characterStore,
                     entry.toImmutable(),
                     aliasMap,
-                    configuration.getColumnAliasGeneratedMaxSize()
+                    configuration.getColumnAliasGeneratedMaxSize(),
+                    qc.getAst().type != ExpressionNode.LITERAL
             );
         } else {
             if (qc.getAst().type == ExpressionNode.CONSTANT && Chars.indexOfLastUnquoted(token, '.') != -1) {
