@@ -96,9 +96,8 @@ public class SqlUtil {
             boolean nonLiteral
     ) {
         // We need to wrap disallowed aliases with double quotes to avoid later conflicts.
-        final boolean quote = !Chars.isDoubleQuoted(base) && (
-                Chars.indexOf(base, '.') > -1 ||
-                        (nonLiteral && disallowedAliases.contains(base))
+        final boolean quote = nonLiteral && !Chars.isDoubleQuoted(base) && (
+                Chars.indexOf(base, '.') > -1 || disallowedAliases.contains(base)
         );
 
         int len = base.length();
@@ -110,11 +109,10 @@ public class SqlUtil {
         final CharacterStoreEntry entry = store.newEntry();
         final int entryLen = entry.length();
         if (quote) {
+            entry.put('"');
             len += 2;
-            entry.putQuoted(base);
-        } else {
-            entry.put(base);
         }
+        entry.put(base);
 
         int sequence = 1;
         int seqSize = 0;
@@ -132,13 +130,13 @@ public class SqlUtil {
                 }
             }
 
-            entry.trimTo(entryLen + len - ((sequence > 1 && quote) ? 1 : 0));
+            entry.trimTo(entryLen + len - (quote ? 1 : 0));
             if (sequence > 1) {
                 entry.put('_');
                 entry.put(sequence);
-                if (quote) {
-                    entry.put('"');
-                }
+            }
+            if (quote) {
+                entry.put('"');
             }
             CharSequence alias = entry.toImmutable();
             if (len > 0 && aliasToColumnMap.excludes(alias)) {
