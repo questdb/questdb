@@ -199,6 +199,11 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
         }
 
         @Override
+        public long preComputedStateSize() {
+            return RecordCursor.fromBool(isMapBuilt);
+        }
+
+        @Override
         public long size() {
             return -1;
         }

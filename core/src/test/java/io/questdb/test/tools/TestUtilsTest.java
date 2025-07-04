@@ -37,6 +37,17 @@ import java.util.Map;
 public final class TestUtilsTest extends AbstractCairoTest {
 
     @Test
+    public void testAssertReverseLinesEqual() {
+        Assert.assertThrows(AssertionError.class, () -> {
+            TestUtils.assertReverseLinesEqual(null, "123\n456\n789\n", "123\n456\n789\n");
+            TestUtils.assertReverseLinesEqual(null, "1234\n56\n789\n", "789\n456\n123\n");
+        });
+        TestUtils.assertReverseLinesEqual(null, "123\n456\n789\n", "789\n456\n123\n");
+        TestUtils.assertReverseLinesEqual(null, "1234\n56\n789\n", "789\n56\n1234\n");
+        TestUtils.assertReverseLinesEqual(null, "1234\n", "1234\n");
+    }
+
+    @Test
     public void testOrderTolerantRecordComparison() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (x long, ts timestamp) timestamp(ts) partition by day");

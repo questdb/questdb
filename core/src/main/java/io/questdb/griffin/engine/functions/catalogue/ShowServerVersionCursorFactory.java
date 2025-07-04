@@ -95,6 +95,11 @@ public class ShowServerVersionCursorFactory extends AbstractRecordCursorFactory 
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public long size() {
             return SIZE;
         }
