@@ -58,7 +58,7 @@ public class SampleByConfigTest extends AbstractBootstrapTest {
     final CharSequence expectedFirstObservation = "ts\tcount\n" +
             "2021-05-31T23:10:00.000000Z\t5\n" +
             "2021-06-01T23:10:00.000000Z\t2\n";
-    final CharSequence query = "SELECT ts, count() from sensors\n" +
+    final CharSequence query = "SELECT ts, count from sensors\n" +
             "SAMPLE BY 1d";
 
     public SampleByConfigTest() {

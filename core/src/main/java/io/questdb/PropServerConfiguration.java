@@ -643,6 +643,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long queryTimeout;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitBeforeReload;
+    public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT = 64;
+    public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_MINIMUM = 4;
+    private boolean cairoSqlColumnAliasExpressionEnabled;
+    private int cairoSqlColumnAliasGeneratedMaxSize;
 
     public PropServerConfiguration(
             String installRoot,
@@ -1702,6 +1706,20 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         // compatibility switch, to be removed in future
         this.sqlSampleByValidateFillType = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_VALIDATE_FILL_TYPE, true);
+
+        this.cairoSqlColumnAliasExpressionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, true);
+        this.cairoSqlColumnAliasGeneratedMaxSize = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE, COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT);
+        if (this.cairoSqlColumnAliasGeneratedMaxSize < COLUMN_ALIAS_GENERATED_MAX_SIZE_MINIMUM) {
+            log.info()
+                    .$("expected a column alias truncate length superior or equal to ")
+                    .$(COLUMN_ALIAS_GENERATED_MAX_SIZE_MINIMUM)
+                    .$(" but got ")
+                    .$(cairoSqlColumnAliasGeneratedMaxSize)
+                    .$(". Using ")
+                    .$(COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT)
+                    .$(" instead").$();
+            this.cairoSqlColumnAliasGeneratedMaxSize = COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT;
+        }
     }
 
     public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
@@ -3896,6 +3914,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean useWithinLatestByOptimisation() {
             return queryWithinLatestByOptimisationEnabled;
+        }
+
+        @Override
+        public boolean isColumnAliasExpressionEnabled() {
+            return cairoSqlColumnAliasExpressionEnabled;
+        }
+
+        @Override
+        public int getColumnAliasGeneratedMaxSize() {
+            return cairoSqlColumnAliasGeneratedMaxSize;
         }
     }
 

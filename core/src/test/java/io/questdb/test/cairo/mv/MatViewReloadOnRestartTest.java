@@ -489,7 +489,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 drainMatViewQueue(main2.getEngine());
                 assertSql(
                         main2,
-                        "count\n" +
+                        "count()\n" +
                                 "0\n",
                         "select count() from materialized_views();"
                 );

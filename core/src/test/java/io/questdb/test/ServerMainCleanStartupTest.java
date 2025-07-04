@@ -71,7 +71,7 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                         sqlExecutionContext,
                         "select wait_wal_table('y')",
                         sink,
-                        "wait_wal_table\n" +
+                        "wait_wal_table('y')\n" +
                                 "true\n"
                 );
 

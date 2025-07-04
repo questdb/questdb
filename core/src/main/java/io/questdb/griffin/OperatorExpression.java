@@ -161,6 +161,10 @@ public final class OperatorExpression {
         return type;
     }
 
+    public String getToken() {
+        return operator.token;
+    }
+
     public boolean greaterPrecedence(int otherPrecedence) {
         return (leftAssociative && precedence >= otherPrecedence) || (!leftAssociative && precedence > otherPrecedence);
     }
