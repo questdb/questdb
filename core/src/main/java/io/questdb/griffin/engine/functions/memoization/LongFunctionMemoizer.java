@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.memoization;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -34,8 +35,10 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 
 public final class LongFunctionMemoizer extends LongFunction implements UnaryFunction {
     private final Function fn;
-    private boolean memoized;
-    private long value;
+    private Record recordLeft;
+    private Record recordRight;
+    private long valueLeft;
+    private long valueRight;
 
     public LongFunctionMemoizer(Function fn) {
         assert fn.shouldMemoize();
@@ -49,7 +52,13 @@ public final class LongFunctionMemoizer extends LongFunction implements UnaryFun
 
     @Override
     public long getLong(Record rec) {
-        return memoized ? value : fn.getLong(rec);
+        if (recordLeft == rec) {
+            return valueLeft;
+        }
+        if (recordRight == rec) {
+            return valueRight;
+        }
+        return fn.getLong(rec);
     }
 
     @Override
@@ -59,7 +68,8 @@ public final class LongFunctionMemoizer extends LongFunction implements UnaryFun
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        memoized = false;
+        recordLeft = null;
+        recordRight = null;
         UnaryFunction.super.init(symbolTableSource, executionContext);
     }
 
@@ -70,8 +80,27 @@ public final class LongFunctionMemoizer extends LongFunction implements UnaryFun
 
     @Override
     public void memoize(Record record) {
-        value = fn.getLong(record);
-        memoized = true;
+        if (recordLeft == record) {
+            valueLeft = fn.getLong(record);
+        } else if (recordRight == record) {
+            valueRight = fn.getLong(record);
+        } else if (recordLeft == null) {
+            recordLeft = record;
+            valueLeft = fn.getLong(record);
+        } else if (recordRight == null) {
+            assert supportsRandomAccess();
+            recordRight = record;
+            valueRight = fn.getLong(record);
+        } else {
+            throw CairoException.nonCritical().
+                    put("LongFunctionMemoizer can only memoize two records, but got more than two: [recordLeft=")
+                    .put(recordLeft.toString())
+                    .put(", recordRight=")
+                    .put(recordRight.toString())
+                    .put(", newRecord=")
+                    .put(record.toString())
+                    .put(']');
+        }
     }
 
     @Override

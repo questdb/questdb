@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.memoization;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -34,17 +35,14 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 
 public final class FloatFunctionMemoizer extends FloatFunction implements UnaryFunction {
     private final Function fn;
-    private boolean memoized;
-    private float value;
+    private Record recordLeft;
+    private Record recordRight;
+    private float valueLeft;
+    private float valueRight;
 
     public FloatFunctionMemoizer(Function fn) {
         assert fn.shouldMemoize();
         this.fn = fn;
-    }
-
-    @Override
-    public String getName() {
-        return "memoize";
     }
 
     @Override
@@ -54,12 +52,24 @@ public final class FloatFunctionMemoizer extends FloatFunction implements UnaryF
 
     @Override
     public float getFloat(Record rec) {
-        return memoized ? value : fn.getFloat(rec);
+        if (recordLeft == rec) {
+            return valueLeft;
+        }
+        if (recordRight == rec) {
+            return valueRight;
+        }
+        return fn.getFloat(rec);
+    }
+
+    @Override
+    public String getName() {
+        return "memoize";
     }
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        memoized = false;
+        recordLeft = null;
+        recordRight = null;
         UnaryFunction.super.init(symbolTableSource, executionContext);
     }
 
@@ -70,8 +80,27 @@ public final class FloatFunctionMemoizer extends FloatFunction implements UnaryF
 
     @Override
     public void memoize(Record record) {
-        value = fn.getFloat(record);
-        memoized = true;
+        if (recordLeft == record) {
+            valueLeft = fn.getFloat(record);
+        } else if (recordRight == record) {
+            valueRight = fn.getFloat(record);
+        } else if (recordLeft == null) {
+            recordLeft = record;
+            valueLeft = fn.getFloat(record);
+        } else if (recordRight == null) {
+            assert supportsRandomAccess();
+            recordRight = record;
+            valueRight = fn.getFloat(record);
+        } else {
+            throw CairoException.nonCritical().
+                    put("FloatFunctionMemoizer can only memoize two records, but got more than two: [recordLeft=")
+                    .put(recordLeft.toString())
+                    .put(", recordRight=")
+                    .put(recordRight.toString())
+                    .put(", newRecord=")
+                    .put(record.toString())
+                    .put(']');
+        }
     }
 
     @Override

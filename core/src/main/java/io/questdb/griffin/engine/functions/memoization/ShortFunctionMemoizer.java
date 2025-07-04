@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.memoization;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -34,8 +35,10 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 
 public final class ShortFunctionMemoizer extends ShortFunction implements UnaryFunction {
     private final Function fn;
-    private boolean memoized;
-    private short value;
+    private Record recordLeft;
+    private Record recordRight;
+    private short valueLeft;
+    private short valueRight;
 
     public ShortFunctionMemoizer(Function fn) {
         assert fn.shouldMemoize();
@@ -48,18 +51,25 @@ public final class ShortFunctionMemoizer extends ShortFunction implements UnaryF
     }
 
     @Override
-    public short getShort(Record rec) {
-        return memoized ? value : fn.getShort(rec);
-    }
-
-    @Override
     public String getName() {
         return "memoize";
     }
 
     @Override
+    public short getShort(Record rec) {
+        if (recordLeft == rec) {
+            return valueLeft;
+        }
+        if (recordRight == rec) {
+            return valueRight;
+        }
+        return fn.getShort(rec);
+    }
+
+    @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        memoized = false;
+        recordLeft = null;
+        recordRight = null;
         UnaryFunction.super.init(symbolTableSource, executionContext);
     }
 
@@ -70,8 +80,27 @@ public final class ShortFunctionMemoizer extends ShortFunction implements UnaryF
 
     @Override
     public void memoize(Record record) {
-        value = fn.getShort(record);
-        memoized = true;
+        if (recordLeft == record) {
+            valueLeft = fn.getShort(record);
+        } else if (recordRight == record) {
+            valueRight = fn.getShort(record);
+        } else if (recordLeft == null) {
+            recordLeft = record;
+            valueLeft = fn.getShort(record);
+        } else if (recordRight == null) {
+            assert supportsRandomAccess();
+            recordRight = record;
+            valueRight = fn.getShort(record);
+        } else {
+            throw CairoException.nonCritical().
+                    put("ShortFunctionMemoizer can only memoize two records, but got more than two: [recordLeft=")
+                    .put(recordLeft.toString())
+                    .put(", recordRight=")
+                    .put(recordRight.toString())
+                    .put(", newRecord=")
+                    .put(record.toString())
+                    .put(']');
+        }
     }
 
     @Override
