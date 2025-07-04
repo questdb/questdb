@@ -384,7 +384,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testProjectionSymbolAccess() throws SqlException {
+    public void testProjectionSymbolAccess() throws Exception {
         assertSql(
                 "a\tconcat\tp\tb\n" +
                         "abc\tabc--\t1\t3.0\n" +
