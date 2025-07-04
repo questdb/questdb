@@ -141,4 +141,8 @@ inline bool operator<(const int256 &a, const int256 &b) {
     return a.lo < b.lo;
 }
 
+inline bool operator!=(const int256 &a, const int256 &b) {
+    return a.hi != b.hi || a.lo != b.lo;
+}
+
 #endif //QUESTDB_DEDUP_H

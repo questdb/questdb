@@ -731,24 +731,6 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDropIndex() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
-            TableToken tableToken = createTable(testName.getMethodName());
-            execute("ALTER TABLE " + tableName + " ADD COLUMN sym SYMBOL INDEX");
-            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym DROP INDEX");
-            execute("ALTER TABLE " + tableName + " ALTER COLUMN SYM DROP INDEX");
-            execute("ALTER TABLE " + tableName + " ALTER COLUMN SYM Add INDEX");
-            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym DROP INDEX");
-            execute("ALTER TABLE " + tableName + " ALTER COLUMN SYm DROP INDEX");
-
-            drainWalQueue();
-
-            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
-        });
-    }
-
-    @Test
     public void testAddingDuplicateColumn() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
@@ -1658,6 +1640,24 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            TableToken tableToken = createTable(testName.getMethodName());
+            execute("ALTER TABLE " + tableName + " ADD COLUMN sym SYMBOL INDEX");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym DROP INDEX");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN SYM DROP INDEX");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN SYM Add INDEX");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN sym DROP INDEX");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN SYm DROP INDEX");
+
+            drainWalQueue();
+
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+        });
+    }
+
+    @Test
     public void testExceptionThrownIfSequencerCannotBeOpened() throws Exception {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -1805,7 +1805,7 @@ public class WalWriterTest extends AbstractCairoTest {
             ) {
                 for (int i = 0; i < rowsToInsertTotal; i++) {
                     if (rnd.nextBoolean()) {
-                        walWriter.resetMatViewState(i, i, true, "Invalidating " + i);
+                        walWriter.resetMatViewState(i, i, true, "Invalidating " + i, i);
                     }
                     String symbol = rnd.nextInt(10) == 5 ? null : rnd.nextString(rnd.nextInt(9) + 1);
                     int v = rnd.nextInt(rowsToInsertTotal);
@@ -1825,7 +1825,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 if (rnd.nextBoolean()) {
                     walWriter.commit();
                 } else {
-                    walWriter.commitMatView(0, 0, 0, 0);
+                    walWriter.commitMatView(0, 0, 0, 0, 0);
                 }
 
                 drainWalQueue();
@@ -1904,6 +1904,55 @@ public class WalWriterTest extends AbstractCairoTest {
                 drainPurgeJob();
 
                 assertSegmentExistence(false, tableName, 1, 0);
+            }
+        });
+    }
+
+    @Test
+    public void testLegacyMatViewMessages() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(testName.getMethodName());
+
+            final String walName;
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                walName = walWriter.getWalName();
+                walWriter.setLegacyMatViewFormat(true);
+
+                TableWriter.Row row = walWriter.newRow(4);
+                row.putByte(0, (byte) 1);
+                row.putStr(1, "foobar");
+                row.append();
+                walWriter.commitMatView(1, 2, 3, 4, 5);
+
+                walWriter.resetMatViewState(6, 7, true, "test", 8);
+            }
+
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 1)) {
+                final WalEventCursor eventCursor = reader.getEventCursor();
+                assertTrue(eventCursor.hasNext());
+                assertEquals(0, eventCursor.getTxn());
+                assertEquals(WalTxnType.MAT_VIEW_DATA, eventCursor.getType());
+
+                final WalEventCursor.MatViewDataInfo mvDataInfo = eventCursor.getMatViewDataInfo();
+                assertEquals(1, mvDataInfo.getLastRefreshBaseTableTxn());
+                assertEquals(2, mvDataInfo.getLastRefreshTimestamp());
+                // last period value should be written along with replace range lo/hi timestamps
+                assertEquals(3, mvDataInfo.getLastPeriodHi());
+                assertEquals(4, mvDataInfo.getReplaceRangeTsLow());
+                assertEquals(5, mvDataInfo.getReplaceRangeTsHi());
+
+                assertTrue(eventCursor.hasNext());
+                assertEquals(WalTxnType.MAT_VIEW_INVALIDATE, eventCursor.getType());
+
+                final WalEventCursor.MatViewInvalidationInfo mvInfo = eventCursor.getMatViewInvalidationInfo();
+                assertEquals(6, mvInfo.getLastRefreshBaseTableTxn());
+                assertEquals(7, mvInfo.getLastRefreshTimestamp());
+                assertTrue(mvInfo.isInvalid());
+                TestUtils.assertEquals("test", mvInfo.getInvalidationReason());
+                // last period value should be ignored
+                assertEquals(Numbers.LONG_NULL, mvInfo.getLastPeriodHi());
+
+                assertFalse(eventCursor.hasNext());
             }
         });
     }
@@ -4067,7 +4116,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 WalEventCursor walEventCursor = walEventReader.of(path, segmentTxn);
                 if (walEventCursor.getType() == WalTxnType.MAT_VIEW_INVALIDATE) {
                     if (newFormat) {
-                        WalEventCursor.MatViewInvalidationInfo info = walEventCursor.getMvInvalidationInfo();
+                        WalEventCursor.MatViewInvalidationInfo info = walEventCursor.getMatViewInvalidationInfo();
                         assertTrue(info.isInvalid());
                         assertEquals("test_invalidate", info.getInvalidationReason().toString());
                     } else {
@@ -4144,7 +4193,6 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
             }
 
-
             success = WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
             assertFalse(success); // incomplete refresh, no commitMatView
 
@@ -4155,22 +4203,20 @@ public class WalWriterTest extends AbstractCairoTest {
                     row.putSym(1, "sym" + i);
                     row.append();
                     if (i == 1) {
-                        walWriter.commitMatView(42, 42, 0, 1);
+                        walWriter.commitMatView(42, 42, 42, 0, 1);
                     } else {
                         walWriter.commit();
                     }
                 }
             }
 
-
             success = WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
             assertTrue(success);
             assertEquals(42, matViewStateReader.getLastRefreshBaseTxn()); // refresh commit
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                walWriter.resetMatViewState(45, 45, true, "test_invalidate");
+                walWriter.resetMatViewState(45, 45, true, "test_invalidate", 45);
             }
-
 
             success = WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
             assertTrue(success);
@@ -4179,11 +4225,11 @@ public class WalWriterTest extends AbstractCairoTest {
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 // reset invalidation
-                walWriter.resetMatViewState(43, 43, false, "test_invalidate");
+                walWriter.resetMatViewState(43, 43, false, "test_invalidate", 43);
             }
 
             drainWalQueue();
-            engine.clear(); // release Wal writers
+            engine.clear(); // release WAL writers
             path.trimTo(tableLen).concat(WAL_NAME_BASE).put(1).slash().put(0).concat(EVENT_FILE_NAME);
             ff.remove(path.$());
             Assert.assertFalse(ff.exists(path.$()));
@@ -4195,7 +4241,7 @@ public class WalWriterTest extends AbstractCairoTest {
             ff.remove(path.$());
             Assert.assertFalse(ff.exists(path.$()));
             success = WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
-            assertFalse(success);  // no _event file, no state file
+            assertFalse(success); // no _event file, no state file
         } finally {
             node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, chunkSizeOld);
         }
@@ -4261,14 +4307,14 @@ public class WalWriterTest extends AbstractCairoTest {
                     walWriter.commit();
                 } else {
                     if (newFormat) {
-                        walWriter.commitMatView(refreshTxn + i, i, i, i + 1);
+                        walWriter.commitMatView(refreshTxn + i, i, i, i, i + 1);
                     } else {
                         walWriter.commit();
                     }
                 }
             }
             if (newFormat) {
-                walWriter.resetMatViewState(1, 1, true, "test_invalidate");
+                walWriter.resetMatViewState(1, 1, true, "test_invalidate", 1);
             }
         }
         return tableToken;

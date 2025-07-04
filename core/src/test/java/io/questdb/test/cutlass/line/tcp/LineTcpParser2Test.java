@@ -540,7 +540,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                     sink.put(entity.getValue()).put('i');
                     break;
                 case LineTcpParser.ENTITY_TYPE_ARRAY:
-                    ArrayTypeDriver.arrayToJson(entity.getArray(), sink, NoopArrayWriteState.INSTANCE);
+                    ArrayTypeDriver.arrayToJson(entity.getArray(), sink, NoopArrayWriteState.INSTANCE, false);
                     break;
                 default:
                     Utf8s.utf8ToUtf16(entity.getValue().lo(), entity.getValue().hi(), sink);

@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCacheBuilder;
 import io.questdb.griffin.FunctionFactoryDescriptor;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.catalogue.FunctionListFunctionFactory;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -69,7 +70,7 @@ public class FunctionListFunctionFactoryTest extends AbstractCairoTest {
         return names;
     }
 
-    private static Set<String> expectedFunctions() {
+    private static Set<String> expectedFunctions() throws SqlException {
         Set<String> lines = new HashSet<>();
         StringSink sink2 = new StringSink();
         for (FunctionFactory factory : new FunctionFactoryCacheBuilder().scan(LOG).build()) {
@@ -85,6 +86,17 @@ public class FunctionListFunctionFactoryTest extends AbstractCairoTest {
             sink2.put(factory.isRuntimeConstant()).put('\t');
             sink2.put(FunctionListFunctionFactory.FunctionFactoryType.getType(factory).name()).put('\n');
             lines.add(sink2.toString());
+
+            if (factory.shouldSwapArgs()) {
+                sink2.clear();
+                sink2.put(name).put('\t');
+                signature = FunctionFactoryDescriptor.replaceSignatureNameAndSwapArgs(name, signature);
+                sink2.put(signature).put('\t');
+                FunctionFactoryDescriptor.translateSignature(name, signature, sink2).put('\t');
+                sink2.put(factory.isRuntimeConstant()).put('\t');
+                sink2.put(FunctionListFunctionFactory.FunctionFactoryType.getType(factory).name()).put('\n');
+                lines.add(sink2.toString());
+            }
         }
         return lines;
     }

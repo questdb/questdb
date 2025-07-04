@@ -22,32 +22,34 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.table;
+package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.PlanSink;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.TimeFrameRecordCursor;
 
-public class BwdPageFrameRowCursorFactory implements RowCursorFactory {
-    private final PageFrameBwdRowCursor cursor = new PageFrameBwdRowCursor();
+public final class SingleStringSymbolShortCircuit implements SymbolShortCircuit {
+    private final int masterStringIndex;
+    private final int slaveSymbolIndex;
+    private StaticSymbolTable slaveSymbolTable;
 
-    @Override
-    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
-        cursor.of(pageFrame);
-        return cursor;
+    public SingleStringSymbolShortCircuit(int masterStringIndex, int slaveSymbolIndex) {
+        this.masterStringIndex = masterStringIndex;
+        this.slaveSymbolIndex = slaveSymbolIndex;
     }
 
     @Override
-    public boolean isEntity() {
-        return true;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        if (sink.getOrder() == PartitionFrameCursorFactory.ORDER_ASC) {
-            sink.type("Row forward scan");
-        } else {
-            sink.type("Row backward scan");
+    public boolean isShortCircuit(Record masterRecord) {
+        CharSequence strA = masterRecord.getStrA(masterStringIndex);
+        if (strA == null) {
+            return slaveSymbolTable.containsNullValue();
         }
+        int key = slaveSymbolTable.keyOf(strA);
+        return key == StaticSymbolTable.VALUE_NOT_FOUND;
+    }
+
+    @Override
+    public void of(TimeFrameRecordCursor slaveCursor) {
+        this.slaveSymbolTable = slaveCursor.getSymbolTable(slaveSymbolIndex);
     }
 }
-

@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.arr.FlatArrayView;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -53,8 +53,7 @@ public class DoubleArrayAddFunctionFactory implements FunctionFactory {
                 configuration,
                 args.getQuick(0),
                 args.getQuick(1),
-                argPositions.getQuick(0),
-                argPositions.getQuick(1)
+                argPositions.getQuick(0)
         );
     }
 
@@ -64,10 +63,9 @@ public class DoubleArrayAddFunctionFactory implements FunctionFactory {
                 CairoConfiguration configuration,
                 Function leftArg,
                 Function rightArg,
-                int leftArgPos,
-                int rightArgPos
-        ) throws SqlException {
-            super("+", configuration, leftArg, rightArg, leftArgPos, rightArgPos);
+                int leftArgPos
+        ) {
+            super("+", configuration, leftArg, rightArg, leftArgPos);
         }
 
         @Override
@@ -76,10 +74,10 @@ public class DoubleArrayAddFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected void bulkApplyOperation(FlatArrayView leftFlatView, FlatArrayView rightFlatView) {
-            for (int i = 0, n = leftFlatView.length(); i < n; i++) {
-                double leftVal = leftFlatView.getDoubleAtAbsIndex(i);
-                double rightVal = rightFlatView.getDoubleAtAbsIndex(i);
+        protected void bulkApplyOperation(ArrayView left, ArrayView right) {
+            for (int i = 0, n = left.getFlatViewLength(); i < n; i++) {
+                double leftVal = left.getDouble(i);
+                double rightVal = right.getDouble(i);
                 arrayOut.putDouble(i, leftVal + rightVal);
             }
         }
