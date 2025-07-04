@@ -352,6 +352,11 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         @Override
+        public long preComputedStateSize() {
+            return recordChain.size();
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             recordChain.recordAt(record, atRowId);
         }

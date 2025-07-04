@@ -65,7 +65,7 @@ public class ArrayTest extends AbstractCairoTest {
     @Override
     @Before
     public void setUp() {
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf("true"));
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
         super.setUp();
     }
 

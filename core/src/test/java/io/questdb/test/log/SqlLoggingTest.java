@@ -40,7 +40,7 @@ public class SqlLoggingTest extends AbstractCairoTest {
                     exec(httpClient, "{\"dml\":\"OK\"}", "insert into x values (1,0)", port);
                     waitForRegex("fin.*?insert into x values");
                     serverMain.awaitTable("x");
-                    exec(httpClient, "{\"query\":\"select count() from x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}", "select count() from x", port);
+                    exec(httpClient, "{\"query\":\"select count() from x\",\"columns\":[{\"name\":\"count()\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}", "select count() from x", port);
                     waitForRegex("fin.*?select count\\(\\) from x");
                     exec(httpClient, "{\"ddl\":\"OK\"}", "alter table x add column c double", port);
                     waitForRegex("fin.*?alter table x add");
