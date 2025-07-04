@@ -1532,7 +1532,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     private static void aliasToSink(CharSequence alias, CharSink<?> sink) {
         sink.putAscii(' ');
-        boolean quote = Chars.indexOf(alias, ' ') != -1;
+        boolean quote = !Chars.isQuoted(alias) && Chars.indexOf(alias, ' ') != -1;
         if (quote) {
             sink.putAscii('\'').put(alias).putAscii('\'');
         } else {
