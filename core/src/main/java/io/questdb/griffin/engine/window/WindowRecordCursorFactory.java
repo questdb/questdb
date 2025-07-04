@@ -177,6 +177,11 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public void skipRows(Counter rowCount) throws DataUnavailableException {
             // we can't skip to an arbitrary result set point because current window function value might depend
             // on values in other rows that could be located anywhere

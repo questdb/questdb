@@ -37,7 +37,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class VirtualFunctionRecordCursor implements RecordCursor {
-
     protected final VirtualFunctionRecord recordA;
     private final ObjList<Function> functions;
     private final int memoizerCount;
@@ -45,7 +44,6 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     private final VirtualFunctionRecord recordB;
     private final boolean supportsRandomAccess;
     protected RecordCursor baseCursor;
-
     public VirtualFunctionRecordCursor(
             ObjList<Function> functions,
             ObjList<Function> memoizers,
@@ -118,6 +116,11 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
             recordB.of(baseCursor.getRecordB());
         }
         cursor.toTop();
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return 0;
     }
 
     @Override
