@@ -1150,7 +1150,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             final MatViewState viewState = stateStore.getViewState(viewToken);
             if (viewState != null && !viewState.isPendingInvalidation() && !viewState.isInvalid() && !viewState.isDropped()) {
                 if (viewState.getViewDefinition().getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
-                    // The refresh is not immediate, i.e. manual or timer.
+                    // The refresh is not immediate, i.e. it's either manual or timer.
                     // Increment the sequence, so that mat view timer job knows it should enqueue a caching task
                     // when the timer is triggered.
                     viewState.incrementTxnIntervalsCacheSeq();
@@ -1297,7 +1297,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
             final long fromBaseTxn = viewState.getLastRefreshBaseTxn();
-            final long toBaseTxn = baseTableReader.getTxn();
+            final long toBaseTxn = baseTableReader.getSeqTxn();
             if (fromBaseTxn > toBaseTxn) {
                 final TableToken viewToken = viewState.getViewDefinition().getMatViewToken();
                 throw CairoException.nonCritical().put("unexpected txn numbers, base table may have been renamed [view=").put(viewToken.getTableName())
