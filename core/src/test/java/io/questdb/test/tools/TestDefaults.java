@@ -109,7 +109,7 @@ public final class TestDefaults {
     }
 
     public static Function createTimestampFunction(java.util.function.Function<Record, Long> f) {
-        return new TimestampFunction() {
+        return new TimestampFunction(ColumnType.TIMESTAMP_MICRO) {
             @Override
             public long getTimestamp(Record rec) {
                 return f.apply(rec);

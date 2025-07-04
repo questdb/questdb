@@ -22,13 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.griffin.engine.functions.date;
 
-public class StationaryNanosClock implements NanosecondClock {
-    public static final StationaryNanosClock INSTANCE = new StationaryNanosClock();
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+
+public final class VarcharToNanoTimestampFunctionFactory implements FunctionFactory {
+    private static final String NAME = "to_timestamp_ns";
 
     @Override
-    public long getTicks() {
-        return 0L;
+    public String getSignature() {
+        return "to_timestamp_ns(Ø)";
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        final Function arg = args.getQuick(0);
+        return new VarcharToTimestampFunctionFactory.ToTimestampFunction(arg, ColumnType.TIMESTAMP_NANO, NAME);
     }
 }

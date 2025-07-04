@@ -39,7 +39,8 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     protected final Function arg;
     protected int valueIndex;
 
-    public FirstTimestampGroupByFunction(@NotNull Function arg) {
+    public FirstTimestampGroupByFunction(@NotNull Function arg, int timestampType) {
+        super(timestampType);
         this.arg = arg;
     }
 

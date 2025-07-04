@@ -25,7 +25,10 @@
 package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -37,16 +40,16 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Vect;
+import io.questdb.std.str.Utf8Sequence;
 
 import static io.questdb.griffin.model.IntervalUtils.isInIntervals;
-import static io.questdb.griffin.model.IntervalUtils.parseAndApplyIntervalEx;
+import static io.questdb.griffin.model.IntervalUtils.parseAndApplyInterval;
 
 public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
@@ -61,8 +64,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             ObjList<Function> args,
             IntList argPositions,
             CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+            SqlExecutionContext sqlExecutionContext) throws SqlException {
         boolean allConst = true;
         boolean allRuntimeConst = true;
         for (int i = 1, n = args.size(); i < n && (allConst || allRuntimeConst); i++) {
@@ -79,9 +81,11 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 case ColumnType.UNDEFINED:
                     break;
                 case ColumnType.INTERVAL:
-                    return new InTimestampIntervalFunctionFactory.Func(args.getQuick(0), args.getQuick(1));
+                    return new InTimestampIntervalFunctionFactory.Func(args.getQuick(0), args.getQuick(1), configuration);
                 default:
-                    throw SqlException.position(argPositions.getQuick(i)).put("cannot compare TIMESTAMP with type ").put(ColumnType.nameOf(func.getType()));
+                    throw SqlException.position(argPositions.getQuick(i))
+                            .put("cannot compare TIMESTAMP with type ")
+                            .put(ColumnType.nameOf(func.getType()));
             }
             if (!func.isConstant()) {
                 allConst = false;
@@ -105,7 +109,11 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
         if (allRuntimeConst) {
             if (intervalSearch) {
-                return new InTimestampRuntimeConstIntervalFunction(args.getQuick(0), args.getQuick(1), argPositions.getQuick(1));
+                return new InTimestampRuntimeConstIntervalFunction(
+                        args.getQuick(0),
+                        args.getQuick(1),
+                        argPositions.getQuick(1)
+                );
 
             }
             return new InTimestampManyRuntimeConstantsFunction(new ObjList<>(args));
@@ -127,7 +135,8 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         return ColumnType.isVarcharOrString(rightFn.getType());
     }
 
-    private static LongList parseDiscreteTimestampValues(ObjList<Function> args, IntList argPositions) throws SqlException {
+    private static LongList parseDiscreteTimestampValues(ObjList<Function> args, IntList argPositions)
+            throws SqlException {
         LongList res = new LongList(args.size() - 1);
         res.extendAndSet(args.size() - 2, 0);
 
@@ -146,13 +155,16 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                     break;
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
-                case ColumnType.VARCHAR:
                 case ColumnType.NULL:
-                    CharSequence tsValue = func.getStrA(null);
-                    val = (tsValue != null) ? tryParseTimestamp(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NULL;
+                    val = parseFloorOrDie(func.getStrA(null), argPositions.getQuick(i));
+                    break;
+                case ColumnType.VARCHAR:
+                    val = parseFloorOrDie(func.getVarcharA(null), argPositions.getQuick(i));
                     break;
                 default:
-                    throw SqlException.inconvertibleTypes(argPositions.getQuick(i), func.getType(), ColumnType.nameOf(func.getType()), ColumnType.TIMESTAMP, ColumnType.nameOf(ColumnType.TIMESTAMP));
+                    throw SqlException.inconvertibleTypes(argPositions.getQuick(i), func.getType(),
+                            ColumnType.nameOf(func.getType()), ColumnType.TIMESTAMP,
+                            ColumnType.nameOf(ColumnType.TIMESTAMP));
             }
             res.setQuick(i - 1, val);
         }
@@ -161,9 +173,33 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         return res;
     }
 
-    private static long tryParseTimestamp(CharSequence seq, int position) throws SqlException {
+    private static long parseFloorOrDie(CharSequence value) {
         try {
-            return IntervalUtils.parseFloorPartialTimestamp(seq);
+            return MicrosTimestampDriver.INSTANCE.parseFloorLiteral(value);
+        } catch (NumericException e) {
+            throw CairoException.nonCritical().put("Invalid timestamp: ").put(value);
+        }
+    }
+
+    private static long parseFloorOrDie(Utf8Sequence value) {
+        try {
+            return MicrosTimestampDriver.INSTANCE.parseFloorLiteral(value);
+        } catch (NumericException e) {
+            throw CairoException.nonCritical().put("Invalid timestamp: ").put(value);
+        }
+    }
+
+    private static long parseFloorOrDie(CharSequence seq, int position) throws SqlException {
+        try {
+            return MicrosTimestampDriver.INSTANCE.parseFloorLiteral(seq);
+        } catch (NumericException e) {
+            throw SqlException.invalidDate(seq, position);
+        }
+    }
+
+    private static long parseFloorOrDie(Utf8Sequence seq, int position) throws SqlException {
+        try {
+            return MicrosTimestampDriver.INSTANCE.parseFloorLiteral(seq);
         } catch (NumericException e) {
             throw SqlException.invalidDate(seq, position);
         }
@@ -179,7 +215,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 int rightPosition
         ) throws SqlException {
             this.left = left;
-            parseAndApplyIntervalEx(right, intervals, rightPosition);
+            parseAndApplyInterval(ColumnType.getTimestampDriver(ColumnType.TIMESTAMP), right, intervals, rightPosition);
         }
 
         @Override
@@ -206,6 +242,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         private final LongList intervals = new LongList();
         private final Function left;
         private final Function right;
+        private final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
 
         public EqTimestampStrFunction(Function left, Function right) {
             this.left = left;
@@ -225,7 +262,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             intervals.clear();
             try {
                 // we are ignoring exception contents here, so we do not need the exact position
-                parseAndApplyIntervalEx(timestampAsString, intervals, 0);
+                parseAndApplyInterval(timestampDriver, timestampAsString, intervals, 0);
             } catch (SqlException e) {
                 return negated;
             }
@@ -287,7 +324,8 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class InTimestampManyRuntimeConstantsFunction extends NegatableBooleanFunction implements MultiArgFunction {
+    private static class InTimestampManyRuntimeConstantsFunction extends NegatableBooleanFunction
+            implements MultiArgFunction {
         private final ObjList<Function> args;
         private final LongList timestampValues;
 
@@ -314,7 +352,8 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext)
+                throws SqlException {
             MultiArgFunction.super.init(symbolTableSource, executionContext);
             timestampValues.clear();
             for (int i = 1, n = args.size(); i < n; i++) {
@@ -328,9 +367,10 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                         break;
                     case ColumnType.STRING:
                     case ColumnType.SYMBOL:
+                        val = parseFloorOrDie(func.getStrA(null));
+                        break;
                     case ColumnType.VARCHAR:
-                        CharSequence str = func.getStrA(null);
-                        val = str != null ? IntervalUtils.tryParseTimestamp(str) : Numbers.LONG_NULL;
+                        val = parseFloorOrDie(func.getVarcharA(null));
                         break;
                 }
                 timestampValues.add(val);
@@ -348,7 +388,8 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class InTimestampRuntimeConstIntervalFunction extends NegatableBooleanFunction implements BinaryFunction {
+    private static class InTimestampRuntimeConstIntervalFunction extends NegatableBooleanFunction
+            implements BinaryFunction {
         private final Function intervalFunc;
         private final int intervalFuncPos;
         private final LongList intervals = new LongList();
@@ -377,20 +418,24 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext)
+                throws SqlException {
             BinaryFunction.super.init(symbolTableSource, executionContext);
             intervals.clear();
             // This is a specific function, which accepts "in interval" as bind variable.
-            // For this reason only STRING and VARCHAR bind variables are supported. Other types,
-            // such as INT, LONG etc. will require two or move values to represent the interval
+            // For this reason, only STRING and VARCHAR bind variables are supported. Other
+            // types,
+            // such as INT, LONG etc. will require two or move values to represent the
+            // interval
             switch (intervalFunc.getType()) {
                 case ColumnType.STRING:
                 case ColumnType.VARCHAR:
-                    parseAndApplyIntervalEx(intervalFunc.getStrA(null), intervals, 0);
+                    parseAndApplyInterval(ColumnType.getTimestampDriver(ColumnType.TIMESTAMP), intervalFunc.getStrA(null), intervals, 0);
                     break;
                 default:
                     throw SqlException
-                            .$(intervalFuncPos, "unsupported bind variable type [").put(ColumnType.nameOf(intervalFunc.getType()))
+                            .$(intervalFuncPos, "unsupported bind variable type [")
+                            .put(ColumnType.nameOf(intervalFunc.getType()))
                             .put("] expected one of [STRING or VARCHAR]");
             }
         }
@@ -437,9 +482,10 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                         break;
                     case ColumnType.STRING:
                     case ColumnType.SYMBOL:
+                        val = parseFloorOrDie(func.getStrA(rec));
+                        break;
                     case ColumnType.VARCHAR:
-                        CharSequence str = func.getStrA(rec);
-                        val = str != null ? IntervalUtils.tryParseTimestamp(str) : Numbers.LONG_NULL;
+                        val = parseFloorOrDie(func.getVarcharA(rec));
                         break;
                 }
                 if (val == ts) {

@@ -1173,8 +1173,18 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public long getNanosecondTimestamp() {
+            return sqlExecutionContext.getNanosecondTimestamp();
+        }
+
+        @Override
         public long getNow() {
             return sqlExecutionContext.getNow();
+        }
+
+        @Override
+        public int getNowTimestampType() {
+            return sqlExecutionContext.getNowTimestampType();
         }
 
         @Override
@@ -1308,8 +1318,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public void setNowAndFixClock(long now) {
-            sqlExecutionContext.setNowAndFixClock(now);
+        public void setNowAndFixClock(long now, int nowTimestampType) {
+            sqlExecutionContext.setNowAndFixClock(now, nowTimestampType);
         }
 
         @Override

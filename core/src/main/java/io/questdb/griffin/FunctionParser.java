@@ -101,7 +101,6 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -191,7 +190,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.DATE:
                 return DateColumn.newInstance(index);
             case ColumnType.TIMESTAMP:
-                return TimestampColumn.newInstance(index);
+                return TimestampColumn.newInstance(index, columnType);
             case ColumnType.RECORD:
                 return new RecordColumn(index, metadata.getMetadata(index));
             case ColumnType.GEOBYTE:
@@ -213,7 +212,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.IPv4:
                 return new IPv4Column(index);
             case ColumnType.INTERVAL:
-                return IntervalColumn.newInstance(index);
+                return IntervalColumn.newInstance(index, columnType);
             case ColumnType.ARRAY:
                 return new ArrayColumn(index, columnType);
             default:
@@ -994,7 +993,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         for (int k = 0; k < candidateSigArgCount; k++) {
             final Function arg = args.getQuick(k);
-            final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(candidateDescriptor.getArgTypeWithFlags(k));
+            final int sigArgType = candidateDescriptor.getArgTypeWithFlags(k);
+            final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(sigArgType);
             final short argTypeTag = ColumnType.tagOf(arg.getType());
 
             if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Numbers.isNull(arg.getDouble(null))) {
@@ -1007,8 +1007,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL || argTypeTag == ColumnType.VARCHAR) && arg.isConstant()) {
                 if (sigArgTypeTag == ColumnType.TIMESTAMP) {
                     int position = argPositions.getQuick(k);
-                    long timestamp = parseTimestamp(arg.getStrA(null), position);
-                    args.set(k, TimestampConstant.newInstance(timestamp));
+                    long timestamp = parseTimestamp(sigArgType, arg.getStrA(null), position);
+                    args.set(k, TimestampConstant.newInstance(timestamp, sigArgType));
                 } else if (sigArgTypeTag == ColumnType.DATE) {
                     int position = argPositions.getQuick(k);
                     long millis = parseDate(arg.getStrA(null), position);
@@ -1031,8 +1031,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.SYMBOL:
                 if (toType == ColumnType.UUID) {
                     return new CastStrToUuidFunctionFactory.Func(function);
-                } else if (toType == ColumnType.TIMESTAMP) {
-                    return new CastStrToTimestampFunctionFactory.Func(function);
+                } else if (ColumnType.isTimestamp(toType)) {
+                    return new CastStrToTimestampFunctionFactory.Func(function, toType);
                 } else if (ColumnType.isArray(toType)) {
                     assert ColumnType.decodeArrayElementType(toType) == ColumnType.DOUBLE;
                     return new CastStrToDoubleArrayFunctionFactory.Func(function, toType);
@@ -1044,8 +1044,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (toType == ColumnType.UUID) {
                     return new CastVarcharToUuidFunctionFactory.Func(function);
                 }
-                if (toType == ColumnType.TIMESTAMP) {
-                    return new CastVarcharToTimestampFunctionFactory.Func(function);
+                if (ColumnType.isTimestamp(toType)) {
+                    return new CastVarcharToTimestampFunctionFactory.Func(function, toType);
                 }
                 if (ColumnType.isGeoHash(toType)) {
                     return CastVarcharToGeoHashFunctionFactory.newInstance(position, toType, function);
@@ -1218,7 +1218,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (function instanceof TimestampConstant) {
                     return function;
                 } else {
-                    return TimestampConstant.newInstance(function.getTimestamp(null));
+                    return TimestampConstant.newInstance(function.getTimestamp(null), type);
                 }
             case ColumnType.UUID:
                 if (function instanceof UuidConstant) {
@@ -1274,9 +1274,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
     }
 
-    private long parseTimestamp(CharSequence str, int position) throws SqlException {
+    private long parseTimestamp(int timestampType, CharSequence str, int position) throws SqlException {
         try {
-            return IntervalUtils.parseFloorPartialTimestamp(str);
+            return ColumnType.getTimestampDriver(timestampType).parseFloorLiteral(str);
         } catch (NumericException e) {
             throw SqlException.invalidDate(str, position);
         }

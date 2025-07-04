@@ -100,7 +100,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             case DATE:
                 return argsSize == 2 ? new TwoDateCoalesceFunction(args) : new DateCoalesceFunction(args, argsSize);
             case TIMESTAMP:
-                return argsSize == 2 ? new TwoTimestampCoalesceFunction(args) : new TimestampCoalesceFunction(args);
+                return argsSize == 2 ? new TwoTimestampCoalesceFunction(args, returnType) : new TimestampCoalesceFunction(args, returnType);
             case LONG:
                 return argsSize == 2 ? new TwoLongCoalesceFunction(args) : new LongCoalesceFunction(args, argsSize);
             case LONG256:
@@ -421,7 +421,8 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final ObjList<Function> args;
         private final int size;
 
-        public TimestampCoalesceFunction(ObjList<Function> args) {
+        public TimestampCoalesceFunction(ObjList<Function> args, int columnType) {
+            super(columnType);
             this.args = args;
             this.size = args.size();
         }
@@ -434,9 +435,10 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             for (int i = 0; i < size; i++) {
-                long value = args.getQuick(i).getTimestamp(rec);
+                Function arg = args.getQuick(i);
+                long value = arg.getTimestamp(rec);
                 if (value != Numbers.LONG_NULL) {
-                    return value;
+                    return timestampDriver.from(value, arg.getType());
                 }
             }
             return Numbers.LONG_NULL;
@@ -796,7 +798,8 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final Function args0;
         private final Function args1;
 
-        public TwoTimestampCoalesceFunction(ObjList<Function> args) {
+        public TwoTimestampCoalesceFunction(ObjList<Function> args, int columnType) {
+            super(columnType);
             assert args.size() == 2;
             this.args0 = args.getQuick(0);
             this.args1 = args.getQuick(1);
@@ -816,9 +819,10 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             long value = args0.getTimestamp(rec);
             if (value != Numbers.LONG_NULL) {
+                timestampDriver.from(value, args0.getType());
                 return value;
             }
-            return args1.getTimestamp(rec);
+            return timestampDriver.from(args1.getTimestamp(rec), args1.getType());
         }
     }
 

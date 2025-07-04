@@ -214,7 +214,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             timestampSampler.setStart(timestamp);
         } else {
             // FROM-TO may apply to align to calendar queries, fixing the lower bound.
-            if (sampleFromFunc != TimestampConstant.NULL) {
+            if (sampleFromFunc != TimestampConstant.TIMESTAMP_MICRO_NULL) {
                 timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? sampleFromFunc.getTimestamp(null) : 0L);
             } else {
                 timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
@@ -223,7 +223,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
 
         topTzOffset = tzOffset;
         topNextDst = nextDstUtc;
-        if (sampleFromFunc != TimestampConstant.NULL) {
+        if (sampleFromFunc != TimestampConstant.TIMESTAMP_MICRO_NULL) {
             // set the top epoch to be the lower limit
             topLocalEpoch = timestampSampler.round(sampleFromFunc.getTimestamp(null) + tzOffset);
             // set current epoch to be the floor of the starting timestamp
@@ -289,6 +289,10 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     }
 
     protected class TimestampFunc extends TimestampFunction implements Function {
+
+        public TimestampFunc(int timestampType) {
+            super(timestampType);
+        }
 
         @Override
         public long getTimestamp(Record rec) {

@@ -69,6 +69,7 @@ public final class ColumnType {
     public static final int MIGRATION_VERSION = 427;
     public static final short OVERLOAD_FULL = -1; // akin to no distance
     public static final short OVERLOAD_NONE = 10000; // akin to infinite distance
+    public static final int TIMESTAMP_TYPE_MASK = 0x000FFFFF;
     // our type system is absolutely ordered ranging
     // - from UNDEFINED: index 0, represents lack of type, an internal parsing concept.
     // - to NULL: index must be last, other parts of the codebase rely on this fact.
@@ -118,6 +119,11 @@ public final class ColumnType {
     // slightly bigger than needed to make it a power of 2
     private static final short OVERLOAD_PRIORITY_N = (short) Math.pow(2.0, Numbers.msb(NULL) + 1.0);
     private static final int[] OVERLOAD_PRIORITY_MATRIX = new int[OVERLOAD_PRIORITY_N * OVERLOAD_PRIORITY_N]; // NULL to any is 0
+    public static final int INTERVAL_RAW = INTERVAL;
+    public static final int INTERVAL_TIMESTAMP_MICRO = INTERVAL | 1 << 17;
+    public static final int INTERVAL_TIMESTAMP_NANO = INTERVAL | 1 << 18;
+    public static final int TIMESTAMP_MICRO = TIMESTAMP;
+    public static final int TIMESTAMP_NANO = 1 << 18 | TIMESTAMP;
     public static final int VARCHAR_AUX_SHL = 4;
     // column type version as written to the metadata file
     public static final int VERSION = 426;
@@ -135,6 +141,7 @@ public final class ColumnType {
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final IntHashSet nonPersistedTypes = new IntHashSet();
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
+
 
     private ColumnType() {
     }
@@ -204,7 +211,7 @@ public final class ColumnType {
      * @param elemType one of the supported array element type tags.
      * @param nDims    dimensionality, from 1 to {@value ARRAY_NDIMS_LIMIT}.
      */
-    public static int encodeArrayType(short elemType, int nDims) {
+    public static int encodeArrayType(int elemType, int nDims) {
         assert nDims >= 1 && nDims <= ARRAY_NDIMS_LIMIT : "nDims out of range: " + nDims;
         assert isSupportedArrayElementType(elemType) || elemType == UNDEFINED
                 : "not supported as array element type: " + nameOf(elemType);
@@ -240,8 +247,76 @@ public final class ColumnType {
         return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
     }
 
+    public static int getIntervalType(int timestampType) {
+        assert isTimestamp(timestampType);
+        switch (timestampType) {
+            case TIMESTAMP_MICRO:
+                return INTERVAL_TIMESTAMP_MICRO;
+            case TIMESTAMP_NANO:
+                return INTERVAL_TIMESTAMP_NANO;
+            default:
+                return UNDEFINED;
+        }
+    }
+
+    public static TimestampDriver getTimestampDriver(int timestampType) {
+        final short type = tagOf(timestampType);
+        // todo null and UNDEFINED use MicrosTimestamp
+        if (type == ColumnType.NULL || type == UNDEFINED) {
+            return MicrosTimestampDriver.INSTANCE;
+        }
+
+        assert tagOf(timestampType) == TIMESTAMP;
+        switch (timestampType & TIMESTAMP_TYPE_MASK) {
+            case TIMESTAMP_MICRO:
+                return MicrosTimestampDriver.INSTANCE;
+            case TIMESTAMP_NANO:
+                return NanosTimestampDriver.INSTANCE;
+            default:
+                throw new UnsupportedOperationException();
+        }
+    }
+
+    public static TimestampDriver getTimestampDriverByIntervalType(int intervalType) {
+        assert intervalType == INTERVAL_TIMESTAMP_MICRO || intervalType == INTERVAL_TIMESTAMP_NANO;
+        if (intervalType == INTERVAL_TIMESTAMP_MICRO) {
+            return MicrosTimestampDriver.INSTANCE;
+        } else {
+            return NanosTimestampDriver.INSTANCE;
+        }
+    }
+
+    public static int getTimestampType(int left, int right, CairoConfiguration configuration) {
+        if (left == TIMESTAMP_NANO || right == TIMESTAMP_NANO) {
+            return TIMESTAMP_NANO;
+        } else if (left == TIMESTAMP_MICRO || right == TIMESTAMP_MICRO) {
+            return TIMESTAMP_MICRO;
+        }
+        return configuration.getDefaultTimestampType();
+    }
+
+    public static int getTimestampType(int left, CairoConfiguration configuration) {
+        if (isTimestamp(left)) {
+            return left;
+        }
+        return configuration.getDefaultTimestampType();
+    }
+
+    public static int getTimestampTypeByIntervalType(int intervalType) {
+        assert isInterval(intervalType);
+        switch (intervalType) {
+            case INTERVAL_RAW:
+            case INTERVAL_TIMESTAMP_MICRO:
+                return TIMESTAMP_MICRO;
+            case INTERVAL_TIMESTAMP_NANO:
+                return TIMESTAMP_NANO;
+            default:
+                return ColumnType.UNDEFINED;
+        }
+    }
+
     public static int getWalDataColumnShl(int columnType, boolean designatedTimestamp) {
-        if (columnType == ColumnType.TIMESTAMP && designatedTimestamp) {
+        if (ColumnType.tagOf(columnType) == ColumnType.TIMESTAMP && designatedTimestamp) {
             return 4; // 128 bit column
         }
         return pow2SizeOf(columnType);
@@ -353,7 +428,7 @@ public final class ColumnType {
     }
 
     public static boolean isInterval(int columnType) {
-        return columnType == INTERVAL;
+        return tagOf(columnType) == INTERVAL;
     }
 
     public static boolean isNull(int columnType) {
@@ -376,7 +451,7 @@ public final class ColumnType {
         return colType == VARCHAR || colType == STRING;
     }
 
-    public static boolean isSupportedArrayElementType(short typeTag) {
+    public static boolean isSupportedArrayElementType(int typeTag) {
         return arrayTypeSet.contains(typeTag);
     }
 
@@ -389,12 +464,12 @@ public final class ColumnType {
     }
 
     public static boolean isTimestamp(int columnType) {
-        return columnType == TIMESTAMP;
+        return ColumnType.tagOf(columnType) == TIMESTAMP;
     }
 
     public static boolean isToSameOrWider(int fromType, int toType) {
         return (tagOf(fromType) == tagOf(toType) && !isArray(fromType) && (getGeoHashBits(fromType) == 0 || getGeoHashBits(fromType) >= getGeoHashBits(toType)))
-                || isBuiltInWideningCast(fromType, toType)
+                || isBuiltInWideningCast(tagOf(fromType), tagOf(toType))
                 || isStringCast(fromType, toType)
                 || isVarcharCast(fromType, toType)
                 || isGeoHashWideningCast(fromType, toType)
@@ -689,7 +764,8 @@ public final class ColumnType {
         typeNameMap.put(BINARY, "BINARY");
         typeNameMap.put(DATE, "DATE");
         typeNameMap.put(PARAMETER, "PARAMETER");
-        typeNameMap.put(TIMESTAMP, "TIMESTAMP");
+        typeNameMap.put(TIMESTAMP_MICRO, "TIMESTAMP");
+        typeNameMap.put(TIMESTAMP_NANO, "TIMESTAMP_NS");
         typeNameMap.put(LONG256, "LONG256");
         typeNameMap.put(UUID, "UUID");
         typeNameMap.put(LONG128, "LONG128");
@@ -701,7 +777,9 @@ public final class ColumnType {
         typeNameMap.put(REGPROCEDURE, "regprocedure");
         typeNameMap.put(ARRAY_STRING, "text[]");
         typeNameMap.put(IPv4, "IPv4");
-        typeNameMap.put(INTERVAL, "INTERVAL");
+        typeNameMap.put(INTERVAL_RAW, "INTERVAL");
+        typeNameMap.put(INTERVAL_TIMESTAMP_MICRO, "INTERVAL");
+        typeNameMap.put(INTERVAL_TIMESTAMP_NANO, "INTERVAL");
         typeNameMap.put(NULL, "NULL");
 
 //        arrayTypeSet.add(BOOLEAN);
@@ -733,7 +811,7 @@ public final class ColumnType {
         nameTypeMap.put("binary", BINARY);
         nameTypeMap.put("date", DATE);
         nameTypeMap.put("parameter", PARAMETER);
-        nameTypeMap.put("timestamp", TIMESTAMP);
+        nameTypeMap.put("timestamp", TIMESTAMP_MICRO);
         nameTypeMap.put("cursor", CURSOR);
         nameTypeMap.put("long256", LONG256);
         nameTypeMap.put("uuid", UUID);
@@ -748,7 +826,8 @@ public final class ColumnType {
         nameTypeMap.put("regprocedure", REGPROCEDURE);
         nameTypeMap.put("text[]", ARRAY_STRING);
         nameTypeMap.put("IPv4", IPv4);
-        nameTypeMap.put("interval", INTERVAL);
+        nameTypeMap.put("interval", INTERVAL_TIMESTAMP_MICRO);
+        nameTypeMap.put("timestamp_ns", TIMESTAMP_NANO);
 
         StringSink sink = new StringSink();
         for (int b = 1; b <= GEOLONG_MAX_BITS; b++) {

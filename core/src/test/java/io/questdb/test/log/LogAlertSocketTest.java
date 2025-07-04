@@ -24,6 +24,7 @@
 
 package io.questdb.test.log;
 
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.log.HttpLogRecordUtf8Sink;
 import io.questdb.log.Log;
 import io.questdb.log.LogAlertSocket;
@@ -689,6 +690,11 @@ public class LogAlertSocketTest {
 
         @Override
         public LogRecord $ts(long x) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $ts(TimestampDriver driver, long x) {
             throw new UnsupportedOperationException();
         }
 

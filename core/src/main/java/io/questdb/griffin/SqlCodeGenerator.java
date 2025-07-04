@@ -47,6 +47,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Function;
@@ -186,9 +187,9 @@ import io.questdb.griffin.engine.groupby.vect.SumShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
-import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.ChainedSymbolShortCircuit;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
@@ -210,9 +211,9 @@ import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.join.RecordAsAFieldRecordCursorFactory;
 import io.questdb.griffin.engine.join.SingleStringSymbolShortCircuit;
+import io.questdb.griffin.engine.join.SingleSymbolSymbolShortCircuit;
 import io.questdb.griffin.engine.join.SingleVarcharSymbolShortCircuit;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
-import io.questdb.griffin.engine.join.SingleSymbolSymbolShortCircuit;
 import io.questdb.griffin.engine.join.SymbolShortCircuit;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
@@ -231,7 +232,6 @@ import io.questdb.griffin.engine.table.FilterOnExcludedValuesRecordCursorFactory
 import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnValuesRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllSymbolsFilteredRecordCursorFactory;
@@ -247,6 +247,7 @@ import io.questdb.griffin.engine.table.LatestByValueIndexedFilteredRecordCursorF
 import io.questdb.griffin.engine.table.LatestByValueIndexedRowCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
@@ -293,7 +294,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -507,6 +507,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Both types are geohash, resolve to the one with fewer geohash bits.
             return geoBitsA < geoBitsB ? typeA : typeB;
         }
+
+        if (tagA == INTERVAL || tagB == INTERVAL) {
+            if (tagA == INTERVAL && tagB == INTERVAL) {
+                return Math.max(typeA, typeB);
+            }
+            if (tagA == INTERVAL && tagB == NULL) {
+                return typeA;
+            }
+            if (tagB == INTERVAL && tagA == NULL) {
+                return typeB;
+            }
+        }
+
         // Neither type is geohash, use the type cast matrix to resolve.
         return UNION_CAST_MATRIX[tagA][tagB];
     }
@@ -748,42 +761,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
     }
 
-    private static long tolerance(QueryModel slaveModel) throws SqlException {
+    private static long tolerance(QueryModel slaveModel, int timestampType) throws SqlException {
         ExpressionNode tolerance = slaveModel.getAsOfJoinTolerance();
         long toleranceInterval = Numbers.LONG_NULL;
         if (tolerance != null) {
             int k = TimestampSamplerFactory.findIntervalEndIndex(tolerance.token, tolerance.position, "tolerance");
             assert tolerance.token.length() > k;
             char unit = tolerance.token.charAt(k);
+            TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
             long multiplier;
-            switch (unit) {
-                case 'U':
-                    multiplier = 1;
-                    break;
-                case 'T':
-                    multiplier = Timestamps.MILLI_MICROS;
-                    break;
-                case 's':
-                    multiplier = Timestamps.SECOND_MICROS;
-                    break;
-                case 'm':
-                    multiplier = Timestamps.MINUTE_MICROS;
-                    break;
-                case 'h':
-                    multiplier = Timestamps.HOUR_MICROS;
-                    break;
-                case 'd':
-                    multiplier = Timestamps.DAY_MICROS;
-                    break;
-                case 'w':
-                    multiplier = Timestamps.WEEK_MICROS;
-                    break;
-                default:
+            if (unit == 'n') {
+                toleranceInterval = timestampDriver.fromNanos(toleranceInterval);
+            } else {
+                multiplier = timestampDriver.getTimestampMultiplier(unit);
+                if (multiplier == 0) {
                     throw SqlException.$(tolerance.position, "unsupported TOLERANCE unit [unit=").put(unit).put(']');
+                }
+                int maxValue = (int) Math.min(Long.MAX_VALUE / multiplier, Integer.MAX_VALUE);
+                toleranceInterval = TimestampSamplerFactory.parseInterval(tolerance.token, k, tolerance.position, "tolerance", maxValue, unit);
+                toleranceInterval *= multiplier;
             }
-            int maxValue = (int) Math.min(Long.MAX_VALUE / multiplier, Integer.MAX_VALUE);
-            toleranceInterval = TimestampSamplerFactory.parseInterval(tolerance.token, k, tolerance.position, "tolerance", maxValue, unit);
-            toleranceInterval *= multiplier;
         }
         return toleranceInterval;
     }
@@ -1644,10 +1641,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     case ColumnType.TIMESTAMP:
                         switch (fromTag) {
                             case ColumnType.DATE:
-                                castFunctions.add(new CastDateToTimestampFunctionFactory.CastDateToTimestampFunction(DateColumn.newInstance(i)));
+                                castFunctions.add(new CastDateToTimestampFunctionFactory.CastDateToTimestampFunction(DateColumn.newInstance(i), toType));
                                 break;
                             case ColumnType.TIMESTAMP:
-                                castFunctions.add(TimestampColumn.newInstance(i));
+                                castFunctions.add(TimestampColumn.newInstance(i, fromType));
                                 break;
                             default:
                                 throw SqlException.unsupportedCast(
@@ -1738,7 +1735,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastDateToStrFunctionFactory.Func(DateColumn.newInstance(i)));
                                 break;
                             case ColumnType.TIMESTAMP:
-                                castFunctions.add(new CastTimestampToStrFunctionFactory.Func(TimestampColumn.newInstance(i)));
+                                castFunctions.add(new CastTimestampToStrFunctionFactory.Func(TimestampColumn.newInstance(i, fromType)));
                                 break;
                             case ColumnType.FLOAT:
                                 castFunctions.add(new CastFloatToStrFunctionFactory.Func(
@@ -1807,7 +1804,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
                                 break;
                             case ColumnType.INTERVAL:
-                                castFunctions.add(new CastIntervalToStrFunctionFactory.Func(IntervalColumn.newInstance(i)));
+                                castFunctions.add(new CastIntervalToStrFunctionFactory.Func(IntervalColumn.newInstance(i, fromType)));
                                 break;
                             case ColumnType.BINARY:
                                 throw SqlException.unsupportedCast(
@@ -2060,7 +2057,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastDateToVarcharFunctionFactory.Func(DateColumn.newInstance(i)));
                                 break;
                             case ColumnType.TIMESTAMP:
-                                castFunctions.add(new CastTimestampToVarcharFunctionFactory.Func(TimestampColumn.newInstance(i)));
+                                castFunctions.add(new CastTimestampToVarcharFunctionFactory.Func(TimestampColumn.newInstance(i, fromType)));
                                 break;
                             case ColumnType.FLOAT:
                                 castFunctions.add(new CastFloatToVarcharFunctionFactory.Func(
@@ -2155,7 +2152,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                         break;
                     case ColumnType.INTERVAL:
-                        castFunctions.add(IntervalColumn.newInstance(i));
+                        castFunctions.add(IntervalColumn.newInstance(i, toType));
                         break;
                     case ColumnType.ARRAY:
                         switch (fromTag) {
@@ -2198,8 +2195,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         ObjList<Function> fillValues = null;
-        Function fillFromFunc = TimestampConstant.NULL;
-        Function fillToFunc = TimestampConstant.NULL;
+        Function fillFromFunc = TimestampConstant.TIMESTAMP_MICRO_NULL;
+        Function fillToFunc = TimestampConstant.TIMESTAMP_MICRO_NULL;
 
         final ExpressionNode fillFrom = curr.getFillFrom();
         final ExpressionNode fillTo = curr.getFillTo();
@@ -2292,7 +2289,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     samplingIntervalUnit,
                     timestampSampler,
                     fillValues,
-                    timestampIndex
+                    timestampIndex,
+                    groupByFactory.getMetadata().getColumnType(timestampIndex)
+
             );
         } catch (Throwable e) {
             Misc.freeObjList(fillValues);
@@ -2577,7 +2576,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 boolean selfJoin = isSameTable(master, slave);
                                 processJoinContext(index == 1, selfJoin, slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
-                                long asOfToleranceInterval = tolerance(slaveModel);
+                                long asOfToleranceInterval = tolerance(slaveModel, slaveMetadata.getTimestampType());
                                 boolean asOfAvoidBinarySearch = SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
@@ -2834,7 +2833,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 releaseSlave = false;
                                 break;
                             case JOIN_LT:
-                                long ltToleranceInterval = tolerance(slaveModel);
+                                long ltToleranceInterval = tolerance(slaveModel, slaveMetadata.getTimestampType());
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "LT");
                                 boolean ltAvoidBinarySearch = SqlHints.hasAvoidLtJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
@@ -3697,7 +3696,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             sampleFromFuncPos = model.getSampleByFrom().position;
             coerceRuntimeConstantType(sampleFromFunc, ColumnType.TIMESTAMP, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", sampleFromFuncPos);
         } else {
-            sampleFromFunc = TimestampConstant.NULL;
+            sampleFromFunc = TimestampConstant.TIMESTAMP_MICRO_NULL;
             sampleFromFuncPos = 0;
         }
 
@@ -3706,11 +3705,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             sampleToFuncPos = model.getSampleByTo().position;
             coerceRuntimeConstantType(sampleToFunc, ColumnType.TIMESTAMP, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", sampleToFuncPos);
         } else {
-            sampleToFunc = TimestampConstant.NULL;
+            sampleToFunc = TimestampConstant.TIMESTAMP_MICRO_NULL;
             sampleToFuncPos = 0;
         }
 
-        final boolean isFromTo = sampleFromFunc != TimestampConstant.NULL || sampleToFunc != TimestampConstant.NULL;
+        final boolean isFromTo = sampleFromFunc != TimestampConstant.TIMESTAMP_MICRO_NULL || sampleToFunc != TimestampConstant.TIMESTAMP_MICRO_NULL;
 
         RecordCursorFactory factory = null;
         // We require timestamp with asc order.
@@ -3800,6 +3799,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         entityColumnFilter,
                         groupByFunctionPositions,
                         timestampIndex,
+                        metadata.getColumnType(timestampIndex),
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -3877,6 +3877,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             groupByFunctions,
                             recordFunctions,
                             timestampIndex,
+                            metadata.getColumnType(timestampIndex),
                             valueTypes.getColumnCount(),
                             timezoneNameFunc,
                             timezoneNameFuncPos,
@@ -3903,6 +3904,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         groupByFunctions,
                         recordFunctions,
                         timestampIndex,
+                        metadata.getColumnType(timestampIndex),
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -3927,6 +3929,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             recordFunctions,
                             valueTypes.getColumnCount(),
                             timestampIndex,
+                            metadata.getColumnType(timestampIndex),
                             timezoneNameFunc,
                             timezoneNameFuncPos,
                             offsetFunc,
@@ -3952,6 +3955,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         keyTypes,
                         valueTypes,
                         timestampIndex,
+                        metadata.getColumnType(timestampIndex),
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -3976,6 +3980,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             recordFunctionPositions,
                             valueTypes.getColumnCount(),
                             timestampIndex,
+                            metadata.getColumnType(timestampIndex),
                             timezoneNameFunc,
                             timezoneNameFuncPos,
                             offsetFunc,
@@ -4002,6 +4007,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         recordFunctions,
                         recordFunctionPositions,
                         timestampIndex,
+                        metadata.getColumnType(timestampIndex),
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -4028,6 +4034,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         recordFunctionPositions,
                         valueTypes.getColumnCount(),
                         timestampIndex,
+                        metadata.getColumnType(timestampIndex),
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -4055,6 +4062,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     recordFunctions,
                     recordFunctionPositions,
                     timestampIndex,
+                    metadata.getColumnType(timestampIndex),
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,
@@ -5645,7 +5653,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         reader
                 );
             } else {
-                intrinsicModel = whereClauseParser.getEmpty();
+                intrinsicModel = whereClauseParser.getEmpty(
+                        reader.getMetadata().getTimestampType(),
+                        reader.getPartitionedBy()
+                );
             }
 
             // When we run materialized view refresh we want to restrict queries to the base table
@@ -5707,7 +5718,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         dfcFactoryMeta,
                         order
                 );
-                intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
+                intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition();
             } else {
                 dfcFactory = new FullPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta, order);
                 intervalHitsOnlyOnePartition = reader.getPartitionedBy() == PartitionBy.NONE;
@@ -6689,7 +6700,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         countConstructors.put(ColumnType.INT, CountIntVectorAggregateFunction::new);
         countConstructors.put(ColumnType.LONG, CountLongVectorAggregateFunction::new);
         countConstructors.put(ColumnType.DATE, CountLongVectorAggregateFunction::new);
-        countConstructors.put(ColumnType.TIMESTAMP, CountLongVectorAggregateFunction::new);
+        countConstructors.put(ColumnType.TIMESTAMP_MICRO, CountLongVectorAggregateFunction::new);
+        countConstructors.put(ColumnType.TIMESTAMP_NANO, CountLongVectorAggregateFunction::new);
 
         sumConstructors.put(ColumnType.DOUBLE, SumDoubleVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.INT, SumIntVectorAggregateFunction::new);
@@ -6708,14 +6720,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         minConstructors.put(ColumnType.DOUBLE, MinDoubleVectorAggregateFunction::new);
         minConstructors.put(ColumnType.LONG, MinLongVectorAggregateFunction::new);
         minConstructors.put(ColumnType.DATE, MinDateVectorAggregateFunction::new);
-        minConstructors.put(ColumnType.TIMESTAMP, MinTimestampVectorAggregateFunction::new);
+        minConstructors.put(ColumnType.TIMESTAMP_MICRO, (int keyKind, int columnIndex, int workerCount) -> new MinTimestampVectorAggregateFunction(keyKind, columnIndex, workerCount, TIMESTAMP_MICRO));
+        minConstructors.put(ColumnType.TIMESTAMP_NANO, (int keyKind, int columnIndex, int workerCount) -> new MinTimestampVectorAggregateFunction(keyKind, columnIndex, workerCount, TIMESTAMP_NANO));
         minConstructors.put(ColumnType.INT, MinIntVectorAggregateFunction::new);
         minConstructors.put(ColumnType.SHORT, MinShortVectorAggregateFunction::new);
 
         maxConstructors.put(ColumnType.DOUBLE, MaxDoubleVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.LONG, MaxLongVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.DATE, MaxDateVectorAggregateFunction::new);
-        maxConstructors.put(ColumnType.TIMESTAMP, MaxTimestampVectorAggregateFunction::new);
+        maxConstructors.put(ColumnType.TIMESTAMP_MICRO, (int keyKind, int columnIndex, int workerCount) -> new MaxTimestampVectorAggregateFunction(keyKind, columnIndex, workerCount, TIMESTAMP_MICRO));
+        maxConstructors.put(ColumnType.TIMESTAMP_NANO, (int keyKind, int columnIndex, int workerCount) -> new MaxTimestampVectorAggregateFunction(keyKind, columnIndex, workerCount, TIMESTAMP_NANO));
         maxConstructors.put(ColumnType.INT, MaxIntVectorAggregateFunction::new);
         maxConstructors.put(ColumnType.SHORT, MaxShortVectorAggregateFunction::new);
     }

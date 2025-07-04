@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -52,16 +54,20 @@ public class InTimestampIntervalFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0), args.getQuick(1));
+        return new Func(args.getQuick(0), args.getQuick(1), configuration);
     }
 
     public static class Func extends NegatableBooleanFunction implements BinaryFunction {
+        private final int intervalType;
         private final Function left;
         private final Function right;
+        private final TimestampDriver timestampDriver;
 
-        public Func(Function left, Function right) {
+        public Func(Function left, Function right, CairoConfiguration configuration) {
             this.left = left;
             this.right = right;
+            timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(left.getType(), configuration));
+            intervalType = right.getType();
         }
 
         @Override
@@ -74,7 +80,7 @@ public class InTimestampIntervalFunctionFactory implements FunctionFactory {
             if (Interval.NULL.equals(interval)) {
                 return negated;
             }
-            return negated != (ts >= interval.getLo() && ts <= interval.getHi());
+            return negated != timestampDriver.inInterval(ts, intervalType, interval);
         }
 
         @Override

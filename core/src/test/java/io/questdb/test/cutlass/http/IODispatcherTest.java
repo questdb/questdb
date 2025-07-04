@@ -110,17 +110,17 @@ import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.StationaryNanosClock;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
+import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -212,7 +212,7 @@ public class IODispatcherTest extends AbstractTest {
             .withLookingForStuckThread(true)
             .build();
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
-    private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
+    private Clock nanosecondClock = NanosecondClockImpl.INSTANCE;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -1157,7 +1157,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public NanosecondClock getNanosecondClock() {
+                    public Clock getNanosecondClock() {
                         return StationaryNanosClock.INSTANCE;
                     }
                 });
@@ -1239,7 +1239,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public NanosecondClock getNanosecondClock() {
+                    public Clock getNanosecondClock() {
                         return StationaryNanosClock.INSTANCE;
                     }
                 });
@@ -6876,7 +6876,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
 
                         @Override
-                        public NanosecondClock getNanosecondClock() {
+                        public Clock getNanosecondClock() {
                             return StationaryNanosClock.INSTANCE;
                         }
                     }

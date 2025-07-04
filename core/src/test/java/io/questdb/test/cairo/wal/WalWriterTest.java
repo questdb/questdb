@@ -28,12 +28,14 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.file.BlockFileReader;
@@ -61,9 +63,7 @@ import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
@@ -335,7 +335,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     .wal()
             );
 
-            long initialTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T00:40:00.000Z");
+            long initialTimestamp = MicrosTimestampDriver.floor("2022-02-24T00:40:00.000Z");
             long tsIncrement = 1000_0000L;
 
             int varcharSize = 20 * Numbers.SIZE_1MB;
@@ -393,7 +393,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             AtomicInteger error = new AtomicInteger();
 
-            long initialTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T00:40:00.000Z");
+            long initialTimestamp = MicrosTimestampDriver.floor("2022-02-24T00:40:00.000Z");
             long tsIncrement = rnd.nextLong(1000_0000L);
             for (int th = 0; th < threadCount; th++) {
                 Rnd threadRnd = new Rnd(rnd.nextLong(), rnd.nextLong());
@@ -1067,7 +1067,7 @@ public class WalWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");
-            long startTs = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
+            long startTs = MicrosTimestampDriver.floor("2022-02-24");
             long tsIncrement = Timestamps.MINUTE_MICROS;
 
             long ts = startTs;
@@ -2149,6 +2149,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             final int rowsToInsertTotal = 100;
             final long pointer = Unsafe.malloc(rowsToInsertTotal, MemoryTag.NATIVE_DEFAULT);
+            final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
             try {
                 final long ts = Os.currentTimeMicros();
                 final Long256Impl long256 = new Long256Impl();
@@ -2197,7 +2198,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         stringSink.put("some rubbish to be ignored");
                         row.putLong256(20, stringSink, 2, strLen);
 
-                        row.putTimestamp(21, SqlUtil.implicitCastStrAsTimestamp("2022-06-10T09:13:46." + (i + 1)));
+                        row.putTimestamp(21, timestampDriver.implicitCast("2022-06-10T09:13:46." + (i + 1)));
 
                         row.putStr(22, (char) (65 + i % 26));
                         row.putStr(23, "abcdefghijklmnopqrstuvwxyz", 0, i % 26 + 1);
@@ -4355,7 +4356,7 @@ public class WalWriterTest extends AbstractCairoTest {
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");
 
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
+            long ts = MicrosTimestampDriver.floor("2022-02-24");
             int symbolCount = 75;
 
             Utf8StringSink sink = new Utf8StringSink();

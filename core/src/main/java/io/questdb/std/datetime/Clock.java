@@ -22,8 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.std.datetime;
 
-public interface NanosecondClock {
+public interface Clock {
+    int getClockTimestampType();
+
     long getTicks();
 }

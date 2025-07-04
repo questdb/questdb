@@ -43,6 +43,7 @@ import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.MapWriter;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
@@ -56,6 +57,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.VacuumColumnVersions;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
@@ -101,7 +103,6 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.InsertModel;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
@@ -127,8 +128,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
 import io.questdb.std.Utf8SequenceObjHashMap;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -277,11 +278,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         long rowCount;
+        int timestampColumnType = metadata.getColumnType(cursorTimestampIndex);
 
-        if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
+        if (ColumnType.isSymbolOrString(timestampColumnType)) {
             rowCount = copyOrderedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, circuitBreaker);
         } else {
-            rowCount = copyOrdered0(writer, cursor, copier, cursorTimestampIndex, circuitBreaker);
+            rowCount = copyOrdered0(writer, cursor, copier, timestampColumnType, cursorTimestampIndex, circuitBreaker);
         }
         return rowCount;
     }
@@ -297,10 +299,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         long rowCount;
-        if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
+        int timestampColumnType = metadata.getColumnType(cursorTimestampIndex);
+        if (ColumnType.isSymbolOrString(timestampColumnType)) {
             rowCount = copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker);
         } else {
-            rowCount = copyOrderedBatched0(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker);
+            rowCount = copyOrderedBatched0(writer, cursor, copier, timestampColumnType, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker);
         }
         return rowCount;
     }
@@ -575,17 +578,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableWriterAPI writer,
             RecordCursor cursor,
             RecordToRowCopier copier,
+            int fromTimestampType,
             int cursorTimestampIndex,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         long rowCount = 0;
         final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-            TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
-            copier.copy(record, row);
-            row.append();
-            rowCount++;
+        CommonUtils.TimestampUnitConverter converter = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType()).getTimestampUnitConverter(fromTimestampType);
+        if (converter == null) {
+            while (cursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
+                copier.copy(record, row);
+                row.append();
+                rowCount++;
+            }
+        } else {
+            while (cursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                TableWriter.Row row = writer.newRow(converter.convert(record.getTimestamp(cursorTimestampIndex)));
+                copier.copy(record, row);
+                row.append();
+                rowCount++;
+            }
         }
 
         return rowCount;
@@ -596,6 +611,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableWriterAPI writer,
             RecordCursor cursor,
             RecordToRowCopier copier,
+            int fromTimestampType,
             int cursorTimestampIndex,
             long batchSize,
             long o3MaxLag,
@@ -604,9 +620,52 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         long commitTarget = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
+        CommonUtils.TimestampUnitConverter converter = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType()).getTimestampUnitConverter(fromTimestampType);
+        if (converter == null) {
+            while (cursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
+                copier.copy(record, row);
+                row.append();
+                if (++rowCount >= commitTarget) {
+                    writer.ic(o3MaxLag);
+                    commitTarget = rowCount + batchSize;
+                }
+            }
+        } else {
+            while (cursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                TableWriter.Row row = writer.newRow(converter.convert(record.getTimestamp(cursorTimestampIndex)));
+                copier.copy(record, row);
+                row.append();
+                if (++rowCount >= commitTarget) {
+                    writer.ic(o3MaxLag);
+                    commitTarget = rowCount + batchSize;
+                }
+            }
+        }
+
+        return rowCount;
+    }
+
+    // todo, this is used to benchmark, will remove in the release.
+    private static long copyOrderedBatched0UseFrom(
+            TableWriterAPI writer,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int fromTimestampType,
+            int cursorTimestampIndex,
+            long batchSize,
+            long o3MaxLag,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        long commitTarget = batchSize;
+        long rowCount = 0;
+        final Record record = cursor.getRecord();
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
+            TableWriter.Row row = writer.newRow(timestampDriver.from(record.getTimestamp(cursorTimestampIndex), fromTimestampType));
             copier.copy(record, row);
             row.append();
             if (++rowCount >= commitTarget) {
@@ -614,6 +673,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 commitTarget = rowCount + batchSize;
             }
         }
+
         return rowCount;
     }
 
@@ -630,11 +690,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         long commitTarget = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
+        final int timestampType = writer.getMetadata().getTimestampType();
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             CharSequence str = record.getStrA(cursorTimestampIndex);
             // It's allowed to insert ISO formatted string to timestamp column
-            TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, -1, ColumnType.STRING, ColumnType.TIMESTAMP));
+            TableWriter.Row row = writer.newRow(timestampDriver.implicitCast(str));
             copier.copy(record, row);
             row.append();
             if (++rowCount >= commitTarget) {
@@ -654,13 +716,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int cursorTimestampIndex,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
+        final int timestampType = writer.getMetadata().getTimestampType();
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             final CharSequence str = record.getStrA(cursorTimestampIndex);
             // It's allowed to insert ISO formatted string to timestamp column
-            TableWriter.Row row = writer.newRow(SqlUtil.implicitCastStrAsTimestamp(str));
+            TableWriter.Row row = writer.newRow(timestampDriver.implicitCast(str));
             copier.copy(record, row);
             row.append();
             rowCount++;
@@ -684,7 +748,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok;
         tok = expectToken(lexer, "column type");
 
-        short typeTag = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
+        int typeTag = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
+        if (typeTag == ColumnType.TIMESTAMP) {
+            typeTag = ColumnType.typeOf(tok);
+        }
         int typePosition = lexer.lastTokenPosition();
 
         int dim = SqlUtil.parseArrayDimensionality(lexer);
@@ -1364,12 +1431,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             // reader == null means it's compilation for WAL table
             // before applying to WAL writer
+            final int timestampType;
             final int partitionBy;
             if (reader != null) {
                 partitionBy = reader.getPartitionedBy();
+                timestampType = reader.getMetadata().getTimestampType();
             } else {
                 try (TableMetadata meta = engine.getTableMetadata(tableToken)) {
                     partitionBy = meta.getPartitionBy();
+                    timestampType = meta.getTimestampType();
                 }
             }
             try {
@@ -1377,7 +1447,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // like 2022-02-26T155900-000001
                 // Otherwise ignore the split time part.
                 int hi = action == PartitionAction.FORCE_DROP ? partitionName.length() : -1;
-                long timestamp = PartitionBy.parsePartitionDirName(partitionName, partitionBy, 0, hi);
+                long timestamp = PartitionBy.parsePartitionDirName(partitionName, timestampType, partitionBy, 0, hi);
                 alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
             } catch (CairoException e) {
                 throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
@@ -1662,8 +1732,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         long start = configuration.getMicrosecondClock().getTicks();
 
                         tok = expectToken(lexer, "interval");
-                        final int interval = Timestamps.getStrideMultiple(tok);
-                        final char unit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                        final int interval = CommonUtils.getStrideMultiple(tok);
+                        final char unit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                         SqlParser.validateMatViewEveryUnit(unit, lexer.lastTokenPosition());
                         tok = SqlUtil.fetchNext(lexer);
 
@@ -1673,7 +1743,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             }
                             tok = expectToken(lexer, "START timestamp");
                             try {
-                                start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                                start = MicrosTimestampDriver.floor(GenericLexer.unquote(tok));
                             } catch (NumericException e) {
                                 throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                             }
@@ -2432,7 +2502,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                 VirtualRecord record = new VirtualRecord(valueFunctions);
                 RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(asm, record, metadata, listColumnFilter);
-                insertOperation.addInsertRow(new InsertRowImpl(record, copier, timestampFunction, designatedTimestampPosition, tupleIndex));
+                insertOperation.addInsertRow(new InsertRowImpl(
+                                record,
+                                copier,
+                                timestampFunction,
+                                designatedTimestampPosition,
+                                tupleIndex,
+                                metadata.getTimestampType()
+                        )
+                );
             }
             return insertOperation;
         } catch (Throwable th) {
@@ -2672,14 +2750,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             expectKeyword(lexer, "from");
             tok = expectToken(lexer, "FROM timestamp");
             try {
-                from = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                from = MicrosTimestampDriver.floor(GenericLexer.unquote(tok));
             } catch (NumericException e) {
                 throw SqlException.$(lexer.lastTokenPosition(), "invalid FROM timestamp value");
             }
             expectKeyword(lexer, "to");
             tok = expectToken(lexer, "TO timestamp");
             try {
-                to = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                to = MicrosTimestampDriver.floor(GenericLexer.unquote(tok));
             } catch (NumericException e) {
                 throw SqlException.$(lexer.lastTokenPosition(), "invalid TO timestamp value");
             }
@@ -2722,7 +2800,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             tok = GenericLexer.unquote(tok);
         }
         final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+
         checkMatViewModification(tableToken);
+
         try (IndexBuilder indexBuilder = new IndexBuilder(configuration)) {
             indexBuilder.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()));
 
@@ -2770,7 +2850,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 columnNames.add(columnName);
             }
             executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnNames);
-            indexBuilder.reindex(partition, columnName);
+
+            // read table's timestamp type
+            int timestampType;
+            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                timestampType = metadata.getTimestampType();
+            }
+
+            indexBuilder.reindex(partition, columnName, timestampType);
         }
         compiledQuery.ofRepair();
     }
@@ -3015,7 +3102,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     int partitionBy = rdr.getMetadata().getPartitionBy();
                     if (PartitionBy.isPartitioned(partitionBy)) {
                         executionContext.getSecurityContext().authorizeTableVacuum(rdr.getTableToken());
-                        if (!TableUtils.schedulePurgeO3Partitions(messageBus, rdr.getTableToken(), partitionBy)) {
+                        if (!TableUtils.schedulePurgeO3Partitions(
+                                messageBus,
+                                rdr.getTableToken(),
+                                rdr.getMetadata().getTimestampType(),
+                                partitionBy
+                        )) {
                             throw SqlException.$(
                                     tableNamePos,
                                     "cannot schedule vacuum action, queue is full, please retry " +

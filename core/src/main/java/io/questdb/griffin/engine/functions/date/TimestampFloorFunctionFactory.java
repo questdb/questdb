@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -70,25 +71,45 @@ public class TimestampFloorFunctionFactory implements FunctionFactory {
                 c = 1; // report it as an empty unit rather than null
             }
         }
+        Function arg = args.getQuick(1);
+        int timestampType = ColumnType.getTimestampType(arg.getType(), configuration);
         switch (c) {
             case 'M':
-                return new TimestampFloorFunctions.TimestampFloorMMFunction(args.getQuick(1), stride);
+                return stride > 1 ?
+                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, "month", stride, timestampType) :
+                        new TimestampFloorFunctions.TimestampFloorFunction(arg, "month", timestampType);
             case 'y':
-                return new TimestampFloorFunctions.TimestampFloorYYYYFunction(args.getQuick(1), stride);
+                return stride > 1 ?
+                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, "year", stride, timestampType) :
+                        new TimestampFloorFunctions.TimestampFloorFunction(arg, "year", timestampType);
             case 'w':
-                return new TimestampFloorFunctions.TimestampFloorWWFunction(args.getQuick(1), stride);
+                return stride > 1 ?
+                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, "week", stride, timestampType) :
+                        new TimestampFloorFunctions.TimestampFloorFunction(arg, "week", timestampType);
             case 'd':
-                return new TimestampFloorFunctions.TimestampFloorDDFunction(args.getQuick(1), stride);
+                return stride > 1 ?
+                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, "day", stride, timestampType) :
+                        new TimestampFloorFunctions.TimestampFloorFunction(arg, "day", timestampType);
             case 'h':
-                return new TimestampFloorFunctions.TimestampFloorHHFunction(args.getQuick(1), stride);
+                return stride > 1 ?
+                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, "hour", stride, timestampType) :
+                        new TimestampFloorFunctions.TimestampFloorFunction(arg, "hour", timestampType);
             case 'm':
-                return new TimestampFloorFunctions.TimestampFloorMIFunction(args.getQuick(1), stride);
+                return stride > 1 ?
+                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, "minute", stride, timestampType) :
+                        new TimestampFloorFunctions.TimestampFloorFunction(arg, "minute", timestampType);
             case 's':
-                return new TimestampFloorFunctions.TimestampFloorSSFunction(args.getQuick(1), stride);
+                return stride > 1 ?
+                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, "second", stride, timestampType) :
+                        new TimestampFloorFunctions.TimestampFloorFunction(arg, "second", timestampType);
             case 'T':
-                return new TimestampFloorFunctions.TimestampFloorMSFunction(args.getQuick(1), stride);
+                return stride > 1 ?
+                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, "millisecond", stride, timestampType) :
+                        new TimestampFloorFunctions.TimestampFloorFunction(arg, "millisecond", timestampType);
             case 'U':
-                return new TimestampFloorFunctions.TimestampFloorMCFunction(args.getQuick(1), stride);
+                return stride > 1 ?
+                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, "microsecond", stride, timestampType) :
+                        new TimestampFloorFunctions.TimestampFloorFunction(arg, "microsecond", timestampType);
             case 0:
                 throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
             default:

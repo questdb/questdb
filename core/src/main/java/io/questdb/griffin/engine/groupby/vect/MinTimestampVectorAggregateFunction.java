@@ -57,7 +57,8 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
     private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
-    public MinTimestampVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public MinTimestampVectorAggregateFunction(int keyKind, int columnIndex, int workerCount, int timestampType) {
+        super(timestampType);
         this.columnIndex = columnIndex;
         if (keyKind == GKK_HOUR_INT) {
             this.distinctFunc = Rosti::keyedHourDistinct;

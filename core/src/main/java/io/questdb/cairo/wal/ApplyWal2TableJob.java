@@ -55,7 +55,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
@@ -73,8 +73,8 @@ import static io.questdb.cairo.ErrorTag.OUT_OF_MEMORY;
 import static io.questdb.cairo.ErrorTag.resolveTag;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
-import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 import static io.questdb.cairo.wal.WalTxnType.*;
+import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
@@ -86,7 +86,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final CairoConfiguration config;
     private final CairoEngine engine;
     private final WalMetrics metrics;
-    private final MicrosecondClock microClock;
+    private final Clock microClock;
     private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
     private final BlockFileWriter mvStateWriter;
     private final OperationExecutor operationExecutor;
@@ -372,7 +372,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                             default:
                                 // Always set full path when using thread static path
-                                operationExecutor.setNowAndFixClock(commitTimestamp);
+                                operationExecutor.setNowAndFixClock(commitTimestamp, writer.getTimestampType());
                                 tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken).slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                                 final long start = microClock.getTicks();
 

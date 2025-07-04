@@ -22,13 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cairo;
 
-public class NanosecondClockImpl implements NanosecondClock {
-    public final static NanosecondClock INSTANCE = new NanosecondClockImpl();
+import io.questdb.std.datetime.DateFormat;
 
-    @Override
-    public long getTicks() {
-        return System.nanoTime();
-    }
+public interface TimestampDateFormatFactory {
+    DateFormat get(CharSequence pattern);
 }

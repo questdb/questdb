@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DebugUtils;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
@@ -496,7 +497,7 @@ public class FuzzRunner {
     }
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd) throws NumericException {
-        long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
+        long start = MicrosTimestampDriver.floor("2022-02-24T17");
         long end = start + partitionCount * Timestamps.DAY_MICROS;
         return generateTransactions(tableName, rnd, start, end);
     }

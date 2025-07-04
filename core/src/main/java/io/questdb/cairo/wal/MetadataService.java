@@ -153,6 +153,8 @@ public interface MetadataService {
 
     TableToken getTableToken();
 
+    int getTimestampType();
+
     UpdateOperator getUpdateOperator();
 
     void removeColumn(@NotNull CharSequence columnName);

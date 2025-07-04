@@ -119,7 +119,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     long getMicrosecondTimestamp();
 
+    long getNanosecondTimestamp();
+
     long getNow();
+
+    int getNowTimestampType();
 
     QueryFutureUpdateListener getQueryFutureUpdateListener();
 
@@ -227,7 +231,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void setJitMode(int jitMode);
 
-    void setNowAndFixClock(long now);
+    void setNowAndFixClock(long now, int nowTimestampType);
 
     void setParallelFilterEnabled(boolean parallelFilterEnabled);
 

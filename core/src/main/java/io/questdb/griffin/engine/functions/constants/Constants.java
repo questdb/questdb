@@ -82,7 +82,8 @@ public final class Constants {
         nullConstants.extendAndSet(ColumnType.SYMBOL, SymbolConstant.NULL);
         nullConstants.extendAndSet(ColumnType.LONG, LongConstant.NULL);
         nullConstants.extendAndSet(ColumnType.DATE, DateConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.TIMESTAMP, TimestampConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.TIMESTAMP_MICRO, TimestampConstant.TIMESTAMP_MICRO_NULL);
+        nullConstants.extendAndSet(ColumnType.TIMESTAMP_NANO, TimestampConstant.TIMESTAMP_NANO_NULL);
         nullConstants.extendAndSet(ColumnType.BYTE, ByteConstant.ZERO);
         nullConstants.extendAndSet(ColumnType.SHORT, ShortConstant.ZERO);
         nullConstants.extendAndSet(ColumnType.CHAR, CharConstant.ZERO);
@@ -99,7 +100,9 @@ public final class Constants {
         nullConstants.extendAndSet(ColumnType.UUID, UuidConstant.NULL);
         nullConstants.extendAndSet(ColumnType.IPv4, IPv4Constant.NULL);
         nullConstants.extendAndSet(ColumnType.VARCHAR, VarcharConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.INTERVAL, IntervalConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.INTERVAL, IntervalConstant.RAW_NULL);
+        nullConstants.extendAndSet(ColumnType.INTERVAL_TIMESTAMP_MICRO, IntervalConstant.TIMESTAMP_MICRO_NULL);
+        nullConstants.extendAndSet(ColumnType.INTERVAL_TIMESTAMP_NANO, IntervalConstant.TIMESTAMP_NANO_NULL);
         nullConstants.setPos(ColumnType.NULL + 1);
 
         typeConstants.extendAndSet(ColumnType.INT, IntTypeConstant.INSTANCE);
@@ -107,7 +110,8 @@ public final class Constants {
         typeConstants.extendAndSet(ColumnType.SYMBOL, SymbolTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.LONG, LongTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.DATE, DateTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.TIMESTAMP, TimestampTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.TIMESTAMP_MICRO, TimestampTypeConstant.TIMESTAMP_MS_CONSTANT);
+        typeConstants.extendAndSet(ColumnType.TIMESTAMP_NANO, TimestampTypeConstant.TIMESTAMP_NS_CONSTANT);
         typeConstants.extendAndSet(ColumnType.BYTE, ByteTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.SHORT, ShortTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.CHAR, CharTypeConstant.INSTANCE);
@@ -122,7 +126,10 @@ public final class Constants {
         typeConstants.extendAndSet(ColumnType.UUID, UuidTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.IPv4, IPv4TypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.VARCHAR, VarcharTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.INTERVAL, IntervalTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.INTERVAL_RAW, IntervalTypeConstant.RAW_INSTANCE);
+        typeConstants.extendAndSet(ColumnType.INTERVAL_TIMESTAMP_MICRO, IntervalTypeConstant.TIMESTAMP_MICRO_INSTANCE);
+        typeConstants.extendAndSet(ColumnType.INTERVAL_TIMESTAMP_NANO, IntervalTypeConstant.TIMESTAMP_NANO_INSTANCE);
+
 
         for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
             geoNullConstants.extendAndSet(b, getGeoHashConstant(GeoHashes.NULL, b));

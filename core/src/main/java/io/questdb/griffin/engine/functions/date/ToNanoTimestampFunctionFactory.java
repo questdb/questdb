@@ -22,22 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cutlass.line;
+package io.questdb.griffin.engine.functions.date;
 
-import io.questdb.cutlass.line.LineNanoTimestampAdapter;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
-import io.questdb.cutlass.line.tcp.LineTcpParser;
-import org.junit.Assert;
-import org.junit.Test;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public class LineTcpTimestampAdapterTest {
+public class ToNanoTimestampFunctionFactory implements FunctionFactory {
+    private static final String NAME = "to_timestamp_ns";
 
-    @Test
-    public void testSmoke() {
-        LineTcpTimestampAdapter adapter = new LineTcpTimestampAdapter(LineNanoTimestampAdapter.INSTANCE);
-        Assert.assertEquals(56799L, adapter.getMicros(56799000, LineTcpParser.ENTITY_UNIT_NONE));
-        Assert.assertEquals(56799L, adapter.getMicros(56799000, LineTcpParser.ENTITY_UNIT_NANO));
-        Assert.assertEquals(5679L, adapter.getMicros(5679, LineTcpParser.ENTITY_UNIT_MICRO));
-        Assert.assertEquals(5679000L, adapter.getMicros(5679, LineTcpParser.ENTITY_UNIT_MILLI));
+    @Override
+    public String getSignature() {
+        return "to_timestamp_ns(S)";
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        final Function arg = args.getQuick(0);
+        return new ToTimestampFunctionFactory.ToTimestampFunction(arg, ColumnType.TIMESTAMP_NANO, NAME);
     }
 }

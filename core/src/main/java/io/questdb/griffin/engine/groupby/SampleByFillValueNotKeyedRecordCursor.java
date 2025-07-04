@@ -49,6 +49,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
             ObjList<Function> placeholderFunctions,
             SimpleMapValuePeeker peeker,
             int timestampIndex, // index of timestamp column in base cursor
+            int timestampType,
             TimestampSampler timestampSampler,
             SimpleMapValue simpleMapValue,
             Function timezoneNameFunc,
@@ -64,6 +65,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
                 configuration,
                 recordFunctions,
                 timestampIndex,
+                timestampType,
                 timestampSampler,
                 groupByFunctions,
                 groupByFunctionsUpdater,
@@ -123,7 +125,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
 
         final boolean hasNext = notKeyedLoop(simpleMapValue);
 
-        if (baseRecord == null && sampleToFunc != TimestampConstant.NULL && !endFill) {
+        if (baseRecord == null && sampleToFunc != TimestampConstant.TIMESTAMP_MICRO_NULL && !endFill) {
             endFill = true;
             upperBound = sampleToFunc.getTimestamp(null);
             // we must not re-initialize baseRecord after base cursor has been exhausted

@@ -41,7 +41,7 @@ import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
@@ -811,7 +811,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         serverMain.ddl(sql);
     }
 
-    private static Bootstrap newBootstrapWithClock(MicrosecondClock microsecondClock, Map<String, String> envs) {
+    private static Bootstrap newBootstrapWithClock(Clock microsecondClock, Map<String, String> envs) {
         Map<String, String> env = new HashMap<>(System.getenv());
         env.putAll(envs);
         return new Bootstrap(
@@ -824,7 +824,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 getServerMainArgs()
         ) {
             @Override
-            public MicrosecondClock getMicrosecondClock() {
+            public Clock getMicrosecondClock() {
                 return microsecondClock != null ? microsecondClock : super.getMicrosecondClock();
             }
         };
@@ -843,7 +843,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     }
 
     @NotNull
-    private static TestServerMain startMainPortsDisabled(MicrosecondClock microsecondClock) {
+    private static TestServerMain startMainPortsDisabled(Clock microsecondClock) {
         return startWithEnvVariables0(
                 microsecondClock,
                 PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
@@ -859,7 +859,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         return startWithEnvVariables0(null, envs);
     }
 
-    private static TestServerMain startWithEnvVariables0(MicrosecondClock microsecondClock, String... envs) {
+    private static TestServerMain startWithEnvVariables0(Clock microsecondClock, String... envs) {
         assert envs.length % 2 == 0;
 
         Map<String, String> envMap = new HashMap<>();

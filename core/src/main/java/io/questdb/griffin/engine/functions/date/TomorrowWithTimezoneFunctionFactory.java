@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -55,16 +56,16 @@ public class TomorrowWithTimezoneFunctionFactory implements FunctionFactory {
     ) {
         final Function tzFunc = args.getQuick(0);
         if (tzFunc.isConstant() || tzFunc.isRuntimeConstant()) {
-            return new RuntimeConstFunc(tzFunc);
+            return new RuntimeConstFunc(ColumnType.INTERVAL_TIMESTAMP_MICRO, tzFunc);
         }
-        return new Func(tzFunc);
+        return new Func(ColumnType.INTERVAL_TIMESTAMP_MICRO, tzFunc);
     }
 
     private static class Func extends AbstractDayIntervalWithTimezoneFunction {
         private long now;
 
-        public Func(Function tzFunc) {
-            super(tzFunc);
+        public Func(int intervalType, Function tzFunc) {
+            super(intervalType, tzFunc);
         }
 
         @Override
@@ -91,8 +92,8 @@ public class TomorrowWithTimezoneFunctionFactory implements FunctionFactory {
 
     private static class RuntimeConstFunc extends AbstractDayIntervalWithTimezoneFunction {
 
-        public RuntimeConstFunc(Function tzFunc) {
-            super(tzFunc);
+        public RuntimeConstFunc(int intervalType, Function tzFunc) {
+            super(intervalType, tzFunc);
         }
 
         @Override
@@ -102,12 +103,12 @@ public class TomorrowWithTimezoneFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isThreadSafe() {
+        public boolean isRuntimeConstant() {
             return true;
         }
 
         @Override
-        public boolean isRuntimeConstant() {
+        public boolean isThreadSafe() {
             return true;
         }
 

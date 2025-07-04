@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -43,7 +44,6 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.InsertModel;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
@@ -62,8 +62,9 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -981,8 +982,8 @@ public class SqlParser {
                 tok = tok(lexer, "'deferred' or 'period' or 'as'");
             } else if (isEveryKeyword(tok)) {
                 tok = tok(lexer, "interval");
-                every = Timestamps.getStrideMultiple(tok);
-                everyUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                every = CommonUtils.getStrideMultiple(tok);
+                everyUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewEveryUnit(everyUnit, lexer.lastTokenPosition());
                 refreshType = MatViewDefinition.REFRESH_TYPE_TIMER;
                 tok = tok(lexer, "'deferred' or 'start' or 'period' or 'as'");
@@ -1002,8 +1003,8 @@ public class SqlParser {
                 expectTok(lexer, "(");
                 expectTok(lexer, "length");
                 tok = tok(lexer, "LENGTH interval");
-                final int length = Timestamps.getStrideMultiple(tok);
-                final char lengthUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                final int length = CommonUtils.getStrideMultiple(tok);
+                final char lengthUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
                 final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(length, lengthUnit, lexer.lastTokenPosition());
                 tok = tok(lexer, "'time zone' or 'delay' or ')'");
@@ -1018,7 +1019,7 @@ public class SqlParser {
                     }
                     tz = unquote(tok).toString();
                     try {
-                        tzRules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, tz);
+                        tzRules = Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
                     } catch (NumericException e) {
                         throw SqlException.position(lexer.lastTokenPosition()).put("invalid timezone: ").put(tz);
                     }
@@ -1029,8 +1030,8 @@ public class SqlParser {
                 char delayUnit = 0;
                 if (isDelayKeyword(tok)) {
                     tok = tok(lexer, "DELAY interval");
-                    delay = Timestamps.getStrideMultiple(tok);
-                    delayUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                    delay = CommonUtils.getStrideMultiple(tok);
+                    delayUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                     validateMatViewDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
                     tok = tok(lexer, "')'");
                 }
@@ -1058,7 +1059,7 @@ public class SqlParser {
                 if (isStartKeyword(tok)) {
                     tok = tok(lexer, "START timestamp");
                     try {
-                        start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                        start = MicrosTimestampDriver.floor(unquote(tok));
                     } catch (NumericException e) {
                         throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                     }
@@ -1326,7 +1327,7 @@ public class SqlParser {
                     throw SqlException.position(timestamp.position)
                             .put("invalid designated timestamp column [name=").put(timestamp.token).put(']');
                 }
-                if (model.getColumnType() != ColumnType.TIMESTAMP) {
+                if (ColumnType.tagOf(model.getColumnType()) != ColumnType.TIMESTAMP) {
                     throw SqlException
                             .position(timestamp.position)
                             .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(model.getColumnType()))
@@ -3928,7 +3929,7 @@ public class SqlParser {
 
     private int toColumnType(GenericLexer lexer, @NotNull CharSequence tok) throws SqlException {
         int typePosition = lexer.lastTokenPosition();
-        final short typeTag = SqlUtil.toPersistedTypeTag(tok, typePosition);
+        int typeTag = SqlUtil.toPersistedTypeTag(tok, typePosition);
 
         // ignore precision keyword for DOUBLE column: 'double precision' is the same type as 'double'
         if (typeTag == ColumnType.DOUBLE) {
@@ -3936,6 +3937,8 @@ public class SqlParser {
             if (next != null && !isPrecisionKeyword(next)) {
                 lexer.unparseLast();
             }
+        } else if (typeTag == ColumnType.TIMESTAMP) {
+            typeTag = ColumnType.typeOf(tok);
         }
 
         int nDims = SqlUtil.parseArrayDimensionality(lexer);

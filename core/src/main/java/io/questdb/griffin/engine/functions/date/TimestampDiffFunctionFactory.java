@@ -74,7 +74,7 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
                     return new DiffVarVarFunction(args.getQuick(1), args.getQuick(2), func, period);
                 }
             }
-            return TimestampConstant.NULL;
+            return TimestampConstant.TIMESTAMP_MICRO_NULL;
         }
         return new DateDiffFunc(args.getQuick(0), args.getQuick(1), args.getQuick(2));
     }

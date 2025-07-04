@@ -25,9 +25,10 @@
 package io.questdb.test.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
@@ -297,7 +298,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     public void testTimezoneDSTSwitch() throws Exception {
         // Last Sunday of March, e.g. 2024-03-31, is the DST (daylight saving time) switch day in Bulgaria (UTC+02 to UTC+03).
         assertMemoryLeak(() -> {
-            setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2024-04-01T06:00:00.000000Z"));
+            setCurrentMicros(MicrosTimestampDriver.floor("2024-04-01T06:00:00.000000Z"));
             String expected = "yesterday\n" +
                     "('2024-03-30T22:00:00.000Z', '2024-03-31T20:59:59.999Z')\n";
             assertSql(expected, "select yesterday('Europe/Sofia')");
@@ -305,7 +306,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             bindVariableService.setStr("tz", "Europe/Sofia");
             assertSql(expected, "select yesterday(:tz)");
 
-            setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2024-03-31T06:00:00.000000Z"));
+            setCurrentMicros(MicrosTimestampDriver.floor("2024-03-31T06:00:00.000000Z"));
             expected = "today\n" +
                     "('2024-03-30T22:00:00.000Z', '2024-03-31T20:59:59.999Z')\n";
             assertSql(expected, "select today('Europe/Sofia')");
@@ -313,7 +314,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             bindVariableService.setStr("tz", "Europe/Sofia");
             assertSql(expected, "select today(:tz)");
 
-            setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2024-03-30T06:00:00.000000Z"));
+            setCurrentMicros(MicrosTimestampDriver.floor("2024-03-30T06:00:00.000000Z"));
             expected = "tomorrow\n" +
                     "('2024-03-30T22:00:00.000Z', '2024-03-31T20:59:59.999Z')\n";
             assertSql(expected, "select tomorrow('Europe/Sofia')");
@@ -329,7 +330,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             long todayStart = today(sqlExecutionContext.getNow());
             long todayEnd = tomorrow(sqlExecutionContext.getNow()) - 1;
             final Interval interval = new Interval(todayStart, todayEnd);
-            assertSql("today\n" + intervalAsString(interval) + "\n", "select today()");
+            assertSql("today\n" + intervalAsString(interval, ColumnType.INTERVAL_TIMESTAMP_MICRO) + "\n", "select today()");
         });
     }
 
@@ -380,7 +381,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             long tomorrowStart = tomorrow(sqlExecutionContext.getNow());
             long tomorrowEnd = Timestamps.addDays(tomorrowStart, 1) - 1;
             final Interval interval = new Interval(tomorrowStart, tomorrowEnd);
-            assertSql("tomorrow\n" + intervalAsString(interval) + "\n", "select tomorrow()");
+            assertSql("tomorrow\n" + intervalAsString(interval, ColumnType.INTERVAL_TIMESTAMP_MICRO) + "\n", "select tomorrow()");
         });
     }
 
@@ -431,7 +432,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             long yesterdayStart = yesterday(sqlExecutionContext.getNow());
             long yesterdayEnd = today(sqlExecutionContext.getNow()) - 1;
             final Interval interval = new Interval(yesterdayStart, yesterdayEnd);
-            assertSql("yesterday\n" + intervalAsString(interval) + "\n", "select yesterday()");
+            assertSql("yesterday\n" + intervalAsString(interval, ColumnType.INTERVAL_TIMESTAMP_MICRO) + "\n", "select yesterday()");
         });
     }
 
@@ -493,8 +494,10 @@ public class IntervalFunctionTest extends AbstractCairoTest {
         sink.put("\")]\n");
     }
 
-    private static String intervalAsString(Interval interval) {
-        return new StringSink().put(interval).toString();
+    private static String intervalAsString(Interval interval, int columnType) {
+        StringSink sink = new StringSink();
+        interval.toSink(sink, columnType);
+        return sink.toString();
     }
 
     private static long today(long nowMicros) {
