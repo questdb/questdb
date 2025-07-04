@@ -1289,22 +1289,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     ) throws SqlException {
         assert viewState.isLocked();
 
-        final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
-        final long toBaseTxn = baseSeqTracker.getWriterTxn();
-
-        final long fromBaseTxn = viewState.getLastRefreshBaseTxn();
-        if (fromBaseTxn > toBaseTxn) {
-            final TableToken viewToken = viewState.getViewDefinition().getMatViewToken();
-            throw CairoException.nonCritical().put("unexpected txn numbers, base table may have been renamed [view=").put(viewToken.getTableName())
-                    .put(", fromBaseTxn=").put(fromBaseTxn)
-                    .put(", toBaseTxn=").put(toBaseTxn)
-                    .put(']');
-        }
-        if (viewState.getViewDefinition().getPeriodLength() == 0 && fromBaseTxn > -1 && fromBaseTxn == toBaseTxn) {
-            // Non-period mat view which is already refreshed.
-            return false;
-        }
-
         // Steps:
         // - compile view and execute with timestamp ranges from the unprocessed commits
         // - write the result set to WAL (or directly to table writer O3 area)
@@ -1312,6 +1296,20 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // - update applied to txn in MatViewStateStore
 
         try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
+            final long fromBaseTxn = viewState.getLastRefreshBaseTxn();
+            final long toBaseTxn = baseTableReader.getTxn();
+            if (fromBaseTxn > toBaseTxn) {
+                final TableToken viewToken = viewState.getViewDefinition().getMatViewToken();
+                throw CairoException.nonCritical().put("unexpected txn numbers, base table may have been renamed [view=").put(viewToken.getTableName())
+                        .put(", fromBaseTxn=").put(fromBaseTxn)
+                        .put(", toBaseTxn=").put(toBaseTxn)
+                        .put(']');
+            }
+            if (viewState.getViewDefinition().getPeriodLength() == 0 && fromBaseTxn > -1 && fromBaseTxn == toBaseTxn) {
+                // Non-period mat view which is already up-to-date.
+                return false;
+            }
+
             // Operate SQL on a fixed reader that has known max transaction visible. The reader
             // is used to initialize base table readers returned from the refreshExecutionContext.getReader()
             // call, so that all of them are at the same txn.
