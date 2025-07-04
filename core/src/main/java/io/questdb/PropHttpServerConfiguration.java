@@ -30,7 +30,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
-import io.questdb.std.datetime.nanotime.NanosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 
@@ -206,7 +206,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     }
 
     @Override
-    public NanosecondClock getNanosecondClock() {
+    public Clock getNanosecondClock() {
         return httpFrozenClock ? StationaryNanosClock.INSTANCE : NanosecondClockImpl.INSTANCE;
     }
 

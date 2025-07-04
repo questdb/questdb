@@ -25,17 +25,20 @@
 package io.questdb.cairo;
 
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.constants.IntervalConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosFormatFactory;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -124,7 +127,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
     private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(FLOOR_MM, MONTH_FORMAT);
     private static final DateFormat PARTITION_WEEK_FORMAT = new IsoWeekPartitionFormat();
     private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(FLOOR_YYYY, YEAR_FORMAT);
-    private MicrosecondClock clock = MicrosecondClockImpl.INSTANCE;
+    private Clock clock = MicrosecondClockImpl.INSTANCE;
 
     public static CairoException expectedPartitionDirNameFormatCairoException(CharSequence partitionName, int lo, int hi, int partitionBy) {
         final CairoException ee = CairoException.critical(0).put('\'');
@@ -270,6 +273,16 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public Interval fixInterval(Interval interval, int intervalType) {
+        if (intervalType == ColumnType.INTERVAL_TIMESTAMP_NANO) {
+            long lo = interval.getLo() / 1000L;
+            long hi = interval.getHi() / 1000L;
+            interval.of(lo, hi);
+        }
+        return interval;
+    }
+
+    @Override
     public long from(long value, ChronoUnit unit) {
         switch (unit) {
             case NANOS:
@@ -356,6 +369,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
     @Override
     public int getColumnType() {
         return ColumnType.TIMESTAMP_MICRO;
+    }
+
+    @Override
+    public IntervalConstant getIntervalConstantNull() {
+        return IntervalConstant.TIMESTAMP_MICRO_NULL;
     }
 
     @Override
@@ -464,6 +482,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
             default:
                 return null;
         }
+    }
+
+    @Override
+    public TimestampConstant getTimestampConstantNull() {
+        return TimestampConstant.TIMESTAMP_MICRO_NULL;
     }
 
     @Override
@@ -585,6 +608,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
             return CommonUtils::nanosToMicros;
         }
         return null;
+    }
+
+    @Override
+    public TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException {
+        return Timestamps.getTimezoneRules(locale, timezone);
     }
 
     @Override
@@ -1015,7 +1043,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @TestOnly
-    public void setTicker(MicrosecondClock clock) {
+    public void setTicker(Clock clock) {
         this.clock = clock;
     }
 
@@ -1032,6 +1060,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
     @Override
     public String toString(long timestamp) {
         return Timestamps.toString(timestamp);
+    }
+
+    @Override
+    public long toUTC(long localTimestamp, DateLocale locale, CharSequence timezone) throws NumericException {
+        return Timestamps.toUTC(localTimestamp, locale, timezone);
     }
 
     @Override

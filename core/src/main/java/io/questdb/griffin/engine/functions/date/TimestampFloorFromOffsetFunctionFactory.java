@@ -81,25 +81,18 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return newInstance(position, args, argPositions, configuration, sqlExecutionContext, ColumnType.TIMESTAMP_MICRO);
-    }
-
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext,
-            int timestampType
-    ) throws SqlException {
         final CharSequence unitStr = args.getQuick(0).getStrA(null);
         final int stride = CommonUtils.getStrideMultiple(unitStr);
         final char unit = CommonUtils.getStrideUnit(unitStr, argPositions.getQuick(0));
         final int unitPos = argPositions.getQuick(0);
         final Function timestampFunc = args.getQuick(1);
+        int timestampType = ColumnType.getTimestampType(timestampFunc.getType(), configuration);
+        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         long from = args.getQuick(2).getTimestamp(null);
         if (from == Numbers.LONG_NULL) {
             from = 0;
+        } else {
+            from = timestampDriver.from(from, args.getQuick(2).getType());
         }
         final Function offsetFunc = args.getQuick(3);
         final int offsetPos = argPositions.getQuick(3);
@@ -108,7 +101,6 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
         validateUnit(unit, unitPos);
         String offsetStr = null;
         long offset = 0;
-        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         if (offsetFunc.isConstant()) {
             final CharSequence o = offsetFunc.getStrA(null);
             if (o != null) {

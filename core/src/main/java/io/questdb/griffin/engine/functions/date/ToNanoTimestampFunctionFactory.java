@@ -22,8 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.datetime.nanotime;
+package io.questdb.griffin.engine.functions.date;
 
-public interface NanosecondClock {
-    long getTicks();
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+
+public class ToNanoTimestampFunctionFactory implements FunctionFactory {
+    private static final String NAME = "to_timestamp_ns";
+
+    @Override
+    public String getSignature() {
+        return "to_timestamp_ns(S)";
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        final Function arg = args.getQuick(0);
+        return new ToTimestampFunctionFactory.ToTimestampFunction(arg, ColumnType.TIMESTAMP_NANO, NAME);
+    }
 }

@@ -34,7 +34,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -54,14 +53,15 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
+        int timestampType = ColumnType.getTimestampType(argPositions.getQuick(0), configuration);
         if (args.getQuick(0).isConstant()) {
             final long start = args.getQuick(0).getTimestamp(null);
             if (start == Numbers.LONG_NULL) {
-                return TimestampConstant.TIMESTAMP_MICRO_NULL;
+                return ColumnType.getTimestampDriver(timestampType).getTimestampConstantNull();
             }
-            return new TimestampSequenceFunction(start, args.getQuick(1), ColumnType.TIMESTAMP_MICRO);
+            return new TimestampSequenceFunction(start, args.getQuick(1), timestampType);
         } else {
-            return new TimestampSequenceVariableFunction(args.getQuick(0), args.getQuick(1), ColumnType.TIMESTAMP_MICRO);
+            return new TimestampSequenceVariableFunction(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampType(args.getQuick(0).getType(), configuration));
         }
     }
 

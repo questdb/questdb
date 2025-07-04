@@ -22,29 +22,38 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.groupby;
+package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class LastTimestampGroupByFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "last(N)";
-    }
+public class SysNanotimestampFunctionFactory implements FunctionFactory {
+    private static final String SIGNATURE = "systimestamp_ns()";
 
     @Override
-    public boolean isGroupBy() {
-        return true;
+    public String getSignature() {
+        return SIGNATURE;
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LastTimestampGroupByFunction(args.getQuick(0), ColumnType.getTimestampType(args.getQuick(0).getType(), configuration));
+        return new Func(sqlExecutionContext, ColumnType.TIMESTAMP_NANO);
+    }
+
+    static class Func extends SystimestampFunctionFactory.Func {
+        public Func(SqlExecutionContext context, int columnType) {
+            super(context, columnType);
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return context.getNanosecondTimestamp();
+        }
     }
 }

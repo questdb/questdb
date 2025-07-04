@@ -710,7 +710,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     public void setTimestampBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         ensureValueLength(index, Long.BYTES, valueLen);
-        bindVariableService.setTimestamp(index, getLongUnsafe(address) + Numbers.JULIAN_EPOCH_OFFSET_USEC);
+        bindVariableService.setTimestampWithType(index, ColumnType.TIMESTAMP_MICRO, getLongUnsafe(address) + Numbers.JULIAN_EPOCH_OFFSET_USEC);
     }
 
     private static void bindParameterFormats(long lo, long msgLimit, short parameterFormatCount, IntList bindVariableTypes) throws BadProtocolException {

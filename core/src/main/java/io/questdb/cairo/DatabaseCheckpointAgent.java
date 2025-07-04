@@ -57,7 +57,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
@@ -85,7 +85,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final ReentrantLock lock = new ReentrantLock();
     private final MessageBus messageBus;
     private final WalWriterMetadata metadata; // protected with #lock
-    private final MicrosecondClock microClock;
+    private final Clock microClock;
     private final StringSink nameSink = new StringSink(); // protected with #lock
     private final Path path = new Path(); // protected with #lock
     private final LongList scoreboardTxns = new LongList();

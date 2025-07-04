@@ -48,12 +48,12 @@ public class CastCharToTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CastCharToTimestampFunctionFactory.Func(args.getQuick(0));
+        return new CastCharToTimestampFunctionFactory.Func(args.getQuick(0), args.getQuick(1).getType());
     }
 
     private static class Func extends AbstractCastToTimestampFunction {
-        public Func(Function arg) {
-            super(arg, ColumnType.TIMESTAMP_MICRO);
+        public Func(Function arg, int timestampType) {
+            super(arg, timestampType);
         }
 
         @Override

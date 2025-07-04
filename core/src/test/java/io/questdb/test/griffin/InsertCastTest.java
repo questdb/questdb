@@ -1747,7 +1747,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 SqlCompiler compiler = engine.getSqlCompiler();
                 InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
         ) {
-            bindVariableService.setTimestamp(0, 8); // compatible with everything
+            bindVariableService.setTimestamp(0, 8L); // compatible with everything
             insert.execute(sqlExecutionContext);
 
             bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
@@ -1771,7 +1771,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 SqlCompiler compiler = engine.getSqlCompiler();
                 InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).popInsertOperation()
         ) {
-            bindVariableService.setTimestamp(0, 8); // compatible with everything
+            bindVariableService.setTimestamp(0, 8L); // compatible with everything
             insert.execute(sqlExecutionContext);
 
             bindVariableService.setTimestamp(0, Numbers.LONG_NULL);

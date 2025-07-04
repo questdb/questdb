@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -41,12 +40,12 @@ public class CastBooleanToTimestampFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+        return new Func(args.getQuick(0), args.getQuick(1).getType());
     }
 
     private static class Func extends AbstractCastToTimestampFunction {
-        public Func(Function arg) {
-            super(arg, ColumnType.TIMESTAMP_MICRO);
+        public Func(Function arg, int timestampType) {
+            super(arg, timestampType);
         }
 
         @Override

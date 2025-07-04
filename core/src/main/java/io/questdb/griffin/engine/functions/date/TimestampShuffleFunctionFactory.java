@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -33,7 +34,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -53,16 +53,20 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        long start = args.getQuick(0).getTimestamp(null);
-        long end = args.getQuick(1).getTimestamp(null);
+        Function arg = args.getQuick(0);
+        Function arg2 = args.getQuick(1);
+        int timestampType = ColumnType.getTimestampType(arg.getType(), arg2.getType(), configuration);
+        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        long start = driver.from(arg.getTimestamp(null), arg.getType());
+        long end = driver.from(arg2.getTimestamp(null), arg2.getType());
         if (start == Numbers.LONG_NULL || end == Numbers.LONG_NULL) {
-            return TimestampConstant.TIMESTAMP_MICRO_NULL;
+            return driver.getTimestampConstantNull();
         }
 
         if (start <= end) {
-            return new TimestampShuffleFunction(start, end, ColumnType.TIMESTAMP_MICRO);
+            return new TimestampShuffleFunction(start, end, timestampType);
         } else {
-            return new TimestampShuffleFunction(end, start, ColumnType.TIMESTAMP_MICRO);
+            return new TimestampShuffleFunction(end, start, timestampType);
         }
     }
 

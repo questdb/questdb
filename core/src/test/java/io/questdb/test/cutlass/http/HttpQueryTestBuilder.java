@@ -56,8 +56,7 @@ import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.nanotime.NanosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
@@ -78,8 +77,8 @@ public class HttpQueryTestBuilder {
     private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private long maxWriterWaitTimeout = 30_000L;
-    private MicrosecondClock microsecondClock;
-    private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
+    private io.questdb.std.datetime.Clock microsecondClock;
+    private Clock nanosecondClock = NanosecondClockImpl.INSTANCE;
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private long queryTimeout = -1;
     private HttpServerConfigurationBuilder serverConfigBuilder;
@@ -139,7 +138,7 @@ public class HttpQueryTestBuilder {
                     }
 
                     @Override
-                    public @NotNull MicrosecondClock getMicrosecondClock() {
+                    public @NotNull io.questdb.std.datetime.Clock getMicrosecondClock() {
                         return microsecondClock != null ? microsecondClock : super.getMicrosecondClock();
                     }
 
@@ -342,12 +341,12 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
-    public HttpQueryTestBuilder withMicrosecondClock(MicrosecondClock clock) {
+    public HttpQueryTestBuilder withMicrosecondClock(io.questdb.std.datetime.Clock clock) {
         this.microsecondClock = clock;
         return this;
     }
 
-    public HttpQueryTestBuilder withNanosClock(NanosecondClock nanosecondClock) {
+    public HttpQueryTestBuilder withNanosClock(Clock nanosecondClock) {
         this.nanosecondClock = nanosecondClock;
         return this;
     }

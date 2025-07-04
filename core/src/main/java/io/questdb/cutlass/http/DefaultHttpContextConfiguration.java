@@ -31,7 +31,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
-import io.questdb.std.datetime.nanotime.NanosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 
 public class DefaultHttpContextConfiguration implements HttpContextConfiguration {
@@ -113,7 +113,7 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
-    public NanosecondClock getNanosecondClock() {
+    public Clock getNanosecondClock() {
         return NanosecondClockImpl.INSTANCE;
     }
 

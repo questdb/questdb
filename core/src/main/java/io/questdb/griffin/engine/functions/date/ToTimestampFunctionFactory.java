@@ -38,6 +38,8 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class ToTimestampFunctionFactory implements FunctionFactory {
+    private static final String NAME = "to_timestamp";
+
     @Override
     public String getSignature() {
         return "to_timestamp(S)";
@@ -46,15 +48,17 @@ public class ToTimestampFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
-        return new ToTimestampFunction(arg, ColumnType.TIMESTAMP_MICRO);
+        return new ToTimestampFunction(arg, ColumnType.TIMESTAMP_MICRO, NAME);
     }
 
     public static final class ToTimestampFunction extends TimestampFunction implements UnaryFunction {
         private final Function arg;
+        private final String name;
 
-        public ToTimestampFunction(Function arg, int timestampType) {
+        public ToTimestampFunction(Function arg, int timestampType, String name) {
             super(timestampType);
             this.arg = arg;
+            this.name = name;
         }
 
         @Override
@@ -64,7 +68,7 @@ public class ToTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return "to_timestamp";
+            return name;
         }
 
         @Override

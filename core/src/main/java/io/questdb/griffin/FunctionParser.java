@@ -1031,8 +1031,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.SYMBOL:
                 if (toType == ColumnType.UUID) {
                     return new CastStrToUuidFunctionFactory.Func(function);
-                } else if (toType == ColumnType.TIMESTAMP) {
-                    return new CastStrToTimestampFunctionFactory.Func(function);
+                } else if (ColumnType.isTimestamp(toType)) {
+                    return new CastStrToTimestampFunctionFactory.Func(function, toType);
                 } else if (ColumnType.isArray(toType)) {
                     assert ColumnType.decodeArrayElementType(toType) == ColumnType.DOUBLE;
                     return new CastStrToDoubleArrayFunctionFactory.Func(function, toType);
@@ -1044,8 +1044,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (toType == ColumnType.UUID) {
                     return new CastVarcharToUuidFunctionFactory.Func(function);
                 }
-                if (toType == ColumnType.TIMESTAMP) {
-                    return new CastVarcharToTimestampFunctionFactory.Func(function);
+                if (ColumnType.isTimestamp(toType)) {
+                    return new CastVarcharToTimestampFunctionFactory.Func(function, toType);
                 }
                 if (ColumnType.isGeoHash(toType)) {
                     return CastVarcharToGeoHashFunctionFactory.newInstance(position, toType, function);

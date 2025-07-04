@@ -27,53 +27,41 @@ package io.questdb.griffin.engine.functions.date;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.DateLocale;
 
-public class SystimestampFunctionFactory implements FunctionFactory {
-    private static final String SIGNATURE = "systimestamp()";
+public final class VarcharToNanoTimestampVCFunctionFactory extends ToTimestampVCFunctionFactory {
+    private final static String NAME = "to_timestamp_ns";
 
     @Override
     public String getSignature() {
-        return SIGNATURE;
+        return "to_timestamp_ns(Øs)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(sqlExecutionContext, ColumnType.TIMESTAMP_MICRO);
-    }
-
-    static class Func extends TimestampFunction implements Function {
-        protected final SqlExecutionContext context;
-
-        public Func(SqlExecutionContext context, int columnType) {
-            super(columnType);
-            this.context = context;
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final Function arg = args.getQuick(0);
+        final CharSequence pattern = args.getQuick(1).getStrA(null);
+        if (pattern == null) {
+            throw SqlException.$(argPositions.getQuick(1), "pattern is required");
         }
-
-        @Override
-        public long getTimestamp(Record rec) {
-            return context.getMicrosecondTimestamp();
-        }
-
-        @Override
-        public boolean isNonDeterministic() {
-            return true;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(SIGNATURE);
+        DateLocale defaultDateLocale = configuration.getDefaultDateLocale();
+        if (arg.isConstant()) {
+            return evaluateConstant(arg, pattern, defaultDateLocale, ColumnType.TIMESTAMP_NANO);
+        } else {
+            if ("en".equals(defaultDateLocale.getName()) || (defaultDateLocale.getName() != null && defaultDateLocale.getName().startsWith("en-"))) {
+                return new VarcharToTimestampVCFunctionFactory.ToAsciiTimestampFunc(arg, pattern, defaultDateLocale, ColumnType.TIMESTAMP_NANO, NAME);
+            }
+            return new Func(arg, pattern, defaultDateLocale, ColumnType.TIMESTAMP_NANO, NAME);
         }
     }
 }

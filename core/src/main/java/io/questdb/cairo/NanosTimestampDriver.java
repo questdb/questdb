@@ -25,19 +25,22 @@
 package io.questdb.cairo;
 
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.constants.IntervalConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.datetime.nanotime.NanosFormatFactory;
 import io.questdb.std.datetime.nanotime.NanosFormatUtils;
-import io.questdb.std.datetime.nanotime.NanosecondClock;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -124,7 +127,7 @@ public class NanosTimestampDriver implements TimestampDriver {
     private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(FLOOR_MM, MONTH_FORMAT);
     private static final DateFormat PARTITION_WEEK_FORMAT = new IsoWeekPartitionFormat();
     private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(FLOOR_YYYY, YEAR_FORMAT);
-    private NanosecondClock clock = NanosecondClockImpl.INSTANCE;
+    private Clock clock = NanosecondClockImpl.INSTANCE;
 
     public static CairoException expectedPartitionDirNameFormatCairoException(CharSequence partitionName, int lo, int hi, int partitionBy) {
         final CairoException ee = CairoException.critical(0).put('\'');
@@ -269,6 +272,16 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public Interval fixInterval(Interval interval, int intervalType) {
+        if (intervalType == ColumnType.INTERVAL_TIMESTAMP_MICRO) {
+            long lo = interval.getLo() * Nanos.MICRO_NANOS;
+            long hi = interval.getHi() * Nanos.MICRO_NANOS;
+            interval.of(lo, hi);
+        }
+        return interval;
+    }
+
+    @Override
     public long from(long value, ChronoUnit unit) {
         switch (unit) {
             case NANOS:
@@ -358,6 +371,11 @@ public class NanosTimestampDriver implements TimestampDriver {
     @Override
     public int getColumnType() {
         return ColumnType.TIMESTAMP_NANO;
+    }
+
+    @Override
+    public IntervalConstant getIntervalConstantNull() {
+        return IntervalConstant.TIMESTAMP_NANO_NULL;
     }
 
     @Override
@@ -466,6 +484,11 @@ public class NanosTimestampDriver implements TimestampDriver {
             default:
                 return null;
         }
+    }
+
+    @Override
+    public TimestampConstant getTimestampConstantNull() {
+        return TimestampConstant.TIMESTAMP_NANO_NULL;
     }
 
     @Override
@@ -587,6 +610,11 @@ public class NanosTimestampDriver implements TimestampDriver {
             return CommonUtils::microsToNanos;
         }
         return null;
+    }
+
+    @Override
+    public TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException {
+        return Nanos.getTimezoneRules(locale, timezone);
     }
 
     @Override
@@ -852,7 +880,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                                                 + hour * Nanos.HOUR_NANOS
                                                 + min * Nanos.MINUTE_NANOS
                                                 + sec * Nanos.SECOND_NANOS
-                                                + 999999,
+                                                + 999999999,
                                         operation,
                                         out);
                             }
@@ -870,7 +898,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                                             + hour * Nanos.HOUR_NANOS
                                             + min * Nanos.MINUTE_NANOS
                                             + 59 * Nanos.SECOND_NANOS
-                                            + 999999,
+                                            + 999999999,
                                     operation,
                                     out
                             );
@@ -888,7 +916,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                                         + hour * Nanos.HOUR_NANOS
                                         + 59 * Nanos.MINUTE_NANOS
                                         + 59 * Nanos.SECOND_NANOS
-                                        + 999999,
+                                        + 999999999,
                                 operation,
                                 out
                         );
@@ -905,7 +933,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                                     + 23 * Nanos.HOUR_NANOS
                                     + 59 * Nanos.MINUTE_NANOS
                                     + 59 * Nanos.SECOND_NANOS
-                                    + 999999,
+                                    + 999999999,
                             operation,
                             out
                     );
@@ -920,7 +948,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                                 + 23 * Nanos.HOUR_NANOS
                                 + 59 * Nanos.MINUTE_NANOS
                                 + 59 * Nanos.SECOND_NANOS
-                                + 999999,
+                                + 999999999,
                         operation,
                         out
                 );
@@ -935,7 +963,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                             + 23 * Nanos.HOUR_NANOS
                             + 59 * Nanos.MINUTE_NANOS
                             + 59 * Nanos.SECOND_NANOS
-                            + 999999,
+                            + 999999999,
                     operation,
                     out
             );
@@ -1001,7 +1029,7 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @TestOnly
-    public void setTicker(NanosecondClock clock) {
+    public void setTicker(Clock clock) {
         this.clock = clock;
     }
 
@@ -1018,6 +1046,11 @@ public class NanosTimestampDriver implements TimestampDriver {
     @Override
     public String toString(long timestamp) {
         return Nanos.toString(timestamp);
+    }
+
+    @Override
+    public long toUTC(long localTimestamp, DateLocale locale, CharSequence timezone) throws NumericException {
+        return Nanos.toUTC(localTimestamp, locale, timezone);
     }
 
     @Override

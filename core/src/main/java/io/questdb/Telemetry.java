@@ -47,7 +47,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -65,7 +65,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
 
     private final boolean enabled;
     private final int maxFileNameLen;
-    private MicrosecondClock clock;
+    private Clock clock;
     private long dbSizeEstimateStartTimestamp;
     private long dbSizeEstimateTimeout; //micros
     private MPSequence telemetryPubSeq;

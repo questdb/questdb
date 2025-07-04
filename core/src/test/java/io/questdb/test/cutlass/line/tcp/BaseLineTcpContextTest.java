@@ -59,7 +59,7 @@ import io.questdb.std.Pool;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8StringObjHashMap;
 import io.questdb.std.WeakClosableObjectPool;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -230,7 +230,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public MicrosecondClock getMicrosecondClock() {
+            public Clock getMicrosecondClock() {
                 return new MicrosecondClockImplInner();
             }
 

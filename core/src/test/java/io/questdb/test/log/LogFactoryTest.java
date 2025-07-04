@@ -24,6 +24,7 @@
 
 package io.questdb.test.log;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.log.GuaranteedLogger;
@@ -55,7 +56,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.GcUtf8String;
@@ -573,7 +574,7 @@ public class LogFactoryTest {
         String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
         String expectedLogFile = base + "mylog-2015-05-03.log";
 
-        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1, MicrosTimestampDriver.floor("2019-12-31"));
+        final Clock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1, MicrosTimestampDriver.floor("2019-12-31"));
 
         try (Path path = new Path()) {
             // create rogue file that would be in a way of logger rolling existing files
@@ -661,7 +662,7 @@ public class LogFactoryTest {
         String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
         String expectedLogFile = base + "mylog-2015-05-03.log";
         try (LogFactory factory = new LogFactory()) {
-            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T11:35:00.000Z"), 1, MicrosTimestampDriver.floor("2015-05-04"));
+            final Clock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T11:35:00.000Z"), 1, MicrosTimestampDriver.floor("2015-05-04"));
 
             factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
                 LogRollingFileWriter w = new LogRollingFileWriter(TestFilesFacadeImpl.INSTANCE, clock, ring, seq, level);
@@ -690,7 +691,7 @@ public class LogFactoryTest {
 
             String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
 
-            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1, MicrosTimestampDriver.floor("2015-05-04"));
+            final Clock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1, MicrosTimestampDriver.floor("2015-05-04"));
 
             try (Path path = new Path()) {
 
@@ -970,7 +971,7 @@ public class LogFactoryTest {
     public void testSpaceInRollEvery() throws Exception {
         final String logFile = temp.getRoot().getAbsolutePath() + Files.SEPARATOR + "mylog-${date:yyyy-MM-dd}.log";
 
-        final MicrosecondClock clock = new TestMicrosecondClock(
+        final Clock clock = new TestMicrosecondClock(
                 TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"),
                 1,
                 MicrosTimestampDriver.floor("2019-12-31")
@@ -1105,7 +1106,7 @@ public class LogFactoryTest {
         String extraFilePrefix = "mylog-test";
         long speed = Timestamps.HOUR_MICROS;
 
-        final MicrosecondClock clock = new TestMicrosecondClock(
+        final Clock clock = new TestMicrosecondClock(
                 TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"),
                 speed,
                 MicrosTimestampDriver.floor("2019-12-31")
@@ -1244,7 +1245,7 @@ public class LogFactoryTest {
             String rollEvery,
             String mustContain
     ) throws NumericException {
-        final MicrosecondClock clock = new TestMicrosecondClock(
+        final Clock clock = new TestMicrosecondClock(
                 TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"),
                 speed,
                 MicrosTimestampDriver.floor("2019-12-31")
@@ -1308,7 +1309,7 @@ public class LogFactoryTest {
         Assert.assertEquals(expectedMemUsage, Unsafe.getMemUsed());
     }
 
-    private static class TestMicrosecondClock implements MicrosecondClock {
+    private static class TestMicrosecondClock implements Clock {
         private final long limit;
         private final long speed;
         private final long start;
@@ -1319,6 +1320,11 @@ public class LogFactoryTest {
             this.speed = speed;
             this.limit = limit - 1;
             this.k = 0;
+        }
+
+        @Override
+        public int getClockTimestampType() {
+            return ColumnType.TIMESTAMP_MICRO;
         }
 
         @Override

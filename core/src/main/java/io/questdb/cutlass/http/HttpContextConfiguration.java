@@ -28,7 +28,7 @@ import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.datetime.nanotime.NanosecondClock;
+import io.questdb.std.datetime.Clock;
 
 public interface HttpContextConfiguration {
 
@@ -62,7 +62,7 @@ public interface HttpContextConfiguration {
 
     long getMultipartIdleSpinCount();
 
-    NanosecondClock getNanosecondClock();
+    Clock getNanosecondClock();
 
     NetworkFacade getNetworkFacade();
 

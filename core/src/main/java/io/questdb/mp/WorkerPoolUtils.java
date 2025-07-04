@@ -40,8 +40,7 @@ import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.nanotime.NanosecondClock;
+import io.questdb.std.datetime.Clock;
 
 public class WorkerPoolUtils {
 
@@ -61,8 +60,8 @@ public class WorkerPoolUtils {
         }
 
         if (configuration.isSqlParallelFilterEnabled() || configuration.isSqlParallelGroupByEnabled()) {
-            final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
-            final NanosecondClock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();
+            final io.questdb.std.datetime.Clock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
+            final Clock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();
             for (int i = 0; i < workerCount; i++) {
                 // create job per worker to allow each worker to have own shard walk sequence
                 final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(

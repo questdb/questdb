@@ -45,36 +45,37 @@ public class DateTruncFunctionFactory implements FunctionFactory {
         final Function kindFunction = args.getQuick(0);
         CharSequence kind = kindFunction.getStrA(null);
         Function innerFunction = args.getQuick(1);
+        int timestampType = ColumnType.getTimestampType(innerFunction.getType(), configuration);
         if (kind == null) {
             throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
         } else if (isTimeUnit(kind, "microsecond")) {
             // timestamps are in microseconds internally, there is nothing to truncate
             return innerFunction;
         } else if (isTimeUnit(kind, "millisecond")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "millisecond", ColumnType.TIMESTAMP_MICRO);
+            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "millisecond", timestampType);
 
         } else if (isTimeUnit(kind, "second")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "second", ColumnType.TIMESTAMP_MICRO);
+            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "second", timestampType);
         } else if (isTimeUnit(kind, "minute")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "minute", ColumnType.TIMESTAMP_MICRO);
+            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "minute", timestampType);
         } else if (isTimeUnit(kind, "hour")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "hour", ColumnType.TIMESTAMP_MICRO);
+            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "hour", timestampType);
         } else if (isTimeUnit(kind, "day")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "day", ColumnType.TIMESTAMP_MICRO);
+            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "day", timestampType);
         } else if (isTimeUnit(kind, "week")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "week", ColumnType.TIMESTAMP_MICRO);
+            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "week", timestampType);
         } else if (isTimeUnit(kind, "month")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "month", ColumnType.TIMESTAMP_MICRO);
+            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "month", timestampType);
         } else if (isTimeUnit(kind, "quarter")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "quarter", ColumnType.TIMESTAMP_MICRO);
+            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "quarter", timestampType);
         } else if (isTimeUnit(kind, "year")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "year", ColumnType.TIMESTAMP_MICRO);
+            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "year", timestampType);
         } else if (isTimeUnit(kind, "decade")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "decade", ColumnType.TIMESTAMP_MICRO);
+            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "decade", timestampType);
         } else if (Chars.equals(kind, "century") || Chars.equals(kind, "centuries")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "century", ColumnType.TIMESTAMP_MICRO);
+            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "century", timestampType);
         } else if (isTimeUnit(kind, "millennium")) {
-            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "millennium", ColumnType.TIMESTAMP_MICRO);
+            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "millennium", timestampType);
         } else {
             throw SqlException.$(argPositions.getQuick(0), "invalid unit '").put(kind).put('\'');
         }

@@ -52,7 +52,8 @@ public class IntervalStartFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0), ColumnType.TIMESTAMP_MICRO);
+        Function arg = args.getQuick(0);
+        return new Func(arg, ColumnType.getTimestampTypeByIntervalType(arg.getType()));
     }
 
     private static class Func extends TimestampFunction implements UnaryFunction {

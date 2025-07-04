@@ -92,6 +92,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         Function strideFunc = args.getQuick(1);
         Function timestampFunc = args.getQuick(2);
         int stride;
+        int timestampType = ColumnType.getTimestampType(timestampFunc.getType(), configuration);
 
         if (periodFunc.isConstant()) {
             char period = periodFunc.getChar(null);
@@ -102,14 +103,14 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
 
             if (strideFunc.isConstant()) {
                 if ((stride = strideFunc.getInt(null)) != Numbers.INT_NULL) {
-                    return new TimestampAddConstConstVar(period, periodAddFunc, stride, timestampFunc, ColumnType.TIMESTAMP_MICRO);
+                    return new TimestampAddConstConstVar(period, periodAddFunc, stride, timestampFunc, timestampType);
                 } else {
                     throw SqlException.$(argPositions.getQuick(1), "`null` is not a valid stride");
                 }
             }
-            return new TimestampAddConstVarVar(period, periodAddFunc, strideFunc, timestampFunc, ColumnType.TIMESTAMP_MICRO);
+            return new TimestampAddConstVarVar(period, periodAddFunc, strideFunc, timestampFunc, timestampType);
         }
-        return new TimestampAddFunc(periodFunc, strideFunc, argPositions.getQuick(1), timestampFunc, ColumnType.TIMESTAMP_MICRO);
+        return new TimestampAddFunc(periodFunc, strideFunc, argPositions.getQuick(1), timestampFunc, timestampType);
     }
 
     @FunctionalInterface

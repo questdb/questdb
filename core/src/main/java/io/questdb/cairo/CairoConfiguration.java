@@ -40,14 +40,13 @@ import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Rnd;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.RostiAllocFacadeImpl;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
-import io.questdb.std.datetime.nanotime.NanosecondClock;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -191,6 +190,10 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
+    default int getDefaultTimestampType() {
+        return ColumnType.TIMESTAMP_MICRO;
+    }
+
     int getDetachedMkDirMode();
 
     default Map<String, String> getEnv() {
@@ -296,7 +299,7 @@ public interface CairoConfiguration {
     Metrics getMetrics();
 
     @NotNull
-    default MicrosecondClock getMicrosecondClock() {
+    default Clock getMicrosecondClock() {
         return MicrosecondClockImpl.INSTANCE;
     }
 
@@ -310,7 +313,7 @@ public interface CairoConfiguration {
     int getMkDirMode();
 
     @NotNull
-    default NanosecondClock getNanosecondClock() {
+    default Clock getNanosecondClock() {
         return NanosecondClockImpl.INSTANCE;
     }
 

@@ -32,7 +32,7 @@ import io.questdb.network.Net;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
@@ -59,11 +59,11 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     protected final RingQueue<LogRecordUtf8Sink> infoRing;
     protected final Sequence infoSeq;
     protected final ThreadLocal<CursorHolder> tl = ThreadLocal.withInitial(CursorHolder::new);
-    private final MicrosecondClock clock;
+    private final Clock clock;
     private final CharSequence name;
 
     AbstractLogRecord(
-            MicrosecondClock clock,
+            Clock clock,
             CharSequence name,
             RingQueue<LogRecordUtf8Sink> debugRing,
             Sequence debugSeq,

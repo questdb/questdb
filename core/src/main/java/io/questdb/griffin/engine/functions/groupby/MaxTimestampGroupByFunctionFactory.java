@@ -45,6 +45,6 @@ public class MaxTimestampGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new MaxTimestampGroupByFunction(args.getQuick(0), ColumnType.TIMESTAMP_MICRO);
+        return new MaxTimestampGroupByFunction(args.getQuick(0), ColumnType.getTimestampType(args.getQuick(0).getType(), configuration));
     }
 }

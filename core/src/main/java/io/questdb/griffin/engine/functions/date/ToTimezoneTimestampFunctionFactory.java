@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -65,13 +66,14 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         final Function timestampFunc = args.getQuick(0);
         final Function timezoneFunc = args.getQuick(1);
         final int timezonePos = argPositions.getQuick(1);
+        int timestampType = ColumnType.getTimestampType(timestampFunc.getType(), configuration);
 
         if (timezoneFunc.isConstant()) {
-            return toTimezoneConstFunction(timestampFunc, timezoneFunc, timezonePos);
+            return toTimezoneConstFunction(timestampFunc, timezoneFunc, timezonePos, timestampType);
         } else if (timezoneFunc.isRuntimeConstant()) {
-            return new RuntimeConstFunc(timestampFunc, timezoneFunc, timezonePos, ColumnType.TIMESTAMP_MICRO);
+            return new RuntimeConstFunc(timestampFunc, timezoneFunc, timezonePos, timestampType);
         } else {
-            return new Func(timestampFunc, timezoneFunc, ColumnType.TIMESTAMP_MICRO);
+            return new Func(timestampFunc, timezoneFunc, timestampType);
         }
     }
 
@@ -79,10 +81,12 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
     private static TimestampFunction toTimezoneConstFunction(
             Function timestampFunc,
             Function timezoneFunc,
-            int timezonePos
+            int timezonePos,
+            int timestampType
     ) throws SqlException {
         final CharSequence tz = timezoneFunc.getStrA(null);
         if (tz != null) {
+            TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
             final int hi = tz.length();
             final long l = Dates.parseOffset(tz, 0, hi);
             if (l == Long.MIN_VALUE) {
@@ -90,9 +94,9 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
                     return new ConstRulesFunc(
                             timestampFunc,
                             DateLocaleFactory.EN_LOCALE.getZoneRules(
-                                    Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                                    Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), timestampDriver.getTZRuleResolution()
                             ),
-                            ColumnType.TIMESTAMP_MICRO
+                            timestampType
                     );
                 } catch (NumericException e) {
                     Misc.free(timestampFunc);
@@ -101,8 +105,8 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
             } else {
                 return new OffsetTimestampFunction(
                         timestampFunc,
-                        Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS,
-                        ColumnType.TIMESTAMP_MICRO
+                        timestampDriver.fromMinutes(Numbers.decodeLowInt(l)),
+                        timestampType
                 );
             }
         }

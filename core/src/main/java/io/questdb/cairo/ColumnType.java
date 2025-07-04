@@ -247,6 +247,18 @@ public final class ColumnType {
         return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
     }
 
+    public static int getIntervalType(int timestampType) {
+        assert isTimestamp(timestampType);
+        switch (timestampType) {
+            case TIMESTAMP_MICRO:
+                return INTERVAL_TIMESTAMP_MICRO;
+            case TIMESTAMP_NANO:
+                return INTERVAL_TIMESTAMP_NANO;
+            default:
+                return UNDEFINED;
+        }
+    }
+
     public static TimestampDriver getTimestampDriver(int timestampType) {
         final short type = tagOf(timestampType);
         // todo null and UNDEFINED use MicrosTimestamp
@@ -271,6 +283,35 @@ public final class ColumnType {
             return MicrosTimestampDriver.INSTANCE;
         } else {
             return NanosTimestampDriver.INSTANCE;
+        }
+    }
+
+    public static int getTimestampType(int left, int right, CairoConfiguration configuration) {
+        if (left == TIMESTAMP_NANO || right == TIMESTAMP_NANO) {
+            return TIMESTAMP_NANO;
+        } else if (left == TIMESTAMP_MICRO || right == TIMESTAMP_MICRO) {
+            return TIMESTAMP_MICRO;
+        }
+        return configuration.getDefaultTimestampType();
+    }
+
+    public static int getTimestampType(int left, CairoConfiguration configuration) {
+        if (isTimestamp(left)) {
+            return left;
+        }
+        return configuration.getDefaultTimestampType();
+    }
+
+    public static int getTimestampTypeByIntervalType(int intervalType) {
+        assert isInterval(intervalType);
+        switch (intervalType) {
+            case INTERVAL_RAW:
+            case INTERVAL_TIMESTAMP_MICRO:
+                return TIMESTAMP_MICRO;
+            case INTERVAL_TIMESTAMP_NANO:
+                return TIMESTAMP_NANO;
+            default:
+                return ColumnType.UNDEFINED;
         }
     }
 

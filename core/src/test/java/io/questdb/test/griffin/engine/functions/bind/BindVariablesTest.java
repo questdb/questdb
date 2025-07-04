@@ -39,9 +39,23 @@ import io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqByteFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqLong256FunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqShortFunctionFactory;
-import io.questdb.griffin.engine.functions.math.*;
-import io.questdb.griffin.engine.functions.str.*;
-import io.questdb.std.*;
+import io.questdb.griffin.engine.functions.math.AddDoubleFunctionFactory;
+import io.questdb.griffin.engine.functions.math.AddFloatFunctionFactory;
+import io.questdb.griffin.engine.functions.math.AddIntFunctionFactory;
+import io.questdb.griffin.engine.functions.math.AddLongFunctionFactory;
+import io.questdb.griffin.engine.functions.math.SubIntFunctionFactory;
+import io.questdb.griffin.engine.functions.str.ConcatFunctionFactory;
+import io.questdb.griffin.engine.functions.str.LengthBinFunctionFactory;
+import io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory;
+import io.questdb.griffin.engine.functions.str.RightStrFunctionFactory;
+import io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory;
+import io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory;
+import io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
@@ -771,7 +785,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testTimestampIndexed() throws SqlException, NumericException {
-        bindVariableService.setTimestamp(1, 25);
+        bindVariableService.setTimestamp(1, 25L);
         bindVariableService.setTimestamp(0, TimestampFormatUtils.parseTimestamp("2015-04-10T10:00:00.000Z"));
 
         Function func = expr("to_str($1, 'yyyy-MM')")

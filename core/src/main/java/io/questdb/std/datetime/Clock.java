@@ -22,8 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.datetime.microtime;
+package io.questdb.std.datetime;
 
-public interface MicrosecondClock {
+public interface Clock {
+    int getClockTimestampType();
+
     long getTicks();
 }

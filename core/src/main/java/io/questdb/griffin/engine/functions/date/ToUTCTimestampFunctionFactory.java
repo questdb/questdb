@@ -42,7 +42,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
 
@@ -65,13 +64,13 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
         final Function timestampFunc = args.getQuick(0);
         final Function timezoneFunc = args.getQuick(1);
         final int timezonePos = argPositions.getQuick(1);
-
+        int timestampType = ColumnType.getTimestampType(timestampFunc.getType(), configuration);
         if (timezoneFunc.isConstant()) {
-            return toUTCConstFunction(timestampFunc, timezoneFunc, timezonePos, ColumnType.TIMESTAMP_MICRO);
+            return toUTCConstFunction(timestampFunc, timezoneFunc, timezonePos, timestampType);
         } else if (timezoneFunc.isRuntimeConstant()) {
-            return new RuntimeConstFunc(timestampFunc, timezoneFunc, timezonePos, ColumnType.TIMESTAMP_MICRO);
+            return new RuntimeConstFunc(timestampFunc, timezoneFunc, timezonePos, timestampType);
         } else {
-            return new Func(timestampFunc, timezoneFunc, ColumnType.TIMESTAMP_MICRO);
+            return new Func(timestampFunc, timezoneFunc, timestampType);
         }
     }
 
@@ -100,7 +99,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
             } else {
                 return new OffsetTimestampFunction(
                         timestampFunc,
-                        -Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS,
+                        ColumnType.getTimestampDriver(timestampType).fromMinutes(-Numbers.decodeLowInt(l)),
                         timestampType
                 );
             }
@@ -112,8 +111,8 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
         private final Function timestampFunc;
         private final TimeZoneRules tzRules;
 
-        public ConstRulesFunc(Function timestampFunc, CharSequence tz, int timestampTType) throws NumericException {
-            super(timestampTType);
+        public ConstRulesFunc(Function timestampFunc, CharSequence tz, int timestampType) throws NumericException {
+            super(timestampType);
             this.timestampFunc = timestampFunc;
             this.tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
                     Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, tz.length())), timestampDriver.getTZRuleResolution());
@@ -167,7 +166,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
             final long timestampValue = timestampFunc.getTimestamp(rec);
             try {
                 final CharSequence tz = timezoneFunc.getStrA(rec);
-                return tz != null ? Timestamps.toUTC(timestampValue, DateLocaleFactory.EN_LOCALE, tz) : timestampValue;
+                return tz != null ? timestampDriver.toUTC(timestampValue, DateLocaleFactory.EN_LOCALE, tz) : timestampValue;
             } catch (NumericException e) {
                 return timestampValue;
             }
@@ -234,7 +233,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
                     throw SqlException.$(timezonePos, "invalid timezone: ").put(tz);
                 }
             } else {
-                tzOffset = Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS;
+                tzOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
                 tzRules = null;
             }
         }

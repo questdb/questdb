@@ -26,12 +26,16 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.constants.IntervalConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -78,6 +82,8 @@ public interface TimestampDriver {
     long dayEnd(long start);
 
     long dayStart(long now, int shiftDays);
+
+    Interval fixInterval(Interval interval, int intervalType);
 
     long from(long value, ChronoUnit unit);
 
@@ -126,6 +132,8 @@ public interface TimestampDriver {
 
     int getColumnType();
 
+    IntervalConstant getIntervalConstantNull();
+
     PartitionAddMethod getPartitionAddMethod(int partitionBy);
 
     TimestampCeilMethod getPartitionCeilMethod(int partitionBy);
@@ -140,6 +148,8 @@ public interface TimestampDriver {
 
     TimestampCeilMethod getTimestampCeilMethod(char c);
 
+    TimestampConstant getTimestampConstantNull();
+
     TimestampDateFormatFactory getTimestampDateFormatFactory();
 
     TimestampFloorMethod getTimestampFloorMethod(String c);
@@ -151,6 +161,8 @@ public interface TimestampDriver {
     long getTimestampMultiplier(char unit);
 
     CommonUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType);
+
+    TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException;
 
     default long implicitCast(CharSequence value, int typeFrom) {
         assert typeFrom == ColumnType.STRING || typeFrom == ColumnType.SYMBOL;
@@ -230,6 +242,8 @@ public interface TimestampDriver {
     long toNanosScale();
 
     String toString(long timestamp);
+
+    long toUTC(long localTimestamp, DateLocale locale, CharSequence timezone) throws NumericException;
 
     void validateBounds(long timestamp);
 

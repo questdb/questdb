@@ -42,6 +42,8 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.Utf8Sequence;
 
 public final class VarcharToTimestampVCFunctionFactory extends ToTimestampVCFunctionFactory {
+    private final static String NAME = "to_timestamp";
+
     @Override
     public String getSignature() {
         return "to_timestamp(Øs)";
@@ -65,9 +67,9 @@ public final class VarcharToTimestampVCFunctionFactory extends ToTimestampVCFunc
             return evaluateConstant(arg, pattern, defaultDateLocale, ColumnType.TIMESTAMP_MICRO);
         } else {
             if ("en".equals(defaultDateLocale.getName()) || (defaultDateLocale.getName() != null && defaultDateLocale.getName().startsWith("en-"))) {
-                return new ToAsciiTimestampFunc(arg, pattern, defaultDateLocale, ColumnType.TIMESTAMP_MICRO);
+                return new ToAsciiTimestampFunc(arg, pattern, defaultDateLocale, ColumnType.TIMESTAMP_MICRO, NAME);
             }
-            return new Func(arg, pattern, defaultDateLocale, ColumnType.TIMESTAMP_MICRO);
+            return new Func(arg, pattern, defaultDateLocale, ColumnType.TIMESTAMP_MICRO, NAME);
         }
     }
 
@@ -75,13 +77,15 @@ public final class VarcharToTimestampVCFunctionFactory extends ToTimestampVCFunc
 
         private final Function arg;
         private final DateLocale locale;
+        private final String name;
         private final DateFormat timestampFormat;
 
-        public ToAsciiTimestampFunc(Function arg, CharSequence pattern, DateLocale locale, int timestampType) {
+        public ToAsciiTimestampFunc(Function arg, CharSequence pattern, DateLocale locale, int timestampType, String name) {
             super(timestampType);
             this.arg = arg;
             this.timestampFormat = timestampDriver.getTimestampDateFormatFactory().get(pattern);
             this.locale = locale;
+            this.name = name;
         }
 
         @Override
@@ -103,8 +107,7 @@ public final class VarcharToTimestampVCFunctionFactory extends ToTimestampVCFunc
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("to_timestamp(").val(arg).val(')');
+            sink.val(name).val("(").val(arg).val(')');
         }
     }
-
 }

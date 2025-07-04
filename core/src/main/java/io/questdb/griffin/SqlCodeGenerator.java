@@ -1648,7 +1648,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     case ColumnType.TIMESTAMP:
                         switch (fromTag) {
                             case ColumnType.DATE:
-                                castFunctions.add(new CastDateToTimestampFunctionFactory.CastDateToTimestampFunction(DateColumn.newInstance(i)));
+                                castFunctions.add(new CastDateToTimestampFunctionFactory.CastDateToTimestampFunction(DateColumn.newInstance(i), toType));
                                 break;
                             case ColumnType.TIMESTAMP:
                                 castFunctions.add(TimestampColumn.newInstance(i, fromType));

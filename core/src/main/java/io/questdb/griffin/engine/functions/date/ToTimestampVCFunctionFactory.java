@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -43,6 +44,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 
 public class ToTimestampVCFunctionFactory implements FunctionFactory {
+    private static final String NAME = "to_timestamp";
 
     @Override
     public String getSignature() {
@@ -65,34 +67,37 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
         if (arg.isConstant()) {
             return evaluateConstant(arg, pattern, configuration.getDefaultDateLocale(), ColumnType.TIMESTAMP_MICRO);
         } else {
-            return new Func(arg, pattern, configuration.getDefaultDateLocale(), ColumnType.TIMESTAMP_MICRO);
+            return new Func(arg, pattern, configuration.getDefaultDateLocale(), ColumnType.TIMESTAMP_MICRO, NAME);
         }
     }
 
-    protected TimestampConstant evaluateConstant(Function arg, CharSequence pattern, DateLocale locale, int timestampType) {
+    protected static TimestampConstant evaluateConstant(Function arg, CharSequence pattern, DateLocale locale, int timestampType) {
         CharSequence value = arg.getStrA(null);
+        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         try {
             if (value != null) {
-                DateFormat timestampFormat = ColumnType.getTimestampDriver(timestampType).getTimestampDateFormatFactory().get(pattern);
+                DateFormat timestampFormat = driver.getTimestampDateFormatFactory().get(pattern);
                 return new TimestampConstant(timestampFormat.parse(value, locale), timestampType);
             }
         } catch (NumericException ignore) {
         }
 
-        return timestampType == ColumnType.TIMESTAMP_MICRO ? TimestampConstant.TIMESTAMP_MICRO_NULL : TimestampConstant.TIMESTAMP_NANO_NULL;
+        return driver.getTimestampConstantNull();
     }
 
     protected static final class Func extends TimestampFunction implements UnaryFunction {
 
         private final Function arg;
         private final DateLocale locale;
+        private final String name;
         private final DateFormat timestampFormat;
 
-        public Func(Function arg, CharSequence pattern, DateLocale locale, int timestampType) {
+        public Func(Function arg, CharSequence pattern, DateLocale locale, int timestampType, String name) {
             super(timestampType);
             this.arg = arg;
             this.timestampFormat = timestampDriver.getTimestampDateFormatFactory().get(pattern);
             this.locale = locale;
+            this.name = name;
         }
 
         @Override
@@ -114,7 +119,7 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("to_timestamp(").val(arg).val(')');
+            sink.val(name).val("(").val(arg).val(')');
         }
     }
 }

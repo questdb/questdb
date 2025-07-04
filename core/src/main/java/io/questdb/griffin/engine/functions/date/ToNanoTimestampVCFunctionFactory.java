@@ -22,29 +22,44 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.groupby;
+package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class LastTimestampGroupByFunctionFactory implements FunctionFactory {
+import static io.questdb.griffin.engine.functions.date.ToTimestampVCFunctionFactory.evaluateConstant;
+
+public class ToNanoTimestampVCFunctionFactory implements FunctionFactory {
+    private static final String NAME = "to_timestamp_ns";
+
     @Override
     public String getSignature() {
-        return "last(N)";
+        return "to_timestamp_ns(Ss)";
     }
 
     @Override
-    public boolean isGroupBy() {
-        return true;
-    }
-
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LastTimestampGroupByFunction(args.getQuick(0), ColumnType.getTimestampType(args.getQuick(0).getType(), configuration));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final Function arg = args.getQuick(0);
+        final CharSequence pattern = args.getQuick(1).getStrA(null);
+        if (pattern == null) {
+            throw SqlException.$(argPositions.getQuick(1), "pattern is required");
+        }
+        if (arg.isConstant()) {
+            return evaluateConstant(arg, pattern, configuration.getDefaultDateLocale(), ColumnType.TIMESTAMP_NANO);
+        } else {
+            return new ToTimestampVCFunctionFactory.Func(arg, pattern, configuration.getDefaultDateLocale(), ColumnType.TIMESTAMP_NANO, NAME);
+        }
     }
 }

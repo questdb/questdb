@@ -29,7 +29,7 @@ import io.questdb.client.Sender;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 
@@ -42,7 +42,7 @@ public class Table2IlpCopier {
     public long copyTable(Table2Ilp.Table2IlpParams params) {
         LowerCaseCharSequenceHashSet symbols = createSymbolsSet(params);
 
-        MicrosecondClock microsecondClock = new MicrosecondClockImpl();
+        Clock microsecondClock = new MicrosecondClockImpl();
         long totalSentLines = 0;
         try (Connection connection = getConnection(params.getSourcePgConnectionString())) {
             connection.setAutoCommit(false);

@@ -47,7 +47,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 
@@ -67,7 +67,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private static final String WRITER_LOCK_REASON = "ilpUdp";
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
-    private final MicrosecondClock clock;
+    private final Clock clock;
     private final LongList columnIndexAndType = new LongList();
     private final LongList columnNameType = new LongList();
     private final LongList columnValues = new LongList();

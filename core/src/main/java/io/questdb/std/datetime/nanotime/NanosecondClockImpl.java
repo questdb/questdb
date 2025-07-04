@@ -24,8 +24,16 @@
 
 package io.questdb.std.datetime.nanotime;
 
-public class NanosecondClockImpl implements NanosecondClock {
-    public final static NanosecondClock INSTANCE = new NanosecondClockImpl();
+import io.questdb.cairo.ColumnType;
+import io.questdb.std.datetime.Clock;
+
+public class NanosecondClockImpl implements Clock {
+    public final static Clock INSTANCE = new NanosecondClockImpl();
+
+    @Override
+    public int getClockTimestampType() {
+        return ColumnType.TIMESTAMP_NANO;
+    }
 
     @Override
     public long getTicks() {

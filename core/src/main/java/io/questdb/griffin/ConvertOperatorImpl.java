@@ -46,7 +46,7 @@ import io.questdb.mp.Sequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnTask;
 import org.jetbrains.annotations.NotNull;
@@ -81,7 +81,7 @@ public class ConvertOperatorImpl implements Closeable {
     private final PurgingOperator purgingOperator;
     private final int rootLen;
     private final TableWriter tableWriter;
-    private final MicrosecondClock timer;
+    private final Clock timer;
     private CharSequence columnName;
     private long fixedFd;
     private int partitionUpdated;

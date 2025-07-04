@@ -696,31 +696,47 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setTimestamp(int index) throws SqlException {
-        setTimestamp(index, Numbers.LONG_NULL);
+        setTimestampWithType(index, ColumnType.TIMESTAMP_MICRO, Numbers.LONG_NULL);
     }
 
     @Override
     public void setTimestamp(int index, long value) throws SqlException {
+        setTimestampWithType(index, ColumnType.TIMESTAMP_MICRO, value);
+    }
+
+    @Override
+    public void setTimestamp(CharSequence name, long value) throws SqlException {
+        setTimestampWithType(name, ColumnType.TIMESTAMP_MICRO, value);
+    }
+
+    @Override
+    public void setTimestampNano(CharSequence name, long value) throws SqlException {
+        setTimestampWithType(name, ColumnType.TIMESTAMP_NANO, value);
+    }
+
+    @Override
+    public void setTimestampNano(int index) throws SqlException {
+        setTimestampWithType(index, ColumnType.TIMESTAMP_NANO, Numbers.LONG_NULL);
+    }
+
+    @Override
+    public void setTimestampNano(int index, long value) throws SqlException {
+        setTimestampWithType(index, ColumnType.TIMESTAMP_NANO, value);
+    }
+
+    @Override
+    public void setTimestampWithType(int index, int timestampType, long value) throws SqlException {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
             setTimestamp0(function, value, index);
         } else {
-            indexedVariables.setQuick(index, function = timestampVarPool.next());
-            ((TimestampBindVariable) function).value = value;
-        }
-    }
-
-    @Override
-    public void setTimestamp(CharSequence name, long value) throws SqlException {
-        int index = namedVariables.keyIndex(name);
-        if (index > -1) {
-            final TimestampBindVariable function;
-            namedVariables.putAt(index, name, function = timestampVarPool.next());
-            function.value = value;
-        } else {
-            setLong0(namedVariables.valueAtQuick(index), value, -1, name, ColumnType.TIMESTAMP);
+            assert ColumnType.isTimestamp(timestampType);
+            TimestampBindVariable timestampVar = timestampVarPool.next();
+            timestampVar.setType(timestampType);
+            timestampVar.value = value;
+            indexedVariables.setQuick(index, timestampVar);
         }
     }
 
@@ -1355,6 +1371,19 @@ public class BindVariableServiceImpl implements BindVariableService {
             } else {
                 reportError(function, colType, index, null);
             }
+        }
+    }
+
+    private void setTimestampWithType(CharSequence name, int timestampType, long value) throws SqlException {
+        int index = namedVariables.keyIndex(name);
+        if (index > -1) {
+            assert ColumnType.isTimestamp(timestampType);
+            final TimestampBindVariable function = timestampVarPool.next();
+            function.setType(timestampType);
+            function.value = value;
+            namedVariables.putAt(index, name, function);
+        } else {
+            setLong0(namedVariables.valueAtQuick(index), value, -1, name, timestampType);
         }
     }
 

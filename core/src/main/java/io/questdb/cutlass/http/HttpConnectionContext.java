@@ -59,7 +59,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.datetime.nanotime.NanosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StdoutSink;
@@ -508,7 +508,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     private boolean configureSecurityContext() {
         if (securityContext == DenyAllSecurityContext.INSTANCE) {
-            final NanosecondClock clock = configuration.getHttpContextConfiguration().getNanosecondClock();
+            final Clock clock = configuration.getHttpContextConfiguration().getNanosecondClock();
             final long authenticationStart = clock.getTicks();
             if (!authenticator.authenticate(headerParser)) {
                 // authenticationNanos stays 0, when it fails this value is irrelevant

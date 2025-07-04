@@ -33,7 +33,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnPurgeTask;
@@ -48,7 +48,7 @@ public class ColumnPurgeOperator implements Closeable {
     private final LongList completedRowIds = new LongList();
     private final CairoEngine engine;
     private final FilesFacade ff;
-    private final MicrosecondClock microClock;
+    private final Clock microClock;
     private final Path path;
     private final int pathRootLen;
     private final TableWriter purgeLogWriter;

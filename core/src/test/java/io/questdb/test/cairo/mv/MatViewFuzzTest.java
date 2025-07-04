@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
@@ -340,7 +341,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             final Thread writer = new Thread(() -> {
                 try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                     for (int i = 0; i < iterations; i++) {
-                        executionContext.setNowAndFixClock(testClock.micros.get());
+                        executionContext.setNowAndFixClock(testClock.micros.get(), ColumnType.TIMESTAMP_MICRO);
                         execute(
                                 "insert into base_price values ('gbpusd', 1317, dateadd('m', -3, now()))," +
                                         "('gbpusd', 1318, dateadd('m', -2, now()))," +

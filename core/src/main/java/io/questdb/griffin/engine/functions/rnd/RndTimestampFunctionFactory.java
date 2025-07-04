@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -53,8 +54,12 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final long lo = args.getQuick(0).getTimestamp(null);
-        final long hi = args.getQuick(1).getTimestamp(null);
+        Function arg = args.getQuick(0);
+        Function arg2 = args.getQuick(1);
+        int timestampType = ColumnType.getTimestampType(arg.getType(), arg2.getType(), configuration);
+        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        final long lo = driver.from(arg.getTimestamp(null), arg.getType());
+        final long hi = driver.from(arg2.getTimestamp(null), arg2.getType());
         final int nanRate = args.getQuick(2).getInt(null);
 
         if (nanRate < 0) {
@@ -62,7 +67,7 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
         }
 
         if (lo < hi) {
-            return new Func(lo, hi, nanRate, ColumnType.TIMESTAMP_MICRO);
+            return new Func(lo, hi, nanRate, timestampType);
         }
 
         throw SqlException.$(position, "invalid range");

@@ -43,7 +43,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
 import io.questdb.std.WeakMutableObjectPool;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.tasks.ColumnPurgeTask;
 import org.jetbrains.annotations.TestOnly;
 
@@ -64,7 +64,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private static final int TABLE_TRUNCATE_VERSION = 4;
     private static final int UPDATE_TXN_COLUMN = 7;
     private final DatabaseCheckpointStatus checkpointStatus;
-    private final MicrosecondClock clock;
+    private final Clock clock;
     private final RingQueue<ColumnPurgeTask> inQueue;
     private final Sequence inSubSequence;
     private final long retryDelay;

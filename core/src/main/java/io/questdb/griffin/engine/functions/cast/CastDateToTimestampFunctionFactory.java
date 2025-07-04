@@ -25,13 +25,11 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastDateToTimestampFunctionFactory implements FunctionFactory {
@@ -43,18 +41,18 @@ public class CastDateToTimestampFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function var = args.getQuick(0);
-        return new CastDateToTimestampFunction(var);
+        return new CastDateToTimestampFunction(var, args.getQuick(1).getType());
     }
 
     public static class CastDateToTimestampFunction extends AbstractCastToTimestampFunction {
-        public CastDateToTimestampFunction(Function arg) {
-            super(arg, ColumnType.TIMESTAMP_MICRO);
+        public CastDateToTimestampFunction(Function arg, int timestampType) {
+            super(arg, timestampType);
         }
 
         @Override
         public long getTimestamp(Record rec) {
             final long value = arg.getDate(rec);
-            return value == Numbers.LONG_NULL ? value : value * 1000L;
+            return timestampDriver.toDate(value);
         }
     }
 }

@@ -45,6 +45,6 @@ public class LastNotNullTimestampGroupByFunctionFactory implements FunctionFacto
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LastNotNullTimestampGroupByFunction(args.getQuick(0), ColumnType.TIMESTAMP_MICRO);
+        return new LastNotNullTimestampGroupByFunction(args.getQuick(0), ColumnType.getTimestampType(args.getQuick(0).getType(), configuration));
     }
 }

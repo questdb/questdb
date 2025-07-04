@@ -67,7 +67,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
         Function timestampFunc = args.getQuick(2);
         Function tzFunc = args.getQuick(3);
         int stride;
-
+        int timestampType = ColumnType.getTimestampType(timestampFunc.getType(), configuration);
         if (periodFunc.isConstant() && tzFunc.isConstant()) {
             // validate timezone and parse timezone into rules, that provide the offset by timestamp
             final TimeZoneRules timeZoneRules;
@@ -85,7 +85,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
 
             if (strideFunc.isConstant()) {
                 if ((stride = strideFunc.getInt(null)) != Numbers.INT_NULL) {
-                    return new TimestampAddConstConstVarConst(period, periodAddFunc, stride, timestampFunc, timeZoneRules, tzFunc, ColumnType.TIMESTAMP_MICRO);
+                    return new TimestampAddConstConstVarConst(period, periodAddFunc, stride, timestampFunc, timeZoneRules, tzFunc, timestampType);
                 } else {
                     throw SqlException.$(argPositions.getQuick(1), "`null` is not a valid stride");
                 }
@@ -99,7 +99,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
                     timestampFunc,
                     timeZoneRules,
                     tzFunc,
-                    ColumnType.TIMESTAMP_MICRO
+                    timestampType
             );
         }
 
@@ -111,7 +111,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
                 timestampFunc,
                 tzFunc,
                 argPositions.getQuick(3),
-                ColumnType.TIMESTAMP_MICRO
+                timestampType
         );
     }
 

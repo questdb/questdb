@@ -2680,7 +2680,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             BindVariableService bindVariableService
     ) throws BadProtocolException, SqlException {
         ensureValueLength(variableIndex, Long.BYTES, valueSize);
-        bindVariableService.setTimestamp(variableIndex, getLongUnsafe(valueAddr) + Numbers.JULIAN_EPOCH_OFFSET_USEC);
+        bindVariableService.setTimestampWithType(variableIndex, ColumnType.TIMESTAMP_MICRO, getLongUnsafe(valueAddr) + Numbers.JULIAN_EPOCH_OFFSET_USEC);
     }
 
     private void setUuidBindVariable(

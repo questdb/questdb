@@ -47,7 +47,7 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
@@ -90,7 +90,7 @@ public class LogFactory implements Closeable {
     private static boolean envEnabled = true;
     private static boolean guaranteedLogging = false;
     private static String rootDir;
-    private final MicrosecondClock clock;
+    private final Clock clock;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final ObjList<DeferredLogger> deferredLoggers = new ObjList<>();
     private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
@@ -107,7 +107,7 @@ public class LogFactory implements Closeable {
         this(MicrosecondClockImpl.INSTANCE);
     }
 
-    private LogFactory(MicrosecondClock clock) {
+    private LogFactory(Clock clock) {
         this.clock = clock;
         workerPool = new WorkerPool(new WorkerPoolConfiguration() {
             @Override

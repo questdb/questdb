@@ -190,7 +190,7 @@ public class BindVariableServiceImplTest {
     public void testDateVarSetToTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.setDate(0);
-            bindVariableService.setTimestamp(0, 99999001);
+            bindVariableService.setTimestamp(0, 99999001L);
             Assert.assertEquals(99999, bindVariableService.getFunction(0).getDate(null));
 
             bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
@@ -896,7 +896,7 @@ public class BindVariableServiceImplTest {
     @Test
     public void testSetTimestampVarToShort() throws Exception {
         assertMemoryLeak(() -> {
-            bindVariableService.setTimestamp(0, 10);
+            bindVariableService.setTimestamp(0, 10L);
             Assert.assertEquals(10, bindVariableService.getFunction(0).getTimestamp(null));
             bindVariableService.setShort(0, (short) 5);
             Assert.assertEquals(5, bindVariableService.getFunction(0).getTimestamp(null));
@@ -1014,8 +1014,8 @@ public class BindVariableServiceImplTest {
     @Test
     public void testTimestampVarSetToInt() throws Exception {
         assertMemoryLeak(() -> {
-            bindVariableService.setTimestamp(0);
-            bindVariableService.setTimestamp(0, 99999001);
+            bindVariableService.setTimestamp(0, ColumnType.TIMESTAMP_MICRO);
+            bindVariableService.setTimestamp(0, 99999001L);
             Assert.assertEquals(99999001, bindVariableService.getFunction(0).getTimestamp(null));
 
             bindVariableService.setInt(0, 450);

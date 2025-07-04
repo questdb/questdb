@@ -201,7 +201,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 } else {
                     if (ColumnType.isInterval(dynamicFunction.getType())) {
                         // This is subtraction or intersection with an Interval (not a single timestamp)
-                        final Interval interval = dynamicFunction.getInterval(null);
+                        final Interval interval = timestampDriver.fixInterval(dynamicFunction.getInterval(null), dynamicFunction.getType());
                         applyInterval(outIntervals, interval);
                         if (operation == IntervalOperation.SUBTRACT_INTERVALS) {
                             IntervalUtils.invert(outIntervals, divider);
@@ -297,6 +297,8 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     return Numbers.LONG_NULL;
                 }
             }
+        } else if (ColumnType.isTimestamp(functionType)) {
+            return timestampDriver.from(dynamicFunction.getTimestamp(null), functionType);
         }
         return dynamicFunction.getTimestamp(null);
     }

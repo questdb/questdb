@@ -63,7 +63,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Uuid;
-import io.questdb.std.datetime.nanotime.NanosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -97,7 +97,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final SCSequence eventSubSequence = new SCSequence();
     private final HttpConnectionContext httpConnectionContext;
     private final CharSequence keepAliveHeader;
-    private final NanosecondClock nanosecondClock;
+    private final Clock nanosecondClock;
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final long statementTimeout;
@@ -137,7 +137,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
-            NanosecondClock nanosecondClock,
+            Clock nanosecondClock,
             CharSequence keepAliveHeader
     ) {
         this.httpConnectionContext = httpConnectionContext;

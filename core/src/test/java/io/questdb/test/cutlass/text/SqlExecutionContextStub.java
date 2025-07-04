@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.text;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SecurityContext;
@@ -109,8 +110,18 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public long getNanosecondTimestamp() {
+        return 0L;
+    }
+
+    @Override
     public long getNow() {
         return 0L;
+    }
+
+    @Override
+    public int getNowTimestampType() {
+        return ColumnType.TIMESTAMP_MICRO;
     }
 
     @Override
@@ -233,7 +244,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public void setNowAndFixClock(long now) {
+    public void setNowAndFixClock(long now, int nowTimestampType) {
     }
 
     @Override

@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.groupby;
+package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
@@ -32,19 +32,17 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class LastTimestampGroupByFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "last(N)";
-    }
+public final class VarcharToNanoTimestampFunctionFactory implements FunctionFactory {
+    private static final String NAME = "to_timestamp_ns";
 
     @Override
-    public boolean isGroupBy() {
-        return true;
+    public String getSignature() {
+        return "to_timestamp_ns(Ø)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LastTimestampGroupByFunction(args.getQuick(0), ColumnType.getTimestampType(args.getQuick(0).getType(), configuration));
+        final Function arg = args.getQuick(0);
+        return new VarcharToTimestampFunctionFactory.ToTimestampFunction(arg, ColumnType.TIMESTAMP_NANO, NAME);
     }
 }
