@@ -95,7 +95,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         }
         try {
             if (viewDefinition.getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
-                // The refresh is not immediate, i.e. manual or timer.
+                // The refresh is not immediate, i.e. it's either manual or timer.
                 // Create a special timer that will enqueue WAL txn intervals caching tasks.
                 // We could cache the intervals right in the refresh job when there is a new base table commit,
                 // but that might create many redundant WAL MAT_VIEW_INVALIDATE transactions with mat view state
