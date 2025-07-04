@@ -48,7 +48,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "rnd_double_array(Lv)";
+        return "rnd_double_array(lv)";
     }
 
     @Override
@@ -64,13 +64,10 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         // - rnd_double_array(nDims, nanRate) - 2 args, generates random dim lengths up to 16 and random element values. NaN frequency is using (rndInt() % nanRate == 0)
         // - rnd_double_array(nDims, nanRate, maxDimLength) - 3 args, same as the previous, except maxDimLen is not 16 but whatever is provided as the arg
         // - rnd_double_array(nDims, nanRate, 0, dim1Len, dim2Len, dim3Len, ...) - 4+ args - generates fixed size array with random elements, NaN rate is as the above
-        if (args == null || args.size() == 0) {
-            return NullConstant.NULL;
-        }
         final int nDims = validateAndGetArg(args, argPositions, 0, "nDims");
-        if (nDims > 32) {
+        if (nDims > ColumnType.ARRAY_NDIMS_LIMIT) {
             throw SqlException.$(argPositions.getQuick(0),
-                    "maximum for nDims is 32 [nDims=").put(nDims).put(']');
+                    "maximum for nDims is ").put(32).put(" [nDims=").put(nDims).put(']');
         }
         if (nDims == 0) {
             return NullConstant.NULL;
