@@ -25,10 +25,22 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Before;
 import org.junit.Test;
 
 public class ProjectionReferenceTest extends AbstractCairoTest {
+
+    private Rnd rnd;
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        rnd = new Rnd();
+    }
+
 
     @Test
     public void testAsofJoinSimple() throws Exception {
@@ -185,9 +197,16 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     @Test
     public void testJsonProjectionInOrderByWithByte() throws SqlException {
         testJsonProjectionInOrderByWith0("name\tval\tdoubled\n" +
-                        "A\t10\t20\n" +
-                        "B\t20\t40\n" +
-                        "C\t30\t60\n",
+                        "C\t1\t2\n" +
+                        "C\t6\t12\n" +
+                        "C\t18\t36\n" +
+                        "C\t20\t40\n" +
+                        "C\t33\t66\n" +
+                        "C\t39\t78\n" +
+                        "C\t42\t84\n" +
+                        "C\t48\t96\n" +
+                        "C\t71\t142\n" +
+                        "C\t71\t142\n",
                 "QUERY PLAN\n" +
                         "Radix sort light\n" +
                         "  keys: [doubled]\n" +
@@ -658,10 +677,11 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
 
     private void testJsonProjectionInOrderByWith0(String expectedResult, String expectedPlan, String typeToExtract) throws SqlException {
         execute("create table items (name string, value varchar)");
-        String json0 = "{ \"name\": \"C\", \"value\": 30 }";
-        String json1 = "{ \"name\": \"A\", \"value\": 10 }";
-        String json2 = "{ \"name\": \"B\", \"value\": 20 }";
-        execute("insert into items values ('C', '" + json0 + "'), ('A', '" + json1 + "'), ('B', '" + json2 + "')");
+        for (int i = 0; i < 10; i++) {
+            int id = rnd.nextInt(100);
+            String json = "{ \"name\": \"B\", \"value\": " + id + " }";
+            execute("insert into items values ('C', '" + json + "')");
+        }
 
         allowFunctionMemoization();
         String query = "select name, json_extract(value, '.value')::" + typeToExtract + " as val, val * 2 as doubled from items order by doubled";
@@ -678,9 +698,16 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
 
     private void testJsonProjectionInOrderByWithF(String type) throws SqlException {
         testJsonProjectionInOrderByWith0("name\tval\tdoubled\n" +
-                        "A\t10.0\t20.0\n" +
-                        "B\t20.0\t40.0\n" +
-                        "C\t30.0\t60.0\n",
+                        "C\t1.0\t2.0\n" +
+                        "C\t6.0\t12.0\n" +
+                        "C\t18.0\t36.0\n" +
+                        "C\t20.0\t40.0\n" +
+                        "C\t33.0\t66.0\n" +
+                        "C\t39.0\t78.0\n" +
+                        "C\t42.0\t84.0\n" +
+                        "C\t48.0\t96.0\n" +
+                        "C\t71.0\t142.0\n" +
+                        "C\t71.0\t142.0\n",
                 "QUERY PLAN\n" +
                         "Sort light\n" +
                         "  keys: [doubled]\n" +
@@ -694,9 +721,16 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
 
     private void testJsonProjectionInOrderByWithI(String type) throws SqlException {
         testJsonProjectionInOrderByWith0("name\tval\tdoubled\n" +
-                        "A\t10\t20\n" +
-                        "B\t20\t40\n" +
-                        "C\t30\t60\n",
+                        "C\t1\t2\n" +
+                        "C\t6\t12\n" +
+                        "C\t18\t36\n" +
+                        "C\t20\t40\n" +
+                        "C\t33\t66\n" +
+                        "C\t39\t78\n" +
+                        "C\t42\t84\n" +
+                        "C\t48\t96\n" +
+                        "C\t71\t142\n" +
+                        "C\t71\t142\n",
                 "QUERY PLAN\n" +
                         "Radix sort light\n" +
                         "  keys: [doubled]\n" +
