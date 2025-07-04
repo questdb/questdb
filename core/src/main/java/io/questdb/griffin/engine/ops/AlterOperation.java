@@ -602,28 +602,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyMatViewRefreshLimit(MetadataService svc) {
-        final int limitHoursOrMonths = (int) extraInfo.get(0);
-        try {
-            svc.setMetaMatViewRefreshLimit(limitHoursOrMonths);
-        } catch (CairoException e) {
-            e.position(tableNamePosition);
-            throw e;
-        }
-    }
-
-    private void applyMatViewRefreshTimer(MetadataService svc) {
-        final long start = extraInfo.get(0);
-        final int interval = (int) extraInfo.get(1);
-        final char unit = (char) extraInfo.get(2);
-        try {
-            svc.setMetaMatViewRefreshTimer(start, interval, unit);
-        } catch (CairoException e) {
-            e.position(tableNamePosition);
-            throw e;
-        }
-    }
-
     private void applyParamO3MaxLag(MetadataService svc) {
         long o3MaxLag = extraInfo.get(0);
         try {
