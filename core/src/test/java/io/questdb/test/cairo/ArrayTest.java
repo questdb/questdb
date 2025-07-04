@@ -2048,6 +2048,33 @@ public class ArrayTest extends AbstractCairoTest {
     public void testRndDoubleFunctionEdgeCases() throws Exception {
         assertMemoryLeak(() -> {
             assertExceptionNoLeakCheck(
+                    "SELECT rnd_double_array(1::char)",
+                    25,
+                    "nDims must be an integer"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT rnd_double_array(1, 1::char)",
+                    28,
+                    "nanRate must be an integer"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT rnd_double_array(1, 1, 1::char)",
+                    31,
+                    "maxDimLength must be an integer"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT rnd_double_array(1, 1, 0, 1::char)",
+                    34,
+                    "dimLength must be an integer"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "SELECT rnd_double_array()",
+                    7,
+                    "`rnd_double_array` requires arguments: rnd_double_array(LONG constant, VARARG constant)"
+            );
+
+            assertExceptionNoLeakCheck(
                     "select rnd_double_array(10, 0, 1000)",
                     7,
                     "array element count exceeds max"
@@ -2061,6 +2088,12 @@ public class ArrayTest extends AbstractCairoTest {
 
             assertSql("rnd_double_array\nnull\n",
                     "select rnd_double_array(0, 0, 1000)"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "SELECT rnd_double_array(33)",
+                    24,
+                    "maximum for nDims is 32"
             );
 
             assertExceptionNoLeakCheck(
