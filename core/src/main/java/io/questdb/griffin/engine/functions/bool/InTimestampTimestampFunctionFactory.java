@@ -81,7 +81,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 case ColumnType.UNDEFINED:
                     break;
                 case ColumnType.INTERVAL:
-                    return new InTimestampIntervalFunctionFactory.Func(args.getQuick(0), args.getQuick(1));
+                    return new InTimestampIntervalFunctionFactory.Func(args.getQuick(0), args.getQuick(1), configuration);
                 default:
                     throw SqlException.position(argPositions.getQuick(i))
                             .put("cannot compare TIMESTAMP with type ")
