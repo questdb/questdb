@@ -268,6 +268,11 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public void toTop() {
             super.toTop();
             origSlaveFrameIndex = -1;

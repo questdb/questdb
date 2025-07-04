@@ -26,8 +26,16 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.VirtualRecordNoRowid;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -232,6 +240,11 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             Function.init(groupByFunctions, baseCursor, executionContext, null);
             toTop();
             return this;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return initState;
         }
 
         @Override

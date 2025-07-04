@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -111,6 +112,11 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         return ((SymbolFunction) groupByFunctions.getQuick(columnIndex)).newSymbolTable();
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return RecordCursor.fromBool(isValueBuilt);
     }
 
     @Override
