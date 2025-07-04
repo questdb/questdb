@@ -395,7 +395,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         "Sort light lo: 10\n" +
                         "  keys: [day, key]\n" +
                         "    VirtualRecord\n" +
-                        "      functions: [day,key,vwap]\n" +
+                        "      functions: [day,key,vwap(price, quantity)]\n" +
                         "        Async Group By workers: 4\n" +
                         "          keys: [day,key]\n" +
                         "          values: [vwap(price,quantity)]\n" +
