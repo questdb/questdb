@@ -44,6 +44,7 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     private final VirtualFunctionRecord recordB;
     private final boolean supportsRandomAccess;
     protected RecordCursor baseCursor;
+
     public VirtualFunctionRecordCursor(
             ObjList<Function> functions,
             ObjList<Function> memoizers,
