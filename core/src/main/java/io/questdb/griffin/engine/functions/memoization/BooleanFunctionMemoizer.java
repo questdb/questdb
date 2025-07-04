@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.memoization;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -34,8 +35,10 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 
 public final class BooleanFunctionMemoizer extends BooleanFunction implements UnaryFunction {
     private final Function fn;
-    private boolean memoized;
-    private boolean value;
+    private Record recordLeft;
+    private Record recordRight;
+    private boolean valueLeft;
+    private boolean valueRight;
 
     public BooleanFunctionMemoizer(Function fn) {
         assert fn.shouldMemoize();
@@ -49,18 +52,25 @@ public final class BooleanFunctionMemoizer extends BooleanFunction implements Un
 
     @Override
     public boolean getBool(Record rec) {
-        return memoized ? value : fn.getBool(rec);
-    }
-
-    @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        memoized = false;
-        UnaryFunction.super.init(symbolTableSource, executionContext);
+        if (recordLeft == rec) {
+            return valueLeft;
+        }
+        if (recordRight == rec) {
+            return valueRight;
+        }
+        return fn.getBool(rec);
     }
 
     @Override
     public String getName() {
         return "memoize";
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        recordLeft = null;
+        recordRight = null;
+        UnaryFunction.super.init(symbolTableSource, executionContext);
     }
 
     @Override
@@ -70,8 +80,27 @@ public final class BooleanFunctionMemoizer extends BooleanFunction implements Un
 
     @Override
     public void memoize(Record record) {
-        value = fn.getBool(record);
-        memoized = true;
+        if (recordLeft == record) {
+            valueLeft = fn.getBool(record);
+        } else if (recordRight == record) {
+            valueRight = fn.getBool(record);
+        } else if (recordLeft == null) {
+            recordLeft = record;
+            valueLeft = fn.getBool(record);
+        } else if (recordRight == null) {
+            assert supportsRandomAccess();
+            recordRight = record;
+            valueRight = fn.getBool(record);
+        } else {
+            throw CairoException.nonCritical().
+                    put("BooleanFunctionMemoizer can only memoize two records, but got more than two: [recordLeft=")
+                    .put(recordLeft.toString())
+                    .put(", recordRight=")
+                    .put(recordRight.toString())
+                    .put(", newRecord=")
+                    .put(record.toString())
+                    .put(']');
+        }
     }
 
     @Override
@@ -84,4 +113,3 @@ public final class BooleanFunctionMemoizer extends BooleanFunction implements Un
         return fn.supportsRandomAccess();
     }
 }
-

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.memoization;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -37,8 +38,10 @@ import io.questdb.std.str.CharSink;
 
 public final class Long256FunctionMemoizer extends Long256Function implements UnaryFunction {
     private final Function fn;
-    private final Long256Impl value = new Long256Impl();
-    private boolean memoized;
+    private final Long256Impl valueLeft = new Long256Impl();
+    private final Long256Impl valueRight = new Long256Impl();
+    private Record recordLeft;
+    private Record recordRight;
 
     public Long256FunctionMemoizer(Function fn) {
         assert fn.shouldMemoize();
@@ -52,23 +55,31 @@ public final class Long256FunctionMemoizer extends Long256Function implements Un
 
     @Override
     public void getLong256(Record rec, CharSink<?> sink) {
-        if (memoized) {
-            value.toSink(sink);
-        } else {
-            fn.getLong256(rec, sink);
+        if (recordLeft == rec) {
+            valueLeft.toSink(sink);
+            return;
         }
+        if (recordRight == rec) {
+            valueRight.toSink(sink);
+            return;
+        }
+        fn.getLong256(rec, sink);
     }
 
     @Override
     public Long256 getLong256A(Record rec) {
-        if (memoized) {
-            return value;
+        if (recordLeft == rec) {
+            return valueLeft;
+        }
+        if (recordRight == rec) {
+            return valueRight;
         }
         return fn.getLong256A(rec);
     }
 
     @Override
     public Long256 getLong256B(Record rec) {
+        // B value is not memoized
         return fn.getLong256B(rec);
     }
 
@@ -79,7 +90,8 @@ public final class Long256FunctionMemoizer extends Long256Function implements Un
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        memoized = false;
+        recordLeft = null;
+        recordRight = null;
         UnaryFunction.super.init(symbolTableSource, executionContext);
     }
 
@@ -91,11 +103,39 @@ public final class Long256FunctionMemoizer extends Long256Function implements Un
     @Override
     public void memoize(Record record) {
         Long256 long256 = fn.getLong256A(record);
-        value.setAll(long256.getLong0(),
-                long256.getLong1(),
-                long256.getLong2(),
-                long256.getLong3());
-        memoized = true;
+        if (recordLeft == record) {
+            valueLeft.setAll(long256.getLong0(),
+                    long256.getLong1(),
+                    long256.getLong2(),
+                    long256.getLong3());
+        } else if (recordRight == record) {
+            valueRight.setAll(long256.getLong0(),
+                    long256.getLong1(),
+                    long256.getLong2(),
+                    long256.getLong3());
+        } else if (recordLeft == null) {
+            recordLeft = record;
+            valueLeft.setAll(long256.getLong0(),
+                    long256.getLong1(),
+                    long256.getLong2(),
+                    long256.getLong3());
+        } else if (recordRight == null) {
+            assert supportsRandomAccess();
+            recordRight = record;
+            valueRight.setAll(long256.getLong0(),
+                    long256.getLong1(),
+                    long256.getLong2(),
+                    long256.getLong3());
+        } else {
+            throw CairoException.nonCritical().
+                    put("Long256FunctionMemoizer can only memoize two records, but got more than two: [recordLeft=")
+                    .put(recordLeft.toString())
+                    .put(", recordRight=")
+                    .put(recordRight.toString())
+                    .put(", newRecord=")
+                    .put(record.toString())
+                    .put(']');
+        }
     }
 
     @Override
@@ -108,4 +148,3 @@ public final class Long256FunctionMemoizer extends Long256Function implements Un
         return fn.supportsRandomAccess();
     }
 }
-

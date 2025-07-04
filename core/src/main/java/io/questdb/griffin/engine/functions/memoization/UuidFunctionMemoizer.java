@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.memoization;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -34,9 +35,12 @@ import io.questdb.griffin.engine.functions.UuidFunction;
 
 public final class UuidFunctionMemoizer extends UuidFunction implements UnaryFunction {
     private final Function fn;
-    private boolean memoized;
-    private long lo;
-    private long hi;
+    private long hiLeft;
+    private long hiRight;
+    private long loLeft;
+    private long loRight;
+    private Record recordLeft;
+    private Record recordRight;
 
     public UuidFunctionMemoizer(Function fn) {
         assert fn.shouldMemoize();
@@ -49,23 +53,36 @@ public final class UuidFunctionMemoizer extends UuidFunction implements UnaryFun
     }
 
     @Override
+    public long getLong128Hi(Record rec) {
+        if (recordLeft == rec) {
+            return hiLeft;
+        }
+        if (recordRight == rec) {
+            return hiRight;
+        }
+        return fn.getLong128Hi(rec);
+    }
+
+    @Override
+    public long getLong128Lo(Record rec) {
+        if (recordLeft == rec) {
+            return loLeft;
+        }
+        if (recordRight == rec) {
+            return loRight;
+        }
+        return fn.getLong128Lo(rec);
+    }
+
+    @Override
     public String getName() {
         return "memoize";
     }
 
     @Override
-    public long getLong128Hi(Record rec) {
-        return memoized ? hi : fn.getLong128Hi(rec);
-    }
-
-    @Override
-    public long getLong128Lo(Record rec) {
-        return memoized ? lo : fn.getLong128Lo(rec);
-    }
-
-    @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        memoized = false;
+        recordLeft = null;
+        recordRight = null;
         UnaryFunction.super.init(symbolTableSource, executionContext);
     }
 
@@ -76,9 +93,31 @@ public final class UuidFunctionMemoizer extends UuidFunction implements UnaryFun
 
     @Override
     public void memoize(Record record) {
-        lo = fn.getLong128Lo(record);
-        hi = fn.getLong128Hi(record);
-        memoized = true;
+        if (recordLeft == record) {
+            loLeft = fn.getLong128Lo(record);
+            hiLeft = fn.getLong128Hi(record);
+        } else if (recordRight == record) {
+            loRight = fn.getLong128Lo(record);
+            hiRight = fn.getLong128Hi(record);
+        } else if (recordLeft == null) {
+            recordLeft = record;
+            loLeft = fn.getLong128Lo(record);
+            hiLeft = fn.getLong128Hi(record);
+        } else if (recordRight == null) {
+            assert supportsRandomAccess();
+            recordRight = record;
+            loRight = fn.getLong128Lo(record);
+            hiRight = fn.getLong128Hi(record);
+        } else {
+            throw CairoException.nonCritical().
+                    put("UuidFunctionMemoizer can only memoize two records, but got more than two: [recordLeft=")
+                    .put(recordLeft.toString())
+                    .put(", recordRight=")
+                    .put(recordRight.toString())
+                    .put(", newRecord=")
+                    .put(record.toString())
+                    .put(']');
+        }
     }
 
     @Override
@@ -91,4 +130,3 @@ public final class UuidFunctionMemoizer extends UuidFunction implements UnaryFun
         return fn.supportsRandomAccess();
     }
 }
-
