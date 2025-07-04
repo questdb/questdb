@@ -149,7 +149,7 @@ public class Rnd {
         MemoryA memA = array.startMemoryA();
         for (int i = 0; i < size; i++) {
             double val;
-            if (nanRate > 0 && nextInt(nanRate) == 1) {
+            if (nanRate > 0 && nextInt(nanRate) == 0) {
                 val = Double.NaN;
             } else {
                 val = nextDouble();
