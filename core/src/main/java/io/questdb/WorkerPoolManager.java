@@ -34,6 +34,7 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -41,6 +42,8 @@ public abstract class WorkerPoolManager implements Target {
 
     private static final Log LOG = LogFactory.getLog(WorkerPoolManager.class);
     protected final WorkerPool sharedPoolIO;
+    // When parellel querying is disabled, query pool will be null. All IO and Writer pools will always be created.
+    @Nullable
     protected final WorkerPool sharedPoolQuery;
     protected final WorkerPool sharedPoolWrite;
     private final AtomicBoolean closed = new AtomicBoolean();
@@ -96,7 +99,9 @@ public abstract class WorkerPoolManager implements Target {
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         long now = Worker.CLOCK_MICROS.getTicks();
         sharedPoolIO.updateWorkerMetrics(now);
-        sharedPoolQuery.updateWorkerMetrics(now);
+        if (sharedPoolQuery != null) {
+            sharedPoolQuery.updateWorkerMetrics(now);
+        }
         sharedPoolWrite.updateWorkerMetrics(now);
         ObjList<CharSequence> poolNames = dedicatedPools.keys();
         for (int i = 0, limit = poolNames.size(); i < limit; i++) {
