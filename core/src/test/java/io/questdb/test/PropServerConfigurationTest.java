@@ -1065,7 +1065,7 @@ public class PropServerConfigurationTest {
     public void testMinimum4SharedWorkers() throws Exception {
         final Properties properties = new Properties();
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals("shared-io", configuration.getNetworkWorkerPoolConfiguration().getPoolName());
+        Assert.assertEquals("shared-network", configuration.getNetworkWorkerPoolConfiguration().getPoolName());
         Assert.assertTrue("must be minimum of 2 shared workers", configuration.getNetworkWorkerPoolConfiguration().getWorkerCount() >= 2);
 
         Assert.assertEquals("shared-query", configuration.getQueryWorkerPoolConfiguration().getPoolName());
