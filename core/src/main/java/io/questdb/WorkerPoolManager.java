@@ -41,8 +41,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public abstract class WorkerPoolManager implements Target {
 
     private static final Log LOG = LogFactory.getLog(WorkerPoolManager.class);
-    protected final WorkerPool sharedPoolIO;
-    // When parellel querying is disabled, query pool will be null. All IO and Writer pools will always be created.
+    protected final WorkerPool sharedPoolNetwork;
+    // When parallel querying is disabled, query pool will be null. All Network and Write pools will always be created.
     @Nullable
     protected final WorkerPool sharedPoolQuery;
     protected final WorkerPool sharedPoolWrite;
@@ -51,29 +51,29 @@ public abstract class WorkerPoolManager implements Target {
     private final AtomicBoolean running = new AtomicBoolean();
 
     public WorkerPoolManager(ServerConfiguration config) {
-        sharedPoolIO = new WorkerPool(config.getIOWorkerPoolConfiguration());
+        sharedPoolNetwork = new WorkerPool(config.getNetworkWorkerPoolConfiguration());
         sharedPoolQuery = config.getQueryWorkerPoolConfiguration().getWorkerCount() > 0 ? new WorkerPool(config.getQueryWorkerPoolConfiguration()) : null;
         sharedPoolWrite = new WorkerPool(config.getWriteWorkerPoolConfiguration());
 
-        WorkerPool queryPool = sharedPoolQuery != null ? sharedPoolQuery : sharedPoolIO;
-        configureSharedPool(sharedPoolIO, queryPool, sharedPoolWrite); // abstract method giving callers the chance to assign jobs
+        WorkerPool queryPool = sharedPoolQuery != null ? sharedPoolQuery : sharedPoolNetwork;
+        configureSharedPool(sharedPoolNetwork, queryPool, sharedPoolWrite); // abstract method giving callers the chance to assign jobs
         config.getMetrics().addScrapable(this);
     }
 
-    public WorkerPool getInstanceIO(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
-        return getWorkerPool(config, requester, sharedPoolIO);
+    public WorkerPool getInstanceNetwork(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
+        return getWorkerPool(config, requester, sharedPoolNetwork);
     }
 
     public WorkerPool getInstanceWrite(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
         return getWorkerPool(config, requester, sharedPoolWrite);
     }
 
-    public WorkerPool getSharedPoolIO() {
-        return sharedPoolIO;
+    public WorkerPool getSharedPoolNetwork() {
+        return sharedPoolNetwork;
     }
 
     public int getSharedWorkerCount() {
-        return sharedPoolIO.getWorkerCount();
+        return sharedPoolNetwork.getWorkerCount();
     }
 
     public void halt() {
@@ -88,8 +88,8 @@ public abstract class WorkerPoolManager implements Target {
         }
         dedicatedPools.clear();
 
-        closePool(sharedPoolIO, "closing shared IO pool [name=");
-        closePool(sharedPoolQuery, "closing shared Read pool [name=");
+        closePool(sharedPoolNetwork, "closing shared Network pool [name=");
+        closePool(sharedPoolQuery, "closing shared Query pool [name=");
         closePool(sharedPoolWrite, "closing shared Write pool [name=");
 
         closed.set(true);
@@ -98,7 +98,7 @@ public abstract class WorkerPoolManager implements Target {
     @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         long now = Worker.CLOCK_MICROS.getTicks();
-        sharedPoolIO.updateWorkerMetrics(now);
+        sharedPoolNetwork.updateWorkerMetrics(now);
         if (sharedPoolQuery != null) {
             sharedPoolQuery.updateWorkerMetrics(now);
         }
@@ -111,7 +111,7 @@ public abstract class WorkerPoolManager implements Target {
 
     public void start(Log sharedPoolLog) {
         if (running.compareAndSet(false, true)) {
-            startWorkerPool(sharedPoolLog, sharedPoolIO, "started shared pool [name=");
+            startWorkerPool(sharedPoolLog, sharedPoolNetwork, "started shared pool [name=");
             startWorkerPool(sharedPoolLog, sharedPoolQuery, "started shared pool [name=");
             startWorkerPool(sharedPoolLog, sharedPoolWrite, "started shared pool [name=");
 
@@ -172,11 +172,11 @@ public abstract class WorkerPoolManager implements Target {
     }
 
     /**
-     * @param sharedPoolIo A reference to the IO SHARED pool
-     * @param sharedPoolR  A reference to the READ SHARED pool
-     * @param sharedPoolW  A reference to the WRITE SHARED pool
+     * @param sharedPoolNetwork A reference to the NETWORK SHARED pool
+     * @param sharedPoolQuery   A reference to the QUERY SHARED pool
+     * @param sharedPoolWrite   A reference to the WRITE SHARED pool
      */
-    protected abstract void configureSharedPool(final WorkerPool sharedPoolIo, final WorkerPool sharedPoolR, final WorkerPool sharedPoolW);
+    protected abstract void configureSharedPool(final WorkerPool sharedPoolNetwork, final WorkerPool sharedPoolQuery, final WorkerPool sharedPoolWrite);
 
     public enum Requester {
 

@@ -426,7 +426,7 @@ public class ServerMain implements Closeable {
                 workerPoolManager
         ));
 
-        workerPoolManager.getSharedPoolIO().assign(new FlushQueryCacheJob(
+        workerPoolManager.getSharedPoolNetwork().assign(new FlushQueryCacheJob(
                 engine.getMessageBus(),
                 httpServer,
                 pgWireServer

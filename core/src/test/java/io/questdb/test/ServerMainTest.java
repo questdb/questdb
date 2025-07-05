@@ -615,8 +615,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "shared.worker.sleep.timeout\tQDB_SHARED_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
                                     "shared.worker.nap.threshold\tQDB_SHARED_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "shared.worker.yield.threshold\tQDB_SHARED_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
-                                    "io.shared.worker.affinity\tQDB_IO_SHARED_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
-                                    "io.shared.worker.count\tQDB_IO_SHARED_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
+                                    "network.shared.worker.affinity\tQDB_NETWORK_SHARED_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
+                                    "network.shared.worker.count\tQDB_NETWORK_SHARED_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
                                     "query.shared.worker.affinity\tQDB_QUERY_SHARED_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "query.shared.worker.count\tQDB_QUERY_SHARED_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
                                     "write.shared.worker.affinity\tQDB_WRITE_SHARED_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +

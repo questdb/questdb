@@ -42,7 +42,7 @@ import io.questdb.mp.WorkerPoolConfiguration;
 public class DefaultServerConfiguration implements ServerConfiguration {
     private final DefaultCairoConfiguration cairoConfiguration;
     private final DefaultHttpServerConfiguration httpServerConfiguration;
-    private final DefaultWorkerPoolConfiguration ioWorkerPoolConfiguration;
+    private final DefaultWorkerPoolConfiguration networkWorkerPoolConfiguration;
     private final DefaultLineTcpReceiverConfiguration lineTcpReceiverConfiguration;
     private final DefaultLineUdpReceiverConfiguration lineUdpReceiverConfiguration = new DefaultLineUdpReceiverConfiguration();
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration;
@@ -58,7 +58,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
         this.cairoConfiguration = new DefaultCairoConfiguration(dbRoot, installRoot);
         this.lineTcpReceiverConfiguration = new DefaultLineTcpReceiverConfiguration(cairoConfiguration);
         this.httpServerConfiguration = new DefaultHttpServerConfiguration(cairoConfiguration);
-        this.ioWorkerPoolConfiguration = new DefaultWorkerPoolConfiguration("shared_io");
+        this.networkWorkerPoolConfiguration = new DefaultWorkerPoolConfiguration("shared_network");
         this.queryWorkerPoolConfiguration = new DefaultWorkerPoolConfiguration("shared_query");
         this.writeWorkerPoolConfiguration = new DefaultWorkerPoolConfiguration("shared_write");
         this.matViewRefreshPoolConfiguration = new DefaultWorkerPoolConfiguration("mat_view_refresh");
@@ -90,8 +90,8 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
-        return ioWorkerPoolConfiguration;
+    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
+        return networkWorkerPoolConfiguration;
     }
 
     @Override

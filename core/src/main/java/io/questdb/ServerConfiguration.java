@@ -64,7 +64,7 @@ public interface ServerConfiguration {
 
     HttpFullFatServerConfiguration getHttpServerConfiguration();
 
-    WorkerPoolConfiguration getIOWorkerPoolConfiguration();
+    WorkerPoolConfiguration getNetworkWorkerPoolConfiguration();
 
     LineTcpReceiverConfiguration getLineTcpReceiverConfiguration();
 

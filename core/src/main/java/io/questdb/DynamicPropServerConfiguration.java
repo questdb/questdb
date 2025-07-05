@@ -350,9 +350,9 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
-    public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
+    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
         // nested object is kept non-reloadable
-        return serverConfig.get().getIOWorkerPoolConfiguration();
+        return serverConfig.get().getNetworkWorkerPoolConfiguration();
     }
 
     @Override

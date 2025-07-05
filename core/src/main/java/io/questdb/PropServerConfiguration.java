@@ -134,6 +134,8 @@ import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String ACL_ENABLED = "acl.enabled";
+    public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT = 64;
+    public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_MINIMUM = 4;
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
@@ -168,6 +170,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceRowIdListCapacity;
     private final int cairoPageFrameReduceShardCount;
     private final int cairoSQLCopyIdSupplier;
+    private final boolean cairoSqlColumnAliasExpressionEnabled;
     private final int cairoSqlCopyLogRetentionDays;
     private final int cairoSqlCopyQueueCapacity;
     private final String cairoSqlCopyRoot;
@@ -254,7 +257,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long instanceHashHi;
     private final long instanceHashLo;
     private final boolean interruptOnClosedConnection;
-    private final PropWorkerPoolConfiguration ioSharedWorkerPoolConfiguration = new PropWorkerPoolConfiguration("shared-io");
     private final boolean ioURingEnabled;
     private final boolean isQueryTracingEnabled;
     private final boolean isReadOnlyInstance;
@@ -322,6 +324,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean metricsEnabled;
     private final MicrosecondClock microsecondClock;
     private final int mkdirMode;
+    private final PropWorkerPoolConfiguration networkSharedWorkerPoolConfiguration = new PropWorkerPoolConfiguration("shared-network");
     private final int o3CallbackQueueCapacity;
     private final int o3ColumnMemorySize;
     private final int o3CopyQueueCapacity;
@@ -519,6 +522,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
     protected long walSegmentRolloverSize;
+    private int cairoSqlColumnAliasGeneratedMaxSize;
     private long cairoSqlCopyMaxIndexChunkSize;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
@@ -637,10 +641,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long queryTimeout;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitBeforeReload;
-    public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT = 64;
-    public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_MINIMUM = 4;
-    private boolean cairoSqlColumnAliasExpressionEnabled;
-    private int cairoSqlColumnAliasGeneratedMaxSize;
 
     public PropServerConfiguration(
             String installRoot,
@@ -1624,9 +1624,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             // IO will be slightly higher priority than query and write pools to make the server more responsive
             int ioSharedPoolWorkerCount = configureSharedThreadPool(
                     properties, env,
-                    this.ioSharedWorkerPoolConfiguration,
-                    PropertyKey.IO_SHARED_WORKER_COUNT,
-                    PropertyKey.IO_SHARED_WORKER_AFFINITY,
+                    this.networkSharedWorkerPoolConfiguration,
+                    PropertyKey.NETWORK_SHARED_WORKER_COUNT,
+                    PropertyKey.NETWORK_SHARED_WORKER_AFFINITY,
                     sharedWorkerCountSett,
                     Thread.NORM_PRIORITY + 1,
                     sharedWorkerHaltOnError,
@@ -1803,11 +1803,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
-        return ioSharedWorkerPoolConfiguration;
-    }
-
-    @Override
     public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
         return lineTcpReceiverConfiguration;
     }
@@ -1835,6 +1830,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public MetricsConfiguration getMetricsConfiguration() {
         return metricsConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
+        return networkSharedWorkerPoolConfiguration;
     }
 
     @Override
@@ -2837,6 +2837,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
             return circuitBreakerConfiguration;
+        }
+
+        @Override
+        public int getColumnAliasGeneratedMaxSize() {
+            return cairoSqlColumnAliasGeneratedMaxSize;
         }
 
         @Override
@@ -3903,6 +3908,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isColumnAliasExpressionEnabled() {
+            return cairoSqlColumnAliasExpressionEnabled;
+        }
+
+        @Override
         public boolean isDevModeEnabled() {
             return devModeEnabled;
         }
@@ -4045,16 +4055,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean useWithinLatestByOptimisation() {
             return queryWithinLatestByOptimisationEnabled;
-        }
-
-        @Override
-        public boolean isColumnAliasExpressionEnabled() {
-            return cairoSqlColumnAliasExpressionEnabled;
-        }
-
-        @Override
-        public int getColumnAliasGeneratedMaxSize() {
-            return cairoSqlColumnAliasGeneratedMaxSize;
         }
     }
 
@@ -4815,11 +4815,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
-            return lineTcpIOWorkerPoolConfiguration;
-        }
-
-        @Override
         public KqueueFacade getKqueueFacade() {
             return KqueueFacadeImpl.INSTANCE;
         }
@@ -4877,6 +4872,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public NetworkFacade getNetworkFacade() {
             return NetworkFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
+            return lineTcpIOWorkerPoolConfiguration;
         }
 
         @Override
