@@ -140,9 +140,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.tasks.TableWriterTask.*;
@@ -4050,10 +4050,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     other.put(path.byteAt(i));
                 }
 
-                int lastSlashOther = Utf8s.lastIndexOfAscii(other, '/');
+                int lastSlashOther = Utf8s.lastIndexOfAscii(other, SEPARATOR);
                 createDirsOrFail(ff, other.trimTo(lastSlashOther).slash(), configuration.getMkDirMode());
 
-                int lastSlashPath = Utf8s.lastIndexOfAscii(path, '/');
+                int lastSlashPath = Utf8s.lastIndexOfAscii(path, SEPARATOR);
 
                 for (int i = lastSlashPath + 1, n = path.size(); i < n; i++) {
                     other.put(path.byteAt(i));
