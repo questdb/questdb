@@ -34,23 +34,12 @@ import org.junit.Test;
 
 public class PrometheusMetricsTest extends AbstractCairoTest {
 
-    private void assertPrometheusMetrics(String expected) throws Exception {
-        assertQuery(
-                expected,
-                "prometheus_metrics()",
-                null,
-                null,
-                false,
-                false
-        );
-    }
-
     @Test
     public void testCounterWithOneLabel() throws Exception {
         // Clear existing metrics and create synthetic ones
         MetricsRegistry metricsRegistry = engine.getMetrics().getRegistry();
         metricsRegistry.clear();
-        
+
         CounterWithOneLabel counter = metricsRegistry.newCounter("counter", "label0", new CharSequence[]{"A", "B", "C"});
 
         counter.inc((short) 0);
@@ -58,16 +47,16 @@ public class PrometheusMetricsTest extends AbstractCairoTest {
         counter.inc((short) 2);
 
         assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n" +
-                        "questdb_counter_total\tcounter\t2\tnull\tLONG\t{ \"label0\" : \"A\" }\n" +
-                        "questdb_counter_total\tcounter\t0\tnull\tLONG\t{ \"label0\" : \"B\" }\n" +
-                        "questdb_counter_total\tcounter\t1\tnull\tLONG\t{ \"label0\" : \"C\" }\n");
+                "questdb_counter_total\tcounter\t2\tnull\tLONG\t{ \"label0\" : \"A\" }\n" +
+                "questdb_counter_total\tcounter\t0\tnull\tLONG\t{ \"label0\" : \"B\" }\n" +
+                "questdb_counter_total\tcounter\t1\tnull\tLONG\t{ \"label0\" : \"C\" }\n");
     }
 
     @Test
     public void testCounterWithTwoLabels() throws Exception {
         MetricsRegistry metricsRegistry = engine.getMetrics().getRegistry();
         metricsRegistry.clear();
-        
+
         CounterWithTwoLabels counter = metricsRegistry.newCounter("counter",
                 "label0", new CharSequence[]{"A", "B", "C"},
                 "label1", new CharSequence[]{"X", "Y", "Z"}
@@ -94,32 +83,32 @@ public class PrometheusMetricsTest extends AbstractCairoTest {
     public void testCounterWithoutLabels() throws Exception {
         MetricsRegistry metricsRegistry = engine.getMetrics().getRegistry();
         metricsRegistry.clear();
-        
+
         Counter counter = metricsRegistry.newCounter("counter");
 
         counter.inc();
 
         assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n" +
-                        "questdb_counter_total\tcounter\t1\tnull\tLONG\t\n");
+                "questdb_counter_total\tcounter\t1\tnull\tLONG\t\n");
     }
 
     @Test
     public void testGauge() throws Exception {
         MetricsRegistry metricsRegistry = engine.getMetrics().getRegistry();
         metricsRegistry.clear();
-        
+
         LongGauge gauge = metricsRegistry.newLongGauge("gauge");
 
         gauge.inc();
         gauge.inc();
 
         assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n" +
-                        "questdb_gauge\tgauge\t2\tnull\tLONG\t\n");
+                "questdb_gauge\tgauge\t2\tnull\tLONG\t\n");
 
         gauge.dec();
 
         assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n" +
-                        "questdb_gauge\tgauge\t1\tnull\tLONG\t\n");
+                "questdb_gauge\tgauge\t1\tnull\tLONG\t\n");
     }
 
     @Test
@@ -134,7 +123,7 @@ public class PrometheusMetricsTest extends AbstractCairoTest {
         // Clear the engine's registry to simulate no metrics being registered
         MetricsRegistry engineRegistry = engine.getMetrics().getRegistry();
         engineRegistry.clear();
-        
+
         // Test that when no metrics are registered, only headers are returned
         assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n");
     }
@@ -144,7 +133,7 @@ public class PrometheusMetricsTest extends AbstractCairoTest {
         // Clear the engine's registry to simulate no metrics being registered
         MetricsRegistry engineRegistry = engine.getMetrics().getRegistry();
         engineRegistry.clear();
-        
+
         // Test that when no metrics are registered, only headers are returned
         assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n");
     }
@@ -152,5 +141,16 @@ public class PrometheusMetricsTest extends AbstractCairoTest {
     @Test
     public void testPlan() throws Exception {
         assertMemoryLeak(() -> assertPlanNoLeakCheck("prometheus_metrics();", "prometheus_metrics\n"));
+    }
+
+    private void assertPrometheusMetrics(String expected) throws Exception {
+        assertQuery(
+                expected,
+                "prometheus_metrics()",
+                null,
+                null,
+                false,
+                false
+        );
     }
 }
