@@ -91,6 +91,11 @@ public class JsonExtractFunction implements Function {
     }
 
     @Override
+    public boolean shouldMemoize() {
+        return true;
+    }
+
+    @Override
     public void close() {
         Misc.free(stateA);
         Misc.free(stateB);

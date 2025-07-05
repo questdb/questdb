@@ -3081,7 +3081,7 @@ public class SqlParser {
                                     if (framingMode == WindowColumn.FRAMING_RANGE) {
                                         long timeUnit = parseTimeUnit(lexer);
                                         if (timeUnit != -1) {
-                                            winCol.setRowsLoExprTimeUnit(timeUnit, lexer.lastTokenPosition());
+                                            winCol.setRowsLoExprTimeUnit(timeUnit);
                                         }
                                     }
 
@@ -3125,7 +3125,7 @@ public class SqlParser {
                                         if (framingMode == WindowColumn.FRAMING_RANGE) {
                                             long timeUnit = parseTimeUnit(lexer);
                                             if (timeUnit != -1) {
-                                                winCol.setRowsHiExprTimeUnit(timeUnit, lexer.lastTokenPosition());
+                                                winCol.setRowsHiExprTimeUnit(timeUnit);
                                             }
                                         }
 
@@ -3165,7 +3165,7 @@ public class SqlParser {
                                     if (framingMode == WindowColumn.FRAMING_RANGE) {
                                         long timeUnit = parseTimeUnit(lexer);
                                         if (timeUnit != -1) {
-                                            winCol.setRowsLoExprTimeUnit(timeUnit, lexer.lastTokenPosition());
+                                            winCol.setRowsLoExprTimeUnit(timeUnit);
                                         }
                                     }
                                     tok = tok(lexer, "'preceding'");
