@@ -243,6 +243,13 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
         }
 
         @Override
+        public @Nullable Utf8Sequence getVarcharB(int col) {
+            // For our implementation, getVarcharB can delegate to getVarcharA
+            // since we're not dealing with mutable strings
+            return getVarcharA(col);
+        }
+
+        @Override
         public long getLong(int col) {
             if (col == LONG_VALUE) {
                 return hasLongValue ? longValue : Numbers.LONG_NULL;

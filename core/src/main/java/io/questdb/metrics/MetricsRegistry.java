@@ -30,6 +30,8 @@ public interface MetricsRegistry extends Target {
 
     void addTarget(Target target);
 
+    void clear();
+
     default int getSize() {
         throw new UnsupportedOperationException();
     }

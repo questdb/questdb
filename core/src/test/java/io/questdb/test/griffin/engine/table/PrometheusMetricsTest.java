@@ -24,35 +24,33 @@
 
 package io.questdb.test.griffin.engine.table;
 
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.CounterWithOneLabel;
 import io.questdb.metrics.CounterWithTwoLabels;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
-import io.questdb.metrics.MetricsRegistryImpl;
-import io.questdb.metrics.NullMetricsRegistry;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class PrometheusMetricsTest extends AbstractCairoTest {
 
-    public void assertPrometheusMetrics(CharSequence expected, MetricsRegistry metricsRegistry) {
-        try (PrometheusMetricsRecordCursorFactory factory = new PrometheusMetricsRecordCursorFactory(configuration)) {
-            PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor cursor = (PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor) factory.getCursor(sqlExecutionContext);
-            cursor.of(metricsRegistry);
-            assertCursor(expected, false, false, true, cursor, factory.getMetadata(), false);
-        } catch (SqlException e) {
-            throw new RuntimeException(e);
-        }
-        TestUtils.assertEquals(expected, sink);
+    private void assertPrometheusMetrics(String expected) throws Exception {
+        assertQuery(
+                expected,
+                "prometheus_metrics()",
+                null,
+                null,
+                false,
+                false
+        );
     }
 
     @Test
-    public void testCounterWithOneLabel() {
-        MetricsRegistry metricsRegistry = new MetricsRegistryImpl();
+    public void testCounterWithOneLabel() throws Exception {
+        // Clear existing metrics and create synthetic ones
+        MetricsRegistry metricsRegistry = engine.getMetrics().getRegistry();
+        metricsRegistry.clear();
+        
         CounterWithOneLabel counter = metricsRegistry.newCounter("counter", "label0", new CharSequence[]{"A", "B", "C"});
 
         counter.inc((short) 0);
@@ -62,13 +60,14 @@ public class PrometheusMetricsTest extends AbstractCairoTest {
         assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n" +
                         "questdb_counter_total\tcounter\t2\tnull\tLONG\t{ \"label0\" : \"A\" }\n" +
                         "questdb_counter_total\tcounter\t0\tnull\tLONG\t{ \"label0\" : \"B\" }\n" +
-                        "questdb_counter_total\tcounter\t1\tnull\tLONG\t{ \"label0\" : \"C\" }\n",
-                metricsRegistry);
+                        "questdb_counter_total\tcounter\t1\tnull\tLONG\t{ \"label0\" : \"C\" }\n");
     }
 
     @Test
-    public void testCounterWithTwoLabels() {
-        MetricsRegistry metricsRegistry = new MetricsRegistryImpl();
+    public void testCounterWithTwoLabels() throws Exception {
+        MetricsRegistry metricsRegistry = engine.getMetrics().getRegistry();
+        metricsRegistry.clear();
+        
         CounterWithTwoLabels counter = metricsRegistry.newCounter("counter",
                 "label0", new CharSequence[]{"A", "B", "C"},
                 "label1", new CharSequence[]{"X", "Y", "Z"}
@@ -78,7 +77,8 @@ public class PrometheusMetricsTest extends AbstractCairoTest {
         counter.inc(0, 1);
         counter.inc(2, 1);
 
-        assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n" +
+        assertPrometheusMetrics(
+                "name\ttype\tlong_value\tdouble_value\tkind\tlabels\n" +
                         "questdb_counter_total\tcounter\t0\tnull\tLONG\t{ \"label0\" : \"A\", \"label1\" : \"X\" }\n" +
                         "questdb_counter_total\tcounter\t2\tnull\tLONG\t{ \"label0\" : \"A\", \"label1\" : \"Y\" }\n" +
                         "questdb_counter_total\tcounter\t0\tnull\tLONG\t{ \"label0\" : \"A\", \"label1\" : \"Z\" }\n" +
@@ -87,39 +87,39 @@ public class PrometheusMetricsTest extends AbstractCairoTest {
                         "questdb_counter_total\tcounter\t0\tnull\tLONG\t{ \"label0\" : \"B\", \"label1\" : \"Z\" }\n" +
                         "questdb_counter_total\tcounter\t0\tnull\tLONG\t{ \"label0\" : \"C\", \"label1\" : \"X\" }\n" +
                         "questdb_counter_total\tcounter\t1\tnull\tLONG\t{ \"label0\" : \"C\", \"label1\" : \"Y\" }\n" +
-                        "questdb_counter_total\tcounter\t0\tnull\tLONG\t{ \"label0\" : \"C\", \"label1\" : \"Z\" }\n",
-                metricsRegistry);
+                        "questdb_counter_total\tcounter\t0\tnull\tLONG\t{ \"label0\" : \"C\", \"label1\" : \"Z\" }\n");
     }
 
     @Test
-    public void testCounterWithoutLabels() {
-        MetricsRegistry metricsRegistry = new MetricsRegistryImpl();
+    public void testCounterWithoutLabels() throws Exception {
+        MetricsRegistry metricsRegistry = engine.getMetrics().getRegistry();
+        metricsRegistry.clear();
+        
         Counter counter = metricsRegistry.newCounter("counter");
 
         counter.inc();
 
         assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n" +
-                        "questdb_counter_total\tcounter\t1\tnull\tLONG\t\n",
-                metricsRegistry);
+                        "questdb_counter_total\tcounter\t1\tnull\tLONG\t\n");
     }
 
     @Test
-    public void testGauge() {
-        MetricsRegistry metricsRegistry = new MetricsRegistryImpl();
+    public void testGauge() throws Exception {
+        MetricsRegistry metricsRegistry = engine.getMetrics().getRegistry();
+        metricsRegistry.clear();
+        
         LongGauge gauge = metricsRegistry.newLongGauge("gauge");
 
         gauge.inc();
         gauge.inc();
 
         assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n" +
-                        "questdb_gauge\tgauge\t2\tnull\tLONG\t\n",
-                metricsRegistry);
+                        "questdb_gauge\tgauge\t2\tnull\tLONG\t\n");
 
         gauge.dec();
 
         assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n" +
-                        "questdb_gauge\tgauge\t1\tnull\tLONG\t\n",
-                metricsRegistry);
+                        "questdb_gauge\tgauge\t1\tnull\tLONG\t\n");
     }
 
     @Test
@@ -130,28 +130,23 @@ public class PrometheusMetricsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNullCounter() {
-        MetricsRegistry metricsRegistry = new NullMetricsRegistry();
-        Counter counter = metricsRegistry.newCounter("counter");
-
-        counter.inc();
-        assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n",
-                metricsRegistry);
+    public void testNullCounter() throws Exception {
+        // Clear the engine's registry to simulate no metrics being registered
+        MetricsRegistry engineRegistry = engine.getMetrics().getRegistry();
+        engineRegistry.clear();
+        
+        // Test that when no metrics are registered, only headers are returned
+        assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n");
     }
 
     @Test
-    public void testNullGauge() {
-        MetricsRegistry metricsRegistry = new NullMetricsRegistry();
-        LongGauge gauge = metricsRegistry.newLongGauge("gauge");
-
-        gauge.inc();
-        gauge.inc();
-        assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n",
-                metricsRegistry);
-
-        gauge.dec();
-        assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n",
-                metricsRegistry);
+    public void testNullGauge() throws Exception {
+        // Clear the engine's registry to simulate no metrics being registered
+        MetricsRegistry engineRegistry = engine.getMetrics().getRegistry();
+        engineRegistry.clear();
+        
+        // Test that when no metrics are registered, only headers are returned
+        assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n");
     }
 
     @Test

@@ -38,6 +38,11 @@ public class MetricsRegistryImpl implements MetricsRegistry {
     }
 
     @Override
+    public void clear() {
+        metrics.clear();
+    }
+
+    @Override
     public int getSize() {
         return metrics.size();
     }

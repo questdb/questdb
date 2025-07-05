@@ -35,6 +35,11 @@ public class NullMetricsRegistry implements MetricsRegistry {
     }
 
     @Override
+    public void clear() {
+        // No-op for null registry
+    }
+
+    @Override
     public int getSize() {
         return 0;
     }
