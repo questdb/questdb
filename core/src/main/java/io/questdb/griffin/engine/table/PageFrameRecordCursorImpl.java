@@ -64,10 +64,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
-        if (!areCursorsPrepared) {
-            rowCursorFactory.prepareCursor(frameCursor);
-            areCursorsPrepared = true;
-        }
+        prepareRowCursorFactory();
 
         if (!frameCursor.supportsSizeCalculation() || filter != null || rowCursorFactory.isUsingIndex()) {
             while (hasNext()) {
@@ -93,11 +90,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
-        if (!areCursorsPrepared) {
-            rowCursorFactory.prepareCursor(frameCursor);
-            areCursorsPrepared = true;
-        }
-
+        prepareRowCursorFactory();
         try {
             if (rowCursor != null && rowCursor.hasNext()) {
                 final int frameIndex = frameCount - 1;
@@ -147,6 +140,11 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return RecordCursor.fromBool(areCursorsPrepared);
+    }
+
+    @Override
     public long size() {
         return entityCursor ? frameCursor.size() : -1;
     }
@@ -157,10 +155,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             return;
         }
 
-        if (!areCursorsPrepared) {
-            rowCursorFactory.prepareCursor(frameCursor);
-            areCursorsPrepared = true;
-        }
+        prepareRowCursorFactory();
 
         if (filter != null || rowCursorFactory.isUsingIndex()) {
             while (rowCount.get() > 0 && hasNext()) {
@@ -207,9 +202,15 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         if (filter != null) {
             filter.toTop();
         }
-        areCursorsPrepared = false;
         rowCursor = null;
         isSkipped = false;
         super.toTop();
+    }
+
+    private void prepareRowCursorFactory() {
+        if (!areCursorsPrepared) {
+            rowCursorFactory.prepareCursor(frameCursor);
+            areCursorsPrepared = true;
+        }
     }
 }

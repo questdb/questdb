@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -38,16 +39,6 @@ public interface QuaternaryFunction extends Function {
         getFunc1().close();
         getFunc2().close();
         getFunc3().close();
-    }
-
-    @Override
-    default void offerStateTo(Function that) {
-        if (that instanceof QuaternaryFunction) {
-            getFunc0().offerStateTo(((QuaternaryFunction) that).getFunc0());
-            getFunc1().offerStateTo(((QuaternaryFunction) that).getFunc1());
-            getFunc2().offerStateTo(((QuaternaryFunction) that).getFunc2());
-            getFunc3().offerStateTo(((QuaternaryFunction) that).getFunc3());
-        }
     }
 
     @Override
@@ -91,6 +82,11 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
+    default boolean isRandom() {
+        return getFunc0().isRandom() || getFunc1().isRandom() || getFunc2().isRandom() || getFunc3().isRandom();
+    }
+
+    @Override
     default boolean isRuntimeConstant() {
         final boolean arc = getFunc0().isRuntimeConstant();
         final boolean brc = getFunc1().isRuntimeConstant();
@@ -114,11 +110,45 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
+    default void memoize(Record record) {
+        getFunc0().memoize(record);
+        getFunc1().memoize(record);
+        getFunc2().memoize(record);
+        getFunc3().memoize(record);
+    }
+
+    @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof QuaternaryFunction) {
+            getFunc0().offerStateTo(((QuaternaryFunction) that).getFunc0());
+            getFunc1().offerStateTo(((QuaternaryFunction) that).getFunc1());
+            getFunc2().offerStateTo(((QuaternaryFunction) that).getFunc2());
+            getFunc3().offerStateTo(((QuaternaryFunction) that).getFunc3());
+        }
+    }
+
+    @Override
+    default boolean shouldMemoize() {
+        return getFunc0().shouldMemoize()
+                || getFunc1().shouldMemoize()
+                || getFunc2().shouldMemoize()
+                || getFunc3().shouldMemoize();
+    }
+
+    @Override
     default boolean supportsParallelism() {
         return getFunc0().supportsParallelism()
                 && getFunc1().supportsParallelism()
                 && getFunc2().supportsParallelism()
                 && getFunc3().supportsParallelism();
+    }
+
+    @Override
+    default boolean supportsRandomAccess() {
+        return getFunc0().supportsRandomAccess()
+                && getFunc1().supportsRandomAccess()
+                && getFunc2().supportsRandomAccess()
+                && getFunc3().supportsRandomAccess();
     }
 
     @Override

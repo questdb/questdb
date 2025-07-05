@@ -101,6 +101,11 @@ class IntersectAllCastRecordCursor extends AbstractSetRecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return isCursorBHashed ? 1 : 0;
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
         cursorA.recordAt(((UnionCastRecord) record).getRecordA(), atRowId);
     }

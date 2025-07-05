@@ -48,19 +48,6 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
-    default void offerStateTo(Function that) {
-        if (that instanceof MultiArgFunction) {
-            ObjList<Function> thatArgs = ((MultiArgFunction) that).getArgs();
-            ObjList<Function> thisArgs = getArgs();
-            if (thatArgs.size() == thisArgs.size()) {
-                for (int i = 0; i < thisArgs.size(); i++) {
-                    thisArgs.getQuick(i).offerStateTo(thatArgs.getQuick(i));
-                }
-            }
-        }
-    }
-
-    @Override
     default boolean isConstant() {
         ObjList<Function> args = getArgs();
         for (int i = 0, n = args.size(); i < n; i++) {
@@ -77,6 +64,18 @@ public interface MultiArgFunction extends Function {
         for (int i = 0, n = args.size(); i < n; i++) {
             final Function function = args.getQuick(i);
             if (function.isNonDeterministic()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
+    default boolean isRandom() {
+        final ObjList<Function> args = getArgs();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function function = args.getQuick(i);
+            if (function.isRandom()) {
                 return true;
             }
         }
@@ -105,6 +104,31 @@ public interface MultiArgFunction extends Function {
             }
         }
         return true;
+    }
+
+    @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof MultiArgFunction) {
+            ObjList<Function> thatArgs = ((MultiArgFunction) that).getArgs();
+            ObjList<Function> thisArgs = getArgs();
+            if (thatArgs.size() == thisArgs.size()) {
+                for (int i = 0; i < thisArgs.size(); i++) {
+                    thisArgs.getQuick(i).offerStateTo(thatArgs.getQuick(i));
+                }
+            }
+        }
+    }
+
+    @Override
+    default boolean shouldMemoize() {
+        final ObjList<Function> args = getArgs();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function function = args.getQuick(i);
+            if (function.shouldMemoize()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

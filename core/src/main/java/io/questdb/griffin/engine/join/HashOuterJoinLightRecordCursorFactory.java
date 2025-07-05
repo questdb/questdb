@@ -189,6 +189,11 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
         }
 
         @Override
+        public long preComputedStateSize() {
+            return RecordCursor.fromBool(isMapBuilt);
+        }
+
+        @Override
         public boolean hasNext() {
             if (!isMapBuilt) {
                 populateRowIDHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain);

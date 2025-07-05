@@ -93,6 +93,11 @@ public final class UnorderedVarcharMapCursor implements MapRecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return 0;
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
         ((UnorderedVarcharMapRecord) record).of(atRowId);
     }

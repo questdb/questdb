@@ -183,6 +183,11 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             ((LongSequenceRecord) record).of(atRowId);
         }

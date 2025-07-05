@@ -140,6 +140,11 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             baseCursor.recordAt(((RecordAsAFieldRecord) record).base, atRowId);
         }

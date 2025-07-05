@@ -675,7 +675,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.pipeline.capacity\tQDB_PG_PIPELINE_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
                                     "query.within.latest.by.optimisation.enabled\tQDB_QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.preferences.string.pool.capacity\tQDB_CAIRO_PREFERENCES_STRING_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
-                                    "http.settings.readonly\tQDB_HTTP_SETTINGS_READONLY\tfalse\tdefault\tfalse\tfalse\n"
+                                    "http.settings.readonly\tQDB_HTTP_SETTINGS_READONLY\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.column.alias.expression.enabled\tQDB_CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.column.alias.generated.max.size\tQDB_CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE\t64\tdefault\tfalse\tfalse\n"
                     )
                             .split("\n");
 

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -40,13 +41,6 @@ public interface UnaryFunction extends Function {
     @Override
     default void cursorClosed() {
         getArg().cursorClosed();
-    }
-
-    @Override
-    default void offerStateTo(Function that) {
-        if (that instanceof UnaryFunction) {
-            getArg().offerStateTo(((UnaryFunction) that).getArg());
-        }
     }
 
     Function getArg();
@@ -67,6 +61,11 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
+    default boolean isRandom() {
+        return getArg().isRandom();
+    }
+
+    @Override
     default boolean isRuntimeConstant() {
         return getArg().isRuntimeConstant();
     }
@@ -77,8 +76,30 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
+    default void memoize(Record record) {
+        getArg().memoize(record);
+    }
+
+    @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof UnaryFunction) {
+            getArg().offerStateTo(((UnaryFunction) that).getArg());
+        }
+    }
+
+    @Override
+    default boolean shouldMemoize() {
+        return getArg().shouldMemoize();
+    }
+
+    @Override
     default boolean supportsParallelism() {
         return getArg().supportsParallelism();
+    }
+
+    @Override
+    default boolean supportsRandomAccess() {
+        return getArg().supportsRandomAccess();
     }
 
     @Override
