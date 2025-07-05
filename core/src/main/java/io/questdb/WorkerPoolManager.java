@@ -56,7 +56,7 @@ public abstract class WorkerPoolManager implements Target {
         sharedPoolWrite = new WorkerPool(config.getWriteWorkerPoolConfiguration());
 
         WorkerPool queryPool = sharedPoolQuery != null ? sharedPoolQuery : sharedPoolNetwork;
-        configureSharedPool(sharedPoolNetwork, queryPool, sharedPoolWrite); // abstract method giving callers the chance to assign jobs
+        configureWorkerPools(sharedPoolNetwork, queryPool, sharedPoolWrite); // abstract method giving callers the chance to assign jobs
         config.getMetrics().addScrapable(this);
     }
 
@@ -176,7 +176,11 @@ public abstract class WorkerPoolManager implements Target {
      * @param sharedPoolQuery   A reference to the QUERY SHARED pool
      * @param sharedPoolWrite   A reference to the WRITE SHARED pool
      */
-    protected abstract void configureSharedPool(final WorkerPool sharedPoolNetwork, final WorkerPool sharedPoolQuery, final WorkerPool sharedPoolWrite);
+    protected abstract void configureWorkerPools(
+            final WorkerPool sharedPoolNetwork,
+            final WorkerPool sharedPoolQuery,
+            final WorkerPool sharedPoolWrite
+    );
 
     public enum Requester {
 
