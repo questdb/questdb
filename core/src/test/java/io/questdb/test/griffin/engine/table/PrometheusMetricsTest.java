@@ -59,10 +59,10 @@ public class PrometheusMetricsTest extends AbstractCairoTest {
         counter.inc((short) 0);
         counter.inc((short) 2);
 
-        assertPrometheusMetrics("name\ttype\tvalue\tkind\tlabels\n" +
-                        "questdb_counter_total\tcounter\t2\tLONG\t{ \"label0\" : \"A\" }\n" +
-                        "questdb_counter_total\tcounter\t0\tLONG\t{ \"label0\" : \"B\" }\n" +
-                        "questdb_counter_total\tcounter\t1\tLONG\t{ \"label0\" : \"C\" }\n",
+        assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n" +
+                        "questdb_counter_total\tcounter\t2\tnull\tLONG\t{ \"label0\" : \"A\" }\n" +
+                        "questdb_counter_total\tcounter\t0\tnull\tLONG\t{ \"label0\" : \"B\" }\n" +
+                        "questdb_counter_total\tcounter\t1\tnull\tLONG\t{ \"label0\" : \"C\" }\n",
                 metricsRegistry);
     }
 
@@ -74,20 +74,20 @@ public class PrometheusMetricsTest extends AbstractCairoTest {
                 "label1", new CharSequence[]{"X", "Y", "Z"}
         );
 
-        counter.inc((short) 0, (short) 1);
-        counter.inc((short) 0, (short) 1);
-        counter.inc((short) 2, (short) 1);
+        counter.inc(0, 1);
+        counter.inc(0, 1);
+        counter.inc(2, 1);
 
-        assertPrometheusMetrics("name\ttype\tvalue\tkind\tlabels\n" +
-                        "questdb_counter_total\tcounter\t0\tLONG\t{ \"label0\" : \"A\", \"label1\" : \"X\" }\n" +
-                        "questdb_counter_total\tcounter\t2\tLONG\t{ \"label0\" : \"A\", \"label1\" : \"Y\" }\n" +
-                        "questdb_counter_total\tcounter\t0\tLONG\t{ \"label0\" : \"A\", \"label1\" : \"Z\" }\n" +
-                        "questdb_counter_total\tcounter\t0\tLONG\t{ \"label0\" : \"B\", \"label1\" : \"X\" }\n" +
-                        "questdb_counter_total\tcounter\t0\tLONG\t{ \"label0\" : \"B\", \"label1\" : \"Y\" }\n" +
-                        "questdb_counter_total\tcounter\t0\tLONG\t{ \"label0\" : \"B\", \"label1\" : \"Z\" }\n" +
-                        "questdb_counter_total\tcounter\t0\tLONG\t{ \"label0\" : \"C\", \"label1\" : \"X\" }\n" +
-                        "questdb_counter_total\tcounter\t1\tLONG\t{ \"label0\" : \"C\", \"label1\" : \"Y\" }\n" +
-                        "questdb_counter_total\tcounter\t0\tLONG\t{ \"label0\" : \"C\", \"label1\" : \"Z\" }\n",
+        assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n" +
+                        "questdb_counter_total\tcounter\t0\tnull\tLONG\t{ \"label0\" : \"A\", \"label1\" : \"X\" }\n" +
+                        "questdb_counter_total\tcounter\t2\tnull\tLONG\t{ \"label0\" : \"A\", \"label1\" : \"Y\" }\n" +
+                        "questdb_counter_total\tcounter\t0\tnull\tLONG\t{ \"label0\" : \"A\", \"label1\" : \"Z\" }\n" +
+                        "questdb_counter_total\tcounter\t0\tnull\tLONG\t{ \"label0\" : \"B\", \"label1\" : \"X\" }\n" +
+                        "questdb_counter_total\tcounter\t0\tnull\tLONG\t{ \"label0\" : \"B\", \"label1\" : \"Y\" }\n" +
+                        "questdb_counter_total\tcounter\t0\tnull\tLONG\t{ \"label0\" : \"B\", \"label1\" : \"Z\" }\n" +
+                        "questdb_counter_total\tcounter\t0\tnull\tLONG\t{ \"label0\" : \"C\", \"label1\" : \"X\" }\n" +
+                        "questdb_counter_total\tcounter\t1\tnull\tLONG\t{ \"label0\" : \"C\", \"label1\" : \"Y\" }\n" +
+                        "questdb_counter_total\tcounter\t0\tnull\tLONG\t{ \"label0\" : \"C\", \"label1\" : \"Z\" }\n",
                 metricsRegistry);
     }
 
@@ -98,8 +98,8 @@ public class PrometheusMetricsTest extends AbstractCairoTest {
 
         counter.inc();
 
-        assertPrometheusMetrics("name\ttype\tvalue\tkind\tlabels\n" +
-                        "questdb_counter_total\tcounter\t1\tLONG\t\n",
+        assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n" +
+                        "questdb_counter_total\tcounter\t1\tnull\tLONG\t\n",
                 metricsRegistry);
     }
 
@@ -111,14 +111,14 @@ public class PrometheusMetricsTest extends AbstractCairoTest {
         gauge.inc();
         gauge.inc();
 
-        assertPrometheusMetrics("name\ttype\tvalue\tkind\tlabels\n" +
-                        "questdb_gauge\tgauge\t2\tLONG\t\n",
+        assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n" +
+                        "questdb_gauge\tgauge\t2\tnull\tLONG\t\n",
                 metricsRegistry);
 
         gauge.dec();
 
-        assertPrometheusMetrics("name\ttype\tvalue\tkind\tlabels\n" +
-                        "questdb_gauge\tgauge\t1\tLONG\t\n",
+        assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n" +
+                        "questdb_gauge\tgauge\t1\tnull\tLONG\t\n",
                 metricsRegistry);
     }
 
@@ -135,7 +135,7 @@ public class PrometheusMetricsTest extends AbstractCairoTest {
         Counter counter = metricsRegistry.newCounter("counter");
 
         counter.inc();
-        assertPrometheusMetrics("name\ttype\tvalue\tkind\tlabels\n",
+        assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n",
                 metricsRegistry);
     }
 
@@ -146,11 +146,11 @@ public class PrometheusMetricsTest extends AbstractCairoTest {
 
         gauge.inc();
         gauge.inc();
-        assertPrometheusMetrics("name\ttype\tvalue\tkind\tlabels\n",
+        assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n",
                 metricsRegistry);
 
         gauge.dec();
-        assertPrometheusMetrics("name\ttype\tvalue\tkind\tlabels\n",
+        assertPrometheusMetrics("name\ttype\tlong_value\tdouble_value\tkind\tlabels\n",
                 metricsRegistry);
     }
 

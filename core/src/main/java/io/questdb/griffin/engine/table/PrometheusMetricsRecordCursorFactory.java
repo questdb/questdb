@@ -42,6 +42,7 @@ import io.questdb.metrics.PrometheusFormatUtils;
 import io.questdb.metrics.Target;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
@@ -64,7 +65,7 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
         }
 
         DirectUtf8Sink sink = new DirectUtf8Sink(255);
-        LongList values = new LongList(10);
+        LongList values = new LongList(12);  // 6 columns * 2 slots per column
         DirectUtf8String value = new DirectUtf8String();
         record = new PrometheusMetricsRecord(sink, values, value);
         cursor = new PrometheusMetricsCursor(record);
@@ -187,14 +188,19 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
     public class PrometheusMetricsRecord implements Record {
         public static final int NAME = 0;
         public static final int TYPE = NAME + 1;
-        public static final int VALUE = TYPE + 1;
-        public static final int KIND = VALUE + 1;
+        public static final int LONG_VALUE = TYPE + 1;
+        public static final int DOUBLE_VALUE = LONG_VALUE + 1;
+        public static final int KIND = DOUBLE_VALUE + 1;
         public static final int LABELS = KIND + 1;
         public DirectUtf8Sink sink;
         boolean isClosed;
         Target target;
         DirectUtf8String value;
         LongList values;
+        private long longValue;
+        private double doubleValue;
+        private boolean hasLongValue;
+        private boolean hasDoubleValue;
 
         public PrometheusMetricsRecord(DirectUtf8Sink sink, LongList values, DirectUtf8String value) {
             this.sink = sink;
@@ -227,12 +233,27 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
         @Override
         public @Nullable Utf8Sequence getVarcharA(int col) {
             switch (col) {
-                case VALUE:
                 case NAME:
                 case TYPE:
                 case KIND:
                 case LABELS:
                     return getProp(col);
+            }
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getLong(int col) {
+            if (col == LONG_VALUE) {
+                return hasLongValue ? longValue : Numbers.LONG_NULL;
+            }
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public double getDouble(int col) {
+            if (col == DOUBLE_VALUE) {
+                return hasDoubleValue ? doubleValue : Double.NaN;
             }
             throw new UnsupportedOperationException();
         }
@@ -245,14 +266,22 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
         public int of(Target target) {
             this.target = target;
             sink.clear();
-            this.values.setAll(10, -1);
+            this.values.setAll(12, -1);
+            this.hasLongValue = false;
+            this.hasDoubleValue = false;
+            this.longValue = Numbers.LONG_NULL;
+            this.doubleValue = Double.NaN;
             return this.target.scrapeIntoRecord(this);
         }
 
         public void of(Target target, int index) {
             this.target = target;
             sink.clear();
-            this.values.setAll(10, -1);
+            this.values.setAll(12, -1);
+            this.hasLongValue = false;
+            this.hasDoubleValue = false;
+            this.longValue = Numbers.LONG_NULL;
+            this.doubleValue = Double.NaN;
             this.target.scrapeIntoRecord(this, index);
         }
 
@@ -320,16 +349,16 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
         }
 
         public PrometheusMetricsRecord setValue(long l) {
-            setLo(VALUE, sink.hi());
-            sink.put(l);
-            setHi(VALUE, sink.hi());
+            this.longValue = l;
+            this.hasLongValue = true;
+            this.hasDoubleValue = false;  // Clear the other value
             return this;
         }
 
         public PrometheusMetricsRecord setValue(double d) {
-            setLo(VALUE, sink.hi());
-            sink.put(d);
-            setHi(VALUE, sink.hi());
+            this.doubleValue = d;
+            this.hasDoubleValue = true;
+            this.hasLongValue = false;  // Clear the other value
             return this;
         }
 
@@ -354,7 +383,8 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("name", ColumnType.VARCHAR));
         metadata.add(new TableColumnMetadata("type", ColumnType.VARCHAR));
-        metadata.add(new TableColumnMetadata("value", ColumnType.VARCHAR));
+        metadata.add(new TableColumnMetadata("long_value", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("double_value", ColumnType.DOUBLE));
         metadata.add(new TableColumnMetadata("kind", ColumnType.VARCHAR));
         metadata.add(new TableColumnMetadata("labels", ColumnType.VARCHAR));
         METADATA = metadata;
