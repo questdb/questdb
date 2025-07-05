@@ -642,6 +642,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPrometheusMetricsSinkCapacity() {
+        return getDelegate().getPrometheusMetricsSinkCapacity();
+    }
+
+    @Override
     public int getQueryCacheEventQueueCapacity() {
         return getDelegate().getQueryCacheEventQueueCapacity();
     }

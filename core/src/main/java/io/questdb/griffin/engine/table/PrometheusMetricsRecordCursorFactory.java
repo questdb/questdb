@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -42,7 +43,9 @@ import io.questdb.metrics.PrometheusFormatUtils;
 import io.questdb.metrics.Target;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
@@ -54,7 +57,7 @@ import java.util.Objects;
 import static io.questdb.metrics.MemoryTagLongGauge.MEMORY_TAG_PREFIX;
 
 public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCursorFactory {
-    public static final RecordMetadata METADATA;
+    private static final RecordMetadata METADATA;
     private final PrometheusMetricsCursor cursor;
     private final PrometheusMetricsRecord record;
 
@@ -64,17 +67,13 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
             throw SqlException.$(0, "metrics are disabled! try setting `metrics.enabled=true` in `server.conf`");
         }
 
-        DirectUtf8Sink sink = new DirectUtf8Sink(255);
-        LongList values = new LongList(12);  // 6 columns * 2 slots per column
-        DirectUtf8String value = new DirectUtf8String();
-        record = new PrometheusMetricsRecord(sink, values, value);
+        record = new PrometheusMetricsRecord(configuration.getPrometheusMetricsSinkCapacity());
         cursor = new PrometheusMetricsCursor(record);
     }
 
     @Override
     public void _close() {
-        record.close();
-        cursor.close();
+        Misc.free(record);
     }
 
     @Override
@@ -94,8 +93,8 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
         sink.type("prometheus_metrics");
     }
 
-    public static class PrometheusMetricsCursor implements RecordCursor {
-        PrometheusMetricsRecord record;
+    public static class PrometheusMetricsCursor implements NoRandomAccessRecordCursor {
+        private final PrometheusMetricsRecord record;
         private int pos;
         private MetricsRegistry registry;
         private int size;
@@ -108,16 +107,12 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
 
         @Override
         public void close() {
+            this.record.clear();
         }
 
         @Override
         public Record getRecord() {
             return record;
-        }
-
-        @Override
-        public Record getRecordB() {
-            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -163,11 +158,6 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public long size() throws DataUnavailableException {
             return -1;
         }
@@ -177,43 +167,57 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
             pos = -1;
             subPos = -1;
             subLimit = -1;
-            if (record.isClosed) {
-                Misc.free(record.sink);
-                record.sink = new DirectUtf8Sink(255);
-                record.isClosed = false;
-            }
         }
     }
 
-    public class PrometheusMetricsRecord implements Record {
+    public class PrometheusMetricsRecord implements Record, Mutable, QuietCloseable {
         public static final int NAME = 0;
         public static final int TYPE = NAME + 1;
         public static final int LONG_VALUE = TYPE + 1;
         public static final int DOUBLE_VALUE = LONG_VALUE + 1;
         public static final int KIND = DOUBLE_VALUE + 1;
         public static final int LABELS = KIND + 1;
-        public DirectUtf8Sink sink;
-        boolean isClosed;
-        Target target;
-        DirectUtf8String value;
-        LongList values;
-        private long longValue;
+        private final DirectUtf8Sink sink;
+        private final DirectUtf8String value;
+        private final LongList values;
         private double doubleValue;
-        private boolean hasLongValue;
         private boolean hasDoubleValue;
+        private boolean hasLongValue;
+        private long longValue;
+        private Target target;
 
-        public PrometheusMetricsRecord(DirectUtf8Sink sink, LongList values, DirectUtf8String value) {
-            this.sink = sink;
-            this.values = values;
-            this.value = value;
-            isClosed = false;
+        public PrometheusMetricsRecord(int sinkCapacity) {
+            this.sink = new DirectUtf8Sink(sinkCapacity);
+            this.values = new LongList(12);  // 6 columns * 2 slots per column
+            this.value = new DirectUtf8String();
         }
 
-        public void close() {
+        @Override
+        public void clear() {
+            this.sink.resetCapacity();
             this.values.clear();
             this.value.clear();
-            this.sink.close();
-            isClosed = true;
+        }
+
+        @Override
+        public void close() {
+            Misc.free(this.sink);
+        }
+
+        @Override
+        public double getDouble(int col) {
+            if (col == DOUBLE_VALUE) {
+                return hasDoubleValue ? doubleValue : Double.NaN;
+            }
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getLong(int col) {
+            if (col == LONG_VALUE) {
+                return hasLongValue ? longValue : Numbers.LONG_NULL;
+            }
+            throw new UnsupportedOperationException();
         }
 
         public Utf8Sequence getProp(int slot) {
@@ -250,45 +254,17 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
         }
 
         @Override
-        public long getLong(int col) {
-            if (col == LONG_VALUE) {
-                return hasLongValue ? longValue : Numbers.LONG_NULL;
-            }
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public double getDouble(int col) {
-            if (col == DOUBLE_VALUE) {
-                return hasDoubleValue ? doubleValue : Double.NaN;
-            }
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public int getVarcharSize(int col) {
             return Objects.requireNonNull(getVarcharA(col)).size();
         }
 
         public int of(Target target) {
-            this.target = target;
-            sink.clear();
-            this.values.setAll(12, -1);
-            this.hasLongValue = false;
-            this.hasDoubleValue = false;
-            this.longValue = Numbers.LONG_NULL;
-            this.doubleValue = Double.NaN;
+            of0(target);
             return this.target.scrapeIntoRecord(this);
         }
 
         public void of(Target target, int index) {
-            this.target = target;
-            sink.clear();
-            this.values.setAll(12, -1);
-            this.hasLongValue = false;
-            this.hasDoubleValue = false;
-            this.longValue = Numbers.LONG_NULL;
-            this.doubleValue = Double.NaN;
+            of0(target);
             this.target.scrapeIntoRecord(this, index);
         }
 
@@ -367,6 +343,16 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
             this.hasDoubleValue = true;
             this.hasLongValue = false;  // Clear the other value
             return this;
+        }
+
+        private void of0(Target target) {
+            this.target = target;
+            this.values.setAll(12, -1);
+            this.hasLongValue = false;
+            this.hasDoubleValue = false;
+            this.longValue = Numbers.LONG_NULL;
+            this.doubleValue = Double.NaN;
+            sink.clear();
         }
 
         long getHi(int slot) {
