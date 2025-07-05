@@ -206,6 +206,14 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
+    public AlterOperationBuilder ofExportPartition(int tableNamePosition, TableToken tableToken, int tableId) {
+        this.command = EXPORT_PARTITION_TO_PARQUET;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        return this;
+    }
+
     public AlterOperationBuilder ofForceDropPartition(int tableNamePosition, TableToken tableToken, int tableId) {
         this.command = FORCE_DROP_PARTITION;
         this.tableNamePosition = tableNamePosition;

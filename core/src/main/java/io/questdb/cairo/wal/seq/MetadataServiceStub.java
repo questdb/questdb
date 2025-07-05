@@ -83,6 +83,11 @@ public interface MetadataServiceStub extends MetadataService {
         return false;
     }
 
+    @Override
+    default boolean exportPartitionNativeToParquet(long partitionTimestamp) {
+        throw CairoException.critical(0).put("export native partition to parquet does not update sequencer metadata");
+    }
+
     default void forceRemovePartitions(LongList partitionTimestamps) {
         throw CairoException.critical(0).put("recover partitions does not update sequencer metadata");
     }
