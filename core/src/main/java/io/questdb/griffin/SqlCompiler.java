@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Mutable;
@@ -53,6 +54,12 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      * @throws CairoException in case of unexpected, typically runtime, errors
      */
     void execute(final Operation op, SqlExecutionContext executionContext) throws SqlException, CairoException;
+
+    RecordCursorFactory generateInsertSelectWithRetries(
+            InsertModel queryModel,
+            @Transient SqlExecutionContext executionContext,
+            boolean generateProgressLogger
+    ) throws SqlException;
 
     RecordCursorFactory generateSelectWithRetries(
             @Transient QueryModel queryModel,
