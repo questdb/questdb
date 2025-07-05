@@ -24,9 +24,21 @@
 
 package io.questdb.metrics;
 
+import org.jetbrains.annotations.Nullable;
+
 public interface MetricsRegistry extends Target {
 
     void addTarget(Target target);
+
+    void clear();
+
+    default int getSize() {
+        throw new UnsupportedOperationException();
+    }
+
+    default @Nullable Target getTarget(int index) {
+        throw new UnsupportedOperationException();
+    }
 
     AtomicLongGauge newAtomicLongGauge(CharSequence name);
 

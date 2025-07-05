@@ -24,7 +24,7 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.Numbers;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsRecord;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 
@@ -37,7 +37,8 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
     private final CharSequence[] labelValues0;
     private final CharSequence[] labelValues1;
     private final CharSequence name;
-    private final int shl;
+    private final int labelValues0Length;
+    private final int labelValues1Length;
 
     CounterWithTwoLabelsImpl(
             CharSequence name,
@@ -51,35 +52,62 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
         this.labelName1 = labelName1;
         this.labelValues0 = labelValues0;
         this.labelValues1 = labelValues1;
-        int labelValues0Capacity = Numbers.ceilPow2(labelValues0.length);
-        this.shl = Numbers.msb(labelValues0Capacity);
-        this.counters = new LongAdder[labelValues0Capacity * labelValues1.length];
-        for (int i = 0, n = labelValues0.length; i < n; i++) {
-            for (int j = 0, k = labelValues1.length; j < k; j++) {
-                counters[(i << shl) + j] = new LongAdder();
-            }
+        this.labelValues0Length = labelValues0.length;
+        this.labelValues1Length = labelValues1.length;
+        this.counters = new LongAdder[labelValues0Length * labelValues1Length];
+        for (int i = 0, n = this.counters.length; i < n; i++) {
+            counters[i] = new LongAdder();
         }
     }
 
     @Override
-    public void inc(short label0, short label1) {
-        counters[(label0 << shl) + label1].increment();
+    public CharSequence getName() {
+        return name;
+    }
+
+    @Override
+    public void inc(int label0, int label1) {
+        if (label0 < 0 || label0 >= labelValues0Length || label1 < 0 || label1 >= labelValues1Length) {
+            throw new IllegalArgumentException("Invalid label indices: label0=" + label0 + ", label1=" + label1);
+        }
+        counters[(label0 * labelValues1Length) + label1].increment();
     }
 
     @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         PrometheusFormatUtils.appendCounterType(name, sink);
-        for (int i = 0, n = labelValues0.length; i < n; i++) {
-            for (int j = 0, k = labelValues1.length; j < k; j++) {
+        for (int i = 0; i < labelValues0Length; i++) {
+            for (int j = 0; j < labelValues1Length; j++) {
                 PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
                 sink.put('{');
                 PrometheusFormatUtils.appendLabel(sink, labelName0, labelValues0[i]);
                 sink.put(',');
                 PrometheusFormatUtils.appendLabel(sink, labelName1, labelValues1[j]);
                 sink.put('}');
-                PrometheusFormatUtils.appendSampleLineSuffix(sink, counters[(i << shl) + j].longValue());
+                PrometheusFormatUtils.appendSampleLineSuffix(sink, counters[(i * labelValues1Length) + j].longValue());
             }
         }
         PrometheusFormatUtils.appendNewLine(sink);
+    }
+
+    @Override
+    public void scrapeIntoRecord(PrometheusMetricsRecord record, int label) {
+        if (label < 0 || label >= counters.length) {
+            throw new IllegalArgumentException("Invalid label index: " + label);
+        }
+        int i1 = label / labelValues1Length;
+        int i2 = label % labelValues1Length;
+        record
+                .setCounterName(getName())
+                .setType("counter")
+                .setValue(counters[label].longValue())
+                .setKind("LONG")
+                .setLabels(labelName0, labelValues0[i1], labelName1, labelValues1[i2]);
+    }
+
+    @Override
+    public int scrapeIntoRecord(PrometheusMetricsRecord record) {
+        scrapeIntoRecord(record, 0);
+        return counters.length;
     }
 }
