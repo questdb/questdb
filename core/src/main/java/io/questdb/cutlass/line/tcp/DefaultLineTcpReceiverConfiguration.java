@@ -137,7 +137,7 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     }
 
     @Override
-    public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
+    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
         return SHARED_CONFIGURATION;
     }
 
