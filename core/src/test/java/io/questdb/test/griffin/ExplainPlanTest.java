@@ -721,7 +721,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertPlanNoLeakCheck(
                 "select rnd_float()::double ",
                 "VirtualRecord\n" +
-                        "  functions: [rnd_float()::double]\n" +
+                        "  functions: [memoize(rnd_float()::double)]\n" +
                         "    long_sequence count: 1\n"
         ));
     }
@@ -1606,7 +1606,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "where d < 100.0d and ts > dateadd('d', 1, now()  );",
                 "Update table: a\n" +
                         "    VirtualRecord\n" +
-                        "      functions: [20,d+rnd_double()]\n" +
+                        "      functions: [20,memoize(d+rnd_double())]\n" +
                         "        Async Filter workers: 1\n" +
                         "          filter: d<100.0 [pre-touch]\n" +
                         "            PageFrame\n" +
@@ -9375,7 +9375,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertPlanNoLeakCheck(
                 "select rnd_boolean()",
                 "VirtualRecord\n" +
-                        "  functions: [rnd_boolean()]\n" +
+                        "  functions: [memoize(rnd_boolean())]\n" +
                         "    long_sequence count: 1\n"
         ));
     }
@@ -10221,7 +10221,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = rnd_long() ",
                 "Async Filter workers: 1\n" +
-                        "  filter: l=rnd_long() [pre-touch]\n" +
+                        "  filter: memoize(l=rnd_long()) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"

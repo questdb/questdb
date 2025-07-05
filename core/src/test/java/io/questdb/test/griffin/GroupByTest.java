@@ -1629,7 +1629,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     "VirtualRecord\n" +
-                            "  functions: [l,s,rnd_int(0,1,0)/10]\n" +
+                            "  functions: [l,s,memoize(rnd_int(0,1,0)/10)]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [l,s]\n" +
                             "      filter: null\n" +
@@ -1642,7 +1642,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "1\ta\t0\n",
                     query,
                     null,
-                    true,
+                    false,
                     true
             );
         });

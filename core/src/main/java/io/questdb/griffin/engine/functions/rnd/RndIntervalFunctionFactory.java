@@ -113,5 +113,10 @@ public class RndIntervalFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             rnd = executionContext.getRandom();
         }
+
+        @Override
+        public boolean isRandom() {
+            return true;
+        }
     }
 }

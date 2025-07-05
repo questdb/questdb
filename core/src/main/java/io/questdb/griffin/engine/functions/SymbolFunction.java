@@ -234,7 +234,6 @@ public abstract class SymbolFunction implements Function, SymbolTable {
      *
      * @return clone of symbol table
      */
-    @Nullable
     public SymbolTable newSymbolTable() {
         return null;
     }
