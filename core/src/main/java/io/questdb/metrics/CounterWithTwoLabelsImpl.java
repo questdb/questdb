@@ -54,7 +54,7 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
         this.labelValues1 = labelValues1;
         this.labelValues0Length = labelValues0.length;
         this.labelValues1Length = labelValues1.length;
-        this.counters = new LongAdder[labelValues0Length * labelValues0Length];
+        this.counters = new LongAdder[labelValues0Length * labelValues1Length];
         for (int i = 0, n = this.counters.length; i < n; i++) {
             counters[i] = new LongAdder();
         }
@@ -67,7 +67,10 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
 
     @Override
     public void inc(int label0, int label1) {
-        counters[(label0 * labelValues0Length) + label1].increment();
+        if (label0 < 0 || label0 >= labelValues0Length || label1 < 0 || label1 >= labelValues1Length) {
+            throw new IllegalArgumentException("Invalid label indices: label0=" + label0 + ", label1=" + label1);
+        }
+        counters[(label0 * labelValues1Length) + label1].increment();
     }
 
     @Override
@@ -81,7 +84,7 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
                 sink.put(',');
                 PrometheusFormatUtils.appendLabel(sink, labelName1, labelValues1[j]);
                 sink.put('}');
-                PrometheusFormatUtils.appendSampleLineSuffix(sink, counters[(i * labelValues0Length) + j].longValue());
+                PrometheusFormatUtils.appendSampleLineSuffix(sink, counters[(i * labelValues1Length) + j].longValue());
             }
         }
         PrometheusFormatUtils.appendNewLine(sink);
@@ -89,7 +92,10 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
 
     @Override
     public void scrapeIntoRecord(PrometheusMetricsRecord record, int label) {
-        int i1 = label / labelValues0Length;
+        if (label < 0 || label >= counters.length) {
+            throw new IllegalArgumentException("Invalid label index: " + label);
+        }
+        int i1 = label / labelValues1Length;
         int i2 = label % labelValues1Length;
         record
                 .setCounterName(getName())
