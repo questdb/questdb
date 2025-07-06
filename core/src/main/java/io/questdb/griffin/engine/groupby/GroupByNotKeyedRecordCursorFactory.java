@@ -156,8 +156,6 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         private static final int INIT_PENDING = 0;
         private final GroupByAllocator allocator;
         private final GroupByFunctionsUpdater groupByFunctionsUpdater;
-        // hold on to reference of base cursor here
-        // because we use it as symbol table source for the functions
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private int initState;
@@ -184,13 +182,16 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public void close() {
+            for (int i = 0; i < groupByFunctions.size(); i++) {
+                groupByFunctions.getQuick(i).cursorClosed();
+            }
             baseCursor = Misc.free(baseCursor);
             Misc.free(allocator);
             Misc.clearObjList(groupByFunctions);
         }
 
         public boolean earlyExit() {
-            return false; // no early exit support here
+            return false;
         }
 
         @Override
