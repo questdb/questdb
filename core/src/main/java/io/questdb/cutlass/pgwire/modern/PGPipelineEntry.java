@@ -2932,22 +2932,4 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 }
 
-private static final Logger LOG = LoggerFactory.getLogger(PGPipelineEntry.class);
-
-public void reuse() {
-    LOG.info().$("Reusing entry: ").$(this.hashCode()).$();
-    // Clear state here if not already
-    // e.g., sqlText = null, state = CLEAN
-}
-
-public void close() {
-    LOG.info().$("Closing entry: ").$(this.hashCode()).$();
-    // Reset everything before returning to pool
-}
-public void reset() {
-    sqlText = null;
-    statement = null;
-    errorFlag = false;
-    // Reset all mutable state fields
-}
 
