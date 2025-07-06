@@ -1,7 +1,9 @@
 # Fix: Stabilize LineHttpSender test on Windows by adding socket readiness checks
 
+Closes #5815
+
 ## 🐛 Problem Description
-Fixes issue #5815 - `LineHttpSenderMockServerTest` was flaky on Windows due to:
+This PR fixes the flaky `LineHttpSenderMockServerTest` on Windows platform. The issue was reported in #5815 where tests were failing intermittently due to:
 - Race conditions between test server startup and client connection attempts
 - Windows TCP stack behaving differently than Unix systems
 - Insufficient timeout handling for Windows socket operations
