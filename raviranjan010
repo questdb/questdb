@@ -1,0 +1,6 @@
+What Has Been Fixed:
+All assert false; statements in PGPipelineEntry.java have been replaced with:
+Logging a critical error using LOG.critical(), so the issue is visible in server logs.
+Throwing a BadProtocolException, which is a catchable exception and allows the server to handle the error gracefully instead of crashing.
+How the Fix Addresses the Issue:
+Instead of crashing the server, the code now logs a critical error and throws a protocol exception, allowing the connection to be closed safely and the error to be managed higher up the call stack.   
