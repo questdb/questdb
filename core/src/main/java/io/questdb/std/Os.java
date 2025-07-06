@@ -259,6 +259,11 @@ public final class Os {
 
     private static native int setCurrentThreadAffinity0(int cpu);
 
+    private static boolean isMusl() {
+        return new File("/lib/libc.musl-x86_64.so.1").exists() ||
+                new File("/lib/libc.musl-aarch64.so.1").exists();
+    }
+
     static {
         if ("aarch64".equals(System.getProperty("os.arch"))) {
             arch = ARCH_AARCH64;
@@ -292,7 +297,9 @@ public final class Os {
                 throw new Error("Unsupported OS: " + osName);
             }
 
-            String prdLibRoot = "/io/questdb/bin/" + name + '-' + archName + '/';
+            final boolean isMusl = type == LINUX && isMusl();
+
+            String prdLibRoot = "/io/questdb/bin/" + name + '-' + archName + (isMusl ? "-musl" : "") + '/';
             String devCXXLibRoot = "/io/questdb/bin-local/";
             String cxxLibName = "libquestdb" + outputLibExt;
             String devCXXLib = devCXXLibRoot + cxxLibName;
