@@ -725,11 +725,12 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                 }
 
                 if (Utf8s.equalsAscii("boundary", name)) {
-                    this.boundary = csPool.next().of(_lo, p - 1);
+                    this.boundary = unquote("boundary", csPool.next().of(_lo, p - 1));
                     _lo = p;
                     name = null;
                     continue;
                 }
+
 
                 if (p > hi) {
                     break;
