@@ -252,6 +252,16 @@ and contact information.
 - [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean)
 - [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)
 
+## Star History
+
+<a href="https://www.star-history.com/#questdb/questdb&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=questdb/questdb&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=questdb/questdb&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=questdb/questdb&type=Date" />
+ </picture>
+</a>
+
 ## Contribute
 
 Contributions welcome!
