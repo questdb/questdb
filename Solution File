@@ -1,0 +1,19 @@
+Problem: You want to format your project’s source code from the command line using Maven, without needing IntelliJ IDEA.
+Solution: Use the Spotless Maven Plugin. It automatically formats your code using a standard style.
+
+POCEDURE:
+1.) Add this to your pom.xml inside <build><plugins>:
+<plugin>
+  <groupId>com.diffplug.spotless</groupId>
+  <artifactId>spotless-maven-plugin</artifactId>
+  <version>2.44.0</version> <!-- Use latest version -->
+  <configuration>
+    <java>
+      <googleJavaFormat/>
+    </java>
+  </configuration>
+</plugin>
+2.) Open your terminal and run:
+mvn spotless:apply
+Result:
+The code will be reformatted without using IntelliJ.
