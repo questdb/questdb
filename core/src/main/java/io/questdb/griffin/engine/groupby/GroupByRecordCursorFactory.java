@@ -200,16 +200,27 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             baseCursor.calculateSize(circuitBreaker, counter);
         }
 
-        @Override
-        public void close() {
-            if (isOpen) {
-                isOpen = false;
-                Misc.free(dataMap);
-                Misc.free(allocator);
-                Misc.clearObjList(groupByFunctions);
-                super.close();
+       @Override
+public void close() {
+    if (isOpen) {
+        isOpen = false;
+
+        // Notify all functions about cursor closure   -- by BackendbyAman
+        for (int i = 0; i < functions.size(); i++) {
+            Function f = functions.getQuick(i);
+            if (f != null) {
+                f.cursorClosed();
             }
         }
+
+        // Free memory and cleanup    
+        Misc.free(dataMap);
+        Misc.free(allocator);
+        Misc.clearObjList(groupByFunctions);
+        super.close();
+           }
+        }
+
 
         @Override
         public boolean hasNext() {
