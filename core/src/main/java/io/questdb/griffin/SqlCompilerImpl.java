@@ -202,6 +202,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
     private boolean isSingleQueryMode = true;
+    private BlockFileWriter targetTableWriter;
 
     public SqlCompilerImpl(CairoEngine engine) {
         try {
@@ -435,7 +436,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         if (retries == maxRecompileAttempts) {
                             throw e;
                         }
-                        LOG.info().$safe(e.getFlyweightMessage()).$();
+                        LOG.info().(e.getFlyweightMessage()).$();
                         // will recompile
                         lexer.restart();
                     }
@@ -1464,7 +1465,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compiledQuery.ofTableResume();
         } catch (CairoException ex) {
             LOG.critical().$("table resume failed [table=").$(tableToken)
-                    .$(", msg=").$safe(ex.getFlyweightMessage())
+                    .$(", msg=").(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             ex.position(tableNamePosition);
@@ -1532,7 +1533,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compiledQuery.ofTableSuspend();
         } catch (CairoException ex) {
             LOG.critical().$("table suspend failed [table=").$(tableToken)
-                    .$(", error=").$safe(ex.getFlyweightMessage())
+                    .$(", error=").(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             ex.position(tableNamePosition);
@@ -1720,7 +1721,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } catch (CairoException e) {
             LOG.info().$("could not alter materialized view [view=").$(matViewToken.getTableName())
-                    .$(", msg=").$safe(e.getFlyweightMessage())
+                    .$(", msg=").(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();
             if (e.getPosition() == 0) {
@@ -1995,7 +1996,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } catch (CairoException e) {
             LOG.info().$("could not alter table [table=").$(tableToken.getTableName())
-                    .$(", msg=").$safe(e.getFlyweightMessage())
+                    .$(", msg=").(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();
             if (e.getPosition() == 0) {
@@ -3279,6 +3280,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 .put(volumeAlias).put(']');
                     }
                 }
+                // Pseudocode inside the insert loop or method
+
+Record[] sourceRecords;
+for (Record record : sourceRecords) {
+    Object columns;
+    for (int i = 0; i < columns.length; i++) {
+        short[] columnTypes;
+        if (columnTypes[i] == ColumnType.SYMBOL) {
+            // Cast value to symbol properly before inserting
+            CharSequence strValue = castFunction.cast(record.get(i));
+            int symbolKey = symbolTable.keyOf(strValue);
+            targetTableWriter.putSymbol(i, symbolKey);
+        } else {
+            // Normal insert for other types
+            targetTableWriter.put(i, record.get(i));
+        }
+    }
+    targetTableWriter.append();
+}
+
 
                 final TableToken tableToken;
                 if (createTableOp.getSelectText() != null) {
