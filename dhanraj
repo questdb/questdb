@@ -1,0 +1,73 @@
+package io.questdb.test.cutlass.http.line;
+
+import io.questdb.client.Sender;
+import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.test.tools.TestUtils;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+
+import static org.junit.Assert.*;
+
+public class LineHttpSenderMockServerTest {
+
+    private MockLineServer mockServer;
+
+    @Before
+    public void setUp() throws Exception {
+        mockServer = new MockLineServer(9000);
+        mockServer.start();
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        if (mockServer != null) {
+            mockServer.stop();
+        }
+    }
+
+    @Test
+    public void testTimeoutConfString() throws Exception {
+        // Configure mock server to delay response beyond client timeout
+        mockServer.setResponseDelay(6000);  // 6 seconds delay
+
+        // The client will timeout in 5 seconds
+        String conf = "timeout=5000";
+        
+        try {
+            TestUtils.assertMemoryLeak(() -> {
+                Sender.LineSenderBuilder builder = Sender.builder("http://localhost:9000", conf);
+                try (Sender.LineSender sender = builder.build()) {
+                    sender.metric("weather")
+                          .tag("location", "us-midwest")
+                          .field("temperature", 82)
+                          .at(1465839830100400200L)
+                          .send();
+                    fail("Expected LineSenderException due to timeout");
+                }
+            });
+        } catch (LineSenderException e) {
+            // Validate the expected failure due to timeout
+            assertTrue(e.getMessage().contains("Failed to detect server line protocol version"));
+        }
+    }
+
+    @Test
+    public void testSuccessConfString() throws Exception {
+        // Configure mock server to respond quickly
+        mockServer.setResponseDelay(100);  // 100 ms delay
+
+        String conf = "timeout=5000";  // 5 seconds timeout
+
+        TestUtils.assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder("http://localhost:9000", conf);
+            try (Sender.LineSender sender = builder.build()) {
+                sender.metric("weather")
+                      .tag("location", "us-midwest")
+                      .field("temperature", 82)
+                      .at(1465839830100400200L)
+                      .send();
+            }
+        });
+    }
+}
