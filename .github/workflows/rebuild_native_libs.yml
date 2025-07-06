@@ -237,7 +237,7 @@ jobs:
           ./configure
           make build_lib_shared -j$(nproc)
           mkdir -p ../../bin/linux-aarch64-musl/
-          cp lib/libjemalloc.a ../../bin/linux-aarch64-musl/
+          cp lib/libjemalloc.so ../../bin/linux-aarch64-musl/
       - name: Generate Makefiles
         run: |
           cd ./core
