@@ -42,7 +42,7 @@ jobs:
         # macos-14 = ARM M1
         # macos-13 = x64
         # if you change OS definitions then you need to change conditions in cache-save steps below
-        os: [ macos-14, macos-13 ]
+        os: [macos-14, macos-13]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -83,8 +83,7 @@ jobs:
     # manylinux2014 is a container with new-ish compilers and tools, but old glibc - 2.17
     # 2.17 is old enough to be compatible with most Linux distributions out there
     container:
-      image:
-        quay.io/pypa/manylinux2014_x86_64
+      image: quay.io/pypa/manylinux2014_x86_64
       volumes:
         - /node20217:/node20217
         - /node20217:/__e/node20
@@ -124,6 +123,36 @@ jobs:
           path: |
             core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdbr.so
           key: nativelibs-linux-${{ github.sha }}
+  build-all-linux-x86-64-musl:
+    runs-on: ubuntu-latest
+    # manylinux2014 is a container with new-ish compilers and tools, but old glibc - 2.17
+    # 2.17 is old enough to be compatible with most Linux distributions out there
+    container:
+      image: alpine:3.22
+    steps:
+      - name: Install tools
+        run: |
+          apk add python3 gcc musl-dev tar nodejs
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Install toolchains (Rust)
+        run: |
+          python3 ./.github/prepare_rust_env.py --libc musl --match core/rust/qdbr/rust-toolchain.toml
+      - name: Build linux-x86-64-musl Rust Library
+        run: |
+          cd core/rust/qdbr
+          . "$HOME/.cargo/env"
+          cargo clean
+          RUSTFLAGS="-C target-feature=-crt-static" cargo build --release
+          mkdir -p ../../src/main/resources/io/questdb/bin/linux-x86-64-musl/
+          cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux-x86-64-musl/
+      - name: Save linux-x86-64-musl Libraries to Cache
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/linux-x86-64-musl/libquestdbr.so
+          key: nativelibs-linux-musl-${{ github.sha }}
   build-all-linux-aarch64:
     runs-on: ubuntu-22.04-arm
     container:
@@ -158,8 +187,46 @@ jobs:
           path: |
             core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdbr.so
           key: nativelibs-armlinux-${{ github.sha }}
+  build-all-linux-aarch64-musl:
+    runs-on: ubuntu-latest
+    # manylinux2014 is a container with new-ish compilers and tools, but old glibc - 2.17
+    # 2.17 is old enough to be compatible with most Linux distributions out there
+    container:
+      image: alpine:3.22
+    steps:
+      - name: Install tools
+        run: |
+          apk add python3 gcc musl-dev tar nodejs
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Install toolchains (Rust)
+        run: |
+          python3 ./.github/prepare_rust_env.py --libc musl --match core/rust/qdbr/rust-toolchain.toml
+      - name: Build linux-aarch64-musl Rust Library
+        run: |
+          cd core/rust/qdbr
+          . "$HOME/.cargo/env"
+          cargo clean
+          RUSTFLAGS="-C target-feature=-crt-static" cargo build --release
+          mkdir -p ../../src/main/resources/io/questdb/bin/linux-aarch64-musl/
+          cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux-aarch64-musl/
+      - name: Save linux-aarch64-musl Libraries to Cache
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/linux-aarch64-musl/libquestdbr.so
+          key: nativelibs-linux-musl-${{ github.sha }}
   collect-commit-and-push:
-    needs: [ build-all-macos, build-rust-windows, build-all-linux-x86-64, build-all-linux-aarch64 ]
+    needs:
+      [
+        build-all-macos,
+        build-rust-windows,
+        build-all-linux-x86-64,
+        build-all-linux-aarch64,
+        build-all-linux-x86-64-musl,
+        build-all-linux-aarch64-musl,
+      ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -193,6 +260,18 @@ jobs:
           path: |
             core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdbr.so
           key: nativelibs-armlinux-${{ github.sha }}
+      - name: Restore linux-x86-64-musl Libraries from Cache
+        uses: actions/cache/restore@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/linux-x86-64-musl/libquestdbr.so
+          key: nativelibs-linux-musl-${{ github.sha }}
+      - name: Restore linux-aarch64-musl Libraries from Cache
+        uses: actions/cache/restore@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/linux-aarch64-musl/libquestdbr.so
+          key: nativelibs-armlinux-musl-${{ github.sha }}
       - name: Restore Windows Rust Library from Cache
         uses: actions/cache/restore@v3
         with:
@@ -211,8 +290,10 @@ jobs:
           git add core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdbr.dylib
           git add core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdbr.so
           git add core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdbr.so
+          git add core/src/main/resources/io/questdb/bin/linux-x86-64-musl/libquestdbr.so
+          git add core/src/main/resources/io/questdb/bin/linux-aarch64-musl/libquestdbr.so
           git add core/src/main/resources/io/questdb/bin/windows-x86-64/questdbr.dll
-          
+
           git commit -m "Rebuild Rust libraries"
       - name: Check git status after
         run: |
