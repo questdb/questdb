@@ -1161,7 +1161,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
         }
 
-        if (nested.getOrderBy().size() > 0) {
+        if (nested.getOrderBy().size() > 0 && nested.getLimitLo() != null && nested.getLimitHi() != null) {
             assert getOrderBy().size() == 0;
             for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
                 addOrderBy(nested.getOrderBy().getQuick(i), nested.getOrderByDirection().getQuick(i));

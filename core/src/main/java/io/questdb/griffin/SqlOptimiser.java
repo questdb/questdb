@@ -405,6 +405,19 @@ public class SqlOptimiser implements Mutable {
         translatingModel.addBottomUpColumn(column);
     }
 
+    private void addColumnsToParentModelWhileCopy(QueryModel parent, QueryModel child) {
+        final ObjList<CharSequence> aliases = child.getAliasToColumnMap().keys();
+        for (int i = 0, n = aliases.size(); i < n; i++) {
+            final CharSequence alias = aliases.getQuick(i);
+            QueryColumn qc = child.getAliasToColumnMap().get(alias);
+            if (qc != null) {
+                QueryColumn newQc = queryColumnPool.next();
+                newQc.of(alias, qc.getAst());
+                parent.getBottomUpColumns().add(newQc);
+            }
+        }
+    }
+
     private QueryColumn addCursorFunctionAsCrossJoin(
             ExpressionNode node,
             @Nullable CharSequence alias,
@@ -1318,11 +1331,20 @@ public class SqlOptimiser implements Mutable {
         if (baseTableModel.getTimestamp() == null)
             return;
 
+        for (int i = 0; i < targetModel.getColumns().size(); i++) {
+            QueryColumn qc = targetModel.getColumns().getQuick(i);
+            if (Chars.equalsIgnoreCase(qc.getAlias(), baseTableModel.getTimestamp().token)) {
+                // timestamp column already exists, no need to add it again
+                return;
+            }
+
+        }
         QueryColumn qc = baseTableModel.getAliasToColumnMap().get(baseTableModel.getTimestamp().token);
         if (qc != null) {
             QueryColumn newQc = queryColumnPool.next();
             newQc.of(qc.getAlias(), qc.getAst());
             targetModel.getAliasToColumnMap().put(qc.getAlias(), qc);
+            targetModel.getColumns().add(newQc);
         }
     }
 
@@ -3341,9 +3363,20 @@ public class SqlOptimiser implements Mutable {
           It contains filters , limit , order-by clause propagated from target-model
          */
         level1.setSelectModelType(1);
-        level1.copyColumnsFrom(copyModel, queryColumnPool, expressionNodePool);
         level1.setLimit(parentModel.getLimitLo(), null);
         level1.setWhereClause(targetModel.getWhereClause());
+        level1.setTimestamp(baseTableModel.getTimestamp());
+
+
+        if (targetModel.getTableNameExpr() != null) {
+            ExpressionNode aliasNode = expressionNodePool.next();
+            aliasNode.token = targetModel.getAlias() != null ? targetModel.getAlias().token :
+                    targetModel.getTableNameExpr().token;
+            level1.setAlias(aliasNode);
+        }
+
+        //add query columns from copyModel to level1
+        level1.copyColumnsFrom(copyModel, queryColumnPool, expressionNodePool);
         final ObjList<CharSequence> aliases = copyModel.getAliasToColumnMap().keys();
         for (int i = 0, n = aliases.size(); i < n; i++) {
             final CharSequence alias = aliases.getQuick(i);
@@ -3351,16 +3384,10 @@ public class SqlOptimiser implements Mutable {
             if (qc != null) {
                 QueryColumn newQc = queryColumnPool.next();
                 newQc.of(alias, qc.getAst());
-                level1.getAliasToColumnMap().put(alias, qc);
-                level1.getBottomUpColumns().add(newQc);
+                level1.getColumns().add(newQc);
             }
         }
-        for (int i = 0; i < copyModel.getModelAliasIndexes().keys().size(); i++) {
-            CharSequence alias = copyModel.getModelAliasIndexes().keys().getQuick(i);
-            ExpressionNode aliasNode = expressionNodePool.next();
-            aliasNode.token = alias;
-            level1.addModelAliasIndex(aliasNode, i);
-        }
+
         for (int i = 0; i < targetModel.getOrderBy().size(); i++) {
             ExpressionNode aliasNode = expressionNodePool.next();
             CharSequence truncateAlias = targetModel.getTableNameExpr() != null ?
@@ -3374,7 +3401,6 @@ public class SqlOptimiser implements Mutable {
                 isLevel2Needed = false;
             }
         }
-        createAndAddTimestampColumn(baseTableModel, level1);
         level1.setNestedModel(level0);
 
 
@@ -3386,13 +3412,26 @@ public class SqlOptimiser implements Mutable {
             //level 2 model to order by timestamp ASC
             QueryModel level2 = QueryModel.FACTORY.newInstance();
             level2.setSelectModelType(1);
-            level2.copyColumnsFrom(level1, queryColumnPool, expressionNodePool);
+
+            //add query columns from copyModel to level2
+            level2.copyColumnsFrom(targetModel, queryColumnPool, expressionNodePool);
+            final ObjList<CharSequence> aliases0 = copyModel.getAliasToColumnMap().keys();
+            for (int i = 0, n = aliases0.size(); i < n; i++) {
+                final CharSequence alias = aliases.getQuick(i);
+                QueryColumn qc = copyModel.getAliasToColumnMap().get(alias);
+                if (qc != null) {
+                    QueryColumn newQc = queryColumnPool.next();
+                    newQc.of(alias, qc.getAst());
+                    level2.getAliasToColumnMap().put(alias, qc);
+                    level2.getBottomUpColumns().add(newQc);
+                }
+            }
 
             //if its concrete table, then we can don't need to set timestamp
-            if (targetModel.getTableNameExpr() == null) {
-                level2.setTimestamp(baseTableModel.getTimestamp());
-            }
-            createAndAddTimestampColumn(baseTableModel, level1);
+//            if (targetModel.getTableNameExpr() == null) {
+            level2.setTimestamp(baseTableModel.getTimestamp());
+//            }
+
             if (baseTableModel.getTimestamp() != null) {
                 final CharSequence timestampColumn = baseTableModel.getTimestamp().token;
                 final ExpressionNode timestampNode = expressionNodePool.next();
@@ -3404,8 +3443,6 @@ public class SqlOptimiser implements Mutable {
         } else {
             targetModel.setNestedModel(level1);
         }
-
-
         targetModel.setWhereClause(null);
         if (targetModel.getTableNameExpr() != null) {
             ExpressionNode aliasNode = expressionNodePool.next();
@@ -6931,22 +6968,39 @@ public class SqlOptimiser implements Mutable {
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
             optimiseModelsWithASOFJoins(sqlExecutionContext, rewrittenModel);
             optimiseJoins(rewrittenModel);
+            System.out.println("****" + rewrittenModel.toString0() + "****");
             collapseStackedChooseModels(rewrittenModel);
+            System.out.println("****" + rewrittenModel.toString0() + "****");
             rewriteCountDistinct(rewrittenModel);
+            System.out.println("****" + rewrittenModel.toString0() + "****");
             rewriteMultipleTermLimitedOrderByPart1(rewrittenModel);
+            System.out.println("****" + rewrittenModel.toString0() + "****");
             pushLimitFromChooseToNone(rewrittenModel, sqlExecutionContext);
+            System.out.println("****" + rewrittenModel.toString0() + "****");
             validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);
+            System.out.println("****" + rewrittenModel.toString0() + "****");
             rewriteOrderByPosition(rewrittenModel);
+            System.out.println("****" + rewrittenModel.toString0() + "****");
             rewriteOrderByPositionForUnionModels(rewrittenModel);
+            System.out.println("****" + rewrittenModel.toString0() + "****");
             rewrittenModel = rewriteOrderBy(rewrittenModel);
+            System.out.println("****" + rewrittenModel.toString0() + "****");
             optimiseOrderBy(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
+            System.out.println("****" + rewrittenModel.toString0() + "****");
             createOrderHash(rewrittenModel);
+            System.out.println("****" + rewrittenModel.toString0() + "****");
             moveWhereInsideSubQueries(rewrittenModel);
+            System.out.println("****" + rewrittenModel.toString0() + "****");
             eraseColumnPrefixInWhereClauses(rewrittenModel);
+            System.out.println("****" + rewrittenModel.toString0() + "****");
             moveTimestampToChooseModel(rewrittenModel);
+            System.out.println("****" + rewrittenModel.toString0() + "****");
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
+            System.out.println("****" + rewrittenModel.toString0() + "****");
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
+            System.out.println("****" + rewrittenModel.toString0() + "****");
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
+            System.out.println("****" + rewrittenModel.toString0() + "****");
             return rewrittenModel;
         } catch (Throwable th) {
             // at this point, models may have functions than need to be freed
