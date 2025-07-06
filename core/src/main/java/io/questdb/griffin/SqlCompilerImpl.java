@@ -24,6 +24,12 @@
 
 package io.questdb.griffin;
 
+import java.io.Closeable;
+
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+
 import io.questdb.MessageBus;
 import io.questdb.PropServerConfiguration;
 import io.questdb.TelemetryOrigin;
@@ -54,6 +60,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.VacuumColumnVersions;
@@ -81,6 +88,74 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
+import static io.questdb.griffin.SqlKeywords.assertNameIsQuotedOrNotAKeyword;
+import static io.questdb.griffin.SqlKeywords.isAddKeyword;
+import static io.questdb.griffin.SqlKeywords.isAllKeyword;
+import static io.questdb.griffin.SqlKeywords.isAlterKeyword;
+import static io.questdb.griffin.SqlKeywords.isAttachKeyword;
+import static io.questdb.griffin.SqlKeywords.isBypassKeyword;
+import static io.questdb.griffin.SqlKeywords.isCacheKeyword;
+import static io.questdb.griffin.SqlKeywords.isCapacityKeyword;
+import static io.questdb.griffin.SqlKeywords.isColumnKeyword;
+import static io.questdb.griffin.SqlKeywords.isConvertKeyword;
+import static io.questdb.griffin.SqlKeywords.isCreateKeyword;
+import static io.questdb.griffin.SqlKeywords.isDatabaseKeyword;
+import static io.questdb.griffin.SqlKeywords.isDedupKeyword;
+import static io.questdb.griffin.SqlKeywords.isDeduplicateKeyword;
+import static io.questdb.griffin.SqlKeywords.isDetachKeyword;
+import static io.questdb.griffin.SqlKeywords.isDisableKeyword;
+import static io.questdb.griffin.SqlKeywords.isDropKeyword;
+import static io.questdb.griffin.SqlKeywords.isEnableKeyword;
+import static io.questdb.griffin.SqlKeywords.isEveryKeyword;
+import static io.questdb.griffin.SqlKeywords.isExclusiveKeyword;
+import static io.questdb.griffin.SqlKeywords.isExistsKeyword;
+import static io.questdb.griffin.SqlKeywords.isForceKeyword;
+import static io.questdb.griffin.SqlKeywords.isFromKeyword;
+import static io.questdb.griffin.SqlKeywords.isFullKeyword;
+import static io.questdb.griffin.SqlKeywords.isIfKeyword;
+import static io.questdb.griffin.SqlKeywords.isIncrementalKeyword;
+import static io.questdb.griffin.SqlKeywords.isKeepKeyword;
+import static io.questdb.griffin.SqlKeywords.isKeysKeyword;
+import static io.questdb.griffin.SqlKeywords.isLimitKeyword;
+import static io.questdb.griffin.SqlKeywords.isListKeyword;
+import static io.questdb.griffin.SqlKeywords.isLockKeyword;
+import static io.questdb.griffin.SqlKeywords.isMapsKeyword;
+import static io.questdb.griffin.SqlKeywords.isMaterializedKeyword;
+import static io.questdb.griffin.SqlKeywords.isMaxUncommittedRowsKeyword;
+import static io.questdb.griffin.SqlKeywords.isNativeKeyword;
+import static io.questdb.griffin.SqlKeywords.isNoCacheKeyword;
+import static io.questdb.griffin.SqlKeywords.isNotKeyword;
+import static io.questdb.griffin.SqlKeywords.isNullKeyword;
+import static io.questdb.griffin.SqlKeywords.isO3MaxLagKeyword;
+import static io.questdb.griffin.SqlKeywords.isOnlyKeyword;
+import static io.questdb.griffin.SqlKeywords.isParamKeyword;
+import static io.questdb.griffin.SqlKeywords.isParquetKeyword;
+import static io.questdb.griffin.SqlKeywords.isPartitionKeyword;
+import static io.questdb.griffin.SqlKeywords.isPartitionsKeyword;
+import static io.questdb.griffin.SqlKeywords.isQueryKeyword;
+import static io.questdb.griffin.SqlKeywords.isRangeKeyword;
+import static io.questdb.griffin.SqlKeywords.isRefreshKeyword;
+import static io.questdb.griffin.SqlKeywords.isRenameKeyword;
+import static io.questdb.griffin.SqlKeywords.isResumeKeyword;
+import static io.questdb.griffin.SqlKeywords.isSemicolon;
+import static io.questdb.griffin.SqlKeywords.isSetKeyword;
+import static io.questdb.griffin.SqlKeywords.isSquashKeyword;
+import static io.questdb.griffin.SqlKeywords.isStartKeyword;
+import static io.questdb.griffin.SqlKeywords.isSuspendKeyword;
+import static io.questdb.griffin.SqlKeywords.isSymbolKeyword;
+import static io.questdb.griffin.SqlKeywords.isTableKeyword;
+import static io.questdb.griffin.SqlKeywords.isTablesKeyword;
+import static io.questdb.griffin.SqlKeywords.isToKeyword;
+import static io.questdb.griffin.SqlKeywords.isTransactionKeyword;
+import static io.questdb.griffin.SqlKeywords.isTtlKeyword;
+import static io.questdb.griffin.SqlKeywords.isTxnKeyword;
+import static io.questdb.griffin.SqlKeywords.isTypeKeyword;
+import static io.questdb.griffin.SqlKeywords.isUpsertKeyword;
+import static io.questdb.griffin.SqlKeywords.isViewKeyword;
+import static io.questdb.griffin.SqlKeywords.isWalKeyword;
+import static io.questdb.griffin.SqlKeywords.isWhereKeyword;
+import static io.questdb.griffin.SqlKeywords.isWithKeyword;
+import static io.questdb.griffin.SqlKeywords.validateLiteral;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CopyCancelFactory;
@@ -133,14 +208,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
-
-import java.io.Closeable;
-
-import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
-import static io.questdb.griffin.SqlKeywords.*;
 
 public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallback {
     public static final String ALTER_TABLE_EXPECTED_TOKEN_DESCR =
@@ -2796,6 +2863,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         tok = SqlUtil.fetchNext(lexer);
+        boolean hasIfExists = false;
+        if (tok != null && isIfKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || !isExistsKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("EXISTS table-name");
+            }
+            hasIfExists = true;
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
         if (tok != null && isOnlyKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
         }
@@ -2814,7 +2891,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (Chars.isQuoted(tok)) {
                     tok = GenericLexer.unquote(tok);
                 }
-                final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+                
+                final TableToken tableToken;
+                if (hasIfExists) {
+                    tableToken = executionContext.getTableTokenIfExists(tok);
+                    if (tableToken == null) {
+                        // Table doesn't exist, skip it when IF EXISTS is specified
+                        tok = SqlUtil.fetchNext(lexer);
+                        if (tok == null || Chars.equals(tok, ';') || isKeepKeyword(tok)) {
+                            break;
+                        }
+                        if (!Chars.equalsNc(tok, ',')) {
+                            throw SqlException.$(lexer.getPosition(), "',' or 'keep' expected");
+                        }
+                        tok = SqlUtil.fetchNext(lexer);
+                        if (tok != null && isKeepKeyword(tok)) {
+                            throw SqlException.$(lexer.getPosition(), "table name expected");
+                        }
+                        continue;
+                    }
+                } else {
+                    tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+                }
+                
                 checkMatViewModification(tableToken);
                 executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
                 try {
