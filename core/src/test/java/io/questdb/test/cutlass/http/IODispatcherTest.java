@@ -852,16 +852,16 @@ public class IODispatcherTest extends AbstractTest {
                         "\r\n" +
                         "54\r\n" +
                         "\"sym\"\t\"num\"\r\n" +
+                        "\"c\"\t4\r\n" +
+                        "\"a\"\t9\r\n" +
+                        "\"a\"\t10\r\n" +
+                        "\"a\"\t0\r\n" +
+                        "\"b\"\t3\r\n" +
                         "\"c\"\t9\r\n" +
-                        "\"b\"\t5\r\n" +
-                        "\"a\"\t0\r\n" +
-                        "\"a\"\t0\r\n" +
                         "\"a\"\t5\r\n" +
-                        "\"a\"\t7\r\n" +
-                        "\"a\"\t4\r\n" +
-                        "\"a\"\t8\r\n" +
-                        "\"a\"\t2\r\n" +
-                        "\"c\"\t10\r\n" +
+                        "\"a\"\t6\r\n" +
+                        "\"c\"\t2\r\n" +
+                        "\"c\"\t0\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n"
@@ -4289,96 +4289,20 @@ public class IODispatcherTest extends AbstractTest {
         final int requestsPerThread = 500;
         final String[][] requests = {
                 {
-                        "GET /exec?query=xyz%20where%20sym%20%3D%20%27UDEYY%27 HTTP/1.1\r\n" +
-                                "Host: localhost:9001\r\n" +
-                                "Connection: keep-alive\r\n" +
-                                "Cache-Control: max-age=0\r\n" +
-                                "Upgrade-Insecure-Requests: 1\r\n" +
-                                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                                "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                                "Accept-Encoding: gzip, deflate, br\r\n" +
-                                "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                                "\r\n",
-                        "HTTP/1.1 200 OK\r\n" +
-                                "Server: questDB/1.0\r\n" +
-                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                "Transfer-Encoding: chunked\r\n" +
-                                "Content-Type: application/json; charset=utf-8\r\n" +
-                                "Keep-Alive: timeout=5, max=10000\r\n" +
-                                "\r\n" +
-                                "e8\r\n" +
-                                "{\"query\":\"xyz where sym = 'UDEYY'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"UDEYY\",0.15786635599554755],[\"UDEYY\",0.8445258177211064],[\"UDEYY\",0.5778947915182423]],\"count\":3}\r\n" +
-                                "00\r\n" +
-                                "\r\n"
+                        "xyz where sym = 'UDEYY'",
+                        "{\"query\":\"xyz where sym = 'UDEYY'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"UDEYY\",0.5522494170511608],[\"UDEYY\",0.49428905119584543],[\"UDEYY\",0.6551335839796312],[\"UDEYY\",0.9540069089049732],[\"UDEYY\",0.24008362859107102]],\"count\":5}"
                 },
                 {
-                        "GET /exec?query=xyz%20where%20sym%20%3D%20%27QEHBH%27 HTTP/1.1\r\n" +
-                                "Host: localhost:9001\r\n" +
-                                "Connection: keep-alive\r\n" +
-                                "Cache-Control: max-age=0\r\n" +
-                                "Upgrade-Insecure-Requests: 1\r\n" +
-                                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                                "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                                "Accept-Encoding: gzip, deflate, br\r\n" +
-                                "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                                "\r\n",
-                        "HTTP/1.1 200 OK\r\n" +
-                                "Server: questDB/1.0\r\n" +
-                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                "Transfer-Encoding: chunked\r\n" +
-                                "Content-Type: application/json; charset=utf-8\r\n" +
-                                "Keep-Alive: timeout=5, max=10000\r\n" +
-                                "\r\n" +
-                                "0123\r\n" +
-                                "{\"query\":\"xyz where sym = 'QEHBH'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"QEHBH\",0.4022810626779558],[\"QEHBH\",0.9038068796506872],[\"QEHBH\",0.05048190020054388],[\"QEHBH\",0.4149517697653501],[\"QEHBH\",0.44804689668613573]],\"count\":5}\r\n" +
-                                "00\r\n" +
-                                "\r\n"
+                        "xyz where sym = 'QEHBH'",
+                        "{\"query\":\"xyz where sym = 'QEHBH'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"QEHBH\",0.42281342727402726],[\"QEHBH\",0.931192737286751],[\"QEHBH\",0.92050039469858],[\"QEHBH\",0.9644183832564398],[\"QEHBH\",0.8164182592467494]],\"count\":5}"
                 },
                 {
-                        "GET /exec?query=xyz%20where%20sym%20%3D%20%27SXUXI%27 HTTP/1.1\r\n" +
-                                "Host: localhost:9001\r\n" +
-                                "Connection: keep-alive\r\n" +
-                                "Cache-Control: max-age=0\r\n" +
-                                "Upgrade-Insecure-Requests: 1\r\n" +
-                                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                                "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                                "Accept-Encoding: gzip, deflate, br\r\n" +
-                                "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                                "\r\n",
-                        "HTTP/1.1 200 OK\r\n" +
-                                "Server: questDB/1.0\r\n" +
-                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                "Transfer-Encoding: chunked\r\n" +
-                                "Content-Type: application/json; charset=utf-8\r\n" +
-                                "Keep-Alive: timeout=5, max=10000\r\n" +
-                                "\r\n" +
-                                "e9\r\n" +
-                                "{\"query\":\"xyz where sym = 'SXUXI'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"SXUXI\",0.6761934857077543],[\"SXUXI\",0.38642336707855873],[\"SXUXI\",0.48558682958070665]],\"count\":3}\r\n" +
-                                "00\r\n" +
-                                "\r\n"
+                        "xyz where sym = 'SXUXI'",
+                        "{\"query\":\"xyz where sym = 'SXUXI'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"SXUXI\",0.8912587536603974]],\"count\":1}"
                 },
                 {
-                        "GET /exec?query=xyz%20where%20sym%20%3D%20%27VTJWC%27 HTTP/1.1\r\n" +
-                                "Host: localhost:9001\r\n" +
-                                "Connection: keep-alive\r\n" +
-                                "Cache-Control: max-age=0\r\n" +
-                                "Upgrade-Insecure-Requests: 1\r\n" +
-                                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                                "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                                "Accept-Encoding: gzip, deflate, br\r\n" +
-                                "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                                "\r\n",
-                        "HTTP/1.1 200 OK\r\n" +
-                                "Server: questDB/1.0\r\n" +
-                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                "Transfer-Encoding: chunked\r\n" +
-                                "Content-Type: application/json; charset=utf-8\r\n" +
-                                "Keep-Alive: timeout=5, max=10000\r\n" +
-                                "\r\n" +
-                                "0103\r\n" +
-                                "{\"query\":\"xyz where sym = 'VTJWC'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"VTJWC\",0.3435685332942956],[\"VTJWC\",0.8258367614088108],[\"VTJWC\",0.437176959518218],[\"VTJWC\",0.7176053468281931]],\"count\":4}\r\n" +
-                                "00\r\n" +
-                                "\r\n"
+                        "xyz where sym = 'VTJWC'",
+                        "{\"query\":\"xyz where sym = 'VTJWC'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"VTJWC\",0.03167026265669903]],\"count\":1}"
                 }
         };
         new HttpQueryTestBuilder()
@@ -9931,19 +9855,22 @@ public class IODispatcherTest extends AbstractTest {
         public void run() {
             final Rnd rnd = new Rnd();
             try {
-                new SendAndReceiveRequestBuilder().executeMany(requester -> {
+                try (TestHttpClient httpClient = new TestHttpClient()) {
                     TestUtils.await(barrier);
                     for (int i = 0; i < count; i++) {
                         int index = rnd.nextPositiveInt() % requests.length;
                         try {
-                            requester.execute(requests[index][0], requests[index][1]);
+                            httpClient.assertGet(
+                                    requests[index][1],
+                                    requests[index][0]
+                            );
                         } catch (Throwable e) {
                             LOG.critical().$(e).$();
                             System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
                             throw e;
                         }
                     }
-                });
+                }
             } catch (Throwable e) {
                 LOG.critical().$(e).$();
                 errorCounter.incrementAndGet();
