@@ -188,6 +188,11 @@ public class TablesFunctionFactory implements FunctionFactory {
             }
 
             @Override
+            public long preComputedStateSize() {
+                return 0;
+            }
+
+            @Override
             public void toTop() {
                 iteratorIdx = -1;
             }

@@ -102,6 +102,12 @@ public final class Unordered2MapCursor implements MapRecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        // no state to preserve
+        return 0;
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
         ((Unordered2MapRecord) record).of(atRowId);
     }

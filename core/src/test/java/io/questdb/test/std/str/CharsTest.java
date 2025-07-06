@@ -658,4 +658,12 @@ public class CharsTest {
             list.getQuick(i).close();
         }
     }
+
+    @Test
+    public void testLastIndexOfDifferent() {
+        Assert.assertEquals(-1, Chars.lastIndexOfDifferent("   ", 0, 3, ' '));
+        Assert.assertEquals(0, Chars.lastIndexOfDifferent("s  ", 0, 3, ' '));
+        Assert.assertEquals(0, Chars.lastIndexOfDifferent("s s ", 0, 2, ' '));
+        Assert.assertEquals(-1, Chars.lastIndexOfDifferent("s  ", 1, 3, ' '));
+    }
 }

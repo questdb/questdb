@@ -27,6 +27,7 @@ package io.questdb.test;
 import io.questdb.Bootstrap;
 import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropServerConfiguration;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlExecutionContext;
@@ -276,6 +277,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     protected static Bootstrap newBootstrapWithEnvVariables(Map<String, String> envs) {
         Map<String, String> env = new HashMap<>(System.getenv());
         env.putAll(envs);
+        env.put(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getEnvVarName(), "false");
         return new Bootstrap(
                 new PropBootstrapConfiguration() {
                     @Override
