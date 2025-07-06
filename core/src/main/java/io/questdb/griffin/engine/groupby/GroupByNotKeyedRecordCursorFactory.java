@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import org.jetbrains.annotations.NotNull;
+
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
@@ -45,7 +47,6 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import org.jetbrains.annotations.NotNull;
 
 public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
@@ -60,8 +61,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             RecordCursorFactory base,
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
-            int valueCount
-    ) {
+            int valueCount) {
         super(groupByMetadata);
         try {
             this.simpleMapValue = new SimpleMapValue(valueCount);
@@ -134,8 +134,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         public EarlyExitGroupByNotKeyedRecordCursor(
                 CairoConfiguration configuration,
                 ObjList<GroupByFunction> groupByFunctions,
-                GroupByFunctionsUpdater groupByFunctionsUpdater
-        ) {
+                GroupByFunctionsUpdater groupByFunctionsUpdater) {
             super(configuration, groupByFunctions, groupByFunctionsUpdater);
         }
 
@@ -167,8 +166,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         public GroupByNotKeyedRecordCursor(
                 CairoConfiguration configuration,
                 ObjList<GroupByFunction> groupByFunctions,
-                GroupByFunctionsUpdater groupByFunctionsUpdater
-        ) {
+                GroupByFunctionsUpdater groupByFunctionsUpdater) {
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
             this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
             GroupByUtils.setAllocator(groupByFunctions, allocator);

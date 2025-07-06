@@ -30,22 +30,15 @@ import io.questdb.network.IOOperation;
 import io.questdb.network.SelectFacade;
 import io.questdb.network.SocketFactory;
 import io.questdb.std.Misc;
-import io.questdb.std.Os;
-
-import static io.questdb.network.Net.SOCKET_ERROR;
-import static io.questdb.network.Net.WSAGetLastError;
-import static io.questdb.network.Net.WSAPoll;
 
 public class HttpClientWindows extends HttpClient {
     private final SelectFacade sf;
     private FDSet fdSet;
-    private long fds; // For WSAPoll operations
 
     public HttpClientWindows(HttpClientConfiguration configuration, SocketFactory socketFactory) {
         super(configuration, socketFactory);
         this.fdSet = new FDSet(configuration.getWaitQueueCapacity());
         this.sf = configuration.getSelectFacade();
-        this.fds = 0; // Initialize for WSAPoll operations
     }
 
     @Override
@@ -72,13 +65,15 @@ public class HttpClientWindows extends HttpClient {
     }
 
     protected int ioWait(long millis) {
-        // Let's give Windows a bit more time
-        long timeout = Os.isWindows() ? millis * 2 : millis;
-        int n = WSAPoll(fds, 1, (int) timeout);
-        if (n == SOCKET_ERROR) {
-            throw new HttpClientException("WSAPoll failed [errno=" + WSAGetLastError() + "]");
+        // Simple blocking wait for Windows - socket is non-blocking so we wait and
+        // retry
+        try {
+            Thread.sleep(millis);
+            return 1; // Indicate ready to continue
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new HttpClientException("Wait interrupted");
         }
-        return n;
     }
 
     @Override

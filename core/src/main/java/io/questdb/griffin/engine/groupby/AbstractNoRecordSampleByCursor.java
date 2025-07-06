@@ -77,9 +77,9 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
-    ) {
-        super(timestampSampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleFromFuncPos, sampleToFunc, sampleToFuncPos);
+            int sampleToFuncPos) {
+        super(timestampSampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc,
+                sampleFromFuncPos, sampleToFunc, sampleToFuncPos);
         this.timestampIndex = timestampIndex;
         this.recordFunctions = recordFunctions;
         this.groupByFunctions = groupByFunctions;
@@ -292,7 +292,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId);
     }
 
-    protected class TimestampFunc extends TimestampFunction implements Function {
+    protected class TimestampFunc extends TimestampFunction {
 
         @Override
         public long getTimestamp(Record rec) {

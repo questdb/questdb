@@ -24,6 +24,11 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
+import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
+
+import org.jetbrains.annotations.NotNull;
+
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
@@ -60,10 +65,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import org.jetbrains.annotations.NotNull;
-
-import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
-import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
 public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursorFactory {
 
@@ -104,8 +105,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
-    ) throws SqlException {
+            int offsetFuncPos) throws SqlException {
         super(metadata);
         try {
             final int columnCount = model.getBottomUpColumns().size();
@@ -115,7 +115,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             this.sampler = timestampSampler;
 
             // create timestamp column
-            TimestampColumn timestampColumn = TimestampColumn.newInstance(valueTypes.getColumnCount() + keyTypes.getColumnCount());
+            TimestampColumn timestampColumn = TimestampColumn
+                    .newInstance(valueTypes.getColumnCount() + keyTypes.getColumnCount());
             for (int i = 0, n = recordFunctions.size(); i < n; i++) {
                 if (recordFunctions.getQuick(i) == null) {
                     recordFunctions.setQuick(i, timestampColumn);
@@ -158,7 +159,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                             break;
                         default:
                             Misc.freeObjList(groupByScalarFunctions);
-                            throw SqlException.$(groupByFunctionPositions.getQuick(i), "Unsupported interpolation type: ").put(ColumnType.nameOf(function.getType()));
+                            throw SqlException
+                                    .$(groupByFunctionPositions.getQuick(i), "Unsupported interpolation type: ")
+                                    .put(ColumnType.nameOf(function.getType()));
                     }
                 } else {
                     groupByTwoPointFunctions.add(function);
@@ -176,7 +179,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             entityColumnFilter.of(keyTypes.getColumnCount());
             this.mapSink2 = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter);
 
-            this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
+            this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions,
+                    keyTypes, valueTypes, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
         } catch (Throwable th) {
             close();
             throw th;
@@ -193,13 +197,15 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
             final GroupByFunction function = groupByTwoPointFunctions.getQuick(i);
             if (!function.isInterpolationSupported()) {
-                throw SqlException.position(0).put("interpolation is not supported for function: ").put(function.getClass().getName());
+                throw SqlException.position(0).put("interpolation is not supported for function: ")
+                        .put(function.getClass().getName());
             }
         }
 
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            // init all record functions for this cursor, in case functions require metadata and/or symbol tables
+            // init all record functions for this cursor, in case functions require metadata
+            // and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext, null);
         } catch (Throwable th) {
             baseCursor.close();
@@ -286,8 +292,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 Function timezoneNameFunc,
                 int timezoneNameFuncPos,
                 Function offsetFunc,
-                int offsetFuncPos
-        ) {
+                int offsetFuncPos) {
             super(functions);
             try {
                 isOpen = true;
@@ -411,7 +416,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                     circuitBreaker.statefulThrowExceptionIfTripped();
 
                     MapValue value = findDataMapValue(mapRecord, loSample);
-                    if (value.getByte(0) == 0) { //we have at least 1 data point
+                    if (value.getByte(0) == 0) { // we have at least 1 data point
                         long x1 = loSample;
                         long x2 = x1;
                         while (true) {
@@ -434,7 +439,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             // find gaps by checking each of the unique keys against every sample
             long sample;
             long prevSample;
-            for (sample = prevSample = loSample; sample < hiSample; prevSample = sample, sample = sampler.nextTimestamp(sample)) {
+            for (sample = prevSample = loSample; sample < hiSample; prevSample = sample, sample = sampler
+                    .nextTimestamp(sample)) {
                 final RecordCursor mapCursor = recordKeyMap.getCursor();
                 final Record mapRecord = mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
@@ -495,7 +501,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                                         // yep, that's right, and go all the way back down
                                         // to 'sample' calculating interpolated values
                                         MapValue x1Value = findDataMapValue2(mapRecord, prevSample);
-                                        interpolate(sampler.nextTimestamp(prevSample), x2, mapRecord, prevSample, x2, x1Value, value);
+                                        interpolate(sampler.nextTimestamp(prevSample), x2, mapRecord, prevSample, x2,
+                                                x1Value, value);
                                     }
                                     break;
                                 }
@@ -514,7 +521,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                                 } else {
                                     MapValue x1Value = findDataMapValue2(mapRecord, x1);
                                     MapValue x2value = findDataMapValue(mapRecord, prevSample);
-                                    interpolate(sampler.nextTimestamp(prevSample), hiSample, mapRecord, x1, prevSample, x1Value, x2value);
+                                    interpolate(sampler.nextTimestamp(prevSample), hiSample, mapRecord, x1, prevSample,
+                                            x1Value, x2value);
                                 }
                                 break;
                             }
@@ -670,7 +678,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             return true;
         }
 
-        private void interpolate(long lo, long hi, Record mapRecord, long x1, long x2, MapValue x1Value, MapValue x2value) {
+        private void interpolate(long lo, long hi, Record mapRecord, long x1, long x2, MapValue x1Value,
+                MapValue x2value) {
             computeYPoints(x1Value, x2value);
             for (long x = lo; x < hi; x = sampler.nextTimestamp(x)) {
                 final MapValue result = findDataMapValue3(mapRecord, x);
@@ -681,7 +690,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 }
                 for (int i = 0; i < groupByScalarFunctionCount; i++) {
                     GroupByFunction function = groupByScalarFunctions.getQuick(i);
-                    interpolatorFunctions.getQuick(i).interpolateAndStore(function, result, x, x1, x2, yData + i * 16L, yData + i * 16L + 8);
+                    interpolatorFunctions.getQuick(i).interpolateAndStore(function, result, x, x1, x2, yData + i * 16L,
+                            yData + i * 16L + 8);
                 }
                 result.putByte(0, (byte) 0); // fill the value, change flag from 'gap' to 'fill'
             }
@@ -704,7 +714,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 mapSink2.copy(record, key);
                 key.putLong(x);
                 MapValue value = key.findValue();
-                assert value != null && value.getByte(0) == 1; // expect  'gap' flag
+                assert value != null && value.getByte(0) == 1; // expect 'gap' flag
                 value.putByte(0, (byte) 0); // fill the value, change flag from 'gap' to 'fill'
                 for (int i = 0; i < groupByFunctionCount; i++) {
                     groupByFunctions.getQuick(i).setNull(value);
@@ -747,11 +757,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                     long opt = Timestamps.parseOffset(tz);
                     if (opt == Long.MIN_VALUE) {
                         // this is timezone name
-                        // fixed rules means the timezone does not have historical or daylight time changes
+                        // fixed rules means the timezone does not have historical or daylight time
+                        // changes
                         rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
                                 Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
-                                RESOLUTION_MICROS
-                        );
+                                RESOLUTION_MICROS);
                     } else {
                         // here timezone is in numeric offset format
                         tzOffset = Numbers.decodeLowInt(opt) * MINUTE_MICROS;

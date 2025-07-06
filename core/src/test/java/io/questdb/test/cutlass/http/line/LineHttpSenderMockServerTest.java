@@ -24,6 +24,19 @@
 
 package io.questdb.test.cutlass.http.line;
 
+import static io.questdb.client.Sender.PROTOCOL_VERSION_V1;
+import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.function.Consumer;
+import java.util.function.Function;
+
+import org.jetbrains.annotations.NotNull;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+
 import io.questdb.BuildInformationHolder;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
@@ -43,27 +56,10 @@ import io.questdb.test.AbstractTest;
 import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
-
-import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.net.Socket;
-import java.util.concurrent.CountDownLatch;
-import java.util.function.Consumer;
-import java.util.function.Function;
-
-import static io.questdb.client.Sender.PROTOCOL_VERSION_V1;
-import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
-import static java.util.concurrent.TimeUnit.SECONDS;
-import static org.awaitility.Awaitility.await;
 
 public class LineHttpSenderMockServerTest extends AbstractTest {
-    public static final Function<Integer, Sender.LineSenderBuilder> DEFAULT_FACTORY =
-            port -> Sender.builder(Sender.Transport.HTTP).address("localhost:" + port).protocolVersion(PROTOCOL_VERSION_V1);
+    public static final Function<Integer, Sender.LineSenderBuilder> DEFAULT_FACTORY = port -> Sender
+            .builder(Sender.Transport.HTTP).address("localhost:" + port).protocolVersion(PROTOCOL_VERSION_V1);
 
     private static final CharSequence QUESTDB_VERSION = new BuildInformationHolder().getSwVersion();
 
@@ -72,15 +68,6 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         super.setUp();
         // Setup method for test initialization
         // Individual tests will handle server startup and readiness checks
-    }
-
-    private boolean isSocketReady(String host, int port) {
-        try (Socket s = new Socket()) {
-            s.connect(new InetSocketAddress(host, port), 100);
-            return true;  // Successful connection!
-        } catch (IOException e) {
-            return false; // Not ready yet, no worries!
-        }
     }
 
     @Test
@@ -140,7 +127,8 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
                 .replyWithContent(400, badJsonResponse, HttpConstants.CONTENT_TYPE_JSON);
 
-        testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: " + badJsonResponse + " [http-status=400]"));
+        testWithMock(mockHttpProcessor,
+                errorVerifier("Could not flush buffer: " + badJsonResponse + " [http-status=400]"));
     }
 
     @Test
@@ -165,7 +153,10 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         testWithMock(mockHttpProcessor, sender -> sender.table("test")
                 .symbol("sym", "bol")
                 .doubleColumn("x", 1.0)
-                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";username=Aladdin;protocol_version=1;password=;;Open;;Sesame;;;;;")); // escaped semicolons in password
+                .atNow(),
+                port -> Sender.builder("http::addr=localhost:" + port
+                        + ";username=Aladdin;protocol_version=1;password=;;Open;;Sesame;;;;;")); // escaped semicolons
+                                                                                                 // in password
     }
 
     @Test
@@ -177,7 +168,10 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         testWithMock(mockHttpProcessor, sender -> sender.table("test")
                 .symbol("sym", "bol")
                 .doubleColumn("x", 1.0)
-                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";username=Aladdin;protocol_version=1;password=;;Open;;Sesame;;;;;")); // escaped semicolons in password
+                .atNow(),
+                port -> Sender.builder("http::addr=localhost:" + port
+                        + ";username=Aladdin;protocol_version=1;password=;;Open;;Sesame;;;;;")); // escaped semicolons
+                                                                                                 // in password
     }
 
     @Test
@@ -196,7 +190,8 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testDisableAutoFlush() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
         testWithMock(mockHttpProcessor, sender -> {
-            for (int i = 0; i < 1_000_000; i++) { // sufficient large number of rows to trigger auto-flush unless it is disabled
+            for (int i = 0; i < 1_000_000; i++) { // sufficient large number of rows to trigger auto-flush unless it is
+                                                  // disabled
                 sender.table("test")
                         .symbol("sym", "bol")
                         .doubleColumn("x", 1.0)
@@ -210,14 +205,14 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .replyWithStatus(204);
         testWithMock(mockHttpProcessor, sender -> {
-                    for (int i = 0; i < 200; i++) {
-                        sender.table("test")
-                                .symbol("sym", "bol")
-                                .doubleColumn("x", 1.0)
-                                .atNow();
-                        Os.sleep(10);
-                    }
-                },
+            for (int i = 0; i < 200; i++) {
+                sender.table("test")
+                        .symbol("sym", "bol")
+                        .doubleColumn("x", 1.0)
+                        .atNow();
+                Os.sleep(10);
+            }
+        },
                 port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_interval=off;"));
     }
 
@@ -230,14 +225,15 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         }
 
         testWithMock(mockHttpProcessor, sender -> {
-                    for (int i = 0; i < 10; i++) {
-                        sender.table("test")
-                                .symbol("sym", "bol")
-                                .doubleColumn("x", 1.0)
-                                .atNow();
-                    }
-                },
-                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_interval=off;auto_flush_rows=1;protocol_version=1;"));
+            for (int i = 0; i < 10; i++) {
+                sender.table("test")
+                        .symbol("sym", "bol")
+                        .doubleColumn("x", 1.0)
+                        .atNow();
+            }
+        },
+                port -> Sender.builder("http::addr=localhost:" + port
+                        + ";auto_flush_interval=off;auto_flush_rows=1;protocol_version=1;"));
     }
 
     @Test
@@ -245,14 +241,15 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .replyWithStatus(204);
         testWithMock(mockHttpProcessor, sender -> {
-                    for (int i = 0; i < 80000; i++) {
-                        sender.table("test")
-                                .symbol("sym", "bol")
-                                .doubleColumn("x", 1.0)
-                                .atNow();
-                    }
-                },
-                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_rows=off;auto_flush_interval=100000;"));
+            for (int i = 0; i < 80000; i++) {
+                sender.table("test")
+                        .symbol("sym", "bol")
+                        .doubleColumn("x", 1.0)
+                        .atNow();
+            }
+        },
+                port -> Sender
+                        .builder("http::addr=localhost:" + port + ";auto_flush_rows=off;auto_flush_interval=100000;"));
     }
 
     @Test
@@ -266,7 +263,8 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
                 .replyWithContent(400, jsonResponse, HttpConstants.CONTENT_TYPE_JSON);
 
-        testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: failed to parse line protocol: invalid field format [http-status=400, id: ABC-2, code: invalid, line: 2]"));
+        testWithMock(mockHttpProcessor, errorVerifier(
+                "Could not flush buffer: failed to parse line protocol: invalid field format [http-status=400, id: ABC-2, code: invalid, line: 2]"));
     }
 
     @Test
@@ -275,8 +273,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .maxBufferCapacity(65536)
                 .protocolVersion(PROTOCOL_VERSION_V2)
                 .autoFlushRows(Integer.MAX_VALUE)
-                .build()
-        ) {
+                .build()) {
             for (int i = 0; i < 100000; i++) {
                 sender.table("test")
                         .symbol("sym", "bol")
@@ -296,13 +293,23 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .delayedReplyWithStatus(204, 1000);
 
         testWithMock(mock, sender -> {
-                    sender.table("test")
-                            .symbol("sym", "bol")
-                            .doubleColumn("x", 1.0)
-                            .atNow();
+            sender.table("test")
+                    .symbol("sym", "bol")
+                    .doubleColumn("x", 1.0)
+                    .atNow();
 
-                    sender.flush();
-                }, DEFAULT_FACTORY.andThen(b -> b.httpTimeoutMillis(1).minRequestThroughput(1).retryTimeoutMillis(0)) // 1ms base timeout and 1 byte per second to extend the timeout
+            sender.flush();
+        }, DEFAULT_FACTORY.andThen(b -> b.httpTimeoutMillis(1).minRequestThroughput(1).retryTimeoutMillis(0)) // 1ms
+                                                                                                              // base
+                                                                                                              // timeout
+                                                                                                              // and 1
+                                                                                                              // byte
+                                                                                                              // per
+                                                                                                              // second
+                                                                                                              // to
+                                                                                                              // extend
+                                                                                                              // the
+                                                                                                              // timeout
         );
     }
 
@@ -312,13 +319,17 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .delayedReplyWithStatus(204, 1000);
 
         testWithMock(mock, sender -> {
-                    sender.table("test")
-                            .symbol("sym", "bol")
-                            .doubleColumn("x", 1.0)
-                            .atNow();
+            sender.table("test")
+                    .symbol("sym", "bol")
+                    .doubleColumn("x", 1.0)
+                    .atNow();
 
-                    sender.flush();
-                }, port -> Sender.builder("http::addr=localhost:" + port + ";request_timeout=1;request_min_throughput=1;retry_timeout=0;protocol_version=2;") // 1ms base timeout and 1 byte per second to extend the timeout
+            sender.flush();
+        }, port -> Sender.builder("http::addr=localhost:" + port
+                + ";request_timeout=1;request_min_throughput=1;retry_timeout=0;protocol_version=2;") // 1ms base timeout
+                                                                                                     // and 1 byte per
+                                                                                                     // second to extend
+                                                                                                     // the timeout
         );
     }
 
@@ -337,7 +348,8 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 sender.flush();
                 Assert.fail("Exception expected");
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "Could not flush buffer: http://127.0.0.1:1/write?precision=n Connection Failed");
+                TestUtils.assertContains(e.getMessage(),
+                        "Could not flush buffer: http://127.0.0.1:1/write?precision=n Connection Failed");
             }
         }
     }
@@ -348,7 +360,8 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
                 .replyWithContent(405, "Method not allowed", "test/plain");
 
-        testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint does not support ILP. [http-status=405]"));
+        testWithMock(mockHttpProcessor,
+                errorVerifier("Could not flush buffer: HTTP endpoint does not support ILP. [http-status=405]"));
     }
 
     @Test
@@ -395,7 +408,8 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 sender.flush();
                 Assert.fail("Exception expected");
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "Could not flush buffer: Internal Server Error [http-status=500]");
+                TestUtils.assertContains(e.getMessage(),
+                        "Could not flush buffer: Internal Server Error [http-status=500]");
             }
         }, DEFAULT_FACTORY.andThen(b -> b.retryTimeoutMillis(1000)));
     }
@@ -407,8 +421,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .replyWithContent(500, "do not dare to retry", "plain/text");
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: do not dare to retry [http-status=500]"),
-                DEFAULT_FACTORY.andThen(b -> b.retryTimeoutMillis(0))
-        );
+                DEFAULT_FACTORY.andThen(b -> b.retryTimeoutMillis(0)));
     }
 
     @Test
@@ -427,23 +440,25 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .delayedReplyWithStatus(204, delayLatch);
 
         testWithMock(mock, sender -> {
-                    sender.table("test")
-                            .symbol("sym", "bol")
-                            .doubleColumn("x", 1.0)
-                            .atNow();
-                    try {
-                        sender.flush();
-                        Assert.fail("Exception expected");
-                    } catch (LineSenderException e) {
-                        TestUtils.assertContains(
-                                e.getMessage(),
-                                "Could not flush buffer: http://localhost:9001/write?precision=n Connection Failed: timed out [errno="  //errno depends on OS
-                        );
-                    } finally {
-                        delayLatch.countDown();
-                    }
-                }, DEFAULT_FACTORY.andThen(b -> b.httpTimeoutMillis(100).retryTimeoutMillis(0))
-        );
+            sender.table("test")
+                    .symbol("sym", "bol")
+                    .doubleColumn("x", 1.0)
+                    .atNow();
+            try {
+                sender.flush();
+                Assert.fail("Exception expected");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(
+                        e.getMessage(),
+                        "Could not flush buffer: http://localhost:9001/write?precision=n Connection Failed: timed out [errno=" // errno
+                                                                                                                               // depends
+                                                                                                                               // on
+                                                                                                                               // OS
+                );
+            } finally {
+                delayLatch.countDown();
+            }
+        }, DEFAULT_FACTORY.andThen(b -> b.httpTimeoutMillis(100).retryTimeoutMillis(0)));
     }
 
     @Test
@@ -453,23 +468,25 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .delayedReplyWithStatus(204, delayLatch);
 
         testWithMock(mock, sender -> {
-                    sender.table("test")
-                            .symbol("sym", "bol")
-                            .doubleColumn("x", 1.0)
-                            .atNow();
-                    try {
-                        sender.flush();
-                        Assert.fail("Exception expected");
-                    } catch (LineSenderException e) {
-                        TestUtils.assertContains(
-                                e.getMessage(),
-                                "Could not flush buffer: http://localhost:9001/write?precision=n Connection Failed: timed out [errno="  //errno depends on OS
-                        );
-                    } finally {
-                        delayLatch.countDown();
-                    }
-                }, port -> Sender.builder("http::addr=localhost:" + port + ";request_timeout=100;retry_timeout=0;")
-        );
+            sender.table("test")
+                    .symbol("sym", "bol")
+                    .doubleColumn("x", 1.0)
+                    .atNow();
+            try {
+                sender.flush();
+                Assert.fail("Exception expected");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(
+                        e.getMessage(),
+                        "Could not flush buffer: http://localhost:9001/write?precision=n Connection Failed: timed out [errno=" // errno
+                                                                                                                               // depends
+                                                                                                                               // on
+                                                                                                                               // OS
+                );
+            } finally {
+                delayLatch.countDown();
+            }
+        }, port -> Sender.builder("http::addr=localhost:" + port + ";request_timeout=100;retry_timeout=0;"));
     }
 
     @Test
@@ -510,14 +527,16 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public void testUnauthenticated_401() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .replyWithContent(401, "Unauthorized", "text/plain");
-        testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint authentication error: Unauthorized [http-status=401]"));
+        testWithMock(mockHttpProcessor, errorVerifier(
+                "Could not flush buffer: HTTP endpoint authentication error: Unauthorized [http-status=401]"));
     }
 
     @Test
     public void testUnauthenticated_403() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .replyWithContent(403, "Forbidden", "text/plain");
-        testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint authentication error: Forbidden [http-status=403]"));
+        testWithMock(mockHttpProcessor, errorVerifier(
+                "Could not flush buffer: HTTP endpoint authentication error: Forbidden [http-status=403]"));
     }
 
     @Test
@@ -526,7 +545,8 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
                 .replyWithContent(401, "", "text/plain");
 
-        testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint authentication error [http-status=401]"));
+        testWithMock(mockHttpProcessor,
+                errorVerifier("Could not flush buffer: HTTP endpoint authentication error [http-status=401]"));
     }
 
     private static Consumer<Sender> errorVerifier(String expectedError) {
@@ -560,20 +580,27 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         testWithMock(mockHttpProcessor, senderConsumer, DEFAULT_FACTORY);
     }
 
-    private void testWithMock(MockHttpProcessor mockHttpProcessor, Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory) throws Exception {
+    private void testWithMock(MockHttpProcessor mockHttpProcessor, Consumer<Sender> senderConsumer,
+            Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory) throws Exception {
         MockSettingsProcessor settingProcessor = new MockSettingsProcessor();
         testWithMock(mockHttpProcessor, settingProcessor, senderConsumer, senderBuilderFactory, false);
     }
 
-    private void testWithMock(MockHttpProcessor mockHttpProcessor, HttpRequestHandler settingsProcessor, Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory) throws Exception {
+    private void testWithMock(MockHttpProcessor mockHttpProcessor, HttpRequestHandler settingsProcessor,
+            Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory)
+            throws Exception {
         testWithMock(mockHttpProcessor, settingsProcessor, senderConsumer, senderBuilderFactory, false);
     }
 
-    private void testWithMock(MockHttpProcessor mockHttpProcessor, HttpRequestHandler settingsProcessor, Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory, boolean verifyBeforeClose) throws Exception {
+    private void testWithMock(MockHttpProcessor mockHttpProcessor, HttpRequestHandler settingsProcessor,
+            Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory,
+            boolean verifyBeforeClose) throws Exception {
         assertMemoryLeak(() -> {
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(new DefaultCairoConfiguration(root));
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(
+                    new DefaultCairoConfiguration(root));
             try (WorkerPool workerPool = new TestWorkerPool(1);
-                 HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool,
+                            PlainSocketFactory.INSTANCE)) {
                 httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
                     public ObjList<String> getUrls() {

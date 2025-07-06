@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import org.jetbrains.annotations.NotNull;
+
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
@@ -50,7 +52,6 @@ import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import org.jetbrains.annotations.NotNull;
 
 public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
@@ -71,8 +72,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> keyFunctions,
-            ObjList<Function> recordFunctions
-    ) {
+            ObjList<Function> recordFunctions) {
         super(groupByMetadata);
         try {
             this.base = base;
@@ -82,7 +82,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             // sink will be storing record columns to map key
             this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, keyFunctions, null);
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-            this.cursor = new GroupByRecordCursor(configuration, recordFunctions, groupByFunctions, updater, keyTypes, valueTypes);
+            this.cursor = new GroupByRecordCursor(configuration, recordFunctions, groupByFunctions, updater, keyTypes,
+                    valueTypes);
         } catch (Throwable e) {
             close();
             throw e;
@@ -111,7 +112,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            // init all record functions for this cursor, in case functions require metadata and/or symbol tables
+            // init all record functions for this cursor, in case functions require metadata
+            // and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext, null);
         } catch (Throwable th) {
             baseCursor.close();
@@ -179,8 +181,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 ObjList<GroupByFunction> groupByFunctions,
                 GroupByFunctionsUpdater groupByFunctionsUpdater,
                 @Transient @NotNull ArrayColumnTypes keyTypes,
-                @Transient @NotNull ArrayColumnTypes valueTypes
-        ) {
+                @Transient @NotNull ArrayColumnTypes valueTypes) {
             super(functions);
             try {
                 this.isOpen = true;

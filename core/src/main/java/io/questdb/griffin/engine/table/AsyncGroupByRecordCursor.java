@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.table;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.Map;
@@ -57,13 +59,12 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.tasks.GroupByMergeShardTask;
 
-import java.util.concurrent.atomic.AtomicInteger;
-
 class AsyncGroupByRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncGroupByRecordCursor.class);
     private final ObjList<GroupByFunction> groupByFunctions;
     private final AtomicBooleanCircuitBreaker mergeCircuitBreaker; // used to signal cancellation to merge shard workers
-    private final SOUnboundedCountDownLatch mergeDoneLatch = new SOUnboundedCountDownLatch(); // used for merge shard workers
+    private final SOUnboundedCountDownLatch mergeDoneLatch = new SOUnboundedCountDownLatch(); // used for merge shard
+                                                                                              // workers
     private final AtomicInteger mergeStartedCounter = new AtomicInteger();
     private final MessageBus messageBus;
     private final VirtualRecord recordA;
@@ -80,8 +81,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     public AsyncGroupByRecordCursor(
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            MessageBus messageBus
-    ) {
+            MessageBus messageBus) {
         this.groupByFunctions = groupByFunctions;
         this.recordFunctions = recordFunctions;
         this.messageBus = messageBus;
@@ -237,13 +237,15 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         final AsyncGroupByAtom atom = frameSequence.getAtom();
 
         if (!atom.isSharded()) {
-            // No sharding was necessary, so the maps are small, and we merge them ourselves.
+            // No sharding was necessary, so the maps are small, and we merge them
+            // ourselves.
             final Map dataMap = atom.mergeOwnerMap();
             mapCursor = dataMap.getCursor();
         } else {
             // We had to shard the maps, so they must be big.
             final ObjList<Map> shards = mergeShards(atom);
-            // The shards contain non-intersecting row groups, so we can return what's in the shards without merging them.
+            // The shards contain non-intersecting row groups, so we can return what's in
+            // the shards without merging them.
             shardedCursor.of(shards);
             mapCursor = shardedCursor;
         }
@@ -267,12 +269,14 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         // First, make sure to shard all non-sharded maps, if any.
         atom.shardAll();
 
-        // Next, merge each set of partial shard maps into the final shard map. This is done in parallel.
+        // Next, merge each set of partial shard maps into the final shard map. This is
+        // done in parallel.
         final int shardCount = atom.getShardCount();
         final RingQueue<GroupByMergeShardTask> queue = messageBus.getGroupByMergeShardQueue();
         final MPSequence pubSeq = messageBus.getGroupByMergeShardPubSeq();
         final MCSequence subSeq = messageBus.getGroupByMergeShardSubSeq();
-        final WorkStealingStrategy workStealingStrategy = frameSequence.getWorkStealingStrategy().of(mergeStartedCounter);
+        final WorkStealingStrategy workStealingStrategy = frameSequence.getWorkStealingStrategy()
+                .of(mergeStartedCounter);
 
         int queuedCount = 0;
         int ownCount = 0;
@@ -309,8 +313,10 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             throw th;
         } finally {
             // All done? Great, start consuming the queue we just published.
-            // How do we get to the end? If we consume our own queue there is chance we will be consuming
-            // aggregation tasks not related to this execution (we work in concurrent environment).
+            // How do we get to the end? If we consume our own queue there is chance we will
+            // be consuming
+            // aggregation tasks not related to this execution (we work in concurrent
+            // environment).
             // To deal with that we need to check our latch.
 
             while (!mergeDoneLatch.done(queuedCount)) {
@@ -356,7 +362,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         }
     }
 
-    void of(PageFrameSequence<AsyncGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
+    void of(PageFrameSequence<AsyncGroupByAtom> frameSequence, SqlExecutionContext executionContext)
+            throws SqlException {
         final AsyncGroupByAtom atom = frameSequence.getAtom();
         if (!isOpen) {
             isOpen = true;

@@ -222,7 +222,8 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         }
     }
 
-    void of(PageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
+    void of(PageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence, SqlExecutionContext executionContext)
+            throws SqlException {
         if (!isOpen) {
             isOpen = true;
         }
