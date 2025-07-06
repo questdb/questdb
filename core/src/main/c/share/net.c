@@ -25,6 +25,7 @@
 #include <jni.h>
 #include <sys/socket.h>
 #include <sys/fcntl.h>
+#include <sys/types.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
@@ -295,7 +296,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getRcvBuf
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setMulticastInterface
         (JNIEnv *e, jclass cl, jint fd, jint ipv4address) {
     struct in_addr address;
-    address.s_addr = (in_addr_t) htonl((__uint32_t) ipv4address);
+    address.s_addr = (in_addr_t) htonl((uint32_t) ipv4address);
     return setsockopt((int) fd, IPPROTO_IP, IP_MULTICAST_IF, &address, sizeof(address));
 }
 
