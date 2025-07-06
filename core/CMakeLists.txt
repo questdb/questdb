@@ -342,7 +342,7 @@ elseif (OS_DARWIN)
     target_link_libraries(questdb -nostdlib++ -dead_strip -lc++ _simdjson)
 else ()
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics -ffunction-sections -fdata-sections)
-    target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc _simdjson)
+    target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc -static-libstdc++ _simdjson)
 endif ()
 
 # create output directory in case it does not exist, e.g. after mvn clean
@@ -368,4 +368,12 @@ add_custom_command(TARGET questdb POST_BUILD
 )
 
 #jemalloc
-include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/jemalloc-cmake/CMakeLists.txt)
+set(CMAKE_FIND_LIBRARY_SUFFIXES .a)
+find_library(JEMALLOC_LIB jemalloc PATHS ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/jemalloc/lib NO_DEFAULT_PATH)
+if (JEMALLOC_LIB)
+    message(STATUS "Found jemalloc: ${JEMALLOC_LIB}")
+    target_link_libraries(questdb ${JEMALLOC_LIB})
+else ()
+    message(WARNING "jemalloc not found, using default allocator")
+    include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/jemalloc-cmake/CMakeLists.txt)
+endif ()
