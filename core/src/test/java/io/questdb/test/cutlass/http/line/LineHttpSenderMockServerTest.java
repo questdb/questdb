@@ -45,8 +45,12 @@ import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -54,12 +58,29 @@ import java.util.function.Function;
 import static io.questdb.client.Sender.PROTOCOL_VERSION_V1;
 import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.awaitility.Awaitility.await;
 
 public class LineHttpSenderMockServerTest extends AbstractTest {
     public static final Function<Integer, Sender.LineSenderBuilder> DEFAULT_FACTORY =
             port -> Sender.builder(Sender.Transport.HTTP).address("localhost:" + port).protocolVersion(PROTOCOL_VERSION_V1);
 
     private static final CharSequence QUESTDB_VERSION = new BuildInformationHolder().getSwVersion();
+
+    @Before
+    public void setUp() throws Exception {
+        // Setup method for test initialization
+        // Individual tests will handle server startup and readiness checks
+    }
+
+    private boolean isSocketReady(String host, int port) {
+        try (Socket s = new Socket()) {
+            s.connect(new InetSocketAddress(host, port), 100);
+            return true;  // Successful connection!
+        } catch (IOException e) {
+            return false; // Not ready yet, no worries!
+        }
+    }
 
     @Test
     public void testAutoFlushInterval() throws Exception {

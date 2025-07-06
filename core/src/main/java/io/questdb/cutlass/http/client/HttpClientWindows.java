@@ -30,10 +30,16 @@ import io.questdb.network.IOOperation;
 import io.questdb.network.SelectFacade;
 import io.questdb.network.SocketFactory;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
+
+import static io.questdb.network.Net.SOCKET_ERROR;
+import static io.questdb.network.Net.WSAGetLastError;
+import static io.questdb.network.Net.WSAPoll;
 
 public class HttpClientWindows extends HttpClient {
     private final SelectFacade sf;
     private FDSet fdSet;
+    private long fds; // For WSAPoll operations
 
     public HttpClientWindows(HttpClientConfiguration configuration, SocketFactory socketFactory) {
         super(configuration, socketFactory);
@@ -62,6 +68,16 @@ public class HttpClientWindows extends HttpClient {
             writeAddr = fdSet.address();
         }
         dieWaiting(sf.select(readAddr, writeAddr, 0, timeout));
+    }
+
+    protected int ioWait(long millis) {
+        // Let's give Windows a bit more time
+        long timeout = Os.isWindows() ? millis * 2 : millis;
+        int n = WSAPoll(fds, 1, (int) timeout);
+        if (n == SOCKET_ERROR) {
+            throw new HttpClientException("WSAPoll failed [errno=" + WSAGetLastError() + "]");
+        }
+        return n;
     }
 
     @Override
