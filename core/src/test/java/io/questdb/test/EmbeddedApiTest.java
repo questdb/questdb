@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,20 +26,20 @@ package io.questdb.test;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -62,11 +62,8 @@ public class EmbeddedApiTest {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 // Create table upfront, so that reader sees it
-                try (
-                        final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
-                        final SqlCompiler compiler = new SqlCompiler(engine)
-                ) {
-                    compiler.compile("create table if not exists abc (a int, b byte, ts timestamp) timestamp(ts)", ctx);
+                try (final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine)) {
+                    engine.execute("create table if not exists abc (a int, b byte, ts timestamp) timestamp(ts)", ctx);
                 }
 
                 // Now start single reader and writer
@@ -97,16 +94,16 @@ public class EmbeddedApiTest {
             try (
                     final CairoEngine engine = new CairoEngine(configuration)
             ) {
-                workerPool.assign(new GroupByJob(engine.getMessageBus()));
+                WorkerPoolUtils.setupQueryJobs(workerPool, engine);
                 workerPool.start(log);
                 try {
                     // number of cores is current thread + workers in the pool
                     try (
-                            SqlCompiler compiler = new SqlCompiler(engine);
+                            SqlCompiler compiler = engine.getSqlCompiler();
                             SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, 2)
                     ) {
 
-                        compiler.compile("create table abc (g double, ts timestamp) timestamp(ts) partition by DAY", ctx);
+                        engine.execute("create table abc (g double, ts timestamp) timestamp(ts) partition by DAY", ctx);
 
                         long timestamp = 0;
                         try (TableWriter writer = TestUtils.getWriter(engine, "abc")) {
@@ -145,9 +142,9 @@ public class EmbeddedApiTest {
             try (
                     final CairoEngine engine = new CairoEngine(configuration);
                     final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
-                    final SqlCompiler compiler = new SqlCompiler(engine)
+                    final SqlCompiler compiler = engine.getSqlCompiler()
             ) {
-                compiler.compile("create table abc (a int, b byte, c short, d long, e float, g double, h date, i symbol, j string, k boolean, ts timestamp) timestamp(ts)", ctx);
+                engine.execute("create table abc (a int, b byte, c short, d long, e float, g double, h date, i symbol, j string, k boolean, ts timestamp) timestamp(ts)", ctx);
                 try (TableWriter writer = TestUtils.getWriter(engine, "abc")) {
                     for (int i = 0; i < 10; i++) {
                         TableWriter.Row row = writer.newRow(Os.currentTimeMicros());
@@ -202,7 +199,7 @@ public class EmbeddedApiTest {
                 for (int i = 0; i < iterations; i++) {
                     try (
                             final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
-                            final SqlCompiler compiler = new SqlCompiler(engine);
+                            final SqlCompiler compiler = engine.getSqlCompiler();
                             final RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory();
                             final RecordCursor cursor = factory.getCursor(ctx)
                     ) {
@@ -214,7 +211,7 @@ public class EmbeddedApiTest {
                     }
                 }
             } catch (Exception e) {
-                e.printStackTrace();
+                e.printStackTrace(System.out);
                 errors.incrementAndGet();
             } finally {
                 latch.countDown();
@@ -245,7 +242,7 @@ public class EmbeddedApiTest {
                 for (int i = 0; i < iterations; i++) {
                     try (
                             final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
-                            final SqlCompiler compiler = new SqlCompiler(engine)
+                            final SqlCompiler compiler = engine.getSqlCompiler()
                     ) {
                         compiler.compile("create table if not exists abc (a int, b byte, ts timestamp) timestamp(ts) partition by HOUR", ctx);
                         try (TableWriter writer = TestUtils.getWriter(engine, "abc")) {
@@ -261,7 +258,7 @@ public class EmbeddedApiTest {
                     }
                 }
             } catch (Exception e) {
-                e.printStackTrace();
+                e.printStackTrace(System.out);
                 errors.incrementAndGet();
             } finally {
                 latch.countDown();

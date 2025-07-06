@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,7 +30,13 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
 
@@ -42,8 +48,8 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     private final CairoConfiguration configuration;
     private final Cursor cursor = new Cursor();
     private final FilesFacade ff;
-    private final MemoryMARW keyMem = Vm.getMARWInstance();
-    private final MemoryMARW valueMem = Vm.getMARWInstance();
+    private final MemoryMARW keyMem = Vm.getCMARWInstance();
+    private final MemoryMARW valueMem = Vm.getCMARWInstance();
     private int blockCapacity;
     private int blockValueCountMod;
     private int keyCount = -1;
@@ -151,6 +157,11 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         }
     }
 
+    public void closeNoTruncate() {
+        keyMem.close(false);
+        valueMem.close(false);
+    }
+
     public void commit() {
         int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
@@ -183,7 +194,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         return keyMem.isOpen();
     }
 
-    public final void of(CairoConfiguration configuration, int keyFd, int valueFd, boolean init, int indexBlockCapacity) {
+    public final void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int indexBlockCapacity) {
         close();
         final FilesFacade ff = configuration.getFilesFacade();
         boolean kFdUnassigned = true;
@@ -194,7 +205,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             if (init) {
                 if (ff.truncate(keyFd, 0)) {
                     kFdUnassigned = false;
-                    this.keyMem.of(ff, keyFd, null, keyAppendPageSize, keyAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);
+                    this.keyMem.of(ff, keyFd, false, null, keyAppendPageSize, keyAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);
                     initKeyMemory(this.keyMem, indexBlockCapacity);
                 } else {
                     throw CairoException.critical(ff.errno()).put("Could not truncate [fd=").put(keyFd).put(']');
@@ -236,14 +247,14 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             if (init) {
                 if (ff.truncate(valueFd, 0)) {
                     vFdUnassigned = false;
-                    this.valueMem.of(ff, valueFd, null, valueAppendPageSize, valueAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);
+                    this.valueMem.of(ff, valueFd, false, null, valueAppendPageSize, valueAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);
                     this.valueMem.jumpTo(0);
                 } else {
                     throw CairoException.critical(ff.errno()).put("Could not truncate [fd=").put(valueFd).put(']');
                 }
             } else {
                 vFdUnassigned = false;
-                this.valueMem.of(ff, valueFd, null, valueAppendPageSize, this.valueMemSize, MemoryTag.MMAP_INDEX_WRITER);
+                this.valueMem.of(ff, valueFd, false, null, valueAppendPageSize, this.valueMemSize, MemoryTag.MMAP_INDEX_WRITER);
             }
 
             // block value count is always a power of two
@@ -269,26 +280,26 @@ public class BitmapIndexWriter implements Closeable, Mutable {
 
     public final void of(Path path, CharSequence name, long columnNameTxn, int indexBlockCapacity) {
         close();
-        final int plen = path.length();
+        final int plen = path.size();
         try {
             boolean init = indexBlockCapacity > 0;
-            BitmapIndexUtils.keyFileName(path, name, columnNameTxn);
+            LPSZ keyFile = BitmapIndexUtils.keyFileName(path, name, columnNameTxn);
             if (init) {
-                this.keyMem.of(ff, path, configuration.getDataIndexKeyAppendPageSize(), 0L, MemoryTag.MMAP_INDEX_WRITER);
+                this.keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), 0L, MemoryTag.MMAP_INDEX_WRITER);
                 initKeyMemory(this.keyMem, indexBlockCapacity);
             } else {
-                boolean exists = ff.exists(path);
+                boolean exists = ff.exists(keyFile);
                 if (!exists) {
                     LOG.error().$(path).$(" not found").$();
-                    throw CairoException.critical(0).put("Index does not exist: ").put(path);
+                    throw CairoException.fileNotFound().put("index does not exist [path=").put(path).put(']');
                 }
-                this.keyMem.of(ff, path, configuration.getDataIndexKeyAppendPageSize(), ff.length(path), MemoryTag.MMAP_INDEX_WRITER);
+                this.keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), ff.length(keyFile), MemoryTag.MMAP_INDEX_WRITER);
             }
 
             long keyMemSize = this.keyMem.getAppendOffset();
             // check if key file header is present
             if (keyMemSize < BitmapIndexUtils.KEY_FILE_RESERVED) {
-                LOG.error().$("file too short [corrupt] ").$(path).$();
+                LOG.error().$("file too short [corrupt] [path=").$(path).I$();
                 throw CairoException.critical(0).put("Index file too short (w): ").put(path);
             }
 

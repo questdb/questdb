@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ public class Long256FunctionTest {
 
     private static final Long256Function function = new Long256Function() {
         @Override
-        public void getLong256(Record rec, CharSink sink) {
+        public void getLong256(Record rec, CharSink<?> sink) {
         }
 
         @Override
@@ -53,28 +53,8 @@ public class Long256FunctionTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testChar() {
-        function.getChar(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoByte() {
-        function.getGeoByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoInt() {
-        function.getGeoInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoLong() {
-        function.getGeoLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoShort() {
-        function.getGeoShort(null);
+    public void testGetArray() {
+        function.getArray(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -98,6 +78,11 @@ public class Long256FunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetChar() {
+        function.getChar(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetDate() {
         function.getDate(null);
     }
@@ -113,13 +98,43 @@ public class Long256FunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoByte() {
+        function.getGeoByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoInt() {
+        function.getGeoInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoLong() {
+        function.getGeoLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoShort() {
+        function.getGeoShort(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetInt() {
         function.getInt(null);
     }
 
     @Test
     public void testGetLong() {
-        Assert.assertEquals(Numbers.LONG_NaN, function.getLong(null));
+        Assert.assertEquals(Numbers.LONG_NULL, function.getLong(null));
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Hi() {
+        function.getLong128Hi(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Lo() {
+        function.getLong128Lo(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -134,12 +149,7 @@ public class Long256FunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStr() {
-        function.getStr(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStr2() {
-        function.getStr(null, null);
+        function.getStrA(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -160,6 +170,16 @@ public class Long256FunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetSymbolB() {
         function.getSymbolB(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetVarcharA() {
+        function.getVarcharA(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetVarcharB() {
+        function.getVarcharB(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

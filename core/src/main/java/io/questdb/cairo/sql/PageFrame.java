@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,29 +26,59 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.BitmapIndexReader;
 
+/**
+ * Represents a contiguous fragment of a table partition.
+ * <p>
+ * When it comes to data access, page frames should not be used directly
+ * as it's only valid for partitions in the native format. Instead,
+ * a combination of {@link PageFrameAddressCache} and {@link PageFrameMemoryPool}
+ * should be used.
+ */
 public interface PageFrame {
 
-    BitmapIndexReader getBitmapIndexReader(int columnIndex, int dirForward);
-
     /**
-     * Return the size the column as power 2 of the bytes e.g. long == 3, int == 2 etc.
-     *
-     * @param columnIndex index of column
-     * @return logarithm base 2 of size of column in bytes
-     */
-    int getColumnShiftBits(int columnIndex);
-
-    /**
-     * Index page for variable-length column types, such as String and Binary
+     * Auxiliary index page for variable-length column types, such as Varchar, String, and Binary.
+     * <p>
+     * Can be called only for frames in native format.
      *
      * @param columnIndex index of variable length column
      * @return contiguous memory address containing offsets for variable value entries
      */
-    long getIndexPageAddress(int columnIndex);
+    long getAuxPageAddress(int columnIndex);
+
+    /**
+     * Return the size of the page frame aux vector in bytes.
+     * <p>
+     * Can be called only for frames in native format.
+     *
+     * @param columnIndex index of column
+     * @return size of column in bytes
+     */
+    long getAuxPageSize(int columnIndex);
+
+    BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction);
+
+    /**
+     * The count of columns in the page frame. In some cases it is possible to have
+     * page frame with no columns.
+     *
+     * @return column count
+     */
+    int getColumnCount();
+
+    /**
+     * Returns page frame format.
+     * <p>
+     * Possible values: {@link PartitionFormat#NATIVE} and {@link PartitionFormat#PARQUET}.
+     */
+    byte getFormat();
 
     /**
      * Return the address of the start of the page frame or if this page represents
-     * a column top (a column that was added to the table when other columns already had data) then return 0
+     * a column top (a column that was added to the table when other columns already
+     * had data) then return 0.
+     * <p>
+     * Can be called only for frames in native format.
      *
      * @param columnIndex index of column
      * @return address of column or 0 if column is empty
@@ -56,16 +86,57 @@ public interface PageFrame {
     long getPageAddress(int columnIndex);
 
     /**
-     * Return the size of the page frame column in bytes.
+     * Return the size of the page frame data vector in bytes.
+     * <p>
+     * Can be called only for frames in native format.
      *
      * @param columnIndex index of column
      * @return size of column in bytes
      */
     long getPageSize(int columnIndex);
 
+    /**
+     * Return Parquet partition's mmapped file address or 0 in case of a native partition.
+     */
+    long getParquetAddr();
+
+    /**
+     * Return the Parquet partition's read size or -1 in case of a native partition.
+     * Specifying the read size allows us to find a specific metadata at the end of the read size
+     * (rather than the end of the file) should we have performed an O3 operation that extended
+     * the file size.
+     */
+    long getParquetFileSize();
+
+    /**
+     * Returns row group index corresponding to the Parquet page frame.
+     * <p>
+     * Possible values: {@link PartitionFormat#NATIVE} and {@link PartitionFormat#PARQUET}.
+     */
+    int getParquetRowGroup();
+
+    /**
+     * Returns high row index within the row group, exclusive.
+     */
+    int getParquetRowGroupHi();
+
+    /**
+     * Returns low row index within the row group, inclusive.
+     */
+    int getParquetRowGroupLo();
+
+    /**
+     * Return high row index within the frame's partition, exclusive.
+     */
     long getPartitionHi();
 
+    /**
+     * Return index of the partition the frame belongs to.
+     */
     int getPartitionIndex();
 
+    /**
+     * Return low row index within the frame's partition, inclusive.
+     */
     long getPartitionLo();
 }

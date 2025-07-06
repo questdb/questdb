@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 import java.util.Arrays;
 
@@ -43,7 +43,7 @@ public class BoolList implements Mutable {
     }
 
     public void add(boolean value) {
-        ensureCapacity(pos + 1);
+        checkCapacity(pos + 1);
         buffer[pos++] = value;
     }
 
@@ -63,7 +63,7 @@ public class BoolList implements Mutable {
     }
 
     public void clear(int capacity) {
-        ensureCapacity(capacity);
+        checkCapacity(capacity);
         pos = 0;
         Arrays.fill(buffer, NO_ENTRY_VALUE);
     }
@@ -124,14 +124,11 @@ public class BoolList implements Mutable {
     }
 
     public void insert(int index, boolean element) {
-        ensureCapacity(++pos);
+        checkCapacity(++pos);
         System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
         buffer[index] = element;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     public void removeIndex(int index) {
         if (pos < 1 || index >= pos) {
             return;
@@ -163,7 +160,7 @@ public class BoolList implements Mutable {
     }
 
     public void setPos(int capacity) {
-        ensureCapacity(capacity);
+        checkCapacity(capacity);
         pos = capacity;
     }
 
@@ -181,7 +178,7 @@ public class BoolList implements Mutable {
      */
     @Override
     public String toString() {
-        CharSink b = Misc.getThreadLocalBuilder();
+        Utf16Sink b = Misc.getThreadLocalSink();
 
         b.put('[');
         for (int i = 0, k = size(); i < k; i++) {
@@ -198,7 +195,7 @@ public class BoolList implements Mutable {
         Arrays.fill(buffer, 0, pos, value);
     }
 
-    private void ensureCapacity(int capacity) {
+    private void checkCapacity(int capacity) {
         int l = buffer.length;
         if (capacity > l) {
             int newCap = Math.max(l << 1, capacity);
@@ -223,7 +220,7 @@ public class BoolList implements Mutable {
 
     private void extendCapacity(int newPos) {
         if (newPos > pos) {
-            ensureCapacity(newPos);
+            checkCapacity(newPos);
             Arrays.fill(buffer, pos, newPos, NO_ENTRY_VALUE);
             pos = newPos;
         }

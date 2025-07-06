@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,17 +25,50 @@
 package io.questdb.metrics;
 
 
-public class HealthMetricsImpl implements HealthMetrics {
+import io.questdb.std.Mutable;
 
+public class HealthMetricsImpl implements HealthMetrics, Mutable {
+
+    private final Counter queryErrorCounter;
+    private final Counter readerLeakCounter;
     private final Counter unhandledErrorCounter;
 
     public HealthMetricsImpl(MetricsRegistry metricsRegistry) {
         this.unhandledErrorCounter = metricsRegistry.newCounter("unhandled_errors");
+        this.readerLeakCounter = metricsRegistry.newCounter("reader_leak_counter");
+        this.queryErrorCounter = metricsRegistry.newCounter("query_error_counter");
+    }
+
+    @Override
+    public void clear() {
+        unhandledErrorCounter.reset();
+        readerLeakCounter.reset();
+        queryErrorCounter.reset();
+    }
+
+    @Override
+    public void incrementQueryErrorCounter() {
+        queryErrorCounter.inc();
+    }
+
+    @Override
+    public void incrementReaderLeakCounter(int count) {
+        readerLeakCounter.add(count);
     }
 
     @Override
     public void incrementUnhandledErrors() {
         unhandledErrorCounter.inc();
+    }
+
+    @Override
+    public long queryErrorCounter() {
+        return queryErrorCounter.getValue();
+    }
+
+    @Override
+    public long readerLeakCounter() {
+        return readerLeakCounter.getValue();
     }
 
     @Override

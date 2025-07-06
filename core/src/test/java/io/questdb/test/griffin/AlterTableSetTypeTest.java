@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,22 +26,19 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.tools.TestUtils;
+import io.questdb.std.str.Utf8s;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.IOException;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.fail;
 
-public class AlterTableSetTypeTest extends AbstractGriffinTest {
+public class AlterTableSetTypeTest extends AbstractCairoTest {
     static final byte NON_WAL = (byte) 0;
     static final byte WAL = (byte) 1;
 
@@ -50,12 +47,11 @@ public class AlterTableSetTypeTest extends AbstractGriffinTest {
         final String tableName = "table_non_partitioned";
         assertMemoryLeak(() -> {
             createNonPartitionedTable();
-            try {
-                executeOperation("alter table " + tableName + " set type wal", CompiledQuery.TABLE_SET_TYPE);
-                fail("Expected exception is not thrown");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Cannot convert non-partitioned table");
-            }
+            assertException(
+                    "alter table " + tableName + " set type wal",
+                    12,
+                    "Cannot convert non-partitioned table"
+            );
         });
     }
 
@@ -66,7 +62,7 @@ public class AlterTableSetTypeTest extends AbstractGriffinTest {
             createTable(tableName, "BYPASS WAL");
             for (int i = 0; i < 30; i++) {
                 final boolean walEnabled = sqlExecutionContext.getRandom().nextBoolean();
-                executeOperation("alter table " + tableName + " set type " + (walEnabled ? "wal" : "bypass wal"), CompiledQuery.TABLE_SET_TYPE);
+                execute("alter table " + tableName + " set type " + (walEnabled ? "wal" : "bypass wal"));
                 final Path convertFilePath1 = assertConvertFileExists(tableName);
                 assertConvertFileContent(convertFilePath1, walEnabled ? WAL : NON_WAL);
             }
@@ -78,7 +74,7 @@ public class AlterTableSetTypeTest extends AbstractGriffinTest {
         final String tableName = "table_wal";
         assertMemoryLeak(() -> {
             createTable(tableName, "WAL");
-            executeOperation("alter table " + tableName + " set type bypass wal", CompiledQuery.TABLE_SET_TYPE);
+            execute("alter table " + tableName + " set type bypass wal");
             drainWalQueue();
             final Path convertFilePath = assertConvertFileExists(tableName);
             assertConvertFileContent(convertFilePath, NON_WAL);
@@ -90,7 +86,7 @@ public class AlterTableSetTypeTest extends AbstractGriffinTest {
         final String tableName = "table_non_wal";
         assertMemoryLeak(() -> {
             createTable(tableName, "BYPASS WAL");
-            executeOperation("alter table " + tableName + " set type wal", CompiledQuery.TABLE_SET_TYPE);
+            execute("alter table " + tableName + " set type wal");
             final Path convertFilePath = assertConvertFileExists(tableName);
             assertConvertFileContent(convertFilePath, WAL);
         });
@@ -104,16 +100,16 @@ public class AlterTableSetTypeTest extends AbstractGriffinTest {
 
     private Path assertConvertFileExists(String tableName) {
         final TableToken token = engine.verifyTableName(tableName);
-        final Path path = Path.PATH.get().of(configuration.getRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
-        Assert.assertTrue(Chars.toString(path), Files.exists(path.$()));
+        final Path path = Path.PATH.get().of(configuration.getDbRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
+        Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
         return path;
     }
 
     private void createNonPartitionedTable() throws SqlException {
-        compile("create table table_non_partitioned (ts TIMESTAMP, x long)");
+        execute("create table table_non_partitioned (ts TIMESTAMP, x long)");
     }
 
     private void createTable(String tableName, String walMode) throws SqlException {
-        compile("create table " + tableName + " (ts TIMESTAMP, x long) timestamp(ts) PARTITION BY DAY " + walMode);
+        execute("create table " + tableName + " (ts TIMESTAMP, x long) timestamp(ts) PARTITION BY DAY " + walMode);
     }
 }

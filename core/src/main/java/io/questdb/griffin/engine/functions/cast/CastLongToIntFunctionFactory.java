@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,18 +41,18 @@ public class CastLongToIntFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+        return new CastLongToIntFunction(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToIntFunction {
-        public Func(Function arg) {
+    public static class CastLongToIntFunction extends AbstractCastToIntFunction {
+        public CastLongToIntFunction(Function arg) {
             super(arg);
         }
 
         @Override
         public int getInt(Record rec) {
             final long value = arg.getLong(rec);
-            return value == Numbers.LONG_NaN ? Numbers.INT_NaN : (int) value;
+            return value == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) value;
         }
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,12 +24,18 @@
 
 package io.questdb.log;
 
-import io.questdb.std.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
@@ -41,7 +47,7 @@ public class TemplateParser implements Sinkable {
     private final TimestampFormatCompiler dateCompiler = new TimestampFormatCompiler();
     private final AtomicLong dateValue = new AtomicLong();
     private final CharSequenceIntHashMap envStartIdxs = new CharSequenceIntHashMap();
-    private final StringSink resolveSink = new StringSink();
+    private final Utf8StringSink resolveSink = new Utf8StringSink();
     private final ObjList<TemplateNode> templateNodes = new ObjList<>();
     private CharSequence originalTxt;
     private CharSequenceObjHashMap<CharSequence> props;
@@ -83,7 +89,7 @@ public class TemplateParser implements Sinkable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         for (int i = 0, n = templateNodes.size(); i < n; i++) {
             sink.put(templateNodes.getQuick(i));
         }
@@ -114,23 +120,31 @@ public class TemplateParser implements Sinkable {
         final DateFormat dateFormat = dateCompiler.compile(originalTxt, actualStart, actualEnd, false);
         templateNodes.add(new TemplateNode(TemplateNode.TYPE_DATE, DATE_FORMAT_KEY) {
             @Override
-            public void toSink(CharSink sink) {
-                dateFormat.format(dateValue.get(), TimestampFormatUtils.enLocale, null, sink);
+            public void toSink(@NotNull CharSink<?> sink) {
+                dateFormat.format(dateValue.get(), TimestampFormatUtils.EN_LOCALE, null, sink);
             }
         });
     }
 
     private void addEnvTemplateNode(int dollarOffset, int envStart, int envEnd) {
         final String envKey = originalTxt.subSequence(envStart, envEnd).toString();
-        final CharSequence envVal = props.get(envKey);
+        CharSequence envVal = props.get(envKey);
         if (envVal == null) {
-            throw new LogError("Undefined property: " + envKey);
+            if (Chars.equals(envKey, "log.dir")) {
+                envVal = props.get("QDB_LOG_LOG_DIR");
+                if (envVal == null) {
+                    throw CairoException.nonCritical().put("could not find property `log.dir`. Did you pass `QDB_LOG_LOG_DIR` as an environment variable?");
+                }
+            } else {
+                throw new LogError("Undefined property: " + envKey);
+            }
         }
         envStartIdxs.put(envKey, dollarOffset);
+        CharSequence finalEnvVal = envVal;
         templateNodes.add(new TemplateNode(TemplateNode.TYPE_ENV, envKey) {
             @Override
-            public void toSink(CharSink sink) {
-                sink.encodeUtf8(envVal);
+            public void toSink(@NotNull CharSink<?> sink) {
+                sink.put(finalEnvVal);
             }
         });
     }
@@ -138,11 +152,11 @@ public class TemplateParser implements Sinkable {
     private void addStaticTemplateNode(int start, int end, boolean needsUtf8Encoding) {
         templateNodes.add(new TemplateNode(TemplateNode.TYPE_STATIC, null) {
             @Override
-            public void toSink(CharSink sink) {
+            public void toSink(@NotNull CharSink<?> sink) {
                 if (needsUtf8Encoding) {
-                    sink.encodeUtf8(originalTxt, start, end);
-                } else {
                     sink.put(originalTxt, start, end);
+                } else {
+                    sink.putAscii(originalTxt, start, end);
                 }
             }
         });

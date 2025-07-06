@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,26 +27,26 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class RemovePartitionTest extends AbstractGriffinTest {
+public class RemovePartitionTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveSeveralFromTop() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 1000000000l) t from long_sequence(1000)) timestamp (t)) timestamp(t) partition by DAY", sqlExecutionContext);
+            execute("create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 1000000000l) t from long_sequence(1000)) timestamp (t)) timestamp(t) partition by DAY");
 
             try (
                     TableReader reader = getReader("tst");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader);
                     TableWriter writer = getWriter("tst")
             ) {
                 // utilise reader fully
-                RecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
 
                 double superSum = 0;

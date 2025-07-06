@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,8 +38,8 @@ import org.jetbrains.annotations.NotNull;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class UpdateOperation extends AbstractOperation {
-
     public static final String CMD_NAME = "UPDATE";
+    public static final String MAT_VIEW_INVALIDATION_REASON = "update operation";
     public static final int SENDER_CLOSED_INCREMENT = 7;
     public static final int WRITER_CLOSED_INCREMENT = 10;
     public static final int FULLY_CLOSED_STATE = WRITER_CLOSED_INCREMENT + SENDER_CLOSED_INCREMENT;
@@ -50,7 +50,7 @@ public class UpdateOperation extends AbstractOperation {
     private volatile boolean requesterTimeout;
 
     public UpdateOperation(
-            TableToken tableToken,
+            @NotNull TableToken tableToken,
             int tableId,
             long tableVersion,
             int tableNamePosition
@@ -59,7 +59,7 @@ public class UpdateOperation extends AbstractOperation {
     }
 
     public UpdateOperation(
-            TableToken tableToken,
+            @NotNull TableToken tableToken,
             int tableId,
             long tableVersion,
             int tableNamePosition,
@@ -94,11 +94,12 @@ public class UpdateOperation extends AbstractOperation {
     }
 
     public void forceTestTimeout() {
-        if (requesterTimeout || circuitBreaker.checkIfTripped()) {
-            if (circuitBreaker.isCancelled()) {
+        int state = SqlExecutionCircuitBreaker.STATE_OK;
+        if (requesterTimeout || (state = circuitBreaker.getState()) != SqlExecutionCircuitBreaker.STATE_OK) {
+            if (state == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
                 throw CairoException.queryCancelled(circuitBreaker.getFd());
             } else {
-                throw CairoException.queryTimedOut(circuitBreaker.getFd());
+                throw CairoException.queryTimedOut(circuitBreaker.getFd(), 0, 0);
             }
         }
     }
@@ -114,6 +115,11 @@ public class UpdateOperation extends AbstractOperation {
 
     public boolean isWriterClosePending() {
         return executingAsync && closeState.get() != WRITER_CLOSED_INCREMENT;
+    }
+
+    @Override
+    public String matViewInvalidationReason() {
+        return MAT_VIEW_INVALIDATION_REASON;
     }
 
     @Override
@@ -136,7 +142,7 @@ public class UpdateOperation extends AbstractOperation {
 
     public void testTimeout() {
         if (requesterTimeout) {
-            throw CairoException.queryTimedOut(circuitBreaker.getFd());
+            throw CairoException.queryTimedOut(circuitBreaker.getFd(), 0, 0);
         }
 
         circuitBreaker.statefulThrowExceptionIfTripped();
@@ -145,6 +151,6 @@ public class UpdateOperation extends AbstractOperation {
     @Override
     public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
         super.withContext(sqlExecutionContext);
-        circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+        circuitBreaker = sqlExecutionContext.getSimpleCircuitBreaker();
     }
 }

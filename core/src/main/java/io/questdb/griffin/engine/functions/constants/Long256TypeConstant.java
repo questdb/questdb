@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,11 +32,10 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.str.CharSink;
 
 public class Long256TypeConstant extends Long256Function implements TypeConstant {
-
     public static final Long256TypeConstant INSTANCE = new Long256TypeConstant();
 
     @Override
-    public void getLong256(Record rec, CharSink sink) {
+    public void getLong256(Record rec, CharSink<?> sink) {
         Long256Impl.NULL_LONG256.toSink(sink);
     }
 

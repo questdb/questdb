@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,8 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.BorrowableUtf8Sink;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.LongAdder;
 
@@ -50,13 +51,13 @@ public class CounterWithOneLabelImpl implements CounterWithOneLabel {
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         PrometheusFormatUtils.appendCounterType(name, sink);
         for (int i = 0, n = counters.length; i < n; i++) {
             PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
-            sink.put('{');
+            sink.putAscii('{');
             PrometheusFormatUtils.appendLabel(sink, labelName0, labelValues0[i]);
-            sink.put('}');
+            sink.putAscii('}');
             PrometheusFormatUtils.appendSampleLineSuffix(sink, counters[i].longValue());
         }
         PrometheusFormatUtils.appendNewLine(sink);

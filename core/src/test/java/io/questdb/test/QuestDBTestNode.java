@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,19 +27,17 @@ package io.questdb.test;
 import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
+import io.questdb.PropertyKey;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Misc;
-import io.questdb.test.cairo.CairoTestConfiguration;
-import io.questdb.test.cairo.ConfigurationOverrides;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.tools.TestUtils;
 
 public class QuestDBTestNode {
@@ -56,10 +54,6 @@ public class QuestDBTestNode {
         cairo.close();
     }
 
-    public void closeGriffin() {
-        griffin.close();
-    }
-
     public BindVariableService getBindVariableService() {
         return griffin.bindVariableService;
     }
@@ -68,7 +62,7 @@ public class QuestDBTestNode {
         return cairo.configuration;
     }
 
-    public ConfigurationOverrides getConfigurationOverrides() {
+    public Overrides getConfigurationOverrides() {
         return cairo.overrides;
     }
 
@@ -85,30 +79,28 @@ public class QuestDBTestNode {
     }
 
     public Metrics getMetrics() {
-        return cairo.metrics;
+        return cairo.configuration.getMetrics();
     }
 
     public CharSequence getRoot() {
         return cairo.root;
     }
 
-    public DatabaseSnapshotAgent getSnapshotAgent() {
-        return cairo.snapshotAgent;
-    }
-
-    public SqlCompiler getSqlCompiler() {
-        return griffin.compiler;
-    }
-
     public SqlExecutionContext getSqlExecutionContext() {
         return griffin.sqlExecutionContext;
     }
 
-    public void initCairo(String root, boolean ownRoot, ConfigurationOverrides overrides) {
+    public void initCairo(
+            String root,
+            boolean ownRoot,
+            Overrides overrides,
+            TestCairoEngineFactory engineFactory,
+            TestCairoConfigurationFactory configurationFactory
+    ) {
         if (root == null || root.isEmpty()) {
             throw new IllegalArgumentException("must specify dbRoot");
         }
-        cairo = new Cairo(root, ownRoot, overrides);
+        cairo = new Cairo(root, ownRoot, overrides, engineFactory, configurationFactory);
     }
 
     public void initGriffin() {
@@ -120,6 +112,18 @@ public class QuestDBTestNode {
             throw new IllegalStateException("Cairo is not initialised yet");
         }
         griffin = new Griffin(cairo, circuitBreaker);
+    }
+
+    public void setProperty(PropertyKey propertyKey, long value) {
+        getConfigurationOverrides().setProperty(propertyKey, value);
+    }
+
+    public void setProperty(PropertyKey propertyKey, String value) {
+        getConfigurationOverrides().setProperty(propertyKey, value);
+    }
+
+    public void setProperty(PropertyKey propertyKey, boolean value) {
+        getConfigurationOverrides().setProperty(propertyKey, value);
     }
 
     public void setUpCairo() {
@@ -134,10 +138,6 @@ public class QuestDBTestNode {
         cairo.tearDown(removeDir);
     }
 
-    public void tearDownGriffin() {
-        griffin.tearDown();
-    }
-
     @Override
     public String toString() {
         return "QuestDBTestNode{" +
@@ -150,14 +150,18 @@ public class QuestDBTestNode {
     private static class Cairo {
         private final CairoConfiguration configuration;
         private final MessageBus messageBus;
-        private final Metrics metrics;
-        private final ConfigurationOverrides overrides;
+        private final Overrides overrides;
         private final boolean ownRoot;
         private final CharSequence root;
         private CairoEngine engine;
-        private DatabaseSnapshotAgent snapshotAgent;
 
-        private Cairo(String root, boolean ownRoot, ConfigurationOverrides overrides) {
+        private Cairo(
+                String root,
+                boolean ownRoot,
+                Overrides overrides,
+                TestCairoEngineFactory engineFactory,
+                TestCairoConfigurationFactory configurationFactory
+        ) {
             this.root = root;
             this.ownRoot = ownRoot;
             this.overrides = overrides;
@@ -168,10 +172,8 @@ public class QuestDBTestNode {
                 }
             };
 
-            configuration = new CairoTestConfiguration(root, telemetryConfiguration, overrides);
-            metrics = Metrics.enabled();
-            engine = new CairoEngine(configuration, metrics);
-            snapshotAgent = new DatabaseSnapshotAgent(engine);
+            configuration = configurationFactory.getInstance(root, telemetryConfiguration, overrides);
+            engine = engineFactory.getInstance(configuration);
             messageBus = engine.getMessageBus();
         }
 
@@ -182,40 +184,30 @@ public class QuestDBTestNode {
             engine.getTableIdGenerator().open();
             engine.getTableIdGenerator().reset();
             engine.resetNameRegistryMemory();
+            engine.setUp();
         }
 
         public void tearDown(boolean removeDir) {
-            snapshotAgent.clear();
             engine.getTableIdGenerator().close();
             engine.clear();
             engine.closeNameRegistry();
+            engine.getMetrics().clear();
             if (removeDir && ownRoot) {
                 TestUtils.removeTestPath(root);
             }
             overrides.reset();
-            clearWalQueue();
-        }
-
-        private void clearWalQueue() {
-            long seq;
-            while ((seq = engine.getMessageBus().getWalTxnNotificationSubSequence().next()) > -1) {
-                engine.getMessageBus().getWalTxnNotificationSubSequence().done(seq);
-            }
         }
 
         private void close() {
-            snapshotAgent = Misc.free(snapshotAgent);
             engine = Misc.free(engine);
         }
     }
 
     private static class Griffin {
         private final BindVariableService bindVariableService;
-        private final SqlCompiler compiler;
         private final SqlExecutionContext sqlExecutionContext;
 
         private Griffin(Cairo cairo, SqlExecutionCircuitBreaker circuitBreaker) {
-            compiler = cairo.configuration.getFactoryProvider().getSqlCompilerFactory().getInstance(cairo.engine, null, cairo.snapshotAgent);
             bindVariableService = new BindVariableServiceImpl(cairo.configuration);
             sqlExecutionContext = new SqlExecutionContextImpl(cairo.engine, 1)
                     .with(
@@ -225,18 +217,12 @@ public class QuestDBTestNode {
                             -1,
                             circuitBreaker
                     );
+            sqlExecutionContext.initNow();
             bindVariableService.clear();
         }
 
         public void setUp() {
             bindVariableService.clear();
-        }
-
-        public void tearDown() {
-        }
-
-        private void close() {
-            compiler.close();
         }
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,13 +28,13 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.std.Mutable;
 
 public class CopyRequestTask implements Mutable {
-    private SecurityContext securityContext;
     private int atomicity;
+    private long copyID;
     private byte delimiter;
     private String fileName;
     private boolean headerFlag;
-    private long copyID;
     private int partitionBy;
+    private SecurityContext securityContext;
     private String tableName;
     private String timestampColumnName;
     private String timestampFormat;
@@ -56,6 +56,10 @@ public class CopyRequestTask implements Mutable {
         return atomicity;
     }
 
+    public long getCopyID() {
+        return copyID;
+    }
+
     public byte getDelimiter() {
         return delimiter;
     }
@@ -64,12 +68,12 @@ public class CopyRequestTask implements Mutable {
         return fileName;
     }
 
-    public long getCopyID() {
-        return copyID;
-    }
-
     public int getPartitionBy() {
         return partitionBy;
+    }
+
+    public SecurityContext getSecurityContext() {
+        return securityContext;
     }
 
     public String getTableName() {
@@ -86,10 +90,6 @@ public class CopyRequestTask implements Mutable {
 
     public boolean isHeaderFlag() {
         return headerFlag;
-    }
-
-    public SecurityContext getSecurityContext() {
-        return securityContext;
     }
 
     public void of(

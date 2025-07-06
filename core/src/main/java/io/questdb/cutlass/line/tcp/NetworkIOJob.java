@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,21 +25,19 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.mp.Job;
-import io.questdb.std.ObjList;
+import io.questdb.std.Pool;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.str.ByteCharSequence;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8String;
 
 public interface NetworkIOJob extends Job, QuietCloseable {
-    void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails);
+    void addTableUpdateDetails(Utf8String tableNameUtf8, TableUpdateDetails tableUpdateDetails);
 
-    TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableNameUtf8);
+    TableUpdateDetails getLocalTableDetails(DirectUtf8Sequence tableNameUtf8);
 
-    ObjList<SymbolCache> getUnusedSymbolCaches();
+    Pool<SymbolCache> getSymbolCachePool();
 
     int getWorkerId();
 
     void releaseWalTableDetails();
-
-    TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8);
 }

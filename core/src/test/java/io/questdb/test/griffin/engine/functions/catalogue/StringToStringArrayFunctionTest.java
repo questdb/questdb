@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.catalogue.StringToStringArrayFunction;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -82,25 +81,17 @@ public class StringToStringArrayFunctionTest {
     @Test
     public void testGetStrEmpty() throws SqlException {
         StringToStringArrayFunction function = new StringToStringArrayFunction(42, "{}");
-        TestUtils.assertEquals("{}", function.getStr(null));
+        TestUtils.assertEquals("{}", function.getStrA(null));
         TestUtils.assertEquals("{}", function.getStrB(null));
         Assert.assertEquals(2, function.getStrLen(null));
-
-        StringSink sink = new StringSink();
-        function.getStr(null, sink);
-        TestUtils.assertEquals("{}", sink);
     }
 
     @Test
     public void testGetStrSimple() throws SqlException {
         StringToStringArrayFunction function = new StringToStringArrayFunction(42, "{ab, 3,true,1.26,test 1}");
-        TestUtils.assertEquals("{ab,3,true,1.26,test 1}", function.getStr(null));
+        TestUtils.assertEquals("{ab,3,true,1.26,test 1}", function.getStrA(null));
         TestUtils.assertEquals("{ab,3,true,1.26,test 1}", function.getStrB(null));
         Assert.assertEquals(23, function.getStrLen(null));
-
-        StringSink sink = new StringSink();
-        function.getStr(null, sink);
-        TestUtils.assertEquals("{ab,3,true,1.26,test 1}", sink);
     }
 
     @Test
@@ -163,9 +154,9 @@ public class StringToStringArrayFunctionTest {
 
     private static void assertArray(CharSequence expression, CharSequence[] expected) throws SqlException {
         StringToStringArrayFunction function = new StringToStringArrayFunction(5, expression);
-        Assert.assertEquals(expected.length, function.getArrayLength());
+        Assert.assertEquals(expected.length, function.extendedOps().getArrayLength());
         for (int i = 0, n = expected.length; i < n; i++) {
-            Assert.assertEquals(expected[i], function.getStr(null, i));
+            Assert.assertEquals(expected[i], function.extendedOps().getStrA(null, i));
         }
     }
 

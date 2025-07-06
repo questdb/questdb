@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,13 +28,13 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.WhereClauseSymbolEstimator;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
-import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
@@ -42,7 +42,7 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-public class WhereClauseSymbolEstimatorTest extends AbstractGriffinTest {
+public class WhereClauseSymbolEstimatorTest extends AbstractCairoTest {
 
     private static RecordMetadata metadata;
     private static TableReader reader;
@@ -51,29 +51,28 @@ public class WhereClauseSymbolEstimatorTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
 
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-            model.col("sym", ColumnType.SYMBOL).symbolCapacity(1)
-                    .col("bid", ColumnType.DOUBLE)
-                    .col("ask", ColumnType.DOUBLE)
-                    .col("bidSize", ColumnType.INT)
-                    .col("askSize", ColumnType.INT)
-                    .col("mode", ColumnType.SYMBOL).symbolCapacity(4)
-                    .col("ex", ColumnType.SYMBOL).symbolCapacity(5)
-                    .timestamp();
-            CreateTableTestUtils.create(model);
-        }
+        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE);
+        model.col("sym", ColumnType.SYMBOL).symbolCapacity(1)
+                .col("bid", ColumnType.DOUBLE)
+                .col("ask", ColumnType.DOUBLE)
+                .col("bidSize", ColumnType.INT)
+                .col("askSize", ColumnType.INT)
+                .col("mode", ColumnType.SYMBOL).symbolCapacity(4)
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(5)
+                .timestamp();
+        AbstractCairoTest.create(model);
 
-        reader = newTableReader(configuration, "x");
+        reader = newOffPoolReader(configuration, "x");
         metadata = reader.getMetadata();
     }
 
     @AfterClass
-    public static void tearDownStatic() throws Exception {
+    public static void tearDownStatic() {
         reader = Misc.free(reader);
         metadata = null;
-        AbstractGriffinTest.tearDownStatic();
+        AbstractCairoTest.tearDownStatic();
     }
 
     @Override
@@ -301,11 +300,13 @@ public class WhereClauseSymbolEstimatorTest extends AbstractGriffinTest {
         for (String column : columns) {
             columnIndexes.add(metadata.getColumnIndexQuiet(column));
         }
-        return e.estimate(
-                column -> column,
-                compiler.testParseExpression(whereClause, queryModel),
-                metadata,
-                columnIndexes
-        );
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            return e.estimate(
+                    column -> column,
+                    compiler.testParseExpression(whereClause, queryModel),
+                    metadata,
+                    columnIndexes
+            );
+        }
     }
 }

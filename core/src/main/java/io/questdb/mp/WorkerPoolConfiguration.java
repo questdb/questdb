@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,14 @@
 
 package io.questdb.mp;
 
+import io.questdb.Metrics;
+
 public interface WorkerPoolConfiguration {
+
+    default long getNapThreshold() {
+        return 7000;
+    }
+
     default String getPoolName() {
         return "worker";
     }
@@ -57,5 +64,13 @@ public interface WorkerPoolConfiguration {
 
     default boolean isEnabled() {
         return true;
+    }
+
+    default int workerPoolPriority() {
+        return Thread.NORM_PRIORITY;
+    }
+
+    default Metrics getMetrics() {
+        return Metrics.ENABLED;
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,8 +24,9 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.DataFrameCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.IntList;
@@ -33,16 +34,20 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDeferredValueRecordCursorFactory {
+    private final CairoConfiguration configuration;
 
     public LatestByValueDeferredFilteredRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             Function symbolFunc,
             @Nullable Function filter,
-            @NotNull IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        super(metadata, dataFrameCursorFactory, columnIndex, symbolFunc, filter, columnIndexes);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndex, symbolFunc, filter, columnIndexes, columnSizeShifts);
+        this.configuration = configuration;
     }
 
     @Override
@@ -57,10 +62,10 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDe
     }
 
     @Override
-    protected AbstractLatestByValueRecordCursor createDataFrameCursorFor(int symbolKey) {
+    protected AbstractLatestByValueRecordCursor createCursorFor(int symbolKey) {
         if (filter == null) {
-            return new LatestByValueRecordCursor(columnIndex, symbolKey, columnIndexes);
+            return new LatestByValueRecordCursor(configuration, getMetadata(), columnIndex, symbolKey);
         }
-        return new LatestByValueFilteredRecordCursor(columnIndex, symbolKey, filter, columnIndexes);
+        return new LatestByValueFilteredRecordCursor(configuration, getMetadata(), columnIndex, symbolKey, filter);
     }
 }

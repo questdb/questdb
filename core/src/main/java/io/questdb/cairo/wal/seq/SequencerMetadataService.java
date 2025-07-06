@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,9 +24,10 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.std.Chars;
+import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
 
 public class SequencerMetadataService implements MetadataServiceStub {
@@ -40,15 +41,66 @@ public class SequencerMetadataService implements MetadataServiceStub {
 
     @Override
     public void addColumn(
-            CharSequence name,
-            int type,
+            CharSequence columnName,
+            int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isSequential
+            boolean isSequential,
+            boolean isDedupKey,
+            SecurityContext securityContext
     ) {
-        metadata.addColumn(name, type);
+        metadata.addColumn(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                isIndexed,
+                indexValueBlockCapacity,
+                isDedupKey
+        );
+    }
+
+    @Override
+    public void changeColumnType(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isSequential,
+            SecurityContext securityContext
+    ) {
+        metadata.changeColumnType(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                isIndexed,
+                indexValueBlockCapacity
+        );
+    }
+
+    @Override
+    public boolean convertPartitionNativeToParquet(long partitionTimestamp) {
+        return false;
+    }
+
+    @Override
+    public boolean convertPartitionParquetToNative(long partitionTimestamp) {
+        return false;
+    }
+
+    @Override
+    public void disableDeduplication() {
+        metadata.disableDeduplication();
+    }
+
+    @Override
+    public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+        return metadata.enableDeduplicationWithUpsertKeys();
     }
 
     public TableRecordMetadata getMetadata() {
@@ -66,14 +118,13 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
-    public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName) {
+    public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext) {
         metadata.renameColumn(columnName, newName);
     }
 
     @Override
     public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
-        assert Chars.equalsIgnoreCaseNc(fromNameTable, metadata.getTableToken().getTableName());
         metadata.renameTable(toTableName);
-        this.tableToken = metadata.getTableToken();
+        tableToken = metadata.getTableToken();
     }
 }

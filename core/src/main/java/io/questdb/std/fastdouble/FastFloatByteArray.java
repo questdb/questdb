@@ -1,7 +1,26 @@
-/*
- * @(#)FastFloatByteArray.java
- * Copyright © 2022. Werner Randelshofer, Switzerland. MIT License.
- */
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2024 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
 
 package io.questdb.std.fastdouble;
 
@@ -59,7 +78,7 @@ final class FastFloatByteArray {
      * @param endIndex       end index (exclusive)
      * @param isNegative     true if the float value is negative
      * @param hasLeadingZero true if we have consumed the optional leading zero
-     * @param rejectOverflow reject parsed values that overflow double type
+     * @param rejectOverflow reject parsed values that overflow float type
      * @return the bit pattern of the parsed value, if the input is legal;
      * otherwise, {@code -1L}.
      */
@@ -208,7 +227,7 @@ final class FastFloatByteArray {
      * @param startIndex     the start index of the string
      * @param endIndex       the end index of the string
      * @param isNegative     if the resulting number is negative
-     * @param rejectOverflow reject parsed values that overflow double type
+     * @param rejectOverflow reject parsed values that overflow float type
      * @return the bit pattern of the parsed value, if the input is legal;
      * otherwise, {@code -1L}.
      */
@@ -437,7 +456,7 @@ final class FastFloatByteArray {
      * @param str            a string containing a {@code FloatingPointLiteralWithWhiteSpace}
      * @param offset         start offset of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
      * @param length         length of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
-     * @param rejectOverflow reject parsed values that overflow double type
+     * @param rejectOverflow reject parsed values that overflow float type
      * @return the bit pattern of the parsed value, if the input is legal;
      * otherwise, {@code -1L}.
      */

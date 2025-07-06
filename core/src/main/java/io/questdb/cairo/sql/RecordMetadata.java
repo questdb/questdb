@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,10 +27,9 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.TableDescriptor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 /**
  * Retrieve metadata of a table record (row) such as the column count, the type of column by numeric index,
@@ -39,7 +38,7 @@ import io.questdb.std.str.CharSink;
  * <p>
  * Types are defined in {@link io.questdb.cairo.ColumnType}
  */
-public interface RecordMetadata extends ColumnTypes, Plannable, TableDescriptor {
+public interface RecordMetadata extends ColumnTypes, Plannable {
 
     int COLUMN_NOT_FOUND = -1;
 
@@ -83,6 +82,8 @@ public interface RecordMetadata extends ColumnTypes, Plannable, TableDescriptor 
      * @return index of the column
      */
     int getColumnIndexQuiet(CharSequence columnName, int lo, int hi);
+
+    TableColumnMetadata getColumnMetadata(int columnIndex);
 
     /**
      * Retrieves column name.
@@ -167,6 +168,12 @@ public interface RecordMetadata extends ColumnTypes, Plannable, TableDescriptor 
     boolean isColumnIndexed(int columnIndex);
 
     /**
+     * @param columnIndex numeric index of the column
+     * @return true if column is part of deduplication key used in inserts.
+     */
+    boolean isDedupKey(int columnIndex);
+
+    /**
      * @param columnName name of the column
      * @return true if symbol table is static, otherwise false.
      */
@@ -192,30 +199,30 @@ public interface RecordMetadata extends ColumnTypes, Plannable, TableDescriptor 
      *
      * @param sink a character sink to write to
      */
-    default void toJson(CharSink sink) {
+    default void toJson(Utf16Sink sink) {
         sink.put('{');
-        sink.putQuoted("columnCount").put(':').put(getColumnCount());
+        sink.putAsciiQuoted("columnCount").put(':').put(getColumnCount());
         sink.put(',');
-        sink.putQuoted("columns").put(':');
+        sink.putAsciiQuoted("columns").put(':');
         sink.put('[');
         for (int i = 0, n = getColumnCount(); i < n; i++) {
             final int type = getColumnType(i);
             if (i > 0) {
-                sink.put(',');
+                sink.putAscii(',');
             }
             sink.put('{');
-            sink.putQuoted("index").put(':').put(i).put(',');
-            sink.putQuoted("name").put(':').putQuoted(getColumnName(i)).put(',');
-            sink.putQuoted("type").put(':').putQuoted(ColumnType.nameOf(type));
+            sink.putAsciiQuoted("index").putAscii(':').put(i).putAscii(',');
+            sink.putAsciiQuoted("name").putAscii(':').putQuoted(getColumnName(i)).putAscii(',');
+            sink.putAsciiQuoted("type").putAscii(':').putQuoted(ColumnType.nameOf(type));
             if (isColumnIndexed(i)) {
-                sink.put(',').putQuoted("indexed").put(":true");
-                sink.put(',').putQuoted("indexValueBlockCapacity").put(':').put(getIndexValueBlockCapacity(i));
+                sink.putAscii(',').putAsciiQuoted("indexed").putAscii(":true");
+                sink.putAscii(',').putAsciiQuoted("indexValueBlockCapacity").putAscii(':').put(getIndexValueBlockCapacity(i));
             }
-            sink.put('}');
+            sink.putAscii('}');
         }
-        sink.put(']');
-        sink.put(',').putQuoted("timestampIndex").put(':').put(getTimestampIndex());
-        sink.put('}');
+        sink.putAscii(']');
+        sink.putAscii(',').putAsciiQuoted("timestampIndex").putAscii(':').put(getTimestampIndex());
+        sink.putAscii('}');
     }
 
     @Override
@@ -227,6 +234,4 @@ public interface RecordMetadata extends ColumnTypes, Plannable, TableDescriptor 
             sink.val(getColumnName(i));
         }
     }
-
-    TableColumnMetadata getColumnMetadata(int columnIndex);
 }

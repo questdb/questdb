@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,7 +45,6 @@ public class PartitionDateParseUtil {
                     int sec = Numbers.parseInt(seq, pos, pos += 2);
                     checkRange(sec, 0, 59);
                     if (pos < lim && seq.charAt(pos) == '-') {
-
                         pos++;
                         // varlen milli and micros
                         int micrLim = pos + 6;
@@ -69,7 +68,6 @@ public class PartitionDateParseUtil {
                                 + micr;
                     } else {
                         if (pos == lim) {
-
                             // seconds
                             ts += (day - 1) * Timestamps.DAY_MICROS
                                     + hour * Timestamps.HOUR_MICROS
@@ -90,7 +88,6 @@ public class PartitionDateParseUtil {
                 // year + month + day + hour
                 ts += (day - 1) * Timestamps.DAY_MICROS
                         + hour * Timestamps.HOUR_MICROS;
-
             }
         } else {
             // year + month + day

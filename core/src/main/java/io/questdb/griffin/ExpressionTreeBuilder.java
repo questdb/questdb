@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,8 +32,8 @@ import java.util.Deque;
 
 final class ExpressionTreeBuilder implements ExpressionParserListener {
 
+    private final Deque<ExpressionNode> argStack = new ArrayDeque<>();
     private final Deque<QueryModel> modelStack = new ArrayDeque<>();
-    private final Deque<ExpressionNode> stack = new ArrayDeque<>();
     private QueryModel model;
 
     @Override
@@ -55,23 +55,23 @@ final class ExpressionTreeBuilder implements ExpressionParserListener {
             case 0:
                 break;
             case 1:
-                node.rhs = stack.poll();
+                node.rhs = argStack.poll();
                 break;
             case 2:
-                node.rhs = stack.poll();
-                node.lhs = stack.poll();
+                node.rhs = argStack.poll();
+                node.lhs = argStack.poll();
                 break;
             default:
                 for (int i = 0; i < node.paramCount; i++) {
-                    node.args.add(stack.poll());
+                    node.args.add(argStack.poll());
                 }
                 break;
         }
-        stack.push(node);
+        argStack.push(node);
     }
 
     ExpressionNode poll() {
-        return stack.poll();
+        return argStack.poll();
     }
 
     void popModel() {
@@ -86,11 +86,11 @@ final class ExpressionTreeBuilder implements ExpressionParserListener {
     }
 
     void reset() {
-        stack.clear();
+        argStack.clear();
         modelStack.clear();
     }
 
     int size() {
-        return stack.size();
+        return argStack.size();
     }
 }

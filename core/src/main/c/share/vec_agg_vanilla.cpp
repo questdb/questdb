@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,9 @@
 #include "vec_agg_vanilla.h"
 
 int64_t countInt_Vanilla(int32_t *pi, int64_t count) {
+    if (count == 0) {
+        return 0;
+    }
     int32_t *pi1 = pi;
     const int32_t *lim = pi1 + count;
     int64_t cnt = 0;
@@ -40,6 +43,9 @@ int64_t countInt_Vanilla(int32_t *pi, int64_t count) {
 }
 
 int64_t sumInt_Vanilla(int32_t *pi, int64_t count) {
+    if (count == 0) {
+        return L_MIN;
+    }
     int32_t *pi1 = pi;
     const int32_t *lim = pi1 + count;
     int64_t sum = 0;
@@ -55,6 +61,9 @@ int64_t sumInt_Vanilla(int32_t *pi, int64_t count) {
 }
 
 int32_t minInt_Vanilla(int32_t *pi, int64_t count) {
+    if (count == 0) {
+        return I_MIN;
+    }
     const int32_t *lim = pi + count;
     int32_t min = I_MIN;
     for (; pi < lim; pi++) {
@@ -67,6 +76,9 @@ int32_t minInt_Vanilla(int32_t *pi, int64_t count) {
 }
 
 int32_t maxInt_Vanilla(int32_t *pi, int64_t count) {
+    if (count == 0) {
+        return I_MIN;
+    }
     int32_t *pi1 = pi;
     const int32_t *lim = pi1 + count;
     int32_t max = I_MIN;
@@ -80,6 +92,9 @@ int32_t maxInt_Vanilla(int32_t *pi, int64_t count) {
 }
 
 int64_t countDouble_Vanilla(double *d, int64_t count) {
+    if (count == 0) {
+        return 0;
+    }
     const double *lim = d + count;
     int64_t cnt = 0;
     for (; d < lim; d++) {
@@ -92,6 +107,9 @@ int64_t countDouble_Vanilla(double *d, int64_t count) {
 }
 
 double sumDouble_Vanilla(double *d, int64_t count) {
+    if (count == 0) {
+        return NAN;
+    }
     const double *lim = d + count;
     double sum = 0;
     bool hasData = false;
@@ -106,6 +124,9 @@ double sumDouble_Vanilla(double *d, int64_t count) {
 }
 
 double sumDoubleKahan_Vanilla(double *d, int64_t count) {
+    if (count == 0) {
+        return NAN;
+    }
     const double *lim = d + count;
     double sum = 0;
     double c = 0;
@@ -124,6 +145,9 @@ double sumDoubleKahan_Vanilla(double *d, int64_t count) {
 }
 
 double sumDoubleNeumaier_Vanilla(double *d, int64_t count) {
+    if (count == 0) {
+        return NAN;
+    }
     const double *lim = d + count;
     double sum = 0;
     double c = 0;
@@ -145,36 +169,47 @@ double sumDoubleNeumaier_Vanilla(double *d, int64_t count) {
 }
 
 double minDouble_Vanilla(double *d, int64_t count) {
+    if (count == 0) {
+        return NAN;
+    }
     const double *ext = d + count;
-    double min = LDBL_MAX;
+    double min = D_MAX;
     double *pd = d;
-    bool hasData = false;
     for (; pd < ext; pd++) {
         double x = *pd;
-        if (x < min) {
+        if (!std::isnan(x) && x < min) {
             min = x;
-            hasData = true;
         }
     }
-    return hasData ? min : NAN;
+    if (min < D_MAX) {
+        return min;
+    }
+    return NAN;
 }
 
 double maxDouble_Vanilla(double *d, int64_t count) {
+    if (count == 0) {
+        return NAN;
+    }
     const double *ext = d + count;
-    double max = LDBL_MIN;
+    double max = D_MIN;
     double *pd = d;
-    bool hasData = false;
     for (; pd < ext; pd++) {
         double x = *pd;
-        if (x > max) {
+        if (!std::isnan(x) && x > max) {
             max = x;
-            hasData = true;
         }
     }
-    return hasData ? max : NAN;
+    if (max > D_MIN) {
+        return max;
+    }
+    return NAN;
 }
 
 int64_t countLong_Vanilla(int64_t *pl, int64_t count) {
+    if (count == 0) {
+        return 0;
+    }
     const int64_t *lim = pl + count;
     int64_t cnt = 0;
     for (; pl < lim; pl++) {
@@ -185,6 +220,9 @@ int64_t countLong_Vanilla(int64_t *pl, int64_t count) {
 }
 
 int64_t sumLong_Vanilla(int64_t *pl, int64_t count) {
+    if (count == 0) {
+        return L_MIN;
+    }
     const int64_t *lim = pl + count;
     int64_t sum = 0;
     bool hasData = false;
@@ -199,6 +237,9 @@ int64_t sumLong_Vanilla(int64_t *pl, int64_t count) {
 }
 
 int64_t minLong_Vanilla(int64_t *pl, int64_t count) {
+    if (count == 0) {
+        return L_MIN;
+    }
     const int64_t *lim = pl + count;
     int64_t min = L_MIN;
     for (; pl < lim; pl++) {
@@ -211,6 +252,9 @@ int64_t minLong_Vanilla(int64_t *pl, int64_t count) {
 }
 
 int64_t maxLong_Vanilla(int64_t *pl, int64_t count) {
+    if (count == 0) {
+        return L_MIN;
+    }
     const int64_t *lim = pl + count;
     int64_t max = L_MIN;
     for (; pl < lim; pl++) {
@@ -222,15 +266,47 @@ int64_t maxLong_Vanilla(int64_t *pl, int64_t count) {
     return max;
 }
 
-bool hasNull_Vanilla(int32_t *pi, int64_t count) {
-    const int32_t *lim = pi + count;
-    for (; pi < lim; pi++) {
-        const int32_t i = *pi;
-        if (i == I_MIN) {
-            return true;
+int64_t sumShort_Vanilla(int16_t *ps, int64_t count) {
+    if (count == 0) {
+        return L_MIN;
+    }
+    const int16_t *lim = ps + count;
+    int64_t sum = 0;
+    for (; ps < lim; ps++) {
+        const int16_t s = *ps;
+        sum += s;
+    }
+    return sum;
+}
+
+int32_t minShort_Vanilla(int16_t *ps, int64_t count) {
+    if (count == 0) {
+        return I_MIN;
+    }
+    const int16_t *lim = ps + count;
+    int32_t min = I_MAX;
+    for (; ps < lim; ps++) {
+        const int16_t s = *ps;
+        if (s < min) {
+            min = s;
         }
     }
-    return false;
+    return min;
+}
+
+int32_t maxShort_Vanilla(int16_t *ps, int64_t count) {
+    if (count == 0) {
+        return I_MIN;
+    }
+    const int16_t *lim = ps + count;
+    int32_t max = I_MIN;
+    for (; ps < lim; ps++) {
+        const int16_t s = *ps;
+        if (s > max) {
+            max = s;
+        }
+    }
+    return max;
 }
 
 extern "C" {
@@ -259,9 +335,23 @@ Java_io_questdb_std_Vect_avgLongAcc(JNIEnv *env, jclass cl, jlong pi, jlong coun
     for (uint32_t i = 0; i < count; i++) {
         int64_t v = ppi[i];
         if (v != L_MIN) {
-            avg += (v - avg) / c;
+            avg += ((double_t) v - avg) / c;
             ++c;
         }
+    }
+    *(reinterpret_cast<jlong *>(pCount)) = ((jlong) c - 1);
+    return avg;
+}
+
+JNIEXPORT jdouble JNICALL
+Java_io_questdb_std_Vect_avgShortAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
+    auto *ppi = reinterpret_cast<int16_t *>(pi);
+    double_t avg = 0;
+    double_t c = 1;
+    for (uint32_t i = 0; i < count; i++) {
+        int16_t v = ppi[i];
+        avg += ((double_t) v - avg) / c;
+        ++c;
     }
     *(reinterpret_cast<jlong *>(pCount)) = ((jlong) c - 1);
     return avg;

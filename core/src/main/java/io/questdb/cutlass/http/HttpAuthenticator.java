@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,9 +24,9 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.std.QuietCloseable;
+import io.questdb.cutlass.auth.Authenticator;
 
-public interface HttpAuthenticator extends QuietCloseable {
+public interface HttpAuthenticator extends Authenticator {
 
     /**
      * Authenticates incoming HTTP request.
@@ -35,13 +35,4 @@ public interface HttpAuthenticator extends QuietCloseable {
      * @return true if the authentication succeeded, false - otherwise
      */
     boolean authenticate(HttpRequestHeader headers);
-
-    default void clear() {
-    }
-
-    @Override
-    default void close() {
-    }
-
-    CharSequence getPrincipal();
 }

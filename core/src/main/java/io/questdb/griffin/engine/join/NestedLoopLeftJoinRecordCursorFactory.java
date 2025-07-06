@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,12 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -39,11 +41,9 @@ import org.jetbrains.annotations.NotNull;
  * Iterates on master factory in outer loop and on slave factory in inner loop
  * and returns all row pairs matching filter plus all unmatched rows from master factory.
  */
-public class NestedLoopLeftJoinRecordCursorFactory extends AbstractRecordCursorFactory {
+public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final NestedLoopLeftRecordCursor cursor;
     private final Function filter;
-    private final RecordCursorFactory masterFactory;
-    private final RecordCursorFactory slaveFactory;
 
     public NestedLoopLeftJoinRecordCursorFactory(
             RecordMetadata metadata,
@@ -53,15 +53,20 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractRecordCursorF
             @NotNull Function filter,
             @NotNull Record nullRecord
     ) {
-        super(metadata);
-        this.masterFactory = masterFactory;
-        this.slaveFactory = slaveFactory;
+        super(metadata, null, masterFactory, slaveFactory);
         this.filter = filter;
         this.cursor = new NestedLoopLeftRecordCursor(columnSplit, filter, nullRecord);
     }
 
     @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // Forcefully disable column pre-touch for nested filter queries.
+        executionContext.setColumnPreTouchEnabled(false);
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = null;
         try {
@@ -100,10 +105,10 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractRecordCursorF
 
     @Override
     protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
-        filter.close();
+        Misc.freeIfCloseable(getMetadata());
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
+        Misc.free(filter);
     }
 
     private static class NestedLoopLeftRecordCursor extends AbstractJoinCursor {
@@ -155,6 +160,11 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractRecordCursorF
                 record.hasSlave(true);
                 isMasterHasNextPending = true;
             }
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return masterCursor.preComputedStateSize() + slaveCursor.preComputedStateSize();
         }
 
         @Override

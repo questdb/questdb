@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,11 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -58,7 +62,7 @@ abstract class BaseLineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
     @Override
     public void setUp() {
         super.setUp();
-        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
     }
 
     @Test
@@ -97,13 +101,12 @@ abstract class BaseLineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
                                  String expected,
                                  String... expectedExtraStringColumns) throws Exception {
         runInContext(() -> {
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                model.col(targetColumnName, ColumnType.getGeoHashTypeWithBits(columnBits)).timestamp();
-                if (walEnabled) {
-                    model.wal();
-                }
-                TestUtils.create(model, engine);
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
+            model.col(targetColumnName, ColumnType.getGeoHashTypeWithBits(columnBits)).timestamp();
+            if (walEnabled) {
+                model.wal();
             }
+            TestUtils.createTable(engine, model);
             if (walEnabled) {
                 Assert.assertTrue(isWalTable(tableName));
             }
@@ -114,7 +117,7 @@ abstract class BaseLineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
             mayDrainWalQueue();
             assertTable(expected, tableName);
             if (expectedExtraStringColumns != null) {
-                try (TableReader reader = newTableReader(configuration, tableName)) {
+                try (TableReader reader = newOffPoolReader(configuration, tableName)) {
                     TableReaderMetadata meta = reader.getMetadata();
                     Assert.assertEquals(2 + expectedExtraStringColumns.length, meta.getColumnCount());
                     for (String colName : expectedExtraStringColumns) {

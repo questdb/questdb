@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,11 +24,14 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.cutlass.line.LineProtoException;
-import io.questdb.std.*;
+import io.questdb.cutlass.line.LineException;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.AbstractCharSink;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -38,7 +41,7 @@ public class LineUdpLexer implements Mutable, Closeable {
     protected final CharSequenceCache charSequenceCache;
     private final ArrayBackedCharSequence cs = new ArrayBackedCharSequence();
     private final FloatingCharSequence floatingCharSequence = new FloatingCharSequence();
-    private final ArrayBackedCharSink sink = new ArrayBackedCharSink();
+    private final ArrayBackedUtf16Sink sink = new ArrayBackedUtf16Sink();
     private long buffer;
     private long bufferHi;
     private long dstPos = 0;
@@ -99,7 +102,7 @@ public class LineUdpLexer implements Mutable, Closeable {
             dstPos += 2;
             try {
                 onEol();
-            } catch (LineProtoException e) {
+            } catch (LineException e) {
                 parser.onError((int) (dstPos - 2 - buffer) / 2, state, errorCode);
             }
         }
@@ -121,11 +124,11 @@ public class LineUdpLexer implements Mutable, Closeable {
         }
     }
 
-    private void fireEvent() throws LineProtoException {
-        // two bytes less between these and one more byte so we don't have to use >=
+    private void fireEvent() throws LineException {
+        // two bytes less between these and one more byte, so we don't have to use >=
         if (dstTop > dstPos - 3 && state != LineUdpParser.EVT_FIELD_VALUE) { // fields do take empty values, same as null
             errorCode = LineUdpParser.ERROR_EMPTY;
-            throw LineProtoException.INSTANCE;
+            throw LineException.INSTANCE;
         }
         parser.onEvent(cs, state, charSequenceCache);
         chop();
@@ -144,7 +147,7 @@ public class LineUdpLexer implements Mutable, Closeable {
                 break;
             default:
                 errorCode = LineUdpParser.ERROR_EXPECTED;
-                throw LineProtoException.INSTANCE;
+                throw LineException.INSTANCE;
         }
     }
 
@@ -160,7 +163,7 @@ public class LineUdpLexer implements Mutable, Closeable {
                 break;
             default:
                 errorCode = LineUdpParser.ERROR_EXPECTED;
-                throw LineProtoException.INSTANCE;
+                throw LineException.INSTANCE;
         }
     }
 
@@ -202,7 +205,7 @@ public class LineUdpLexer implements Mutable, Closeable {
         escapeQuote = false;
     }
 
-    private long repairMultiByteChar(long lo, long hi, byte b) throws LineProtoException {
+    private long repairMultiByteChar(long lo, long hi, byte b) throws LineException {
         int n = -1;
         do {
             // UTF8 error
@@ -218,12 +221,12 @@ public class LineUdpLexer implements Mutable, Closeable {
             long errorLen = utf8ErrorPos - utf8ErrorTop;
             if (errorLen > 1) {
                 dstPos = utf8ErrorTop - 1;
-                n = Chars.utf8DecodeMultiByte(utf8ErrorTop, utf8ErrorPos, Unsafe.getUnsafe().getByte(utf8ErrorTop), sink);
+                n = Utf8s.utf8DecodeMultiByte(utf8ErrorTop, utf8ErrorPos, Unsafe.getUnsafe().getByte(utf8ErrorTop), sink);
             }
 
             if (n == -1 && errorLen > 3) {
                 errorCode = LineUdpParser.ERROR_ENCODING;
-                throw LineProtoException.INSTANCE;
+                throw LineException.INSTANCE;
             }
 
             if (n == -1 && ++lo < hi) {
@@ -246,12 +249,12 @@ public class LineUdpLexer implements Mutable, Closeable {
         throw Utf8RepairContinue.INSTANCE;
     }
 
-    private long utf8Decode(long lo, long hi, byte b) throws LineProtoException {
+    private long utf8Decode(long lo, long hi, byte b) throws LineException {
         if (utf8ErrorPos > -1) {
             return repairMultiByteChar(lo, hi, b);
         }
 
-        int n = Chars.utf8DecodeMultiByte(lo, hi, b, sink);
+        int n = Utf8s.utf8DecodeMultiByte(lo, hi, b, sink);
         if (n == -1) {
             return repairMultiByteChar(lo, hi, b);
         } else {
@@ -263,7 +266,7 @@ public class LineUdpLexer implements Mutable, Closeable {
         // for extension
     }
 
-    protected void onEol() throws LineProtoException {
+    protected void onEol() throws LineException {
         if (!escapeQuote) {
             switch (state) {
                 case LineUdpParser.EVT_MEASUREMENT:
@@ -278,7 +281,7 @@ public class LineUdpLexer implements Mutable, Closeable {
                     break;
                 default:
                     errorCode = LineUdpParser.ERROR_EXPECTED;
-                    throw LineProtoException.INSTANCE;
+                    throw LineException.INSTANCE;
             }
         }
     }
@@ -288,9 +291,7 @@ public class LineUdpLexer implements Mutable, Closeable {
 
         byte lastByte = (byte) 0;
         while (p < hi && !partialComplete()) {
-
             final byte b = Unsafe.getUnsafe().getByte(p);
-
             if (skipLine) {
                 doSkipLine(b);
                 p++;
@@ -347,7 +348,7 @@ public class LineUdpLexer implements Mutable, Closeable {
                         break;
                 }
                 lastByte = b;
-            } catch (LineProtoException ex) {
+            } catch (LineException ex) {
                 skipLine = true;
                 parser.onError((int) (dstPos - 2 - buffer) / 2, state, errorCode);
             }
@@ -400,10 +401,10 @@ public class LineUdpLexer implements Mutable, Closeable {
         }
     }
 
-    private class ArrayBackedCharSink extends AbstractCharSink {
+    private class ArrayBackedUtf16Sink implements Utf16Sink {
 
         @Override
-        public CharSink put(char c) {
+        public Utf16Sink put(char c) {
             if (dstPos == bufferHi) {
                 extend();
             }
@@ -415,7 +416,7 @@ public class LineUdpLexer implements Mutable, Closeable {
             int capacity = ((int) (bufferHi - buffer) * 2);
             if (capacity < 0) {
                 // can't realistically reach this in test :(
-                throw LineProtoException.INSTANCE;
+                throw LineException.INSTANCE;
             }
             long buf = Unsafe.realloc(buffer, bufferHi - buffer, capacity, MemoryTag.NATIVE_ILP_RSS);
             long offset = dstTop - buffer;

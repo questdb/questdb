@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,30 +24,79 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.tools.TestUtils;
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
-public class SimulateCrashFunctionTest extends AbstractGriffinTest {
+public class SimulateCrashFunctionTest extends AbstractCairoTest {
 
     @Test
-    public void testSimple() throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "select simulate_crash('0')",
-                sink,
-                "simulate_crash\n" +
-                        "false\n"
-        ));
+    public void testCrashDisabled() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql(
+                    "simulate_crash\n" +
+                            "false\n",
+                    "select simulate_crash('C')"
+            );
 
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "select simulate_crash('M')",
-                sink,
-                "simulate_crash\n" +
-                        "false\n"
-        ));
+            assertSql(
+                    "simulate_crash\n" +
+                            "false\n",
+                    "select simulate_crash('M')"
+            );
+
+            assertSql(
+                    "simulate_crash\n" +
+                            "false\n",
+                    "select simulate_crash('E')"
+            );
+
+            assertSql(
+                    "simulate_crash\n" +
+                            "false\n",
+                    "select simulate_crash('0')"
+            );
+        });
+    }
+
+    @Test
+    public void testCrashEnabled() throws Exception {
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+        // select simulate_crash('C'), This is total crash, don't simulate it
+
+        assertMemoryLeak(() -> {
+            try {
+                assertSql(
+                        "simulate_crash\n" +
+                                "false\n",
+                        "select simulate_crash('M')"
+                );
+                Assert.fail();
+            } catch (OutOfMemoryError ignore) {
+            }
+
+            try {
+                assertSql(
+                        "simulate_crash\n" +
+                                "false\n",
+                        "select simulate_crash('E')"
+                );
+                Assert.fail();
+            } catch (CairoError ignore) {
+            }
+
+            try {
+                assertSql(
+                        "simulate_crash\n" +
+                                "false\n",
+                        "select simulate_crash('0')"
+                );
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
+        });
     }
 }

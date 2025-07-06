@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.*;
+import io.questdb.std.str.Utf8s;
 
 public class RecordComparatorCompiler {
     private final BytecodeAssembler asm;
@@ -58,7 +59,6 @@ public class RecordComparatorCompiler {
      * @return RecordComparator instance.
      */
     public RecordComparator compile(ColumnTypes columnTypes, @Transient IntList keyColumnIndices) {
-
         assert keyColumnIndices.size() < SqlParser.MAX_ORDER_BY_COLUMNS;
 
         asm.init(RecordComparator.class);
@@ -294,6 +294,11 @@ public class RecordComparatorCompiler {
                     getterNameA = "getInt";
                     comparatorClass = Integer.class;
                     break;
+                case ColumnType.IPv4:
+                    fieldType = "J";
+                    getterNameA = "getLongIPv4";
+                    comparatorClass = Long.class;
+                    break;
                 case ColumnType.LONG:
                     fieldType = "J";
                     getterNameA = "getLong";
@@ -320,7 +325,7 @@ public class RecordComparatorCompiler {
                     comparatorClass = Character.class;
                     break;
                 case ColumnType.STRING:
-                    getterNameA = "getStr";
+                    getterNameA = "getStrA";
                     getterNameB = "getStrB";
                     fieldType = "Ljava/lang/CharSequence;";
                     comparatorClass = Chars.class;
@@ -332,6 +337,12 @@ public class RecordComparatorCompiler {
                     comparatorClass = Long256Util.class;
                     break;
                 case ColumnType.UUID:
+                    getterNameA = "getLong128Hi";
+                    getterNameB = "getLong128Lo";
+                    fieldType = "J";
+                    comparatorDesc = "(JJJJ)I";
+                    comparatorClass = Uuid.class;
+                    break;
                 case ColumnType.LONG128:
                     getterNameA = "getLong128Hi";
                     getterNameB = "getLong128Lo";
@@ -339,9 +350,15 @@ public class RecordComparatorCompiler {
                     comparatorDesc = "(JJJJ)I";
                     comparatorClass = Long128.class;
                     break;
+                case ColumnType.VARCHAR:
+                    getterNameA = "getVarcharA";
+                    getterNameB = "getVarcharB";
+                    fieldType = "Lio/questdb/std/str/Utf8Sequence;";
+                    comparatorClass = Utf8s.class;
+                    break;
                 default:
                     // SYMBOL
-                    getterNameA = "getSym";
+                    getterNameA = "getSymA";
                     getterNameB = "getSymB";
                     fieldType = "Ljava/lang/CharSequence;";
                     comparatorClass = Chars.class;
@@ -361,7 +378,7 @@ public class RecordComparatorCompiler {
             }
 
             fieldTypeIndices.add(typeIndex);
-            fieldNameIndices.add(nameIndex = asm.poolUtf8().put('f').put(i).$());
+            fieldNameIndices.add(nameIndex = asm.poolUtf8().putAscii('f').put(i).$());
             fieldIndices.add(asm.poolField(thisClassIndex, asm.poolNameAndType(nameIndex, typeIndex)));
 
             int methodIndex;
@@ -369,14 +386,14 @@ public class RecordComparatorCompiler {
             if (columnType == ColumnType.LONG128 || columnType == ColumnType.UUID) {
                 // Special case, Long128 is 2 longs of type J on comparison
                 fieldTypeIndices.add(typeIndex);
-                int nameIndex2 = asm.poolUtf8().put('f').put(i).put(i).$();
+                int nameIndex2 = asm.poolUtf8().putAscii('f').put(i).put(i).$();
                 fieldNameIndices.add(nameIndex2);
                 int nameAndTypeIndex = asm.poolNameAndType(nameIndex2, typeIndex);
                 fieldIndices.add(asm.poolField(thisClassIndex, nameAndTypeIndex));
             }
 
             int getterNameIndex = asm.poolUtf8(getterNameA);
-            int getterSigIndex = asm.poolUtf8().put("(I)").put(getterType).$();
+            int getterSigIndex = asm.poolUtf8().putAscii("(I)").put(getterType).$();
             int getterIndex = asm.poolNameAndType(getterNameIndex, getterSigIndex);
             methodMap.putIfAbsent(getterNameA, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterIndex));
             fieldRecordAccessorIndicesA.add(methodIndex);
@@ -391,10 +408,10 @@ public class RecordComparatorCompiler {
             comparatorAccessorIndices.add(
                     asm.poolMethod(asm.poolClass(comparatorClass),
                             asm.poolNameAndType(
-                                    compareMethodIndex, comparatorDesc == null ?
-                                            asm.poolUtf8().put('(').put(fieldType).put(fieldType).put(")I").$()
-                                            :
-                                            asm.poolUtf8(comparatorDesc))
+                                    compareMethodIndex,
+                                    comparatorDesc == null
+                                            ? asm.poolUtf8().putAscii('(').put(fieldType).put(fieldType).putAscii(")I").$()
+                                            : asm.poolUtf8(comparatorDesc))
                     ));
         }
     }

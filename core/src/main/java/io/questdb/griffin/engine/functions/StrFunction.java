@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,15 +27,28 @@ package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.NotNull;
 
-public abstract class StrFunction implements ScalarFunction {
+public abstract class StrFunction implements Function {
+    private final Utf8StringSink utf8SinkA = new Utf8StringSink();
+    private final Utf8StringSink utf8SinkB = new Utf8StringSink();
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
     @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
@@ -53,27 +66,27 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final byte getByte(Record rec) {
-        return SqlUtil.implicitCastStrAsByte(getStr(rec));
+        return SqlUtil.implicitCastStrAsByte(getStrA(rec));
     }
 
     @Override
     public final char getChar(Record rec) {
-        return SqlUtil.implicitCastStrAsChar(getStr(rec));
+        return SqlUtil.implicitCastStrAsChar(getStrA(rec));
     }
 
     @Override
     public final long getDate(Record rec) {
-        return SqlUtil.implicitCastStrAsDate(getStr(rec));
+        return SqlUtil.implicitCastStrAsDate(getStrA(rec));
     }
 
     @Override
     public final double getDouble(Record rec) {
-        return SqlUtil.implicitCastStrAsDouble(getStr(rec));
+        return SqlUtil.implicitCastStrAsDouble(getStrA(rec));
     }
 
     @Override
     public final float getFloat(Record rec) {
-        return SqlUtil.implicitCastStrAsFloat(getStr(rec));
+        return SqlUtil.implicitCastStrAsFloat(getStrA(rec));
     }
 
     @Override
@@ -97,13 +110,23 @@ public abstract class StrFunction implements ScalarFunction {
     }
 
     @Override
+    public final int getIPv4(Record rec) {
+        return SqlUtil.implicitCastStrAsIPv4(getStrA(rec));
+    }
+
+    @Override
     public final int getInt(Record rec) {
-        return SqlUtil.implicitCastStrAsInt(getStr(rec));
+        return SqlUtil.implicitCastStrAsInt(getStrA(rec));
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public final long getLong(Record rec) {
-        return SqlUtil.implicitCastStrAsLong(getStr(rec));
+        return SqlUtil.implicitCastStrAsLong(getStrA(rec));
     }
 
     @Override
@@ -117,7 +140,7 @@ public abstract class StrFunction implements ScalarFunction {
     }
 
     @Override
-    public final void getLong256(Record rec, CharSink sink) {
+    public final void getLong256(Record rec, CharSink<?> sink) {
         throw new UnsupportedOperationException();
     }
 
@@ -138,23 +161,17 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final short getShort(Record rec) {
-        return SqlUtil.implicitCastStrAsShort(getStr(rec));
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-        sink.put(getStr(rec));
+        return SqlUtil.implicitCastStrAsShort(getStrA(rec));
     }
 
     @Override
     public int getStrLen(Record rec) {
-        final CharSequence str = getStr(rec);
-        return str == null ? TableUtils.NULL_LEN : str.length();
+        return TableUtils.lengthOf(getStrA(rec));
     }
 
     @Override
     public final CharSequence getSymbol(Record rec) {
-        return getStr(rec);
+        return getStrA(rec);
     }
 
     @Override
@@ -164,7 +181,7 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final long getTimestamp(Record rec) {
-        return SqlUtil.implicitCastStrAsTimestamp(getStr(rec));
+        return SqlUtil.implicitCastStrAsTimestamp(getStrA(rec));
     }
 
     @Override
@@ -173,7 +190,35 @@ public abstract class StrFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return false;
+    public Utf8Sequence getVarcharA(Record rec) {
+        final CharSequence cs = getStrA(rec);
+        if (cs != null) {
+            utf8SinkA.clear();
+            utf8SinkA.put(cs);
+            return utf8SinkA;
+        }
+        return null;
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
+        final CharSequence cs = getStrB(rec);
+        if (cs != null) {
+            utf8SinkB.clear();
+            utf8SinkB.put(cs);
+            return utf8SinkB;
+        }
+        return null;
+    }
+
+    @Override
+    public int getVarcharSize(Record rec) {
+        CharSequence utf16Value = getStrA(rec);
+        if (utf16Value == null) {
+            return TableUtils.NULL_LEN;
+        }
+        utf8SinkA.clear();
+        utf8SinkA.put(utf16Value);
+        return utf8SinkA.size();
     }
 }

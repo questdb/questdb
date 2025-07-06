@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,20 +25,54 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.MapWriter;
+import io.questdb.cairo.MetadataCacheWriter;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.text.types.*;
+import io.questdb.cutlass.text.types.BadDateAdapter;
+import io.questdb.cutlass.text.types.BadTimestampAdapter;
+import io.questdb.cutlass.text.types.OtherToTimestampAdapter;
+import io.questdb.cutlass.text.types.TimestampAdapter;
+import io.questdb.cutlass.text.types.TimestampCompatibleAdapter;
+import io.questdb.cutlass.text.types.TypeAdapter;
+import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
@@ -72,13 +106,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(ParallelCsvFileImporter.class);
     private static final int NO_INDEX = -1;
     private final CairoEngine cairoEngine;
-    //holds result of first phase - boundary scanning
-    //count of quotes, even new lines, odd new lines, offset to first even newline, offset to first odd newline
+    // holds result of first phase - boundary scanning
+    // count of quotes, even new lines, odd new lines, offset to first even newline, offset to first odd newline
     private final LongList chunkStats;
     private final Sequence collectSeq;
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
-    //holds input for second phase - indexing: offset and start line number for each chunk
+    // holds input for second phase - indexing: offset and start line number for each chunk
     private final LongList indexChunkStats;
     private final Path inputFilePath;
     private final CharSequence inputRoot;
@@ -92,13 +126,14 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final RingQueue<CopyTask> queue;
     private final IntList symbolCapacities;
     private final TableStructureAdapter targetTableStructure;
-    //stores 3 values per task : index, lo, hi (lo, hi are indexes in partitionNames)
+    // stores 3 values per task : index, lo, hi (lo, hi are indexes in partitionNames)
     private final IntList taskDistribution;
     private final TextDelimiterScanner textDelimiterScanner;
     private final TextMetadataDetector textMetadataDetector;
     private final Path tmpPath;
     private final TypeManager typeManager;
-    private final DirectCharSink utf8Sink;
+    private final DirectUtf16Sink utf16Sink;
+    private final DirectUtf8Sink utf8Sink;
     private final int workerCount;
     private int atomicity;
     private ExecutionCircuitBreaker circuitBreaker;
@@ -108,22 +143,22 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private long errors;
     private boolean forceHeader;
     private long importId;
-    //path to import directory under, usually $inputWorkRoot/$tableName
+    // path to import directory under, usually $inputWorkRoot/$tableName
     private CharSequence importRoot;
-    //name of file to process in inputRoot dir
+    // name of file to process in inputRoot dir
     private CharSequence inputFileName;
-    //incremented in phase 2
+    // incremented in phase 2
     private long linesIndexed;
     private RecordMetadata metadata;
     private int minChunkSize = DEFAULT_MIN_CHUNK_SIZE;
     private int partitionBy;
     private byte phase = CopyTask.PHASE_SETUP;
     private long phaseErrors;
-    //row stats are incremented in phase 3
+    // row stats are incremented in phase 3
     private long rowsHandled;
     private long rowsImported;
-    private long startMs;//start time of current phase (in millis)
-    //import status variables
+    private long startMs; // start time of current phase (in millis)
+    // import status variables
     private byte status = CopyTask.STATUS_STARTED;
     private final Consumer<CopyTask> checkStatusRef = this::updateStatus;
     private final Consumer<CopyTask> collectChunkStatsRef = this::collectChunkStats;
@@ -131,17 +166,17 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final Consumer<CopyTask> collectDataImportStatsRef = this::collectDataImportStats;
     private final Consumer<CopyTask> collectIndexStatsRef = this::collectIndexStats;
     private PhaseStatusReporter statusReporter;
-    //input params start
+    // input params start
     private CharSequence tableName;
     private TableToken tableToken;
     private boolean targetTableCreated;
     private int targetTableStatus;
     private int taskCount;
     private TimestampAdapter timestampAdapter;
-    //name of timestamp column
+    // name of timestamp column
     private CharSequence timestampColumn;
-    //input params end
-    //index of timestamp column in input file
+    // input params end
+    // index of timestamp column in input file
     private int timestampIndex;
     private TableWriter writer;
 
@@ -158,40 +193,47 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         this.cairoEngine = cairoEngine;
         this.workerCount = workerCount;
-
         this.queue = queue;
         this.pubSeq = bus.getTextImportPubSeq();
         this.collectSeq = bus.getTextImportColSeq();
-        this.localImportJob = new CopyJob(bus);
-        this.configuration = cairoEngine.getConfiguration();
 
-        this.ff = configuration.getFilesFacade();
-        this.inputRoot = configuration.getSqlCopyInputRoot();
-        this.inputWorkRoot = configuration.getSqlCopyInputWorkRoot();
+        try {
+            this.localImportJob = new CopyJob(bus);
+            this.configuration = cairoEngine.getConfiguration();
 
-        TextConfiguration textConfiguration = configuration.getTextConfiguration();
-        this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
-        this.typeManager = new TypeManager(textConfiguration, utf8Sink);
-        this.textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
-        this.textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
+            this.ff = configuration.getFilesFacade();
+            this.inputRoot = configuration.getSqlCopyInputRoot();
+            this.inputWorkRoot = configuration.getSqlCopyInputWorkRoot();
 
-        this.targetTableStructure = new TableStructureAdapter(configuration);
-        this.targetTableStatus = -1;
-        this.targetTableCreated = false;
+            TextConfiguration textConfiguration = configuration.getTextConfiguration();
+            int utf8SinkSize = textConfiguration.getUtf8SinkSize();
+            this.utf16Sink = new DirectUtf16Sink(utf8SinkSize);
+            this.utf8Sink = new DirectUtf8Sink(utf8SinkSize);
+            this.typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink);
+            this.textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
+            this.textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
 
-        this.atomicity = Atomicity.SKIP_COL;
-        this.createdWorkDir = false;
-        this.otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
-        this.inputFilePath = new Path();
-        this.tmpPath = new Path();
+            this.targetTableStructure = new TableStructureAdapter(configuration);
+            this.targetTableStatus = -1;
+            this.targetTableCreated = false;
 
-        this.chunkStats = new LongList();
-        this.indexChunkStats = new LongList();
-        this.partitionKeysAndSizes = new LongList();
-        this.partitionNameSink = new StringSink();
-        this.partitions = new ObjList<>();
-        this.taskDistribution = new IntList();
-        this.symbolCapacities = new IntList();
+            this.atomicity = Atomicity.SKIP_COL;
+            this.createdWorkDir = false;
+            this.otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
+            this.inputFilePath = new Path();
+            this.tmpPath = new Path();
+
+            this.chunkStats = new LongList();
+            this.indexChunkStats = new LongList();
+            this.partitionKeysAndSizes = new LongList();
+            this.partitionNameSink = new StringSink();
+            this.partitions = new ObjList<>();
+            this.taskDistribution = new IntList();
+            this.symbolCapacities = new IntList();
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     // Load balances existing partitions between given number of workers using partition sizes.
@@ -244,18 +286,23 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             final CharSequence tableDir,
             final CharSequence tableName,
             TableStructure structure,
-            int tableId
+            int tableId,
+            SecurityContext securityContext
     ) {
         try (Path path = new Path()) {
             switch (TableUtils.exists(ff, path, root, tableDir)) {
                 case TableUtils.TABLE_EXISTS:
-                    int errno;
-                    if ((errno = ff.rmdir(path)) != 0) {
-                        LOG.error().$("could not overwrite table [tableName='").utf8(tableName).$("',path='").utf8(path).$(", errno=").$(errno).I$();
-                        throw CairoException.critical(errno).put("could not overwrite [tableName=").put(tableName).put("]");
+                    if (!ff.rmdir(path)) {
+                        LOG.error()
+                                .$("could not overwrite table [tableName='").$safe(tableName)
+                                .$("',path='").$(path)
+                                .$(", errno=").$(ff.errno())
+                                .I$();
+                        throw CairoException.critical(ff.errno()).put("could not overwrite [tableName=").put(tableName).put("]");
                     }
                 case TableUtils.TABLE_DOES_NOT_EXIST:
-                    try (MemoryMARW memory = Vm.getMARWInstance()) {
+                    securityContext.authorizeTableCreate();
+                    try (MemoryMARW memory = Vm.getCMARWInstance()) {
                         TableUtils.createTable(
                                 ff,
                                 root,
@@ -280,17 +327,18 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         writer = Misc.free(writer);
         metadata = null;
         importId = -1;
-        chunkStats.clear();
-        indexChunkStats.clear();
-        partitionKeysAndSizes.clear();
-        partitionNameSink.clear();
-        taskDistribution.clear();
-        utf8Sink.clear();
-        typeManager.clear();
-        symbolCapacities.clear();
-        textMetadataDetector.clear();
-        otherToTimestampAdapterPool.clear();
-        partitions.clear();
+        Misc.clear(chunkStats);
+        Misc.clear(indexChunkStats);
+        Misc.clear(partitionKeysAndSizes);
+        Misc.clear(partitionNameSink);
+        Misc.clear(taskDistribution);
+        Misc.clear(utf16Sink);
+        Misc.clear(utf8Sink);
+        Misc.clear(typeManager);
+        Misc.clear(symbolCapacities);
+        Misc.clear(textMetadataDetector);
+        Misc.clear(otherToTimestampAdapterPool);
+        Misc.clear(partitions);
         linesIndexed = 0;
         rowsHandled = 0;
         rowsImported = 0;
@@ -318,22 +366,23 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     @Override
     public void close() {
         clear();
-        this.inputFilePath.close();
-        this.tmpPath.close();
-        this.utf8Sink.close();
-        this.textMetadataDetector.close();
-        this.textDelimiterScanner.close();
-        this.localImportJob.close();
+        Misc.free(this.inputFilePath);
+        Misc.free(this.tmpPath);
+        Misc.free(utf16Sink);
+        Misc.free(this.utf8Sink);
+        Misc.free(this.textMetadataDetector);
+        Misc.free(this.textDelimiterScanner);
+        Misc.free(this.localImportJob);
     }
 
     public void of(
-            CharSequence tableName,
-            CharSequence inputFileName,
+            String tableName,
+            String inputFileName,
             long importId,
             int partitionBy,
             byte columnDelimiter,
-            CharSequence timestampColumn,
-            CharSequence timestampFormat,
+            String timestampColumn,
+            String timestampFormat,
             boolean forceHeader,
             ExecutionCircuitBreaker circuitBreaker,
             int atomicity
@@ -341,7 +390,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         clear();
         this.circuitBreaker = circuitBreaker;
         this.tableName = tableName;
-        this.tableToken = cairoEngine.lockTableName(tableName, false);
+        this.tableToken = cairoEngine.lockTableName(tableName);
         if (tableToken == null) {
             tableToken = cairoEngine.verifyTableName(tableName);
         }
@@ -371,13 +420,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     @TestOnly
     public void of(
-            CharSequence tableName,
-            CharSequence inputFileName,
+            String tableName,
+            String inputFileName,
             long importId,
             int partitionBy,
             byte columnDelimiter,
-            CharSequence timestampColumn,
-            CharSequence tsFormat,
+            String timestampColumn,
+            String tsFormat,
             boolean forceHeader,
             ExecutionCircuitBreaker circuitBreaker
     ) {
@@ -397,13 +446,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     @TestOnly
     public void of(
-            CharSequence tableName,
-            CharSequence inputFileName,
+            String tableName,
+            String inputFileName,
             long importId,
             int partitionBy,
             byte columnDelimiter,
-            CharSequence timestampColumn,
-            CharSequence timestampFormat,
+            String timestampColumn,
+            String timestampFormat,
             boolean forceHeader
     ) {
         of(
@@ -420,7 +469,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         );
     }
 
-    public void parseStructure(int fd) throws TextImportException {
+    public void parseStructure(long fd, SecurityContext securityContext) throws TextImportException {
         phasePrologue(CopyTask.PHASE_ANALYZE_FILE_STRUCTURE);
         final CairoConfiguration configuration = cairoEngine.getConfiguration();
 
@@ -454,7 +503,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         textMetadataDetector.getColumnNames(),
                         textMetadataDetector.getColumnTypes(),
                         inputFilePath,
-                        typeManager
+                        typeManager,
+                        securityContext
                 );
                 phaseEpilogue(CopyTask.PHASE_ANALYZE_FILE_STRUCTURE);
             } else {
@@ -469,7 +519,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
     }
 
-    //returns list with N chunk boundaries
+    // returns list with N chunk boundaries
     public LongList phaseBoundaryCheck(long fileLength) throws TextImportException {
         phasePrologue(CopyTask.PHASE_BOUNDARY_CHECK);
         assert (workerCount > 0 && minChunkSize > 0);
@@ -575,16 +625,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         phaseEpilogue(CopyTask.PHASE_INDEXING);
     }
 
-    public void process() throws TextImportException {
+    public void process(SecurityContext securityContext) throws TextImportException {
         final long startMs = getCurrentTimeMs();
 
-        int fd = -1;
+        long fd = -1;
         try {
             try {
-                updateImportStatus(CopyTask.STATUS_STARTED, Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
+                updateImportStatus(CopyTask.STATUS_STARTED, Numbers.LONG_NULL, Numbers.LONG_NULL, 0);
 
                 try {
-                    fd = TableUtils.openRO(ff, inputFilePath, LOG);
+                    fd = TableUtils.openRO(ff, inputFilePath.$(), LOG);
                 } catch (CairoException e) {
                     throw TextImportException.instance(CopyTask.PHASE_SETUP, e.getFlyweightMessage(), e.getErrno());
                 }
@@ -595,7 +645,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 }
 
                 try {
-                    parseStructure(fd);
+                    parseStructure(fd, securityContext);
                     phaseBoundaryCheck(length);
                     phaseIndexing();
                     phasePartitionImport();
@@ -625,7 +675,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         } catch (TextImportException e) {
             LOG.error()
                     .$("could not import [phase=").$(CopyTask.getPhaseName(e.getPhase()))
-                    .$(", ex=").$(e.getFlyweightMessage())
+                    .$(", ex=").$safe(e.getFlyweightMessage())
                     .I$();
             throw e;
         }
@@ -653,7 +703,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     public void updatePhaseStatus(byte phase, byte status, @Nullable final CharSequence msg) {
         if (this.statusReporter != null) {
-            this.statusReporter.report(phase, status, msg, Numbers.LONG_NaN, Numbers.LONG_NaN, phaseErrors);
+            this.statusReporter.report(phase, status, msg, Numbers.LONG_NULL, Numbers.LONG_NULL, phaseErrors);
         }
     }
 
@@ -687,7 +737,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
         closeWriter();
         if (targetTableStatus == TableUtils.TABLE_DOES_NOT_EXIST && targetTableCreated) {
-            cairoEngine.drop(tmpPath, tableToken);
+            cairoEngine.dropTableOrMatView(tmpPath, tableToken);
         }
         if (tableToken != null) {
             cairoEngine.unlockTableName(tableToken);
@@ -758,9 +808,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void createWorkDir() {
         // First, create the work root dir, if it doesn't exist.
-        Path workDirPath = tmpPath.of(inputWorkRoot).slash$();
-        if (!ff.exists(workDirPath)) {
-            int result = ff.mkdir(workDirPath, configuration.getMkDirMode());
+        Path workDirPath = tmpPath.of(inputWorkRoot).slash();
+        if (!ff.exists(workDirPath.$())) {
+            int result = ff.mkdir(workDirPath.$(), configuration.getMkDirMode());
             if (result != 0) {
                 throw CairoException.critical(ff.errno()).put("could not create import work root directory [path='").put(workDirPath).put("']");
             }
@@ -768,8 +818,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         // Next, remove and recreate the per-table sub-dir.
         removeWorkDir();
-        workDirPath = tmpPath.of(importRoot).slash$();
-        int result = ff.mkdir(workDirPath, configuration.getMkDirMode());
+        workDirPath = tmpPath.of(importRoot).slash();
+        int result = ff.mkdir(workDirPath.$(), configuration.getMkDirMode());
         if (result != 0) {
             throw CairoException.critical(ff.errno()).put("could not create temporary import work directory [path='").put(workDirPath).put("']");
         }
@@ -789,7 +839,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void initWriterAndOverrideImportMetadata(
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> types,
-            TypeManager typeManager
+            TypeManager typeManager,
+            SecurityContext securityContext
     ) throws TextException {
         final TableWriter writer = cairoEngine.getWriter(tableToken, LOCK_REASON);
         final RecordMetadata metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
@@ -805,7 +856,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         // remap index is only needed to adjust names and types
         // workers will import data into temp tables without remapping
         final IntList remapIndex = new IntList();
-        remapIndex.ensureCapacity(types.size());
+        remapIndex.setPos(types.size());
         for (int i = 0, n = types.size(); i < n; i++) {
             final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
             final int idx = columnIndex > -1 ? columnIndex : i; // check for strict match ?
@@ -847,6 +898,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         for (int i = 0, n = remapIndex.size(); i < n; i++) {
             names.set(i, metadata.getColumnName(remapIndex.get(i)));
         }
+        this.metadata = metadata;
+        this.writer = writer;//next call can throw exception
+
+        // authorize only columns present in the file
+        securityContext.authorizeInsert(tableToken);
 
         // add table columns missing in input file
         if (names.size() < metadata.getColumnCount()) {
@@ -878,9 +934,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 symbolCapacities.set(i, symbolWriter.getSymbolCapacity());
             }
         }
-
-        this.writer = writer;
-        this.metadata = metadata;
     }
 
     private boolean isOneOfMainDirectories(CharSequence p) {
@@ -890,15 +943,15 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         return path.equals(normalize(configuration.getConfRoot())) ||
-                path.equals(normalize(configuration.getRoot())) ||
+                path.equals(normalize(configuration.getDbRoot())) ||
                 path.equals(normalize(configuration.getDbDirectory())) ||
-                path.equals(normalize(configuration.getSnapshotRoot())) ||
+                path.equals(normalize(configuration.getCheckpointRoot())) ||
                 path.equals(normalize(configuration.getBackupRoot()));
     }
 
     private void logTypeError(int i, int type) {
         LOG.info()
-                .$("mis-detected [table=").$(tableName)
+                .$("mis-detected [table=").$safe(tableName)
                 .$(", column=").$(i)
                 .$(", type=").$(ColumnType.nameOf(type))
                 .$(", workerCount=").$(workerCount)
@@ -916,10 +969,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 int hi = taskDistribution.getQuick(i * 3 + 2);
 
                 final Path srcPath = localImportJob.getTmpPath1().of(importRoot).concat(tableName).put('_').put(index);
-                final Path dstPath = localImportJob.getTmpPath2().of(configuration.getRoot()).concat(tableToken);
+                final Path dstPath = localImportJob.getTmpPath2().of(configuration.getDbRoot()).concat(tableToken);
 
-                final int srcPlen = srcPath.length();
-                final int dstPlen = dstPath.length();
+                final int srcPlen = srcPath.size();
+                final int dstPlen = dstPath.size();
 
                 if (!ff.exists(dstPath.slash$())) {
                     if (ff.mkdirs(dstPath, configuration.getMkDirMode()) != 0) {
@@ -946,15 +999,17 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             throw TextException.$("could not create partition directory [path='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
                         }
 
-                        ff.iterateDir(srcPath, (long name, int type) -> {
-                            if (type == Files.DT_FILE) {
-                                srcPath.trimTo(srcPlen).concat(partitionName).concat(name).$();
-                                dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachPartitionSuffix()).concat(name).$();
-                                if (ff.copy(srcPath, dstPath) < 0) {
-                                    throw TextException.$("could not copy partition file [to='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
+                        ff.iterateDir(
+                                srcPath.$(), (long name, int type) -> {
+                                    if (type == Files.DT_FILE) {
+                                        srcPath.trimTo(srcPlen).concat(partitionName).concat(name);
+                                        dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachPartitionSuffix()).concat(name);
+                                        if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
+                                            throw TextException.$("could not copy partition file [to='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
+                                        }
+                                    }
                                 }
-                            }
-                        });
+                        );
                         srcPath.parent();
                     } else if (res != Files.FILES_RENAME_OK) {
                         throw CairoException.critical(ff.errno()).put("could not copy partition file [to=").put(dstPath).put(']');
@@ -1036,11 +1091,15 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void phasePartitionImport() throws TextImportException {
         if (partitions.size() == 0) {
             if (linesIndexed > 0) {
-                throw TextImportException.instance(CopyTask.PHASE_PARTITION_IMPORT,
-                        "All rows were skipped. Possible reasons: timestamp format mismatch or rows exceed maximum line length (65k).");
+                throw TextImportException.instance(
+                        CopyTask.PHASE_PARTITION_IMPORT,
+                        "All rows were skipped. Possible reasons: timestamp format mismatch or rows exceed maximum line length (65k)."
+                );
             } else {
-                throw TextImportException.instance(CopyTask.PHASE_PARTITION_IMPORT,
-                        "No rows in input file to import.");
+                throw TextImportException.instance(
+                        CopyTask.PHASE_PARTITION_IMPORT,
+                        "No rows in input file to import."
+                );
             }
         }
 
@@ -1288,7 +1347,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             long size = totalSizes.getQuick(i);
 
             partitionNameSink.clear();
-            dirFormat.format(distinctKeys.get(i), null, null, partitionNameSink);
+            dirFormat.format(distinctKeys.get(i), DateFormatUtils.EN_LOCALE, null, partitionNameSink);
             String dirName = partitionNameSink.toString();
 
             partitions.add(new PartitionInfo(key, dirName, size));
@@ -1296,17 +1355,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void removeWorkDir() {
-        Path workDirPath = tmpPath.of(importRoot).$();
-        if (ff.exists(workDirPath)) {
+        Path workDirPath = tmpPath.of(importRoot);
+        if (ff.exists(workDirPath.$())) {
             if (isOneOfMainDirectories(importRoot)) {
                 throw TextException.$("could not remove import work directory because it points to one of main directories [path='").put(workDirPath).put("'] .");
             }
 
             LOG.info().$("removing import work directory [path='").$(workDirPath).$("']").$();
 
-            int errno = ff.rmdir(workDirPath);
-            if (errno != 0) {
-                throw TextException.$("could not remove import work directory [path='").put(workDirPath).put("', errno=").put(errno).put(']');
+            if (!ff.rmdir(workDirPath)) {
+                throw TextException.$("could not remove import work directory [path='").put(workDirPath).put("', errno=").put(ff.errno()).put(']');
             }
         }
     }
@@ -1341,7 +1399,14 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
     }
 
-    void prepareTable(ObjList<CharSequence> names, ObjList<TypeAdapter> types, Path path, TypeManager typeManager) throws TextException {
+    void prepareTable(
+            ObjList<CharSequence> names,
+            ObjList<TypeAdapter> types,
+            Path path,
+            TypeManager typeManager,
+            SecurityContext securityContext
+    )
+            throws TextException {
         if (types.size() == 0) {
             throw CairoException.nonCritical().put("cannot determine text structure");
         }
@@ -1383,20 +1448,26 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     createTable(
                             ff,
                             configuration.getMkDirMode(),
-                            configuration.getRoot(),
+                            configuration.getDbRoot(),
                             tableToken.getDirName(),
                             targetTableStructure.getTableName(),
                             targetTableStructure,
-                            tableToken.getTableId()
+                            tableToken.getTableId(),
+                            securityContext
                     );
                     cairoEngine.registerTableToken(tableToken);
                     targetTableCreated = true;
                     writer = cairoEngine.getWriter(tableToken, LOCK_REASON);
+
+                    try (MetadataCacheWriter metadataRW = cairoEngine.getMetadataCache().writeLock()) {
+                        metadataRW.hydrateTable(tableToken);
+                    }
+
                     metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
                     partitionBy = writer.getPartitionBy();
                     break;
                 case TableUtils.TABLE_EXISTS:
-                    initWriterAndOverrideImportMetadata(names, types, typeManager);
+                    initWriterAndOverrideImportMetadata(names, types, typeManager, securityContext);
 
                     if (writer.getRowCount() > 0) {
                         throw TextException.$("target table must be empty [table=").put(tableName).put(']');
@@ -1590,13 +1661,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
-        public boolean isIndexed(int columnIndex) {
-            return !ignoreColumnIndexedFlag && Numbers.decodeHighInt(columnBits.getQuick(columnIndex)) != 0;
+        public boolean isDedupKey(int columnIndex) {
+            return false;
         }
 
         @Override
-        public boolean isSequential(int columnIndex) {
-            return false;
+        public boolean isIndexed(int columnIndex) {
+            return !ignoreColumnIndexedFlag && Numbers.decodeHighInt(columnBits.getQuick(columnIndex)) != 0;
         }
 
         @Override

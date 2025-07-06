@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,9 +26,10 @@ package io.questdb.std;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.bytes.Bytes;
 import io.questdb.std.ex.BytecodeException;
-import io.questdb.std.str.AbstractCharSink;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.FileOutputStream;
@@ -72,6 +73,7 @@ public class BytecodeAssembler {
     private static final int lstore_2 = 0x41;
     private static final int lstore_3 = 0x42;
     private static final int sipush = 0x11;
+    private static final int new_ = 0xbb;
     private final ObjIntHashMap<Class<?>> classCache = new ObjIntHashMap<>();
     private final Utf8Appender utf8Appender = new Utf8Appender();
     private final CharSequenceIntHashMap utf8Cache = new CharSequenceIntHashMap();
@@ -364,6 +366,11 @@ public class BytecodeAssembler {
         putShort(index);
     }
 
+    public void invokespecial(int index) {
+        putByte(183);
+        putShort(index);
+    }
+
     public void irem() {
         putByte(0x70);
     }
@@ -427,12 +434,10 @@ public class BytecodeAssembler {
         putByte(0x69);
     }
 
-    @SuppressWarnings("unchecked")
-    @Nullable
-    public <T> Class<T> loadClass(Class<?> host) {
-        byte[] b = new byte[position()];
-        System.arraycopy(buf.array(), 0, b, 0, b.length);
-        return (Class<T>) Unsafe.defineAnonymousClass(host, b);
+    public <T> Class<T> loadClass() {
+        Class<T> x = loadClass(host);
+        assert x != null;
+        return x;
     }
 
     public void lreturn() {
@@ -456,6 +461,11 @@ public class BytecodeAssembler {
             LOG.critical().$("could not create an instance of ").$(host.getName()).$(", cause: ").$(e).$();
             throw BytecodeException.INSTANCE;
         }
+    }
+
+    public void new_(int classIndex) {
+        putByte(new_);
+        putShort(classIndex);
     }
 
     public int poolClass(int classIndex) {
@@ -673,8 +683,9 @@ public class BytecodeAssembler {
         // add standard stuff
         objectClassIndex = poolClass(Object.class);
         defaultConstructorMethodIndex = poolMethod(objectClassIndex, poolNameAndType(
-                defaultConstructorNameIndex = poolUtf8("<init>"),
-                defaultConstructorDescIndex = poolUtf8("()V"))
+                        defaultConstructorNameIndex = poolUtf8("<init>"),
+                        defaultConstructorDescIndex = poolUtf8("()V")
+                )
         );
         codeAttributeIndex = poolUtf8("Code");
     }
@@ -751,6 +762,14 @@ public class BytecodeAssembler {
         return pos;
     }
 
+    @SuppressWarnings("unchecked")
+    @Nullable
+    private <T> Class<T> loadClass(Class<?> host) {
+        byte[] b = new byte[position()];
+        System.arraycopy(buf.array(), 0, b, 0, b.length);
+        return (Class<T>) Unsafe.defineAnonymousClass(host, b);
+    }
+
     private void optimisedIO(int code0, int code1, int code2, int code3, int code, int value) {
         switch (value) {
             case 0:
@@ -804,7 +823,7 @@ public class BytecodeAssembler {
         buf = b;
     }
 
-    public class Utf8Appender extends AbstractCharSink implements CharSink {
+    public class Utf8Appender implements Utf8Sink {
         private int lenpos;
         private int utf8len = 0;
 
@@ -814,34 +833,60 @@ public class BytecodeAssembler {
         }
 
         @Override
-        public Utf8Appender put(CharSequence cs) {
-            int n = cs.length();
-            for (int i = 0; i < n; i++) {
-                BytecodeAssembler.this.putByte(cs.charAt(i));
+        public Utf8Sink put(@Nullable Utf8Sequence us) {
+            if (us != null) {
+                int size = us.size();
+                for (int i = 0; i < size; i++) {
+                    BytecodeAssembler.this.putByte(us.byteAt(i));
+                }
+                utf8len += size;
             }
-            utf8len += n;
             return this;
         }
 
         @Override
-        public Utf8Appender put(char c) {
-            BytecodeAssembler.this.putByte(c);
+        public Utf8Appender put(byte b) {
+            BytecodeAssembler.this.putByte(b);
             utf8len++;
             return this;
         }
 
         @Override
         public Utf8Appender put(int value) {
-            super.put(value);
+            Utf8Sink.super.put(value);
             return this;
         }
 
         @Override
-        public CharSink put(char[] chars, int start, int len) {
-            for (int i = 0; i < len; i++) {
-                BytecodeAssembler.this.putByte(chars[i + start]);
+        public Utf8Appender put(@Nullable CharSequence cs) {
+            Utf8Sink.super.put(cs);
+            return this;
+        }
+
+        @Override
+        public Utf8Appender putAscii(char c) {
+            Utf8Sink.super.putAscii(c);
+            return this;
+        }
+
+        @Override
+        public Utf8Appender putAscii(@Nullable CharSequence cs) {
+            if (cs != null) {
+                int len = cs.length();
+                for (int i = 0; i < len; i++) {
+                    BytecodeAssembler.this.putByte(cs.charAt(i));
+                }
+                utf8len += len;
             }
-            utf8len += len;
+            return this;
+        }
+
+        @Override
+        public Utf8Appender putNonAscii(long lo, long hi) {
+            Bytes.checkedLoHiSize(lo, hi, BytecodeAssembler.this.position());
+            for (long p = lo; p < hi; p++) {
+                BytecodeAssembler.this.putByte(Unsafe.getUnsafe().getByte(p));
+            }
             return this;
         }
     }

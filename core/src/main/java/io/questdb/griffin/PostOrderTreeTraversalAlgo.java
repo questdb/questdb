@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -62,14 +62,13 @@ public final class PostOrderTreeTraversalAlgo {
             // see http://en.wikipedia.org/wiki/Tree_traversal
 
             stack.clear();
+            // indexStack keeps the index of the node we are currently visiting.
+            // When paramCount < 3, we are relying on rhs (index 0) and lhs (index 1) to store the node parameters.
             indexStack.clear();
-
-            ExpressionNode lastVisited = null;
 
             while (!stack.isEmpty() || node != null) {
                 if (node != null) {
                     if (!visitor.descend(node)) {
-                        lastVisited = node;
                         node = null;
                         continue;
                     }
@@ -80,11 +79,13 @@ public final class PostOrderTreeTraversalAlgo {
                     ExpressionNode peek = stack.peek();
                     assert peek != null;
                     if (peek.paramCount < 3) {
-                        if (peek.lhs != null && lastVisited != peek.lhs) {
+                        final int index = indexStack.peek();
+                        if (index == 0) {
+                            indexStack.update(1);
                             node = peek.lhs;
                         } else {
                             visitor.visit(peek);
-                            lastVisited = stack.poll();
+                            stack.poll();
                             indexStack.pop();
                         }
                     } else {
@@ -94,7 +95,7 @@ public final class PostOrderTreeTraversalAlgo {
                             indexStack.update(index + 1);
                         } else {
                             visitor.visit(peek);
-                            lastVisited = stack.poll();
+                            stack.poll();
                             indexStack.pop();
                         }
                     }

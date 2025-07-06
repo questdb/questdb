@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,18 +28,17 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class FirstIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class FirstIntGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
-
-        compiler.compile("create table tab (f int)", sqlExecutionContext);
+        execute("create table tab (f int)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -49,20 +48,19 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select first(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(Numbers.INT_NaN, record.getInt(0));
+                Assert.assertEquals(Numbers.INT_NULL, record.getInt(0));
             }
         }
     }
 
     @Test
     public void testFirstNull() throws SqlException {
-
-        compiler.compile("create table tab (f int)", sqlExecutionContext);
+        execute("create table tab (f int)");
 
         try (TableWriter w = getWriter("tab")) {
             TableWriter.Row r = w.newRow();
@@ -75,20 +73,19 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select first(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(Numbers.INT_NaN, record.getInt(0));
+                Assert.assertEquals(Numbers.INT_NULL, record.getInt(0));
             }
         }
     }
 
     @Test
     public void testNonNull() throws SqlException {
-
-        compiler.compile("create table tab (f int)", sqlExecutionContext);
+        execute("create table tab (f int)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -99,7 +96,7 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select first(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -111,7 +108,8 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery13("b\tfirst\tk\n" +
+        assertQuery(
+                "b\tfirst\tk\n" +
                         "\t1530831067\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t1125579207\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t-1520872171\t1970-01-03T00:00:00.000000Z\n" +
@@ -134,7 +132,7 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "\t-1901633430\t1970-01-03T09:00:00.000000Z\n" +
                         "PEHN\t-1398499532\t1970-01-03T09:00:00.000000Z\n" +
                         "VTJW\t-1377625589\t1970-01-03T09:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-03T09:00:00.000000Z\n" +
                         "HYRX\t2147483647\t1970-01-03T09:00:00.000000Z\n",
                 "select b, first(a), k from x sample by 3h fill(linear)",
                 "create table x as " +
@@ -162,130 +160,130 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "PEHN\t-1125169127\t1970-01-03T00:00:00.000000Z\n" +
                         "CPSW\t-2119387831\t1970-01-03T00:00:00.000000Z\n" +
                         "HYRX\t-938514914\t1970-01-03T00:00:00.000000Z\n" +
-                        "ZMZV\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "QLDG\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "LOGI\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "QEBN\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "FOUS\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "ZMZV\tnull\t1970-01-03T00:00:00.000000Z\n" +
+                        "QLDG\tnull\t1970-01-03T00:00:00.000000Z\n" +
+                        "LOGI\tnull\t1970-01-03T00:00:00.000000Z\n" +
+                        "QEBN\tnull\t1970-01-03T00:00:00.000000Z\n" +
+                        "FOUS\tnull\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t1920890138\t1970-01-03T03:00:00.000000Z\n" +
                         "\t-235358133\t1970-01-03T03:00:00.000000Z\n" +
                         "PEHN\t-661194722\t1970-01-03T03:00:00.000000Z\n" +
                         "CPSW\t1196016669\t1970-01-03T03:00:00.000000Z\n" +
                         "HYRX\t532665695\t1970-01-03T03:00:00.000000Z\n" +
                         "VTJW\t215354468\t1970-01-03T03:00:00.000000Z\n" +
-                        "ZMZV\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "QLDG\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "LOGI\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "QEBN\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "FOUS\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                        "ZMZV\tnull\t1970-01-03T03:00:00.000000Z\n" +
+                        "QLDG\tnull\t1970-01-03T03:00:00.000000Z\n" +
+                        "LOGI\tnull\t1970-01-03T03:00:00.000000Z\n" +
+                        "QEBN\tnull\t1970-01-03T03:00:00.000000Z\n" +
+                        "FOUS\tnull\t1970-01-03T03:00:00.000000Z\n" +
                         "CPSW\t519895483\t1970-01-03T06:00:00.000000Z\n" +
                         "\t-355530067\t1970-01-03T06:00:00.000000Z\n" +
                         "HYRX\t1743740444\t1970-01-03T06:00:00.000000Z\n" +
                         "VTJW\t1598679468\t1970-01-03T06:00:00.000000Z\n" +
                         "PEHN\t-2080340570\t1970-01-03T06:00:00.000000Z\n" +
                         "RXGZ\t-1383560599\t1970-01-03T06:00:00.000000Z\n" +
-                        "ZMZV\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "QLDG\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "LOGI\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "QEBN\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "FOUS\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                        "ZMZV\tnull\t1970-01-03T06:00:00.000000Z\n" +
+                        "QLDG\tnull\t1970-01-03T06:00:00.000000Z\n" +
+                        "LOGI\tnull\t1970-01-03T06:00:00.000000Z\n" +
+                        "QEBN\tnull\t1970-01-03T06:00:00.000000Z\n" +
+                        "FOUS\tnull\t1970-01-03T06:00:00.000000Z\n" +
                         "CPSW\t468948839\t1970-01-03T09:00:00.000000Z\n" +
                         "\t-1901633430\t1970-01-03T09:00:00.000000Z\n" +
                         "PEHN\t-1398499532\t1970-01-03T09:00:00.000000Z\n" +
                         "VTJW\t-1377625589\t1970-01-03T09:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-03T09:00:00.000000Z\n" +
                         "HYRX\t2147483647\t1970-01-03T09:00:00.000000Z\n" +
-                        "ZMZV\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "QLDG\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "LOGI\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "QEBN\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "FOUS\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                        "ZMZV\tnull\t1970-01-03T09:00:00.000000Z\n" +
+                        "QLDG\tnull\t1970-01-03T09:00:00.000000Z\n" +
+                        "LOGI\tnull\t1970-01-03T09:00:00.000000Z\n" +
+                        "QEBN\tnull\t1970-01-03T09:00:00.000000Z\n" +
+                        "FOUS\tnull\t1970-01-03T09:00:00.000000Z\n" +
                         "\t-1717233271\t1970-01-03T12:00:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                        "VTJW\tnull\t1970-01-03T12:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-03T12:00:00.000000Z\n" +
                         "PEHN\t-716658493\t1970-01-03T12:00:00.000000Z\n" +
                         "CPSW\t418002195\t1970-01-03T12:00:00.000000Z\n" +
                         "HYRX\t2147483647\t1970-01-03T12:00:00.000000Z\n" +
-                        "ZMZV\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "QLDG\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "LOGI\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "QEBN\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "FOUS\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                        "ZMZV\tnull\t1970-01-03T12:00:00.000000Z\n" +
+                        "QLDG\tnull\t1970-01-03T12:00:00.000000Z\n" +
+                        "LOGI\tnull\t1970-01-03T12:00:00.000000Z\n" +
+                        "QEBN\tnull\t1970-01-03T12:00:00.000000Z\n" +
+                        "FOUS\tnull\t1970-01-03T12:00:00.000000Z\n" +
                         "\t-1532833112\t1970-01-03T15:00:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                        "VTJW\tnull\t1970-01-03T15:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-03T15:00:00.000000Z\n" +
                         "PEHN\t-34817456\t1970-01-03T15:00:00.000000Z\n" +
                         "CPSW\t367055551\t1970-01-03T15:00:00.000000Z\n" +
                         "HYRX\t2147483647\t1970-01-03T15:00:00.000000Z\n" +
-                        "ZMZV\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "QLDG\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "LOGI\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "QEBN\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "FOUS\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                        "ZMZV\tnull\t1970-01-03T15:00:00.000000Z\n" +
+                        "QLDG\tnull\t1970-01-03T15:00:00.000000Z\n" +
+                        "LOGI\tnull\t1970-01-03T15:00:00.000000Z\n" +
+                        "QEBN\tnull\t1970-01-03T15:00:00.000000Z\n" +
+                        "FOUS\tnull\t1970-01-03T15:00:00.000000Z\n" +
                         "\t-1348432953\t1970-01-03T18:00:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                        "VTJW\tnull\t1970-01-03T18:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-03T18:00:00.000000Z\n" +
                         "PEHN\t647023581\t1970-01-03T18:00:00.000000Z\n" +
                         "CPSW\t316108906\t1970-01-03T18:00:00.000000Z\n" +
                         "HYRX\t2147483647\t1970-01-03T18:00:00.000000Z\n" +
-                        "ZMZV\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "QLDG\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "LOGI\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "QEBN\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "FOUS\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                        "ZMZV\tnull\t1970-01-03T18:00:00.000000Z\n" +
+                        "QLDG\tnull\t1970-01-03T18:00:00.000000Z\n" +
+                        "LOGI\tnull\t1970-01-03T18:00:00.000000Z\n" +
+                        "QEBN\tnull\t1970-01-03T18:00:00.000000Z\n" +
+                        "FOUS\tnull\t1970-01-03T18:00:00.000000Z\n" +
                         "\t-1164032794\t1970-01-03T21:00:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                        "VTJW\tnull\t1970-01-03T21:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-03T21:00:00.000000Z\n" +
                         "PEHN\t1328864620\t1970-01-03T21:00:00.000000Z\n" +
                         "CPSW\t265162262\t1970-01-03T21:00:00.000000Z\n" +
                         "HYRX\t2147483647\t1970-01-03T21:00:00.000000Z\n" +
-                        "ZMZV\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "QLDG\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "LOGI\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "QEBN\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "FOUS\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                        "ZMZV\tnull\t1970-01-03T21:00:00.000000Z\n" +
+                        "QLDG\tnull\t1970-01-03T21:00:00.000000Z\n" +
+                        "LOGI\tnull\t1970-01-03T21:00:00.000000Z\n" +
+                        "QEBN\tnull\t1970-01-03T21:00:00.000000Z\n" +
+                        "FOUS\tnull\t1970-01-03T21:00:00.000000Z\n" +
                         "\t-979632635\t1970-01-04T00:00:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                        "VTJW\tnull\t1970-01-04T00:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-04T00:00:00.000000Z\n" +
                         "PEHN\t2010705657\t1970-01-04T00:00:00.000000Z\n" +
                         "CPSW\t214215619\t1970-01-04T00:00:00.000000Z\n" +
                         "HYRX\t2147483647\t1970-01-04T00:00:00.000000Z\n" +
-                        "ZMZV\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "QLDG\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "LOGI\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "QEBN\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "FOUS\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                        "ZMZV\tnull\t1970-01-04T00:00:00.000000Z\n" +
+                        "QLDG\tnull\t1970-01-04T00:00:00.000000Z\n" +
+                        "LOGI\tnull\t1970-01-04T00:00:00.000000Z\n" +
+                        "QEBN\tnull\t1970-01-04T00:00:00.000000Z\n" +
+                        "FOUS\tnull\t1970-01-04T00:00:00.000000Z\n" +
                         "\t-795232477\t1970-01-04T03:00:00.000000Z\n" +
                         "ZMZV\t-1822590290\t1970-01-04T03:00:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                        "VTJW\tnull\t1970-01-04T03:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-04T03:00:00.000000Z\n" +
                         "PEHN\t2147483647\t1970-01-04T03:00:00.000000Z\n" +
                         "CPSW\t163268974\t1970-01-04T03:00:00.000000Z\n" +
                         "HYRX\t2147483647\t1970-01-04T03:00:00.000000Z\n" +
-                        "QLDG\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "LOGI\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "QEBN\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "FOUS\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                        "QLDG\tnull\t1970-01-04T03:00:00.000000Z\n" +
+                        "LOGI\tnull\t1970-01-04T03:00:00.000000Z\n" +
+                        "QEBN\tnull\t1970-01-04T03:00:00.000000Z\n" +
+                        "FOUS\tnull\t1970-01-04T03:00:00.000000Z\n" +
                         "QLDG\t-365989785\t1970-01-04T06:00:00.000000Z\n" +
                         "LOGI\t-358259591\t1970-01-04T06:00:00.000000Z\n" +
                         "QEBN\t171760612\t1970-01-04T06:00:00.000000Z\n" +
                         "\t719793244\t1970-01-04T06:00:00.000000Z\n" +
                         "FOUS\t380766663\t1970-01-04T06:00:00.000000Z\n" +
-                        "VTJW\tNaN\t1970-01-04T06:00:00.000000Z\n" +
-                        "RXGZ\tNaN\t1970-01-04T06:00:00.000000Z\n" +
+                        "VTJW\tnull\t1970-01-04T06:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-04T06:00:00.000000Z\n" +
                         "PEHN\t2147483647\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t112322330\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t2147483647\t1970-01-04T06:00:00.000000Z\n" +
-                        "ZMZV\tNaN\t1970-01-04T06:00:00.000000Z\n",
+                        "ZMZV\tnull\t1970-01-04T06:00:00.000000Z\n",
                 true,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testSomeNull() throws SqlException {
-
-        compiler.compile("create table tab (f int)", sqlExecutionContext);
+        execute("create table tab (f int)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -298,7 +296,7 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select first(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -307,5 +305,4 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
             }
         }
     }
-
 }

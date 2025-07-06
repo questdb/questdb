@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,7 +37,8 @@ import org.jetbrains.annotations.NotNull;
 
 class IntersectCastRecordCursor extends AbstractSetRecordCursor {
     private final UnionCastRecord castRecord;
-    private final Map map;
+    private final Map mapA;
+    private final Map mapB;
     private final RecordSink recordSink;
     private boolean isCursorBHashed;
     private boolean isOpen;
@@ -45,12 +46,14 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
     private UnionCastRecord recordB;
 
     public IntersectCastRecordCursor(
-            Map map,
+            Map mapA,
+            Map mapB,
             RecordSink recordSink,
             @NotNull ObjList<Function> castFunctionA,
             @NotNull ObjList<Function> castFunctionB
     ) {
-        this.map = map;
+        this.mapA = mapA;
+        this.mapB = mapB;
         isOpen = true;
         this.recordSink = recordSink;
         castRecord = new UnionCastRecord(castFunctionA, castFunctionB);
@@ -60,7 +63,8 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
     public void close() {
         if (isOpen) {
             isOpen = false;
-            map.close();
+            mapA.close();
+            mapB.close();
             super.close();
         }
     }
@@ -90,10 +94,14 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
             isCursorBHashed = true;
         }
         while (cursorA.hasNext()) {
-            MapKey key = map.withKey();
-            key.put(castRecord, recordSink);
-            if (key.findValue() != null) {
-                return true;
+            MapKey keyB = mapB.withKey();
+            keyB.put(castRecord, recordSink);
+            if (!keyB.notFound()) {
+                MapKey keyA = mapA.withKey();
+                keyA.put(castRecord, recordSink);
+                if (keyA.create()) {
+                    return true;
+                }
             }
             circuitBreaker.statefulThrowExceptionIfTripped();
         }
@@ -111,13 +119,19 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return isCursorBHashed ? 1 : 0;
+    }
+
+    @Override
     public void toTop() {
         cursorA.toTop();
+        mapA.clear();
     }
 
     private void hashCursorB() {
         while (cursorB.hasNext()) {
-            MapKey key = map.withKey();
+            MapKey key = mapB.withKey();
             key.put(castRecord, recordSink);
             key.createValue();
             circuitBreaker.statefulThrowExceptionIfTripped();
@@ -131,7 +145,8 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) {
         if (!isOpen) {
             isOpen = true;
-            map.reopen();
+            mapA.reopen();
+            mapB.reopen();
         }
 
         this.cursorA = cursorA;

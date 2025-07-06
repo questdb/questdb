@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -60,7 +60,7 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
 
         final Function bitsArg = args.get(2);
         int bits = bitsArg.getInt(null);
-        if (bits < 1 || bits > ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
+        if (bits < 1 || bits > ColumnType.GEOLONG_MAX_BITS) {
             throw SqlException.$(argPositions.getQuick(2), "precision must be in [1..60] range");
         }
 

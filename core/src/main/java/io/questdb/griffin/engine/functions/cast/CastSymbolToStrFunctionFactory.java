@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
 
 public class CastSymbolToStrFunctionFactory implements FunctionFactory {
     @Override
@@ -47,27 +46,27 @@ public class CastSymbolToStrFunctionFactory implements FunctionFactory {
         if (func.isConstant()) {
             return new StrConstant(Chars.toString(func.getSymbol(null)));
         }
-        return new CastSymbolToStrFunction(args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
-    public static class CastSymbolToStrFunction extends AbstractCastToStrFunction {
-        public CastSymbolToStrFunction(Function arg) {
+    public static class Func extends AbstractCastToStrFunction {
+        public Func(Function arg) {
             super(arg);
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return arg.getSymbol(rec);
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            sink.put(arg.getSymbol(rec));
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
             return arg.getSymbolB(rec);
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return arg.isThreadSafe();
         }
     }
 }

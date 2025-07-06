@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,8 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Chars;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.Nullable;
 
 public class SymbolConstant extends SymbolFunction implements ConstantFunction {
@@ -37,11 +39,13 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     public static final SymbolConstant NULL = new SymbolConstant(null, VALUE_IS_NULL);
     public static final SymbolConstant TRUE = new SymbolConstant("true", 0);
     private final int index;
+    private final Utf8String utf8Value;
     private final String value;
 
     public SymbolConstant(CharSequence value, int index) {
         if (value == null) {
             this.value = null;
+            this.utf8Value = null;
             this.index = SymbolTable.VALUE_IS_NULL;
         } else {
             if (Chars.startsWith(value, '\'')) {
@@ -49,6 +53,7 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
             } else {
                 this.value = Chars.toString(value);
             }
+            this.utf8Value = new Utf8String(this.value);
             this.index = index;
         }
     }
@@ -82,6 +87,21 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     }
 
     @Override
+    public Utf8Sequence getVarcharA(Record rec) {
+        return utf8Value;
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
+        return utf8Value;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return index == VALUE_IS_NULL;
+    }
+
+    @Override
     public boolean isSymbolTableStatic() {
         return false;
     }
@@ -89,6 +109,11 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     @Override
     public @Nullable SymbolTable newSymbolTable() {
         return this;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return true;
     }
 
     @Override

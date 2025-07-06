@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,19 +28,19 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.eq.EqGeoHashGeoHashFunctionFactory;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.*;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.eq.EqGeoHashGeoHashFunctionFactory;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
+public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractCairoTest {
 
     private static final ObjList<Function> args = new ObjList<>(2);
     private static final EqGeoHashGeoHashFunctionFactory factory = new EqGeoHashGeoHashFunctionFactory();
@@ -55,15 +55,14 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testCastGeoHashToNullEqNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "select cast(null as geohash(1c)) = null",
                 "column\n" +
-                        "true\n"
+                        "true\n", "select cast(null as geohash(1c)) = null"
         ));
     }
 
     @Test
     public void testConstConst1() {
-        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
             args.clear();
             args.add(Constants.getGeoHashConstant(0, b));
             args.add(Constants.getGeoHashConstant(0, b));
@@ -73,7 +72,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testConstConst2() {
-        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
             args.clear();
             args.add(Constants.getGeoHashConstant(0, b));
             args.add(Constants.getGeoHashConstant(1, b));
@@ -83,7 +82,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testConstConst3() {
-        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
             args.clear();
             args.add(Constants.getGeoHashConstant(1, b));
             args.add(Constants.getGeoHashConstant(1, ((b + 1) % 60) + 1));
@@ -94,15 +93,13 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testConstHalfConst1() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table geohash as (" +
-                            "select " +
-                            "    cast('sp052w92p1' as GeOhAsH(50b)) geohash from long_sequence(1)" +
-                            ")",
-                    sqlExecutionContext);
+            execute("create table geohash as (" +
+                    "select " +
+                    "    cast('sp052w92p1' as GeOhAsH(50b)) geohash from long_sequence(1)" +
+                    ")");
             assertSql(
-                    "geohash where cast('sp052w92p1p' as gEoHaSh(10c)) = geohash",
                     "geohash\n" +
-                            "sp052w92p1\n"
+                            "sp052w92p1\n", "geohash where cast('sp052w92p1p' as gEoHaSh(10c)) = geohash"
             );
         });
     }
@@ -129,16 +126,15 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testEq() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (" +
+            execute("create table x as (" +
                     " select" +
                     " rnd_geohash(11) a," +
                     " rnd_geohash(11) b" +
                     " from long_sequence(5000)" +
-                    ")", sqlExecutionContext);
+                    ")");
             assertSql(
-                    "x where a = b",
                     "a\tb\n" +
-                            "11010001011\t11010001011\n"
+                            "11010001011\t11010001011\n", "x where a = b"
             );
         });
     }
@@ -146,14 +142,13 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNotEq() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (" +
+            execute("create table x as (" +
                     " select" +
                     " rnd_geohash(11) a," +
                     " rnd_geohash(13) b" +
                     " from long_sequence(8)" +
-                    ")", sqlExecutionContext);
+                    ")");
             assertSql(
-                    "x where a != b",
                     "a\tb\n" +
                             "01001110110\t0010000110110\n" +
                             "10001101001\t1111101110110\n" +
@@ -162,7 +157,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                             "10011100111\t0011100001011\n" +
                             "01110110001\t1011000100110\n" +
                             "11010111111\t1000110001001\n" +
-                            "10010110001\t0101011010111\n"
+                            "10010110001\t0101011010111\n", "x where a != b"
             );
         });
     }
@@ -211,7 +206,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNull6() {
         args.add(NullConstant.NULL);
-        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
             args.extendAndSet(1, nullConstantForBitsPrecision(b));
             createEqFunctionAndAssert(true);
         }
@@ -219,7 +214,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testNull7() {
-        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
             args.clear();
             args.add(nullConstantForBitsPrecision(b));
             args.add(NullConstant.NULL);
@@ -229,7 +224,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testNull8() {
-        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
             args.clear();
             args.add(nullConstantForBitsPrecision(b));
             args.add(nullConstantForBitsPrecision(((b + 1) % 60) + 1));
@@ -240,16 +235,14 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNull9() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table geohash as (" +
-                            "select " +
-                            "    cast(null as GeOhAsH(50b)) as geohash1, " +
-                            "    cast('sp052w92' as GeOhAsH(2c)) as geohash2 " +
-                            "from long_sequence(1)" +
-                            ")",
-                    sqlExecutionContext);
+            execute("create table geohash as (" +
+                    "select " +
+                    "    cast(null as GeOhAsH(50b)) as geohash1, " +
+                    "    cast('sp052w92' as GeOhAsH(2c)) as geohash2 " +
+                    "from long_sequence(1)" +
+                    ")");
             assertSql(
-                    "geohash where geohash1 = geohash2",
-                    "geohash1\tgeohash2\n"
+                    "geohash1\tgeohash2\n", "geohash where geohash1 = geohash2"
             );
         });
     }
@@ -338,7 +331,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public boolean isReadThreadSafe() {
+                    public boolean isThreadSafe() {
                         return true;
                     }
                 };
@@ -350,7 +343,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public boolean isReadThreadSafe() {
+                    public boolean isThreadSafe() {
                         return true;
                     }
                 };
@@ -362,7 +355,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public boolean isReadThreadSafe() {
+                    public boolean isThreadSafe() {
                         return true;
                     }
                 };
@@ -375,7 +368,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public boolean isReadThreadSafe() {
+                    public boolean isThreadSafe() {
                         return true;
                     }
                 };

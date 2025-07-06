@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@
  ******************************************************************************/
 
 #include <stdlib.h>
-#include <src/main/c/share/zlib-1.2.8/zutil.h>
+#include <src/main/c/share/zlib/zutil.h>
 #include <src/main/c/share/zip.h>
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Zip_deflateInit

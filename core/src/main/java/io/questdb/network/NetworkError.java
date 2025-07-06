@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,10 +25,11 @@
 package io.questdb.network;
 
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 public class NetworkError extends Error implements Sinkable, FlyweightMessageContainer {
     private static final ThreadLocal<NetworkError> tlException = new ThreadLocal<>(NetworkError::new);
@@ -90,7 +91,7 @@ public class NetworkError extends Error implements Sinkable, FlyweightMessageCon
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("[errno=").put(errno).put("] ").put(message);
+    public void toSink(@NotNull CharSink<?> sink) {
+        sink.putAscii("[errno=").put(errno).putAscii("] ").put(message);
     }
 }

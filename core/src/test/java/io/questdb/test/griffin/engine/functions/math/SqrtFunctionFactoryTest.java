@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,11 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions.math;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class SqrtFunctionFactoryTest extends AbstractGriffinTest {
+public class SqrtFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSqrtDouble() throws Exception {
@@ -37,12 +37,12 @@ public class SqrtFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSqrtDoubleNull() throws Exception {
-        assertSqrt("select sqrt(NaN)", "NaN\n");
+        assertSqrt("select sqrt(NaN)", "null\n");
     }
 
     private void assertSqrt(String sql, String expected) throws Exception {
         assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
+                engine,
                 sqlExecutionContext,
                 sql,
                 sink,

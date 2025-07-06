@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,11 +25,13 @@
 package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
 
 public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements Sinkable {
-
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final ObjList<CharSequence> list;
     private boolean hasNull = false;
@@ -48,7 +50,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         this(initialCapacity, 0.4);
     }
 
-    private CharSequenceHashSet(int initialCapacity, double loadFactor) {
+    public CharSequenceHashSet(int initialCapacity, double loadFactor) {
         super(initialCapacity, loadFactor);
         list = new ObjList<>(free);
         clear();
@@ -60,7 +62,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
      * @param key immutable sequence of characters.
      * @return false if key is already in the set and true otherwise.
      */
-    public boolean add(CharSequence key) {
+    public boolean add(@Nullable CharSequence key) {
         if (key == null) {
             return addNull();
         }
@@ -74,13 +76,13 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         return true;
     }
 
-    public final void addAll(CharSequenceHashSet that) {
+    public final void addAll(@NotNull CharSequenceHashSet that) {
         for (int i = 0, k = that.size(); i < k; i++) {
             add(that.get(i));
         }
     }
 
-    public void addAt(int index, CharSequence key) {
+    public void addAt(int index, @NotNull CharSequence key) {
         final String s = Chars.toString(key);
         keys[index] = s;
         list.add(s);
@@ -107,11 +109,13 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         hasNull = false;
     }
 
-    public boolean contains(CharSequence key) {
+    @Override
+    public boolean contains(@Nullable CharSequence key) {
         return key == null ? hasNull : keyIndex(key) < 0;
     }
 
-    public boolean excludes(CharSequence key) {
+    @Override
+    public boolean excludes(@Nullable CharSequence key) {
         return key == null ? !hasNull : keyIndex(key) > -1;
     }
 
@@ -123,22 +127,27 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         return list.getLast();
     }
 
+    public ObjList<CharSequence> getList() {
+        return list;
+    }
+
     public int getListIndexAt(int keyIndex) {
         int index = -keyIndex - 1;
         return list.indexOf(keys[index]);
     }
 
-    public int getListIndexOf(CharSequence cs) {
+    public int getListIndexOf(@NotNull CharSequence cs) {
         return getListIndexAt(keyIndex(cs));
     }
 
+    @Override
     public CharSequence keyAt(int index) {
         int index1 = -index - 1;
         return keys[index1];
     }
 
     @Override
-    public int remove(CharSequence key) {
+    public int remove(@Nullable CharSequence key) {
         if (key == null) {
             return removeNull();
         }
@@ -172,7 +181,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         sink.put(list);
     }
 

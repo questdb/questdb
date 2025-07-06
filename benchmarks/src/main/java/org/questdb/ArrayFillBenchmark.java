@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -68,7 +68,7 @@ public class ArrayFillBenchmark {
 
     @Benchmark
     public long testFillNeg() {
-        list.zero(-1);
+        list.fill(-1);
         long sum = 0;
         for (long i = 0, n = list.size(); i < n; i++) {
             sum += list.get(i);
@@ -78,7 +78,7 @@ public class ArrayFillBenchmark {
 
     @Benchmark
     public long testFillZero() {
-        list.zero(0);
+        list.fill(0);
         long sum = 0;
         for (long i = 0, n = ArrayFillBenchmark.list.size(); i < n; i++) {
             sum += list.get(i);

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,10 +25,10 @@
 package io.questdb.test.cutlass.line.tcp.load;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.test.cutlass.line.tcp.ColumnNameType;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cutlass.line.tcp.ColumnNameType;
 
 import java.util.List;
 
@@ -117,8 +117,8 @@ public class LineData {
     }
 
     private String TimestampsToString(long uSecs) {
-        StringSink sink = Misc.getThreadLocalBuilder();
-        TimestampFormatUtils.USEC_UTC_FORMAT.format(uSecs, null, null, sink);
+        StringSink sink = Misc.getThreadLocalSink();
+        TimestampFormatUtils.USEC_UTC_FORMAT.format(uSecs, TimestampFormatUtils.EN_LOCALE, null, sink);
         return sink.toString();
     }
 

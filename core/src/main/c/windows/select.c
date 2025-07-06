@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,8 +28,9 @@
 #include "errno.h"
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_SelectAccessor_select
-        (JNIEnv *e, jclass cl, jlong readfds, jlong writefds, jlong exceptfds) {
-    struct timeval tv = {0, 0};
+        (JNIEnv *e, jclass cl, jlong readfds, jlong writefds, jlong exceptfds, jint timeout) {
+    int tv_sec = timeout / 1000;
+    struct timeval tv = {tv_sec, (timeout - tv_sec * 1000) * 1000};
     int n = select(0, (fd_set *) readfds, (fd_set *) writefds, (fd_set *) exceptfds, &tv);
     if (n != 0) {
         SaveLastError();

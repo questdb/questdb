@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,7 +29,11 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
 public class CastCharToLong256FunctionFactory implements FunctionFactory {
@@ -52,19 +56,19 @@ public class CastCharToLong256FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getLong256(Record rec, CharSink sink) {
+        public void getLong256(Record rec, CharSink<?> sink) {
             Numbers.appendLong256(arg.getChar(rec), 0, 0, 0, sink);
         }
 
         @Override
         public Long256 getLong256A(Record rec) {
-            long256a.setAll(arg.getChar(rec), 0, 0, 0);
+            long256a.setLow(arg.getLong(rec));
             return long256a;
         }
 
         @Override
         public Long256 getLong256B(Record rec) {
-            long256b.setAll(arg.getChar(rec), 0, 0, 0);
+            long256b.setLow(arg.getLong(rec));
             return long256b;
         }
     }

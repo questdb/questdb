@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -50,8 +50,13 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         final Function periodFunction = args.getQuick(0);
         if (periodFunction.isConstant()) {
             final Function start = args.getQuick(1);
@@ -60,10 +65,10 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
             if (period < diffFunctionsMax) {
                 final LongDiffFunction func = diffFunctions.getQuick(period);
                 if (func != null) {
-                    if (start.isConstant() && start.getTimestamp(null) != Numbers.LONG_NaN) {
+                    if (start.isConstant() && start.getTimestamp(null) != Numbers.LONG_NULL) {
                         return new DiffVarConstFunction(args.getQuick(2), start.getLong(null), func, period);
                     }
-                    if (end.isConstant() && end.getTimestamp(null) != Numbers.LONG_NaN) {
+                    if (end.isConstant() && end.getTimestamp(null) != Numbers.LONG_NULL) {
                         return new DiffVarConstFunction(args.getQuick(1), end.getLong(null), func, period);
                     }
                     return new DiffVarVarFunction(args.getQuick(1), args.getQuick(2), func, period);
@@ -105,8 +110,8 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
             final char l = left.getChar(rec);
             final long c = center.getTimestamp(rec);
             final long r = right.getTimestamp(rec);
-            if (c == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
-                return Numbers.LONG_NaN;
+            if (c == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
             }
             return Timestamps.getPeriodBetween(l, c, r);
         }
@@ -143,8 +148,8 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             final long l = arg.getTimestamp(rec);
-            if (l == Numbers.LONG_NaN) {
-                return Numbers.LONG_NaN;
+            if (l == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
             }
             return func.diff(l, constantTime);
         }
@@ -177,8 +182,8 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         public long getLong(Record rec) {
             final long l = left.getTimestamp(rec);
             final long r = right.getTimestamp(rec);
-            if (l == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
-                return Numbers.LONG_NaN;
+            if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
             }
             return func.diff(l, r);
         }
@@ -195,6 +200,8 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
     }
 
     static {
+        diffFunctions.extendAndSet('u', Timestamps::getMicrosBetween);
+        diffFunctions.extendAndSet('T', Timestamps::getMillisBetween);
         diffFunctions.extendAndSet('s', Timestamps::getSecondsBetween);
         diffFunctions.extendAndSet('m', Timestamps::getMinutesBetween);
         diffFunctions.extendAndSet('h', Timestamps::getHoursBetween);

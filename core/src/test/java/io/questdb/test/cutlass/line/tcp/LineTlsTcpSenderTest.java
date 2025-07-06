@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
         authKeyId = AUTH_KEY_ID1;
         String tableName = UUID.randomUUID().toString();
         runInContext(c -> {
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .enableTls()
                     .address("localhost")
                     .port(tlsProxy.getListeningPort())
@@ -66,7 +66,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
         String tableName = UUID.randomUUID().toString();
         int rows = 5_000;
         runInContext(c -> {
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .enableTls()
                     .address("127.0.0.1")
                     .port(tlsProxy.getListeningPort())
@@ -85,7 +85,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testHostnameValidation() throws Exception {
         runInContext(c -> {
-            Sender.LineSenderBuilder builder = Sender.builder()
+            Sender.LineSenderBuilder builder = Sender.builder(Sender.Transport.TCP)
                     .enableTls()
                     .address("127.0.0.1")
                     .port(tlsProxy.getListeningPort())
@@ -107,7 +107,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
         withCustomProperty(() -> {
             authKeyId = AUTH_KEY_ID1;
             runInContext(c -> {
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.TCP)
                         .enableTls()
                         .address("localhost")
                         .port(tlsProxy.getListeningPort())
@@ -131,7 +131,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
         String tableName = UUID.randomUUID().toString();
         String truststore = Files.getResourcePath(getClass().getResource(TRUSTSTORE_PATH));
         runInContext(c -> {
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .enableTls()
                     .address("localhost")
                     .port(tlsProxy.getListeningPort())
@@ -154,7 +154,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
         int hugeBufferSize = 1024 * 1024;
         int rows = 100_000;
         runInContext(c -> {
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .enableTls()
                     .bufferCapacity(hugeBufferSize)
                     .address("localhost")

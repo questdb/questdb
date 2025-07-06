@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,18 +24,17 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.StationaryMicrosClock;
-import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-public class TimestampSequenceFunctionFactoryTest extends AbstractGriffinTest {
+public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         testMicrosClock = StationaryMicrosClock.INSTANCE;
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @Test
@@ -52,10 +51,42 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractGriffinTest {
                 "2021-04-25T00:00:03.300000Z\n" +
                 "2021-04-25T00:00:03.800000Z\n";
 
-        assertSql("SELECT timestamp_sequence(\n" +
-                "         to_timestamp('2021-04-25T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
-                "         rnd_long(1,10,0) * 100000L\n" +
-                ") ts from long_sequence(10, 900, 800)", expected);
+        assertSql(
+                expected,
+                "SELECT timestamp_sequence(\n" +
+                        "         to_timestamp('2021-04-25T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
+                        "         rnd_long(1,10,0) * 100000L\n" +
+                        ") ts from long_sequence(10, 900, 800)"
+        );
+    }
+
+    @Test
+    public void testStableProjection() throws Exception {
+        // test that output of timestamp_sequence() does not change
+        // within the same row.
+        // in other words: timestamps on the same row must differ exactly by 1 hour due to the dateadd()
+
+        allowFunctionMemoization();
+
+        final String expected = "ts\tdateadd\n" +
+                "2021-04-25T00:00:00.000000Z\t2021-04-25T01:00:00.000000Z\n" +
+                "2021-04-25T00:05:00.000000Z\t2021-04-25T01:05:00.000000Z\n" +
+                "2021-04-25T00:10:00.000000Z\t2021-04-25T01:10:00.000000Z\n" +
+                "2021-04-25T00:15:00.000000Z\t2021-04-25T01:15:00.000000Z\n" +
+                "2021-04-25T00:20:00.000000Z\t2021-04-25T01:20:00.000000Z\n" +
+                "2021-04-25T00:25:00.000000Z\t2021-04-25T01:25:00.000000Z\n" +
+                "2021-04-25T00:30:00.000000Z\t2021-04-25T01:30:00.000000Z\n" +
+                "2021-04-25T00:35:00.000000Z\t2021-04-25T01:35:00.000000Z\n" +
+                "2021-04-25T00:40:00.000000Z\t2021-04-25T01:40:00.000000Z\n" +
+                "2021-04-25T00:45:00.000000Z\t2021-04-25T01:45:00.000000Z\n";
+
+        assertSql(
+                expected,
+                "SELECT timestamp_sequence(\n" +
+                        "         to_timestamp('2021-04-25T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
+                        "         300_000_000L\n" +
+                        ") ts, dateadd('h', 1, ts) from long_sequence(10)"
+        );
     }
 
     @Test
@@ -73,8 +104,8 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractGriffinTest {
                 "10\t1970-01-01T00:00:00.009000Z\n";
 
         assertSql(
-                "select x ac, timestamp_sequence(systimestamp(), 1000) ts from long_sequence(10)",
-                expected
+                expected,
+                "select x ac, timestamp_sequence(systimestamp(), 1000) ts from long_sequence(10)"
         );
     }
 
@@ -92,22 +123,9 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractGriffinTest {
                 "9\t1970-01-01T00:00:00.008000Z\n" +
                 "10\t1970-01-01T00:00:00.009000Z\n";
 
-        assertSql("select x ac, timestamp_sequence(0, 1000) ts from long_sequence(10)", expected);
-    }
-
-    private void assertSql(String sql, String expected) throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                TestUtils.assertSql(
-                        compiler,
-                        sqlExecutionContext,
-                        sql,
-                        sink,
-                        expected
-                );
-            } finally {
-                sqlExecutionContext.setRandom(null);
-            }
-        });
+        assertSql(
+                expected,
+                "select x ac, timestamp_sequence(0, 1000) ts from long_sequence(10)"
+        );
     }
 }

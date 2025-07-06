@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,85 +24,52 @@
 
 package io.questdb.test.griffin.engine.functions.cast;
 
-import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.tools.TestUtils;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class CastLongToGeoHashFunctionFactoryTest extends AbstractGriffinTest {
+public class CastLongToGeoHashFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext,
-                            "select cast(99889L as geohash(1c))",
-                            sink,
+                    assertSql(
                             "cast\n" +
-                                    "j\n"
+                                    "j\n", "select cast(99889L as geohash(1c))"
                     );
 
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext,
-                            "select cast(899808896L as geohash(2c))",
-                            sink,
+                    assertSql(
                             "cast\n" +
-                                    "n0\n"
+                                    "n0\n", "select cast(899808896L as geohash(2c))"
                     );
 
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext,
-                            "select cast(899808896L as geohash(4c))",
-                            sink,
+                    assertSql(
                             "cast\n" +
-                                    "3zn0\n"
+                                    "3zn0\n", "select cast(899808896L as geohash(4c))"
                     );
 
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext,
-                            "select cast(899808896L as geohash(8c))",
-                            sink,
+                    assertSql(
                             "cast\n" +
-                                    "00uu3zn0\n"
+                                    "00uu3zn0\n", "select cast(899808896L as geohash(8c))"
                     );
 
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext,
-                            "select cast(cast(null as long) as geohash(1c))",
-                            sink,
+                    assertSql(
                             "cast\n" +
-                                    "\n"
+                                    "\n", "select cast(cast(null as long) as geohash(1c))"
                     );
 
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext,
-                            "select cast(cast(null as long) as geohash(2c))",
-                            sink,
+                    assertSql(
                             "cast\n" +
-                                    "\n"
+                                    "\n", "select cast(cast(null as long) as geohash(2c))"
                     );
 
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext,
-                            "select cast(cast(null as long) as geohash(4c))",
-                            sink,
+                    assertSql(
                             "cast\n" +
-                                    "\n"
+                                    "\n", "select cast(cast(null as long) as geohash(4c))"
                     );
 
-                    TestUtils.assertSql(
-                            compiler,
-                            sqlExecutionContext,
-                            "select cast(cast(null as long) as geohash(8c))",
-                            sink,
+                    assertSql(
                             "cast\n" +
-                                    "\n"
+                                    "\n", "select cast(cast(null as long) as geohash(8c))"
                     );
                 }
         );

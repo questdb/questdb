@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,16 +24,23 @@
 
 package io.questdb.cairo.vm.api;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 public class NullMemory implements MemoryMAR, MemoryCARW {
 
     public static final NullMemory INSTANCE = new NullMemory();
+
+    @Override
+    public long addressHi() {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     public long addressOf(long offset) {
@@ -59,11 +66,21 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
+    public long detachFdClose() {
+        return -1;
+    }
+
+    @Override
     public void extend(long size) {
     }
 
     @Override
     public long getAppendOffset() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public ArrayView getArray(long offset) {
         throw new UnsupportedOperationException();
     }
 
@@ -78,7 +95,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public int getFd() {
+    public long getFd() {
         throw new UnsupportedOperationException();
     }
 
@@ -108,12 +125,12 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public CharSequence getStr(long offset) {
+    public CharSequence getStrA(long offset) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getStr2(long offset) {
+    public CharSequence getStrB(long offset) {
         throw new UnsupportedOperationException();
     }
 
@@ -148,6 +165,11 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public int pageIndex(long offset) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putArray(ArrayView array) {
         throw new UnsupportedOperationException();
     }
 
@@ -322,8 +344,17 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
+    public long putVarchar(@NotNull Utf8Sequence value, int lo, int hi) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public long resize(long size) {
         return 0;
+    }
+
+    @Override
+    public void shiftAddressRight(long shiftRightOffset) {
     }
 
     @Override
@@ -336,7 +367,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void switchTo(int fd, long offset, byte truncateMode) {
+    public void switchTo(FilesFacade ff, long fd, long extendSegmentSize, long offset, boolean truncate, byte truncateMode) {
     }
 
     @Override

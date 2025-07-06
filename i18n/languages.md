@@ -8,4 +8,7 @@
 - [Ukranian / Українська](README.ua-ua.md) 
 - [Spanish / Español](./README.es-es.md)
 - [Portuguese / Português](README.pt.md)
-- [Japanese / 日本](./README.ja-ja.md)
+- [Japanese / 日本語](./README.ja-ja.md)
+- [Turkish / Türkçe](./README.tr-tr.md)
+- [Hindi / हिंदी](./README.hn-in.md)
+- [Vietnamese / Tiếng Việt](./README.vi-vn.md)

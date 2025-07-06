@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GeoByteFunction;
-import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -41,7 +40,7 @@ public class GeoHashFunctionTest {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return true;
         }
     };
@@ -49,6 +48,11 @@ public class GeoHashFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testChar() {
         Assert.assertEquals('a', nullFunction.getChar(null));
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetArray() {
+        nullFunction.getArray(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -87,6 +91,11 @@ public class GeoHashFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetIPv4() {
+        nullFunction.getIPv4(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetInt() {
         nullFunction.getInt(null);
     }
@@ -103,7 +112,7 @@ public class GeoHashFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStr() {
-        nullFunction.getStr(null);
+        nullFunction.getStrA(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -114,13 +123,6 @@ public class GeoHashFunctionTest {
     @Test
     public void testGetStrIntoSink1() {
         Assert.assertEquals(GeoHashes.NULL, nullFunction.getGeoByte(null));
-        StringSink sink = new StringSink();
-        try {
-            nullFunction.getStr(null, sink);
-            Assert.fail();
-        } catch (UnsupportedOperationException e) {
-            // Good
-        }
     }
 
     @Test(expected = UnsupportedOperationException.class)

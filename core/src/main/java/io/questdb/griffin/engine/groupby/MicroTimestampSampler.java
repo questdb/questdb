@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 
 public class MicroTimestampSampler implements TimestampSampler {
     private final long bucket;
@@ -35,13 +36,23 @@ public class MicroTimestampSampler implements TimestampSampler {
     }
 
     @Override
+    public long getApproxBucketSize() {
+        return bucket;
+    }
+
+    @Override
     public long getBucketSize() {
-        return this.bucket;
+        return bucket;
     }
 
     @Override
     public long nextTimestamp(long timestamp) {
         return timestamp + bucket;
+    }
+
+    @Override
+    public long nextTimestamp(long timestamp, int numSteps) {
+        return timestamp + numSteps * bucket;
     }
 
     @Override
@@ -51,7 +62,11 @@ public class MicroTimestampSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        return start + ((value - start) / bucket) * bucket;
+        long q = (value - start) / bucket;
+        if (value < 0 && q * bucket != value) {
+            q = q - 1;
+        }
+        return start + q * bucket;
     }
 
     @Override
@@ -60,7 +75,7 @@ public class MicroTimestampSampler implements TimestampSampler {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("MicroTsSampler");
+    public void toSink(@NotNull CharSink<?> sink) {
+        sink.putAscii("MicroTsSampler");
     }
 }

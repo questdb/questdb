@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,12 +24,11 @@
 
 package io.questdb.test.std;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.std.Long256FromCharSequenceDecoder;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
 
 public class Long256FromCharSequenceDecoderTest {
     private Long256FromCharSequenceDecoder decoder;
@@ -37,6 +36,16 @@ public class Long256FromCharSequenceDecoderTest {
     private long l1;
     private long l2;
     private long l3;
+
+    @AfterClass
+    public static void afterClass() {
+        ColumnType.resetStringToDefault();
+    }
+
+    @BeforeClass
+    public static void beforeClass() {
+        ColumnType.makeUtf16DefaultString();
+    }
 
     @Before
     public void before() {

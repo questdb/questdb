@@ -1,0 +1,86 @@
+steps:
+  - bash: sudo sysctl -w fs.file-max=500000
+    displayName: "Increase file count on Linux"
+    condition: eq(variables['os'], 'Linux')
+  - task: Cache@2
+    continueOnError: true
+    inputs:
+      key: '"questdb_compat" | "$(Agent.OS)" | "$(jdk)" | "maven"'
+      restoreKeys: |
+        "questdb_compat" | "$(Agent.OS)" | "$(jdk)" | "maven"
+      path: $(MAVEN_CACHE_FOLDER)
+
+  - task: Cache@2
+    continueOnError: true
+    inputs:
+      key: '"maven_version" | "$(MAVEN_VERSION)"'
+      restoreKeys: mykey | "$(MAVEN_VERSION)"
+      path: $(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)
+      cacheHitVar: MVN_CACHE_RESTORED
+    condition: ne(variables['MAVEN_VERSION_OPTION'], 'Default')
+
+  - script: 'wget https://archive.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip'
+    condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'), ne(variables['os'], 'Windows'))
+  - script: "powershell -Command \"(new-object System.Net.WebClient).DownloadFile('https://www.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip','$(build.sourcesdirectory)\\apache-maven-$(MAVEN_VERSION)-bin.zip')\""
+    condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'), eq(variables['os'], 'Windows'))
+  - task: ExtractFiles@1
+    inputs:
+      archiveFilePatterns: 'apache-maven-$(MAVEN_VERSION)-bin.zip'
+      destinationFolder: '$(build.sourcesdirectory)/maven'
+    condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'))
+
+  - task: Maven@3
+    displayName: "Compile with Maven"
+    inputs:
+      mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
+      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
+      mavenPomFile: "pom.xml"
+      mavenOptions: "$(MAVEN_OPTS)"
+      options:
+        "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) $(MAVEN_RUN_OPTS)"
+      jdkVersionOption: $(jdk)
+    condition:
+      eq(variables['SOURCE_CODE_CHANGED'], 'false')
+  - task: Maven@3
+    displayName: "Run tests"
+    inputs:
+      mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
+      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
+      mavenPomFile: "pom.xml"
+      mavenOptions: "$(MAVEN_OPTS)"
+      goals: "clean test"
+      options:
+        "--batch-mode --quiet -Dtest.include=**/compat/**,**/cliutil/**
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
+        -DfailIfNoTests=false
+        -Dsurefire.failIfNoSpecifiedTests=false
+         $(MAVEN_RUN_OPTS)"
+      jdkVersionOption: $(jdk)
+    timeoutInMinutes: 55
+    condition: |
+      eq(variables['SOURCE_CODE_CHANGED'], 'true')
+  - bash: |
+      find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_CRASH_LOG)"' \;
+    displayName: "Tests failed -- rename crash dump"
+    workingDirectory: $(Build.SourcesDirectory)/compat/
+    condition: failed()
+  - task: PublishBuildArtifacts@1
+    displayName: "Tests failed -- Upload crash logs"
+    condition: failed()
+    inputs:
+      pathToPublish: $(ARCHIVED_CRASH_LOG)
+      artifactName: CrashDump
+  - task: ArchiveFiles@2
+    displayName: "Tests failed -- Compress logs"
+    condition: not(succeeded())
+    inputs:
+      rootFolderOrFile: $(QDB_LOG_W_FILE_LOCATION)
+      includeRootFolder: false
+      archiveFile: $(ARCHIVED_LOGS)
+      quiet: true
+  - task: PublishBuildArtifacts@1
+    displayName: "Tests failed -- Upload logs"
+    condition: not(succeeded())
+    inputs:
+      pathToPublish: $(ARCHIVED_LOGS)
+      artifactName: MavenFailedTestsLogs

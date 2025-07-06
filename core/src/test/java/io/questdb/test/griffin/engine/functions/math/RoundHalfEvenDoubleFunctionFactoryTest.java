@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,9 +26,9 @@ package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.math.RoundHalfEvenDoubleFunctionFactory;
 import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class RoundHalfEvenDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -110,7 +110,7 @@ public class RoundHalfEvenDoubleFunctionFactoryTest extends AbstractFunctionFact
 
     @Test
     public void testRightNan() throws SqlException {
-        call(123.65, Numbers.INT_NaN).andAssert(Double.NaN, 0.0001);
+        call(123.65, Numbers.INT_NULL).andAssert(Double.NaN, 0.0001);
     }
 
     /*ZeroScale*/

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ package io.questdb.std;
 
 import io.questdb.std.ex.FatalError;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -34,9 +35,17 @@ import java.util.Arrays;
 public final class Misc {
     public static final int CACHE_LINE_SIZE = 64;
     public static final String EOL = "\r\n";
-    private final static ThreadLocal<StringSink> tlBuilder = new ThreadLocal<>(StringSink::new);
+    private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private static final ThreadLocal<Utf8StringSink> tlUtf8Sink = new ThreadLocal<>(Utf8StringSink::new);
 
     private Misc() {
+    }
+
+    public static <T extends Mutable> T clear(T object) {
+        if (object != null) {
+            object.clear();
+        }
+        return null;
     }
 
     public static void clearObjList(ObjList<? extends Mutable> args) {
@@ -67,7 +76,7 @@ public final class Misc {
         }
     }
 
-    //same as free() but can be used when input object type is not guaranteed to be Closeable
+    // same as free() but can be used when input object type is not guaranteed to be Closeable
     public static <T> T freeIfCloseable(T object) {
         if (object instanceof Closeable) {
             try {
@@ -102,15 +111,21 @@ public final class Misc {
         }
     }
 
-    //same as freeObjList() but can be used when input object type is not guaranteed to be Closeable
+    // same as freeObjList() but can be used when input object type is not guaranteed to be Closeable
     public static <T> void freeObjListIfCloseable(ObjList<T> list) {
         if (list != null) {
             freeObjList0(list);
         }
     }
 
-    public static StringSink getThreadLocalBuilder() {
-        StringSink b = tlBuilder.get();
+    public static StringSink getThreadLocalSink() {
+        StringSink b = tlSink.get();
+        b.clear();
+        return b;
+    }
+
+    public static Utf8StringSink getThreadLocalUtf8Sink() {
+        Utf8StringSink b = tlUtf8Sink.get();
         b.clear();
         return b;
     }

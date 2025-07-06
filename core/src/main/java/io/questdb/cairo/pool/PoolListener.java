@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -46,8 +46,10 @@ public interface PoolListener {
     short EV_RETURN = 1;
     short EV_UNEXPECTED_CLOSE = 3;
     short EV_UNLOCKED = 8;
-    byte SRC_METADATA = 3;
     byte SRC_READER = 2;
+    byte SRC_SEQUENCER_METADATA = 3;
+    byte SRC_SQL_COMPILER = 6;
+    byte SRC_TABLE_METADATA = 7;
     byte SRC_TABLE_REGISTRY = 5;
     byte SRC_WAL_WRITER = 4;
     byte SRC_WRITER = 1;

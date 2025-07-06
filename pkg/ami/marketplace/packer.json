@@ -1,5 +1,5 @@
 {
-  "_comment": "Packer Template for demo. Based on Amazon Linux 2",
+  "_comment": "Packer Template for demo. Based on Amazon Linux 2023",
   "variables": {
     "base_ami_name": "questdb",
     "region": "eu-west-1",
@@ -9,9 +9,9 @@
   },
   "builders": [
     {
-      "name": "questdb-ami-amazon-linux-2",
-      "ami_name": "{{ user `base_ami_name` }}-{{ user `questdb_version` }}-amzn2-x86_64-ebs",
-      "ami_description": "An Amazon Linux2 instance with QuestDB-{{ user `questdb_version` }} installed and running",
+      "name": "questdb-ami-amazon-linux-2023",
+      "ami_name": "{{ user `base_ami_name` }}-{{ user `questdb_version` }}-al2023-x86_64-ebs",
+      "ami_description": "An Amazon Linux 2023 instance with QuestDB-{{ user `questdb_version` }} installed and running",
       "ami_regions": "{{user `ami_regions`}}",
       "ami_groups": "{{user `ami_groups`}}",
       "instance_type": "t3.large",
@@ -21,24 +21,31 @@
       "force_delete_snapshot": "true",
       "source_ami_filter": {
         "filters": {
-          "name": "questdb-master*"
+          "virtualization-type": "hvm",
+          "architecture": "x86_64",
+          "name": "al2023-ami-202*-x86_64",
+          "block-device-mapping.volume-type": "gp3",
+          "root-device-type": "ebs"
         },
-        "owners": ["self"],
+        "owners": ["137112412989"],
         "most_recent": true
       },
       "launch_block_device_mappings": [
         {
           "device_name": "/dev/xvdb",
-          "volume_size": 100,
-          "delete_on_termination": false
+          "volume_size": 50,
+          "delete_on_termination": false,
+          "volume_type": "gp3",
+          "iops": 3000,
+          "throughput": 250
         }
       ],
 
       "ssh_username": "ec2-user",
       "tags": {
-        "OS_Version": "Amazon Linux 2",
+        "OS_Version": "Amazon Linux 2023",
         "Base_AMI_Name": "{{ .SourceAMIName }}",
-        "Name": "{{ user `base_ami_name` }}-{{ user `questdb_version` }}-amzn2-x86_64-ebs"
+        "Name": "{{ user `base_ami_name` }}-{{ user `questdb_version` }}-al2023-x86_64-ebs"
       }
     }
   ],

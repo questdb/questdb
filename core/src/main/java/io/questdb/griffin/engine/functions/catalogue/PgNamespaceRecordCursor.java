@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -50,6 +51,11 @@ class PgNamespaceRecordCursor implements NoRandomAccessRecordCursor {
     @Override
     public boolean hasNext() {
         return ++row < rowCount;
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return 0;
     }
 
     @Override
@@ -80,18 +86,18 @@ class PgNamespaceRecordCursor implements NoRandomAccessRecordCursor {
         }
 
         @Override
-        public CharSequence getStr(int col) {
+        public CharSequence getStrA(int col) {
             return Constants.NAMESPACES[row];
         }
 
         @Override
         public CharSequence getStrB(int col) {
-            return getStr(col);
+            return getStrA(col);
         }
 
         @Override
         public int getStrLen(int col) {
-            return getStr(col).length();
+            return TableUtils.lengthOf(getStrA(col));
         }
     }
 

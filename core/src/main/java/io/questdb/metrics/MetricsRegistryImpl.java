@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,14 +25,22 @@
 package io.questdb.metrics;
 
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.BorrowableUtf8Sink;
+import org.jetbrains.annotations.NotNull;
 
 public class MetricsRegistryImpl implements MetricsRegistry {
-    private final ObjList<Scrapable> metrics = new ObjList<>();
+    private final ObjList<Target> metrics = new ObjList<>();
 
     @Override
-    public void addScrapable(Scrapable scrapable) {
-        metrics.add(scrapable);
+    public void addTarget(Target target) {
+        metrics.add(target);
+    }
+
+    @Override
+    public AtomicLongGauge newAtomicLongGauge(CharSequence name) {
+        AtomicLongGauge gauge = new AtomicLongGaugeImpl(name);
+        metrics.add(gauge);
+        return gauge;
     }
 
     @Override
@@ -50,9 +58,11 @@ public class MetricsRegistryImpl implements MetricsRegistry {
     }
 
     @Override
-    public CounterWithTwoLabels newCounter(CharSequence name,
-                                           CharSequence labelName0, CharSequence[] labelValues0,
-                                           CharSequence labelName1, CharSequence[] labelValues1) {
+    public CounterWithTwoLabels newCounter(
+            CharSequence name,
+            CharSequence labelName0, CharSequence[] labelValues0,
+            CharSequence labelName1, CharSequence[] labelValues1
+    ) {
         CounterWithTwoLabels counter = new CounterWithTwoLabelsImpl(name, labelName0, labelValues0, labelName1, labelValues1);
         metrics.add(counter);
         return counter;
@@ -87,9 +97,9 @@ public class MetricsRegistryImpl implements MetricsRegistry {
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         for (int i = 0, n = metrics.size(); i < n; i++) {
-            Scrapable metric = metrics.getQuick(i);
+            Target metric = metrics.getQuick(i);
             metric.scrapeIntoPrometheus(sink);
         }
     }

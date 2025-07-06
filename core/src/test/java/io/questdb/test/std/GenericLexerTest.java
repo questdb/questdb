@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -68,7 +68,7 @@ public class GenericLexerTest {
     }
 
     @Test
-    public void testBlockComments() {
+    public void testBlockComments() throws SqlException {
         GenericLexer lex = new GenericLexer(64);
         lex.defineSymbol("+");
         lex.defineSymbol("++");
@@ -152,7 +152,7 @@ public class GenericLexerTest {
     }
 
     @Test
-    public void testDoubleEscapedQuote() {
+    public void testDoubleEscapedQuote() throws SqlException {
         GenericLexer lex = new GenericLexer(64);
 
         lex.defineSymbol("(");
@@ -201,7 +201,7 @@ public class GenericLexerTest {
     }
 
     @Test
-    public void testEscapeDoubleQuoteWithinQuotedIdentifier() {
+    public void testEscapeDoubleQuoteWithinQuotedIdentifier() throws SqlException {
         GenericLexer lex = new GenericLexer(64);
         lex.defineSymbol("(");
         lex.defineSymbol(";");
@@ -225,7 +225,7 @@ public class GenericLexerTest {
     }
 
     @Test
-    public void testEscapeQuoteWithinStringLiteral() {
+    public void testEscapeQuoteWithinStringLiteral() throws SqlException {
         GenericLexer lex = new GenericLexer(64);
         lex.defineSymbol("(");
         lex.defineSymbol(";");
@@ -339,7 +339,7 @@ public class GenericLexerTest {
         CharSequence tok1 = ts.next();
         GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair) ts.immutablePairOf(tok0, tok1);
         Assert.assertEquals(culprit.length() - 1, pair.length());
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         for (int i = 0; i < pair.length(); i++) {
             sink.put(pair.charAt(i));
         }
@@ -359,7 +359,7 @@ public class GenericLexerTest {
         GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair)
                 lex.immutablePairOf(geohashTok, '/', bitsTok);
         Assert.assertEquals(culprit, pair.toString());
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         for (int i = 0; i < pair.length(); i++) {
             sink.put(pair.charAt(i));
         }
@@ -368,7 +368,7 @@ public class GenericLexerTest {
     }
 
     @Test
-    public void testLineComment() {
+    public void testLineComment() throws SqlException {
         GenericLexer lex = new GenericLexer(64);
         lex.defineSymbol("+");
         lex.defineSymbol("++");
@@ -480,7 +480,7 @@ public class GenericLexerTest {
     }
 
     @Test
-    public void testStashUnstash() {
+    public void testStashUnstash() throws SqlException {
         GenericLexer lexer = new GenericLexer(64);
         lexer.of("orange blue yellow green");
         TestUtils.assertEquals("orange", lexer.next());

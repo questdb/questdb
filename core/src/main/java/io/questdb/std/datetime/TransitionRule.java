@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,15 +28,41 @@ public class TransitionRule {
     public static final int STANDARD = 1;
     public static final int UTC = 0;
     public static final int WALL = 2;
-    public int dom;
-    public int dow;
-    public int hour;
-    public boolean midnightEOD;
-    public int minute;
-    public int month;
-    public int offsetAfter;
-    public int offsetBefore;
-    public int second;
-    public int standardOffset;
-    public int timeDef;
+    public final int dom;
+    public final int dow;
+    public final int hour;
+    public final boolean midnightEOD;
+    public final int minute;
+    public final int month;
+    public final int offsetAfter;
+    public final int offsetBefore;
+    public final int second;
+    public final int standardOffset;
+    public final int timeDef;
+
+    public TransitionRule(
+            int offsetBefore,
+            int offsetAfter,
+            int standardOffset,
+            int dow,
+            int dom,
+            int month,
+            boolean midnightEOD,
+            int hour,
+            int minute,
+            int second,
+            int timeDef
+    ) {
+        this.offsetBefore = offsetBefore;
+        this.offsetAfter = offsetAfter;
+        this.standardOffset = standardOffset;
+        this.dow = dow;
+        this.dom = dom;
+        this.month = month;
+        this.midnightEOD = midnightEOD;
+        this.hour = hour;
+        this.minute = minute;
+        this.second = second;
+        this.timeDef = timeDef;
+    }
 }

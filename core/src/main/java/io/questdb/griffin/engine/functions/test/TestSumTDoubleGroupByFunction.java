@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ import org.jetbrains.annotations.NotNull;
 public class TestSumTDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     // allocate just to test that close() is correctly invoked
-    private final long mem = Unsafe.malloc(1024, MemoryTag.NATIVE_FUNC_RSS);
+    private long mem = Unsafe.malloc(1024, MemoryTag.NATIVE_FUNC_RSS);
     private int valueIndex;
 
     public TestSumTDoubleGroupByFunction(@NotNull Function arg) {
@@ -48,16 +48,16 @@ public class TestSumTDoubleGroupByFunction extends DoubleFunction implements Gro
 
     @Override
     public void close() {
-        Unsafe.free(mem, 1024, MemoryTag.NATIVE_FUNC_RSS);
+        mem = Unsafe.free(mem, 1024, MemoryTag.NATIVE_FUNC_RSS);
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putDouble(valueIndex, arg.getDouble(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex) + arg.getDouble(record));
     }
 
@@ -77,7 +77,22 @@ public class TestSumTDoubleGroupByFunction extends DoubleFunction implements Gro
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+    public int getSampleByFlags() {
+        return GroupByFunction.SAMPLE_BY_FILL_ALL;
+    }
+
+    @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);
     }
@@ -90,5 +105,10 @@ public class TestSumTDoubleGroupByFunction extends DoubleFunction implements Gro
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return false;
     }
 }

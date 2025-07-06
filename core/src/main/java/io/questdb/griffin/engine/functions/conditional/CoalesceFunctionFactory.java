@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,17 +25,37 @@
 package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.*;
-import io.questdb.std.*;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.FloatFunction;
+import io.questdb.griffin.engine.functions.IPv4Function;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.Long256Function;
+import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.UuidFunction;
+import io.questdb.griffin.engine.functions.VarcharFunction;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
+
+import static io.questdb.cairo.ColumnType.*;
 
 public class CoalesceFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "coalesce(V)";
@@ -44,12 +64,12 @@ public class CoalesceFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        if (args.size() < 2) {
+        if (args == null || args.size() < 2) {
             throw SqlException.$(position, "coalesce can be used with 2 or more arguments");
         }
         if (args.size() > 2) {
@@ -62,57 +82,76 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         final int argsSize = args.size();
         int returnType = -1;
         for (int i = 0; i < argsSize; i++) {
-            returnType = CaseCommon.getCommonType(returnType, args.getQuick(i).getType(), argPositions.getQuick(i));
+            returnType = CaseCommon.getCommonType(
+                    returnType,
+                    args.getQuick(i).getType(),
+                    argPositions.getQuick(i),
+                    "coalesce cannot be used with bind variables"
+            );
         }
-        switch (ColumnType.tagOf(returnType)) {
-            case ColumnType.DOUBLE:
+
+        for (int i = 0; i < argsSize; i++) {
+            args.setQuick(i, CaseCommon.getCastFunction(args.getQuick(i), argPositions.getQuick(i), returnType, configuration, sqlExecutionContext));
+        }
+
+        switch (tagOf(returnType)) {
+            case DOUBLE:
                 return argsSize == 2 ? new TwoDoubleCoalesceFunction(args) : new DoubleCoalesceFunction(args, argsSize);
-            case ColumnType.DATE:
+            case DATE:
                 return argsSize == 2 ? new TwoDateCoalesceFunction(args) : new DateCoalesceFunction(args, argsSize);
-            case ColumnType.TIMESTAMP:
+            case TIMESTAMP:
                 return argsSize == 2 ? new TwoTimestampCoalesceFunction(args) : new TimestampCoalesceFunction(args);
-            case ColumnType.LONG:
+            case LONG:
                 return argsSize == 2 ? new TwoLongCoalesceFunction(args) : new LongCoalesceFunction(args, argsSize);
-            case ColumnType.LONG256:
+            case LONG256:
                 return argsSize == 2 ? new TwoLong256CoalesceFunction(args) : new Long256CoalesceFunction(args);
-            case ColumnType.INT:
+            case INT:
                 return argsSize == 2 ? new TwoIntCoalesceFunction(args) : new IntCoalesceFunction(args, argsSize);
-            case ColumnType.FLOAT:
+            case IPv4:
+                return argsSize == 2 ? new TwoIPv4CoalesceFunction(args) : new IPv4CoalesceFunction(args, argsSize);
+            case FLOAT:
                 return argsSize == 2 ? new TwoFloatCoalesceFunction(args) : new FloatCoalesceFunction(args, argsSize);
-            case ColumnType.STRING:
-            case ColumnType.SYMBOL:
+            case STRING:
+            case SYMBOL:
                 if (argsSize == 2) {
-                    int type0 = ColumnType.tagOf(args.getQuick(0).getType());
-                    if (type0 != ColumnType.tagOf(args.getQuick(1).getType())) {
+                    final int type0 = tagOf(args.getQuick(0).getType());
+                    if (type0 != tagOf(args.getQuick(1).getType())) {
                         return new TwoSymStrCoalesceFunction(args);
-                    } else if (type0 == ColumnType.SYMBOL) {
+                    } else if (type0 == SYMBOL) {
                         return new TwoSymCoalesceFunction(args);
                     } else {
                         return new TwoStrCoalesceFunction(args);
                     }
                 }
                 return new SymStrCoalesceFunction(args, argsSize);
-            case ColumnType.UUID:
+            case VARCHAR:
+                return argsSize == 2 ? new TwoVarcharCoalesceFunction(args) : new VarcharCoalesceFunction(args, argsSize);
+            case UUID:
                 return argsSize == 2 ? new TwoUuidCoalesceFunction(args) : new UuidCoalesceFunction(args, argsSize);
-            case ColumnType.BOOLEAN:
-            case ColumnType.SHORT:
-            case ColumnType.BYTE:
-            case ColumnType.CHAR:
+            case BOOLEAN:
+            case SHORT:
+            case BYTE:
+            case CHAR:
                 // Null on these data types not supported
                 return args.getQuick(0);
             default:
                 throw SqlException.$(position, "coalesce cannot be used with ")
-                        .put(ColumnType.nameOf(returnType))
+                        .put(nameOf(returnType))
                         .put(" data type");
         }
     }
 
+    @Override
+    public int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) throws SqlException {
+        throw SqlException.$(sqlPos, "coalesce cannot be used with bind variables");
+    }
+
     private static boolean isNotNull(Long256 value) {
         return value != null &&
-                value != Long256Impl.NULL_LONG256 && (value.getLong0() != Numbers.LONG_NaN ||
-                value.getLong1() != Numbers.LONG_NaN ||
-                value.getLong2() != Numbers.LONG_NaN ||
-                value.getLong3() != Numbers.LONG_NaN);
+                value != Long256Impl.NULL_LONG256 && (value.getLong0() != Numbers.LONG_NULL ||
+                value.getLong1() != Numbers.LONG_NULL ||
+                value.getLong2() != Numbers.LONG_NULL ||
+                value.getLong3() != Numbers.LONG_NULL);
     }
 
     private interface BinaryCoalesceFunction extends BinaryFunction {
@@ -147,11 +186,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public long getDate(Record rec) {
             for (int i = 0; i < size; i++) {
                 long value = args.getQuick(i).getDate(rec);
-                if (value != Numbers.LONG_NaN) {
+                if (value != Numbers.LONG_NULL) {
                     return value;
                 }
             }
-            return Numbers.LONG_NaN;
+            return Numbers.LONG_NULL;
         }
     }
 
@@ -207,6 +246,33 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class IPv4CoalesceFunction extends IPv4Function implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public IPv4CoalesceFunction(ObjList<Function> args, int size) {
+            super();
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public int getIPv4(Record rec) {
+            for (int i = 0; i < size; i++) {
+                int value = args.getQuick(i).getIPv4(rec);
+                if (value != Numbers.IPv4_NULL) {
+                    return value;
+                }
+            }
+            return Numbers.IPv4_NULL;
+        }
+    }
+
     private static class IntCoalesceFunction extends IntFunction implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
         private final int size;
@@ -226,11 +292,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             for (int i = 0; i < size; i++) {
                 int value = args.getQuick(i).getInt(rec);
-                if (value != Numbers.INT_NaN) {
+                if (value != Numbers.INT_NULL) {
                     return value;
                 }
             }
-            return Numbers.INT_NaN;
+            return Numbers.INT_NULL;
         }
     }
 
@@ -249,11 +315,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getLong256(Record rec, CharSink sink) {
+        public void getLong256(Record rec, CharSink<?> sink) {
             for (int i = 0; i < size; i++) {
                 Long256 value = args.getQuick(i).getLong256A(rec);
                 if (isNotNull(value)) {
-                    Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
+                    Numbers.appendLong256(value, sink);
                     return;
                 }
             }
@@ -303,11 +369,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             long value;
             for (int i = 0; i < size; i++) {
                 value = args.getQuick(i).getLong(rec);
-                if (value != Numbers.LONG_NaN) {
+                if (value != Numbers.LONG_NULL) {
                     return value;
                 }
             }
-            return Numbers.LONG_NaN;
+            return Numbers.LONG_NULL;
         }
     }
 
@@ -327,10 +393,10 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             for (int i = 0; i < size; i++) {
                 Function arg = args.getQuick(i);
-                CharSequence value = (ColumnType.isSymbol(arg.getType())) ? arg.getSymbol(rec) : arg.getStr(rec);
+                CharSequence value = (isSymbol(arg.getType())) ? arg.getSymbol(rec) : arg.getStrA(rec);
                 if (value != null) {
                     return value;
                 }
@@ -342,7 +408,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public CharSequence getStrB(Record rec) {
             for (int i = 0; i < size; i++) {
                 Function arg = args.getQuick(i);
-                CharSequence value = (ColumnType.isSymbol(arg.getType())) ? arg.getSymbolB(rec) : arg.getStrB(rec);
+                CharSequence value = (isSymbol(arg.getType())) ? arg.getSymbolB(rec) : arg.getStrB(rec);
                 if (value != null) {
                     return value;
                 }
@@ -369,11 +435,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             for (int i = 0; i < size; i++) {
                 long value = args.getQuick(i).getTimestamp(rec);
-                if (value != Numbers.LONG_NaN) {
+                if (value != Numbers.LONG_NULL) {
                     return value;
                 }
             }
-            return Numbers.LONG_NaN;
+            return Numbers.LONG_NULL;
         }
     }
 
@@ -390,7 +456,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public long getDate(Record rec) {
             long value = args0.getDate(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return value;
             }
             return args1.getDate(rec);
@@ -467,6 +533,36 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class TwoIPv4CoalesceFunction extends IPv4Function implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoIPv4CoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public int getIPv4(Record rec) {
+            int value = args0.getIPv4(rec);
+            if (value != Numbers.IPv4_NULL) {
+                return value;
+            }
+            return args1.getIPv4(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
+
     private static class TwoIntCoalesceFunction extends IntFunction implements BinaryCoalesceFunction {
         private final Function args0;
         private final Function args1;
@@ -480,7 +576,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             int value = args0.getInt(rec);
-            if (value != Numbers.INT_NaN) {
+            if (value != Numbers.INT_NULL) {
                 return value;
             }
             return args1.getInt(rec);
@@ -513,12 +609,12 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getLong256(Record rec, CharSink sink) {
+        public void getLong256(Record rec, CharSink<?> sink) {
             Long256 value = args0.getLong256A(rec);
             if (!isNotNull(value)) {
                 value = args1.getLong256A(rec);
             }
-            Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
+            Numbers.appendLong256(value, sink);
         }
 
         @Override
@@ -563,7 +659,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             long value = args0.getLong(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return value;
             }
             return args1.getLong(rec);
@@ -596,12 +692,12 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            CharSequence value = args0.getStr(rec);
+        public CharSequence getStrA(Record rec) {
+            CharSequence value = args0.getStrA(rec);
             if (value != null) {
                 return value;
             }
-            return args1.getStr(rec);
+            return args1.getStrA(rec);
         }
 
         @Override
@@ -635,7 +731,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             CharSequence value = args0.getSymbol(rec);
             if (value != null) {
                 return value;
@@ -663,8 +759,8 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             assert args.size() == 2;
             this.args0 = args.getQuick(0);
             this.args1 = args.getQuick(1);
-            this.args0IsSymbol = ColumnType.isSymbol(args0.getType());
-            this.arg1IsSymbol = ColumnType.isSymbol(args1.getType());
+            this.args0IsSymbol = isSymbol(args0.getType());
+            this.arg1IsSymbol = isSymbol(args1.getType());
         }
 
         @Override
@@ -678,12 +774,12 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            CharSequence value = args0IsSymbol ? args0.getSymbol(rec) : args0.getStr(rec);
+        public CharSequence getStrA(Record rec) {
+            CharSequence value = args0IsSymbol ? args0.getSymbol(rec) : args0.getStrA(rec);
             if (value != null) {
                 return value;
             }
-            return arg1IsSymbol ? args1.getSymbol(rec) : args1.getStr(rec);
+            return arg1IsSymbol ? args1.getSymbol(rec) : args1.getStrA(rec);
         }
 
         @Override
@@ -719,7 +815,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             long value = args0.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return value;
             }
             return args1.getTimestamp(rec);
@@ -744,11 +840,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public long getLong128Hi(Record rec) {
             long hi0 = args0.getLong128Hi(rec);
-            if (hi0 != Numbers.LONG_NaN) {
+            if (hi0 != Numbers.LONG_NULL) {
                 return hi0; // if hi is not NaN then we know Long128 is not null
             }
             long lo0 = args0.getLong128Lo(rec);
-            if (lo0 != Numbers.LONG_NaN) {
+            if (lo0 != Numbers.LONG_NULL) {
                 return hi0; // if lo is not NaN then we know Long128 is not null and we can return hi0 even if it is NaN
             }
             // ok, both hi and lo are NaN, we use the value from the second argument
@@ -758,11 +854,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public long getLong128Lo(Record rec) {
             long lo0 = args0.getLong128Lo(rec);
-            if (lo0 != Numbers.LONG_NaN) {
+            if (lo0 != Numbers.LONG_NULL) {
                 return lo0; // lo is not NaN -> Long128 is not null, that's easy
             }
             long hi0 = args0.getLong128Hi(rec);
-            if (hi0 != Numbers.LONG_NaN) {
+            if (hi0 != Numbers.LONG_NULL) {
                 return lo0; // hi is not NaN  -> Long128 is not null -> we can return lo even if it is NaN
             }
             // ok, both hi and lo are NaN, we use the value from the second argument
@@ -772,6 +868,45 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return args1;
+        }
+    }
+
+    private static class TwoVarcharCoalesceFunction extends VarcharFunction implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoVarcharCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            Utf8Sequence value = args0.getVarcharA(rec);
+            if (value != null) {
+                return value;
+            }
+            return args1.getVarcharA(rec);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            Utf8Sequence value = args0.getVarcharB(rec);
+            if (value != null) {
+                return value;
+            }
+            return args1.getVarcharB(rec);
         }
     }
 
@@ -791,14 +926,14 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong128Hi(Record rec) {
-            long value = Numbers.LONG_NaN;
+            long value = Numbers.LONG_NULL;
             for (int i = 0; i < size; i++) {
                 value = args.getQuick(i).getLong128Hi(rec);
-                if (value != Numbers.LONG_NaN) {
+                if (value != Numbers.LONG_NULL) {
                     return value;
                 }
                 long lo = args.getQuick(i).getLong128Lo(rec);
-                if (lo != Numbers.LONG_NaN) {
+                if (lo != Numbers.LONG_NULL) {
                     return value;
                 }
             }
@@ -807,18 +942,57 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong128Lo(Record rec) {
-            long value = Numbers.LONG_NaN;
+            long value = Numbers.LONG_NULL;
             for (int i = 0; i < size; i++) {
                 value = args.getQuick(i).getLong128Lo(rec);
-                if (value != Numbers.LONG_NaN) {
+                if (value != Numbers.LONG_NULL) {
                     return value;
                 }
                 long hi = args.getQuick(i).getLong128Hi(rec);
-                if (hi != Numbers.LONG_NaN) {
+                if (hi != Numbers.LONG_NULL) {
                     return value;
                 }
             }
             return value;
+        }
+    }
+
+    private static class VarcharCoalesceFunction extends VarcharFunction implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public VarcharCoalesceFunction(ObjList<Function> args, int size) {
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            for (int i = 0; i < size; i++) {
+                Function arg = args.getQuick(i);
+                Utf8Sequence value = arg.getVarcharA(rec);
+                if (value != null) {
+                    return value;
+                }
+            }
+            return null;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            for (int i = 0; i < size; i++) {
+                Function arg = args.getQuick(i);
+                Utf8Sequence value = arg.getVarcharB(rec);
+                if (value != null) {
+                    return value;
+                }
+            }
+            return null;
         }
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class ExtractFunctionTest extends AbstractGriffinTest {
+public class ExtractFunctionTest extends AbstractCairoTest {
 
     @Test
     public void test1997Millennium() throws Exception {
@@ -92,7 +92,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
     public void testCenturyNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(century from null)",
                 null,
                 null,
@@ -103,11 +103,19 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testComma() throws Exception {
-        assertFailure(
+        assertException(
                 "select extract(hour, '2022-03-11T22:00:30.555555Z'::timestamp)",
-                null,
                 15,
                 "Invalid column: hour"
+        );
+    }
+
+    @Test
+    public void testDanglingArg() throws Exception {
+        assertException(
+                "select extract(hour from to_timestamp('2022-03-11T22:00:30.555555Z') table)",
+                69,
+                "dangling literal"
         );
     }
 
@@ -115,7 +123,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
     public void testDayNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(day from null)",
                 null,
                 null,
@@ -128,7 +136,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
     public void testDecadeNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(decade from null)",
                 null,
                 null,
@@ -141,7 +149,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
     public void testDowNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(dow from null)",
                 null,
                 null,
@@ -154,7 +162,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
     public void testDoyNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(doy from null)",
                 null,
                 null,
@@ -193,7 +201,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
     public void testEpochNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(epoch from null)",
                 null,
                 null,
@@ -219,7 +227,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
     public void testHourNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(hour from null)",
                 null,
                 null,
@@ -232,7 +240,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
     public void testIsoDowNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(isodow from null)",
                 null,
                 null,
@@ -245,7 +253,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
     public void testIsoYearNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(isoyear from null)",
                 null,
                 null,
@@ -297,7 +305,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
     public void testMicrosecondsNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(microseconds from null)",
                 null,
                 null,
@@ -310,7 +318,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
     public void testMillenniumNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(millennium from null)",
                 null,
                 null,
@@ -336,7 +344,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
     public void testMillisecondsNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(milliseconds from null)",
                 null,
                 null,
@@ -362,7 +370,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
     public void testMinuteNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(minute from null)",
                 null,
                 null,
@@ -373,11 +381,10 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testMissingPart() throws Exception {
-        assertFailure(
+        assertException(
                 "select extract(from to_timestamp('2022-03-11T22:00:30.555555Z'))",
-                null,
-                14,
-                "unbalanced ("
+                15,
+                "Huh? What would you like to extract?"
         );
     }
 
@@ -385,7 +392,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
     public void testMonthNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(month from null)",
                 null,
                 null,
@@ -396,19 +403,17 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testMultipleFrom() throws Exception {
-        assertFailure(
+        assertException(
                 "select extract(hour from from to_timestamp('2022-03-11T22:00:30.555555Z'))",
-                null,
-                14,
-                "unbalanced ("
+                25,
+                "Unnecessary `from`. Typo?"
         );
     }
 
     @Test
     public void testNonLiteralPart() throws Exception {
-        assertFailure(
+        assertException(
                 "select extract(1+1 from '2022-03-11T22:00:30.555555Z'::timestamp)",
-                null,
                 17,
                 "we expect timestamp part here"
         );
@@ -416,19 +421,17 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testNotExtractFrom() throws Exception {
-        assertFailure(
+        assertException(
                 "select something(null from '2022-03-11T22:00:30.555555Z'::timestamp)",
-                null,
-                16,
-                "unbalanced ("
+                22,
+                "dangling literal"
         );
     }
 
     @Test
     public void testNullFrom() throws Exception {
-        assertFailure(
+        assertException(
                 "select extract(null from '2022-03-11T22:00:30.555555Z'::timestamp)",
-                null,
                 15,
                 "unsupported timestamp part: null"
         );
@@ -490,7 +493,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
     public void testQuarterNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(quarter from null)",
                 null,
                 null,
@@ -503,7 +506,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
     public void testSecondNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(second from null)",
                 null,
                 null,
@@ -540,9 +543,8 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testUnsupported() throws Exception {
-        assertFailure(
+        assertException(
                 "select extract(timezone from '2022-12-30T22:00:30.555555Z'::timestamp)",
-                null,
                 15,
                 "unsupported timestamp part: timezone"
         );
@@ -864,7 +866,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
     public void testWeekNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(week from null)",
                 null,
                 null,
@@ -877,7 +879,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
     public void testYearNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(year from null)",
                 null,
                 null,

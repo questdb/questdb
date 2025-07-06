@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,42 +24,27 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.test.AbstractGriffinTest;
-import io.questdb.griffin.SqlException;
-import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-import static org.junit.Assert.assertEquals;
-
-public class DateTruncFunctionFactoryTest extends AbstractGriffinTest {
+public class DateTruncFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testInvalidKind() {
-        try {
-            compiler.compile(
-                    "select DATE_TRUNC('invalid', TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated",
-                    sqlExecutionContext
-            );
-            Assert.fail();
-        } catch (SqlException e) {
-            assertEquals(18, e.getPosition());
-            TestUtils.assertContains("invalid unit 'invalid'", e.getFlyweightMessage());
-        }
+    public void testInvalidKind() throws Exception {
+        assertException(
+                "select DATE_TRUNC('invalid', TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated",
+                18,
+                "invalid unit 'invalid'"
+        );
     }
 
     @Test
-    public void testNullKind() {
-        try {
-            compiler.compile(
-                    "select DATE_TRUNC(null,    TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated",
-                    sqlExecutionContext
-            );
-            Assert.fail();
-        } catch (SqlException e) {
-            assertEquals(18, e.getPosition());
-            TestUtils.assertContains("invalid unit 'null'", e.getFlyweightMessage());
-        }
+    public void testNullKind() throws Exception {
+        assertException(
+                "select DATE_TRUNC(null,    TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated",
+                18,
+                "invalid unit 'null'"
+        );
     }
 
     @Test
@@ -128,13 +113,9 @@ public class DateTruncFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     private void assertTimestamp(String sql, String expected) throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                sql,
-                sink,
+        assertMemoryLeak(() -> assertSql(
                 "truncated\n" +
-                        expected + "\n"
+                        expected + "\n", sql
         ));
     }
 

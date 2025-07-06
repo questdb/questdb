@@ -1,0 +1,32 @@
+statement error
+select corr()
+----
+db error: ERROR: function `corr` requires arguments: corr(DOUBLE, DOUBLE)
+
+
+query I
+select corr(NULL,NULL)
+----
+NULL
+
+query I
+select corr(1,1)
+----
+NULL
+
+statement ok
+create  table aggr(k int, v double, v2 double);
+
+statement ok
+insert into aggr values(1, 10, null),(2, 10, 11), (2, 20, 22), (2, 25, null), (2, 30, 35);
+
+query II
+select k, corr(v, v2) from aggr order by k
+----
+1	NULL
+2	0.998845
+
+query I
+select corr(v, v2) from aggr
+----
+0.998845

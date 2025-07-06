@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -53,12 +53,12 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
-            return SymbolConstant.newInstance(arg.getStr(null));
+            return SymbolConstant.newInstance(arg.getStrA(null));
         }
         return new Func(arg);
     }
 
-    private static class Func extends SymbolFunction implements UnaryFunction {
+    public static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
         private final CharSequenceIntHashMap lookupMap = new CharSequenceIntHashMap();
         private final ObjList<CharSequence> symbols = new ObjList<>();
@@ -76,7 +76,7 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             final int keyIndex;
             if (value == null) {
                 return SymbolTable.VALUE_IS_NULL;
@@ -92,7 +92,7 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getSymbol(Record rec) {
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             return getSymbol(value);
         }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,12 +29,13 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-public enum PropertyKey implements ConfigProperty {
+public enum PropertyKey implements ConfigPropertyKey {
     BINARYDATA_ENCODING_MAXLENGTH("binarydata.encoding.maxlength"),
     CAIRO_ROOT("cairo.root"),
     CAIRO_VOLUMES("cairo.volumes"),
-    CAIRO_SNAPSHOT_INSTANCE_ID("cairo.snapshot.instance.id"),
-    CAIRO_SNAPSHOT_RECOVERY_ENABLED("cairo.snapshot.recovery.enabled"),
+    CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID("cairo.snapshot.instance.id"),
+    CAIRO_LEGACY_SNAPSHOT_RECOVERY_ENABLED("cairo.snapshot.recovery.enabled"),
+    CAIRO_CHECKPOINT_RECOVERY_ENABLED("cairo.checkpoint.recovery.enabled"),
     CAIRO_MKDIR_MODE("cairo.mkdir.mode"),
     CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT("cairo.writer.alter.busy.wait.timeout"),
     CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT("cairo.writer.alter.max.wait.timeout"),
@@ -48,6 +49,7 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_DEFAULT_SYMBOL_CACHE_FLAG("cairo.default.symbol.cache.flag"),
     CAIRO_DEFAULT_SYMBOL_CAPACITY("cairo.default.symbol.capacity"),
     CAIRO_FILE_OPERATION_RETRY_COUNT("cairo.file.operation.retry.count"),
+    CAIRO_ID_GENERATE_STEP("cairo.id.generator.batch.step"),
     CAIRO_IDLE_CHECK_INTERVAL("cairo.idle.check.interval"),
     CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS("cairo.inactive.reader.max.open.partitions"),
     CAIRO_INACTIVE_READER_TTL("cairo.inactive.reader.ttl"),
@@ -71,6 +73,7 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_SQL_MAP_PAGE_SIZE("cairo.sql.map.page.size"),
     CAIRO_SQL_MAP_MAX_PAGES("cairo.sql.map.max.pages"),
     CAIRO_SQL_MAP_MAX_RESIZES("cairo.sql.map.max.resizes"),
+    CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE("cairo.sql.unordered.map.max.entry.size"),
     CAIRO_MODEL_POOL_CAPACITY("cairo.model.pool.capacity"),
     CAIRO_SQL_MAX_NEGATIVE_LIMIT("cairo.sql.max.negative.limit"),
     CAIRO_SQL_SORT_KEY_PAGE_SIZE("cairo.sql.sort.key.page.size"),
@@ -82,6 +85,10 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_SQL_LATEST_BY_ROW_COUNT("cairo.sql.latest.by.row.count"),
     CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE("cairo.sql.hash.join.light.value.page.size"),
     CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_MAX_PAGES("cairo.sql.hash.join.light.value.max.pages"),
+    CAIRO_SQL_ASOF_JOIN_LOOKAHEAD("cairo.sql.asof.join.lookahead"),
+    CAIRO_SQL_ASOF_JOIN_FAST("cairo.sql.asof.join.fast"),
+    CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY("cairo.sql.asof.join.short.circuit.cache.capacity"),
+    CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD("cairo.sql.asof.join.evacuation.threshold"),
     CAIRO_SQL_SORT_VALUE_PAGE_SIZE("cairo.sql.sort.value.page.size"),
     CAIRO_SQL_SORT_VALUE_MAX_PAGES("cairo.sql.sort.value.max.pages"),
     CAIRO_WORK_STEAL_TIMEOUT_NANOS("cairo.work.steal.timeout.nanos"),
@@ -91,28 +98,53 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY("cairo.page.frame.column.list.capacity"),
     CAIRO_SQL_PARALLEL_FILTER_ENABLED("cairo.sql.parallel.filter.enabled"),
     CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED("cairo.sql.parallel.filter.pretouch.enabled"),
+    CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD("cairo.sql.parallel.filter.pretouch.threshold"),
+    CAIRO_SQL_PARALLEL_GROUPBY_ENABLED("cairo.sql.parallel.groupby.enabled"),
+    CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY("cairo.sql.parallel.groupby.merge.shard.queue.capacity"),
+    CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD("cairo.sql.parallel.groupby.sharding.threshold"),
+    CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED("cairo.sql.parallel.groupby.presize.enabled"),
+    CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_CAPACITY("cairo.sql.parallel.groupby.presize.max.capacity"),
+    CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_HEAP_SIZE("cairo.sql.parallel.groupby.presize.max.heap.size"),
+    CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD("cairo.sql.parallel.work.stealing.threshold"),
+    CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED("cairo.sql.parallel.read.parquet.enabled"),
+    CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY("cairo.sql.parquet.frame.cache.capacity"),
     CAIRO_PAGE_FRAME_SHARD_COUNT("cairo.page.frame.shard.count"),
     CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY("cairo.page.frame.task.pool.capacity"),
     CAIRO_SQL_JOIN_METADATA_PAGE_SIZE("cairo.sql.join.metadata.page.size"),
     CAIRO_SQL_JOIN_METADATA_MAX_RESIZES("cairo.sql.join.metadata.max.resizes"),
+    CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE("cairo.sql.analytic.initial.range.buffer.size"),
+    CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE("cairo.sql.window.initial.range.buffer.size"),
     CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY("cairo.sql.analytic.column.pool.capacity"),
-    CAIRO_SQL_CREATE_TABEL_MODEL_POOL_CAPACITY("cairo.sql.create.table.model.pool.capacity"),
+    CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY("cairo.sql.window.column.pool.capacity"),
+    CAIRO_SQL_CREATE_TABLE_MODEL_BATCH_SIZE("cairo.sql.create.table.model.batch.size"),
     CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY("cairo.sql.column.cast.model.pool.capacity"),
+    CAIRO_SQL_CREATE_TABLE_COLUMN_MODEL_POOL_CAPACITY("cairo.create.table.column.model.pool.capacity"),
     CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY("cairo.sql.rename.table.model.pool.capacity"),
     CAIRO_SQL_WITH_CLAUSE_MODEL_POOL_CAPACITY("cairo.sql.with.clause.model.pool.capacity"),
+    CAIRO_SQL_ORDER_BY_SORT_ENABLED("cairo.sql.orderby.sort.enabled"),
+    CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD("cairo.sql.orderby.radix.sort.threshold"),
     CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY("cairo.sql.insert.model.pool.capacity"),
+    CAIRO_SQL_INSERT_MODEL_BATCH_SIZE("cairo.sql.insert.model.batch.size"),
     CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE("cairo.writer.data.index.key.append.page.size"),
     CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE("cairo.writer.data.index.value.append.page.size"),
     CAIRO_WRITER_DATA_APPEND_PAGE_SIZE("cairo.writer.data.append.page.size"),
+    CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE("cairo.system.writer.data.append.page.size"),
     CAIRO_WRITER_MISC_APPEND_PAGE_SIZE("cairo.writer.misc.append.page.size"),
     CAIRO_WRITER_COMMAND_QUEUE_SLOT_SIZE("cairo.writer.command.queue.slot.size"),
     CAIRO_SQL_SAMPLEBY_PAGE_SIZE("cairo.sql.sampleby.page.size"),
+    CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR("cairo.sql.sampleby.default.alignment.calendar"),
+    CAIRO_SQL_SAMPLEBY_VALIDATE_FILL_TYPE("cairo.sql.unsupported.sampleby.validate.fill.type"),
     CAIRO_SQL_DOUBLE_CAST_SCALE("cairo.sql.double.cast.scale"),
     CAIRO_SQL_FLOAT_CAST_SCALE("cairo.sql.float.cast.scale"),
     CAIRO_SQL_GROUPBY_MAP_CAPACITY("cairo.sql.groupby.map.capacity"),
     CAIRO_SQL_GROUPBY_POOL_CAPACITY("cairo.sql.groupby.pool.capacity"),
+    CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE("cairo.sql.groupby.allocator.default.chunk.size"),
+    CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE("cairo.sql.groupby.allocator.max.chunk.size"),
     CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT("cairo.sql.max.symbol.not.equals.count"),
     CAIRO_SQL_BIND_VARIABLE_POOL_SIZE("cairo.sql.bind.variable.pool.size"),
+    CAIRO_SQL_QUERY_REGISTRY_POOL_SIZE("cairo.sql.query.registry.pool.size"),
+    CAIRO_SQL_COUNT_DISTINCT_CAPACITY("cairo.sql.count.distinct.capacity"),
+    CAIRO_SQL_COUNT_DISTINCT_LOAD_FACTOR("cairo.sql.count.distinct.load.factor"),
     CAIRO_DATE_LOCALE("cairo.date.locale"),
     CAIRO_SQL_DISTINCT_TIMESTAMP_KEY_CAPACITY("cairo.sql.distinct.timestamp.key.capacity"),
     CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR("cairo.sql.distinct.timestamp.load.factor"),
@@ -134,11 +166,22 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_SQL_COPY_MAX_INDEX_CHUNK_SIZE("cairo.sql.copy.max.index.chunk.size"),
     CAIRO_SQL_COPY_QUEUE_CAPACITY("cairo.sql.copy.queue.capacity"),
     CAIRO_SQL_COPY_LOG_RETENTION_DAYS("cairo.sql.copy.log.retention.days"),
+    CAIRO_SQL_COPY_ID_SUPPLIER("cairo.sql.copy.id.supplier"),
     CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY("cairo.sql.explain.model.pool.capacity"),
     CAIRO_O3_MIN_LAG("cairo.o3.min.lag"),
     CAIRO_SQL_BACKUP_ROOT("cairo.sql.backup.root"),
+    CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS("cairo.sql.max.recompile.attempts"),
+    CAIRO_MAT_VIEW_ENABLED("cairo.mat.view.enabled"),
+    CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL("cairo.mat.view.min.refresh.interval"),
+    CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES("cairo.mat.view.max.refresh.retries"),
+    CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT("cairo.mat.view.refresh.oom.retry.timeout"),
+    CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE("cairo.mat.view.insert.as.select.batch.size"),
+    CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE("cairo.mat.view.rows.per.query.estimate"),
+    CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED("cairo.mat.view.parallel.sql.enabled"),
     CAIRO_ATTACH_PARTITION_SUFFIX("cairo.attach.partition.suffix"),
     CAIRO_ATTACH_PARTITION_COPY("cairo.attach.partition.copy"),
+    CAIRO_COMMIT_LATENCY("cairo.commit.latency"),
+    CAIRO_DETACHED_MKDIR_MODE("cairo.detached.mkdir.mode"),
     CAIRO_SQL_BACKUP_DIR_TMP_NAME("cairo.sql.backup.dir.tmp.name"),
     CAIRO_SQL_BACKUP_MKDIR_MODE("cairo.sql.backup.mkdir.mode"),
     CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY("cairo.column.indexer.queue.capacity"),
@@ -151,6 +194,7 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_O3_UPD_PARTITION_SIZE_QUEUE_CAPACITY("cairo.o3.upd.partition.size.queue.capacity"),
     CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY("cairo.o3.purge.discovery.queue.capacity"),
     CAIRO_O3_COLUMN_MEMORY_SIZE("cairo.o3.column.memory.size"),
+    CAIRO_SYSTEM_O3_COLUMN_MEMORY_SIZE("cairo.system.o3.column.memory.size"),
     CAIRO_MAX_UNCOMMITTED_ROWS("cairo.max.uncommitted.rows"),
     CAIRO_COMMIT_LAG("cairo.commit.lag"),
     CAIRO_O3_MAX_LAG("cairo.o3.max.lag"),
@@ -160,24 +204,37 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_REPLACE_BUFFER_MAX_SIZE("cairo.replace.buffer.max.size"),
     CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE("cairo.sql.string.function.buffer.max.size"),
     CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE("cairo.sql.analytic.store.page.size"),
+    CAIRO_SQL_WINDOW_MAX_RECURSION("cairo.sql.window.max.recursion"),
+    CAIRO_SQL_WINDOW_STORE_PAGE_SIZE("cairo.sql.window.store.page.size"),
     CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES("cairo.sql.analytic.store.max.pages"),
+    CAIRO_SQL_WINDOW_STORE_MAX_PAGES("cairo.sql.window.store.max.pages"),
     CAIRO_SQL_ANALYTIC_ROWID_PAGE_SIZE("cairo.sql.analytic.rowid.page.size"),
+    CAIRO_SQL_WINDOW_ROWID_PAGE_SIZE("cairo.sql.window.rowid.page.size"),
     CAIRO_SQL_ANALYTIC_ROWID_MAX_PAGES("cairo.sql.analytic.rowid.max.pages"),
+    CAIRO_SQL_WINDOW_ROWID_MAX_PAGES("cairo.sql.window.rowid.max.pages"),
     CAIRO_SQL_ANALYTIC_TREE_PAGE_SIZE("cairo.sql.analytic.tree.page.size"),
+    CAIRO_SQL_WINDOW_TREE_PAGE_SIZE("cairo.sql.window.tree.page.size"),
     CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES("cairo.sql.analytic.tree.max.pages"),
+    CAIRO_SQL_WINDOW_TREE_MAX_PAGES("cairo.sql.window.tree.max.pages"),
+    CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE("cairo.sql.legacy.operator.precedence"),
     CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT("cairo.o3.txn.scoreboard.entry.count"),
-    CAIRO_LATESTBY_QUEUE_CAPACITY("cairo.latestby.queue.capacity"),
+    CAIRO_LATEST_ON_QUEUE_CAPACITY("cairo.latestby.queue.capacity"),
     CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY("cairo.o3.partition.purge.list.initial.capacity"),
     CAIRO_O3_ENABLED("cairo.o3.enabled"),
     CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY("cairo.query.cache.event.queue.capacity"),
     CAIRO_IO_URING_ENABLED("cairo.iouring.enabled"),
     CAIRO_MAX_CRASH_FILES("cairo.max.crash.files"),
+    CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT("cairo.legacy.string.column.type.default"),
     CIRCUIT_BREAKER_THROTTLE("circuit.breaker.throttle"),
     CIRCUIT_BREAKER_BUFFER_SIZE("circuit.breaker.buffer.size"),
     CONFIG_VALIDATION_STRICT("config.validation.strict"),
+    CONFIG_RELOAD_ENABLED("config.reload.enabled"),
     HTTP_MIN_ENABLED("http.min.enabled"),
+    HTTP_USER("http.user"),
+    HTTP_PASSWORD("http.password", true),
     HTTP_MIN_WORKER_AFFINITY("http.min.worker.affinity"),
     HTTP_MIN_WORKER_YIELD_THRESHOLD("http.min.worker.yield.threshold"),
+    HTTP_MIN_WORKER_NAP_THRESHOLD("http.min.worker.nap.threshold"),
     HTTP_MIN_WORKER_SLEEP_THRESHOLD("http.min.worker.sleep.threshold"),
     HTTP_MIN_WORKER_SLEEP_TIMEOUT("http.min.worker.sleep.timeout"),
     HTTP_MIN_BIND_TO("http.min.bind.to"),
@@ -187,27 +244,26 @@ public enum PropertyKey implements ConfigProperty {
     HTTP_MIN_NET_CONNECTION_TIMEOUT("http.min.net.connection.timeout"),
     HTTP_MIN_NET_QUEUED_CONNECTION_TIMEOUT("http.min.net.queued.connection.timeout"),
     HTTP_MIN_NET_CONNECTION_QUEUE_TIMEOUT("http.min.net.connection.queue.timeout"),
-    HTTP_MIN_NET_SND_BUF_SIZE("http.min.net.snd.buf.size"),
+    HTTP_MIN_NET_SND_BUF_SIZE("http.min.net.snd.buf.size"), // deprecated
     HTTP_MIN_NET_CONNECTION_SNDBUF("http.min.net.connection.sndbuf"),
-    HTTP_NET_RCV_BUF_SIZE("http.net.rcv.buf.size"),
+    HTTP_NET_RCV_BUF_SIZE("http.net.rcv.buf.size"), // deprecated
     HTTP_MIN_NET_CONNECTION_RCVBUF("http.min.net.connection.rcvbuf"),
     HTTP_MIN_NET_CONNECTION_HINT("http.min.net.connection.hint"),
     HTTP_ENABLED("http.enabled"),
     HTTP_MULTIPART_HEADER_BUFFER_SIZE("http.multipart.header.buffer.size"),
     HTTP_MULTIPART_IDLE_SPIN_COUNT("http.multipart.idle.spin.count"),
-    HTTP_RECEIVE_BUFFER_SIZE("http.receive.buffer.size"),
     HTTP_REQUEST_HEADER_BUFFER_SIZE("http.request.header.buffer.size"),
     HTTP_WORKER_AFFINITY("http.worker.affinity"),
     HTTP_WORKER_HALT_ON_ERROR("http.worker.haltOnError"),
     HTTP_WORKER_YIELD_THRESHOLD("http.worker.yield.threshold"),
+    HTTP_WORKER_NAP_THRESHOLD("http.worker.nap.threshold"),
     HTTP_WORKER_SLEEP_THRESHOLD("http.worker.sleep.threshold"),
     HTTP_WORKER_SLEEP_TIMEOUT("http.worker.sleep.timeout"),
-    HTTP_SEND_BUFFER_SIZE("http.send.buffer.size"),
     HTTP_STATIC_INDEX_FILE_NAME("http.static.index.file.name"),
-    HTTP_STATIC_AUTHENTICATION_REQUIRED("http.static.authentication.required"),
     HTTP_FROZEN_CLOCK("http.frozen.clock"),
     HTTP_ALLOW_DEFLATE_BEFORE_SEND("http.allow.deflate.before.send"),
     HTTP_SERVER_KEEP_ALIVE("http.server.keep.alive"),
+    HTTP_SERVER_COOKIES_ENABLED("http.server.cookies.enabled"),
     HTTP_VERSION("http.version"),
     HTTP_STATIC_PUBLIC_DIRECTORY("http.static.public.directory"),
     HTTP_NET_CONNECTION_HINT("http.net.connection.hint"),
@@ -215,9 +271,12 @@ public enum PropertyKey implements ConfigProperty {
     HTTP_NET_CONNECTION_TIMEOUT("http.net.connection.timeout"),
     HTTP_NET_QUEUED_CONNECTION_TIMEOUT("http.net.queued.connection.timeout"),
     HTTP_NET_CONNECTION_QUEUE_TIMEOUT("http.net.connection.queue.timeout"),
-    HTTP_NET_SND_BUF_SIZE("http.net.snd.buf.size"),
+    HTTP_NET_SND_BUF_SIZE("http.net.snd.buf.size"), // deprecated
     HTTP_NET_CONNECTION_SNDBUF("http.net.connection.sndbuf"),
     HTTP_NET_CONNECTION_RCVBUF("http.net.connection.rcvbuf"),
+    HTTP_RECEIVE_BUFFER_SIZE("http.receive.buffer.size"), // deprecated
+    HTTP_RECV_BUFFER_SIZE("http.recv.buffer.size"),
+    HTTP_SEND_BUFFER_SIZE("http.send.buffer.size"),
     HTTP_TEXT_JSON_CACHE_LIMIT("http.text.json.cache.limit"),
     HTTP_TEXT_JSON_CACHE_SIZE("http.text.json.cache.size"),
     HTTP_TEXT_MAX_REQUIRED_DELIMITER_STDDEV("http.text.max.required.delimiter.stddev"),
@@ -228,6 +287,7 @@ public enum PropertyKey implements ConfigProperty {
     HTTP_PESSIMISTIC_HEALTH_CHECK("http.pessimistic.health.check.enabled"),
     HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED("http.health.check.authentication.required"),
     HTTP_SECURITY_READONLY("http.security.readonly"),
+    HTTP_SETTINGS_READONLY("http.settings.readonly"),
     HTTP_SECURITY_MAX_RESPONSE_ROWS("http.security.max.response.rows"),
     HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION("http.security.interrupt.on.closed.connection"),
     HTTP_BIND_TO("http.bind.to"),
@@ -236,6 +296,7 @@ public enum PropertyKey implements ConfigProperty {
     HTTP_BUSY_RETRY_INITIAL_WAIT_QUEUE_SIZE("http.busy.retry.initialWaitQueueSize"),
     HTTP_BUSY_RETRY_MAX_PROCESSING_QUEUE_SIZE("http.busy.retry.maxProcessingQueueSize"),
     HTTP_MIN_WORKER_COUNT("http.min.worker.count"),
+    HTTP_MIN_WORKER_POOL_PRIORITY("http.min.worker.priority"),
     HTTP_MIN_NET_CONNECTION_LIMIT("http.min.net.connection.limit"),
     HTTP_NET_BIND_TO("http.net.bind.to"),
     HTTP_CONNECTION_POOL_INITIAL_CAPACITY("http.connection.pool.initial.capacity"),
@@ -250,6 +311,7 @@ public enum PropertyKey implements ConfigProperty {
     HTTP_TEXT_ANALYSIS_MAX_LINES("http.text.analysis.max.lines"),
     HTTP_TEXT_LEXER_STRING_POOL_CAPACITY("http.text.lexer.string.pool.capacity"),
     HTTP_TEXT_TIMESTAMP_ADAPTER_POOL_CAPACITY("http.text.timestamp.adapter.pool.capacity"),
+    HTTP_JSON_QUERY_CONNECTION_LIMIT("http.json.query.connection.limit"),
     HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY("http.json.query.connection.check.frequency"),
     HTTP_JSON_QUERY_FLOAT_SCALE("http.json.query.float.scale"),
     HTTP_JSON_QUERY_DOUBLE_SCALE("http.json.query.double.scale"),
@@ -257,6 +319,7 @@ public enum PropertyKey implements ConfigProperty {
     HTTP_QUERY_CACHE_ENABLED("http.query.cache.enabled"),
     HTTP_QUERY_CACHE_BLOCK_COUNT("http.query.cache.block.count"),
     HTTP_QUERY_CACHE_ROW_COUNT("http.query.cache.row.count"),
+    HTTP_ILP_CONNECTION_LIMIT("http.ilp.connection.limit"),
     LINE_UDP_BIND_TO("line.udp.bind.to"),
     LINE_UDP_HALT_ON_ERROR("line.udp.haltOnError"),
     LINE_UDP_JOIN("line.udp.join"),
@@ -271,6 +334,9 @@ public enum PropertyKey implements ConfigProperty {
     LINE_UDP_COMMIT_MODE("line.udp.commit.mode"),
     LINE_UDP_TIMESTAMP("line.udp.timestamp"),
     LINE_TCP_ENABLED("line.tcp.enabled"),
+    LINE_HTTP_ENABLED("line.http.enabled"),
+    LINE_HTTP_MAX_RECV_BUFFER_SIZE("line.http.max.recv.buffer.size"),
+    LINE_HTTP_PING_VERSION("line.http.ping.version"),
     LINE_TCP_NET_ACTIVE_CONNECTION_LIMIT("line.tcp.net.active.connection.limit"),
     LINE_TCP_NET_CONNECTION_LIMIT("line.tcp.net.connection.limit"),
     LINE_TCP_NET_CONNECTION_HINT("line.tcp.net.connection.hint"),
@@ -284,19 +350,23 @@ public enum PropertyKey implements ConfigProperty {
     LINE_TCP_NET_CONNECTION_RCVBUF("line.tcp.net.connection.rcvbuf"),
     LINE_TCP_CONNECTION_POOL_CAPACITY("line.tcp.connection.pool.capacity"),
     LINE_TCP_TIMESTAMP("line.tcp.timestamp"),
-    LINE_TCP_MSG_BUFFER_SIZE("line.tcp.msg.buffer.size"),
+    LINE_TCP_MSG_BUFFER_SIZE("line.tcp.msg.buffer.size"), // deprecated
+    LINE_TCP_RECV_BUFFER_SIZE("line.tcp.recv.buffer.size"),
+    LINE_TCP_MAX_RECV_BUFFER_SIZE("line.tcp.max.recv.buffer.size"),
     LINE_TCP_MAX_MEASUREMENT_SIZE("line.tcp.max.measurement.size"),
     LINE_TCP_WRITER_QUEUE_CAPACITY("line.tcp.writer.queue.capacity"),
     LINE_TCP_WRITER_WORKER_COUNT("line.tcp.writer.worker.count"),
     LINE_TCP_WRITER_WORKER_AFFINITY("line.tcp.writer.worker.affinity"),
     LINE_TCP_WRITER_HALT_ON_ERROR("line.tcp.writer.halt.on.error"),
     LINE_TCP_WRITER_WORKER_YIELD_THRESHOLD("line.tcp.writer.worker.yield.threshold"),
+    LINE_TCP_WRITER_WORKER_NAP_THRESHOLD("line.tcp.writer.worker.nap.threshold"),
     LINE_TCP_WRITER_WORKER_SLEEP_THRESHOLD("line.tcp.writer.worker.sleep.threshold"),
-    LINE_TCP_SYMBOL_CACHE_WAIT_US_BEFORE_RELOAD("line.tcp.symbol.cache.wait.us.before.reload"),
+    LINE_TCP_SYMBOL_CACHE_WAIT_BEFORE_RELOAD("line.tcp.symbol.cache.wait.before.reload"),
     LINE_TCP_IO_WORKER_COUNT("line.tcp.io.worker.count"),
     LINE_TCP_IO_WORKER_AFFINITY("line.tcp.io.worker.affinity"),
     LINE_TCP_IO_HALT_ON_ERROR("line.tcp.io.halt.on.error"),
     LINE_TCP_IO_WORKER_YIELD_THRESHOLD("line.tcp.io.worker.yield.threshold"),
+    LINE_TCP_IO_WORKER_NAP_THRESHOLD("line.tcp.io.worker.nap.threshold"),
     LINE_TCP_IO_WORKER_SLEEP_THRESHOLD("line.tcp.io.worker.sleep.threshold"),
     LINE_TCP_MAINTENANCE_JOB_INTERVAL("line.tcp.maintenance.job.interval"),
     LINE_TCP_COMMIT_INTERVAL_FRACTION("line.tcp.commit.interval.fraction"),
@@ -313,6 +383,8 @@ public enum PropertyKey implements ConfigProperty {
     LINE_INTEGER_DEFAULT_COLUMN_TYPE("line.integer.default.column.type"),
     LINE_TCP_NET_IO_QUEUE_CAPACITY("line.tcp.net.io.queue.capacity"),
     LINE_TCP_IO_AGGRESSIVE_RECV("line.tcp.io.aggressive.recv"),
+    LINE_HTTP_HEADER_MAX_SIZE("line.http.header.max.size"),
+    LINE_LOG_MESSAGE_ON_ERROR("line.log.message.on.error"),
     METRICS_ENABLED("metrics.enabled"),
     NET_TEST_CONNECTION_BUFFER_SIZE("net.test.connection.buffer.size"),
     PG_ENABLED("pg.enabled"),
@@ -324,9 +396,9 @@ public enum PropertyKey implements ConfigProperty {
     PG_NET_RECV_BUF_SIZE("pg.net.recv.buf.size"),
     PG_NET_CONNECTION_RCVBUF("pg.net.connection.rcvbuf"),
     PG_NET_SEND_BUF_SIZE("pg.net.send.buf.size"),
-    PG_PASSWORD("pg.password"),
+    PG_PASSWORD("pg.password", true),
     PG_USER("pg.user"),
-    PG_RO_PASSWORD("pg.readonly.password"),
+    PG_RO_PASSWORD("pg.readonly.password", true),
     PG_RO_USER("pg.readonly.user"),
     PG_RO_USER_ENABLED("pg.readonly.user.enabled"),
     PG_SECURITY_READONLY("pg.security.readonly"),
@@ -337,6 +409,7 @@ public enum PropertyKey implements ConfigProperty {
     PG_WORKER_AFFINITY("pg.worker.affinity"),
     PG_HALT_ON_ERROR("pg.halt.on.error"),
     PG_WORKER_YIELD_THRESHOLD("pg.worker.yield.threshold"),
+    PG_WORKER_NAP_THRESHOLD("pg.worker.nap.threshold"),
     PG_WORKER_SLEEP_THRESHOLD("pg.worker.sleep.threshold"),
     PG_DAEMON_POOL("pg.daemon.pool"),
     PG_SELECT_CACHE_ENABLED("pg.select.cache.enabled"),
@@ -353,14 +426,26 @@ public enum PropertyKey implements ConfigProperty {
     PG_INSERT_CACHE_BLOCK_COUNT("pg.insert.cache.block.count"),
     PG_INSERT_CACHE_ROW_COUNT("pg.insert.cache.row.count"),
     PG_INSERT_POOL_CAPACITY("pg.insert.pool.capacity"),
+    PG_LEGACY_MODE_ENABLED("pg.legacy.mode.enabled"),
+    PG_NAMED_STATEMENT_LIMIT("pg.named.statement.limit"),
     PG_NAMED_STATEMENT_CACHE_CAPACITY("pg.named.statement.cache.capacity"),
     PG_NAMED_STATEMENT_POOL_CAPACITY("pg.named.statement.pool.capacity"),
     PG_PENDING_WRITERS_CACHE_CAPACITY("pg.pending.writers.cache.capacity"),
     PG_NET_CONNECTION_SNDBUF("pg.net.connection.sndbuf"),
+    PG_PIPELINE_CAPACITY("pg.pipeline.capacity"),
+    DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE("debug.force.send.fragmentation.chunk.size", false, true),
+    DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE("debug.force.recv.fragmentation.chunk.size", false, true),
+    DEBUG_PG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE("debug.pg.force.send.fragmentation.chunk.size", false, true),
+    DEBUG_PG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE("debug.pg.force.recv.fragmentation.chunk.size", false, true),
+    DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE("debug.http.force.send.fragmentation.chunk.size", false, true),
+    DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE("debug.http.force.recv.fragmentation.chunk.size", false, true),
     QUERY_TIMEOUT_SEC("query.timeout.sec"),
+    QUERY_TIMEOUT("query.timeout"),
+    QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED("query.within.latest.by.optimisation.enabled"),
     SHARED_WORKER_COUNT("shared.worker.count"),
     SHARED_WORKER_AFFINITY("shared.worker.affinity"),
     SHARED_WORKER_HALT_ON_ERROR("shared.worker.haltOnError"),
+    SHARED_WORKER_NAP_THRESHOLD("shared.worker.nap.threshold"),
     SHARED_WORKER_SLEEP_THRESHOLD("shared.worker.sleep.threshold"),
     SHARED_WORKER_SLEEP_TIMEOUT("shared.worker.sleep.timeout"),
     SHARED_WORKER_YIELD_THRESHOLD("shared.worker.yield.threshold"),
@@ -368,6 +453,7 @@ public enum PropertyKey implements ConfigProperty {
     TELEMETRY_DISABLE_COMPLETELY("telemetry.disable.completely"),
     TELEMETRY_QUEUE_CAPACITY("telemetry.queue.capacity"),
     TELEMETRY_HIDE_TABLES("telemetry.hide.tables"),
+    TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT("telemetry.db.size.estimate.timeout"),
     PG_UPDATE_CACHE_ENABLED("pg.update.cache.enabled"),
     PG_UPDATE_CACHE_BLOCK_COUNT("pg.update.cache.block.count"),
     PG_UPDATE_CACHE_ROW_COUNT("pg.update.cache.row.count"),
@@ -377,17 +463,25 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY("cairo.sql.column.purge.retry.delay"),
     CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER("cairo.sql.column.purge.retry.delay.multiplier"),
     CAIRO_SQL_SYSTEM_TABLE_PREFIX("cairo.system.table.prefix"),
+    CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT("cairo.max.array.element.count"),
     CAIRO_MAX_FILE_NAME_LENGTH("cairo.max.file.name.length"),
     LINE_AUTO_CREATE_NEW_COLUMNS("line.auto.create.new.columns"),
     LINE_AUTO_CREATE_NEW_TABLES("line.auto.create.new.tables"),
-    CAIRO_SIMULATE_CRASH_ENABLED("cairo.enable.crash.simulation"),
+    DEV_MODE_ENABLED("dev.mode.enabled"),
     CAIRO_WAL_ENABLED_DEFAULT("cairo.wal.enabled.default"),
     CAIRO_WAL_PURGE_INTERVAL("cairo.wal.purge.interval"),
     CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT("cairo.wal.segment.rollover.row.count"),
+    CAIRO_WAL_SEGMENT_ROLLOVER_SIZE("cairo.wal.segment.rollover.size"),
     CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE("cairo.wal.writer.data.append.page.size"),
+    CAIRO_WAL_WRITER_EVENT_APPEND_PAGE_SIZE("cairo.wal.writer.event.append.page.size"),
+    CAIRO_WAL_SEQUENCER_CHECK_INTERVAL("cairo.wal.sequencer.check.interval"),
+    CAIRO_SYSTEM_WAL_WRITER_DATA_APPEND_PAGE_SIZE("cairo.system.wal.writer.data.append.page.size"),
+    CAIRO_SYSTEM_WAL_WRITER_EVENT_APPEND_PAGE_SIZE("cairo.system.wal.writer.event.append.page.size"),
+    CAIRO_PREFERENCES_STRING_POOL_CAPACITY("cairo.preferences.string.pool.capacity"),
     WAL_APPLY_WORKER_COUNT("wal.apply.worker.count"),
     WAL_APPLY_WORKER_AFFINITY("wal.apply.worker.affinity"),
     WAL_APPLY_WORKER_HALT_ON_ERROR("wal.apply.worker.haltOnError"),
+    WAL_APPLY_WORKER_NAP_THRESHOLD("wal.apply.worker.nap.threshold"),
     WAL_APPLY_WORKER_SLEEP_THRESHOLD("wal.apply.worker.sleep.threshold"),
     WAL_APPLY_WORKER_SLEEP_TIMEOUT("wal.apply.worker.sleep.timeout"),
     WAL_APPLY_WORKER_YIELD_THRESHOLD("wal.apply.worker.yield.threshold"),
@@ -398,20 +492,100 @@ public enum PropertyKey implements ConfigProperty {
     CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS("cairo.wal.recreate.distressed.sequencer.attempts"),
     CAIRO_WAL_INACTIVE_WRITER_TTL("cairo.wal.inactive.writer.ttl"),
     CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER("cairo.wal.squash.uncommitted.rows.multiplier"),
+    CAIRO_WAL_MAX_LAG_TXN_COUNT("cairo.wal.max.lag.txn.count"),
+    CAIRO_WAL_MAX_LAG_SIZE("cairo.wal.max.lag.size"),
+    CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE("cairo.wal.max.segment.file.descriptors.cache"),
     CAIRO_WAL_APPLY_TABLE_TIME_QUOTA("cairo.wal.apply.table.time.quota"),
     CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT("cairo.wal.apply.look.ahead.txn.count"),
+    CAIRO_WAL_TEMP_PENDING_RENAME_TABLE_PREFIX("cairo.wal.temp.pending.rename.table.prefix"),
+    CAIRO_WAL_WRITER_POOL_MAX_SEGMENTS("cairo.wal.writer.pool.max.segments"),
+    CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED("cairo.wal.apply.parallel.sql.enabled"),
     READ_ONLY_INSTANCE("readonly"),
     CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY("cairo.table.registry.auto.reload.frequency"),
     CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD("cairo.table.registry.compaction.threshold"),
     CAIRO_REPEAT_MIGRATION_FROM_VERSION("cairo.repeat.migration.from.version"),
     CAIRO_O3_LAST_PARTITION_MAX_SPLITS("cairo.o3.last.partition.max.splits"),
-    CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size");
+    CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size"),
+    CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED("cairo.o3.partition.overwrite.control.enabled"),
+    CAIRO_WRITE_BACK_OFF_TIMEOUT_ON_MEM_PRESSURE("cairo.write.back.off.timeout.on.mem.pressure"),
+    DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE("debug.wal.purge.wait.before.delete", false, true),
+    RAM_USAGE_LIMIT_BYTES("ram.usage.limit.bytes"),
+    RAM_USAGE_LIMIT_PERCENT("ram.usage.limit.percent"),
+    DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE("debug.allow.table.registry.shared.write", false, true),
+    DEBUG_ENABLE_TEST_FACTORIES("debug.enable.test.factories", false, true),
+    DEBUG_CAIRO_ALLOW_MIXED_IO("debug.cairo.allow.mixed.io", false, true),
+    DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE("debug.cairo.o3.column.memory.size", false, true),
+    CAIRO_DEFAULT_SEQ_PART_TXN_COUNT("cairo.default.sequencer.part.txn.count"),
+    POSTHOG_API_KEY("posthog.api.key"),
+    POSTHOG_ENABLED("posthog.enabled"),
+    QUERY_TRACING_ENABLED("query.tracing.enabled"),
+    LOG_LEVEL_VERBOSE("log.level.verbose"),
+    LOG_TIMESTAMP_TIMEZONE("log.timestamp.timezone"),
+    LOG_TIMESTAMP_LOCALE("log.timestamp.locale"),
+    LOG_TIMESTAMP_FORMAT("log.timestamp.format"),
+    LOG_SQL_QUERY_PROGRESS_EXE("log.sql.query.progress.exe"),
+    CAIRO_PARTITION_ENCODER_PARQUET_VERSION("cairo.partition.encoder.parquet.version"),
+    CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED("cairo.partition.encoder.parquet.statistics.enabled"),
+    CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC("cairo.partition.encoder.parquet.compression.codec"),
+    CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL("cairo.partition.encoder.parquet.compression.level"),
+    CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE("cairo.partition.encoder.parquet.row.group.size"),
+    CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE("cairo.partition.encoder.parquet.data.page.size"),
+    HTTP_MIN_SEND_BUFFER_SIZE("http.min.send.buffer.size"),
+    HTTP_MIN_RECV_BUFFER_SIZE("http.min.recv.buffer.size"),
+    HTTP_MIN_RECEIVE_BUFFER_SIZE("http.min.receive.buffer.size"), // deprecated
+    HTTP_MIN_CONNECTION_STRING_POOL_CAPACITY("http.min.connection.string.pool.capacity"),
+    HTTP_MIN_CONNECTION_POOL_INITIAL_CAPACITY("http.min.connection.pool.initial.capacity"),
+    HTTP_MIN_MULTIPART_HEADER_BUFFER_SIZE("http.min.multipart.header.buffer.size"),
+    HTTP_MIN_MULTIPART_IDLE_SPIN_COUNT("http.min.multipart.idle.spin.count"),
+    HTTP_MIN_ALLOW_DEFLATE_BEFORE_SEND("http.min.allow.deflate.before.send"),
+    HTTP_MIN_SERVER_KEEP_ALIVE("http.min.server.keep.alive"),
+    HTTP_MIN_REQUEST_HEADER_BUFFER_SIZE("http.min.request.header.buffer.size"),
+    HTTP_REDIRECT_COUNT("http.redirect.count"),
+    HTTP_REDIRECT_PREFIX("http.redirect."),
+    HTTP_CONTEXT_WEB_CONSOLE("http.context.web.console"),
+    HTTP_CONTEXT_IMPORT("http.context.import"),
+    HTTP_CONTEXT_EXPORT("http.context.export"),
+    HTTP_CONTEXT_ILP("http.context.ilp"),
+    HTTP_CONTEXT_ILP_PING("http.context.ilp.ping"),
+    HTTP_CONTEXT_SETTINGS("http.context.settings"),
+    HTTP_CONTEXT_WARNINGS("http.context.warnings"),
+    HTTP_CONTEXT_TABLE_STATUS("http.context.table.status"),
+    HTTP_CONTEXT_EXECUTE("http.context.execute"),
+    MAT_VIEW_REFRESH_WORKER_COUNT("mat.view.refresh.worker.count"),
+    MAT_VIEW_REFRESH_WORKER_AFFINITY("mat.view.refresh.worker.affinity"),
+    MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR("mat.view.refresh.worker.haltOnError"),
+    MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD("mat.view.refresh.worker.nap.threshold"),
+    MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD("mat.view.refresh.worker.sleep.threshold"),
+    MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT("mat.view.refresh.worker.sleep.timeout"),
+    MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD("mat.view.refresh.worker.yield.threshold"),
+    MAT_VIEW_DEBUG_ENABLED("mat.view.debug.enabled", false, true),
+    CAIRO_TXN_SCOREBOARD_FORMAT("cairo.txn.scoreboard.format"),
+    DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY("debug.wal.apply.block.failure.no.retry", false, true),
+    CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED("cairo.sql.column.alias.expression.enabled"),
+    CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE("cairo.sql.column.alias.generated.max.size");
 
     private static final Map<String, PropertyKey> nameMapping;
+    private final boolean debug;
+    private final String envVarName;
     private final String propertyPath;
+    private final boolean sensitive;
 
     PropertyKey(String propertyPath) {
+        this(propertyPath, false);
+    }
+
+    PropertyKey(String propertyPath, boolean sensitive) {
         this.propertyPath = propertyPath;
+        this.envVarName = ServerMain.propertyPathToEnvVarName(propertyPath);
+        this.sensitive = sensitive;
+        this.debug = false;
+    }
+
+    PropertyKey(String propertyPath, boolean sensitive, boolean debug) {
+        this.propertyPath = propertyPath;
+        this.envVarName = ServerMain.propertyPathToEnvVarName(propertyPath);
+        this.sensitive = sensitive;
+        this.debug = debug;
     }
 
     public static Optional<PropertyKey> getByString(String name) {
@@ -419,12 +593,33 @@ public enum PropertyKey implements ConfigProperty {
     }
 
     @Override
+    public String getEnvVarName() {
+        return envVarName;
+    }
+
+    @Override
     public String getPropertyPath() {
         return propertyPath;
     }
 
-    static {
-        nameMapping = Arrays.stream(PropertyKey.values()).collect(Collectors.toMap(PropertyKey::getPropertyPath, k -> k));
+    @Override
+    public boolean isDebug() {
+        return debug;
     }
 
+    @Override
+    public boolean isSensitive() {
+        return sensitive;
+    }
+
+    @Override
+    public String toString() {
+        return propertyPath;
+    }
+
+    static {
+        nameMapping = Arrays
+                .stream(PropertyKey.values())
+                .collect(Collectors.toMap(PropertyKey::getPropertyPath, k -> k));
+    }
 }

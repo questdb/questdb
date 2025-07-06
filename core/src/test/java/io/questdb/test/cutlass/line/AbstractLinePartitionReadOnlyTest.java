@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,9 +32,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractBootstrapTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Rule;
 import org.junit.rules.TestName;
 
@@ -42,7 +40,7 @@ import java.util.concurrent.TimeUnit;
 
 
 public class AbstractLinePartitionReadOnlyTest extends AbstractBootstrapTest {
-    protected static final String TABLE_START_CONTENT = "min\tmax\tcount\n" +
+    protected static final String TABLE_START_CONTENT = "min(ts)\tmax(ts)\tcount()\n" +
             "2022-12-08T00:05:11.070207Z\t2022-12-08T23:56:06.447339Z\t277\n" +
             "2022-12-09T00:01:17.517546Z\t2022-12-09T23:57:23.964885Z\t278\n" +
             "2022-12-10T00:02:35.035092Z\t2022-12-10T23:58:41.482431Z\t278\n" +
@@ -62,17 +60,6 @@ public class AbstractLinePartitionReadOnlyTest extends AbstractBootstrapTest {
 
     @Rule
     public TestName testName = new TestName();
-
-    @Before
-    public void setUp() {
-        super.setUp();
-        TestUtils.unchecked(() -> createDummyConfiguration(
-                        "cairo.max.uncommitted.rows=500",
-                        "cairo.commit.lag=2000",
-                        "cairo.o3.max.lag=2000"
-                )
-        );
-    }
 
     protected static void checkPartitionReadOnlyState(CairoEngine engine, TableToken tableToken, boolean... partitionIsReadOnly) {
         engine.releaseAllWriters();

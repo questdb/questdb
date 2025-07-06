@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,7 +27,14 @@ package io.questdb.cairo.wal.seq;
 import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.wal.MetadataService;
 
-@FunctionalInterface
 public interface TableMetadataChange {
+
     long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException;
+
+    /**
+     * Should return a non-null string in case when the operation on the base table leaves dependent mat views in invalid state.
+     */
+    default String matViewInvalidationReason() {
+        return null;
+    }
 }

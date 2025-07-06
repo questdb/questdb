@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,9 +32,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
 
 public class CastBooleanToStrFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "cast(Ts)";
@@ -44,7 +44,7 @@ public class CastBooleanToStrFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
-            return new StrConstant(func.getStr(null));
+            return new StrConstant(func.getStrA(null));
         }
         return new Func(args.getQuick(0));
     }
@@ -55,18 +55,18 @@ public class CastBooleanToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            return arg.getStr(rec);
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            arg.getStr(rec, sink);
+        public CharSequence getStrA(Record rec) {
+            return arg.getStrA(rec);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
             return arg.getStrB(rec);
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return arg.isThreadSafe();
         }
     }
 }

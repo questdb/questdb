@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,10 @@
 package io.questdb.metrics;
 
 import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.Mutable;
+import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
@@ -34,13 +37,13 @@ import java.lang.management.ManagementFactory;
  * GC metrics don't rely on MetricsRegistry to be able to obtain and write all metrics
  * to the sink in one go.
  */
-public class GCMetrics implements Scrapable {
+public class GCMetrics implements Target, Mutable {
 
     private static final CharSequenceHashSet majorGCNames = new CharSequenceHashSet();
     private static final CharSequenceHashSet minorGCNames = new CharSequenceHashSet();
 
     @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         long majorCount = 0;
         long majorTime = 0;
         long minorCount = 0;
@@ -72,7 +75,11 @@ public class GCMetrics implements Scrapable {
         appendCounter(sink, unknownTime, "jvm_unknown_gc_time");
     }
 
-    private void appendCounter(CharSink sink, long value, String name) {
+    @Override
+    public void clear() {
+    }
+
+    private void appendCounter(CharSink<?> sink, long value, String name) {
         PrometheusFormatUtils.appendCounterType(name, sink);
         PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
         PrometheusFormatUtils.appendSampleLineSuffix(sink, value);

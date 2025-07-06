@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,11 +24,19 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.Misc;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 
 public interface RecordSinkSPI {
+
+    void putArray(ArrayView view);
+
     void putBin(BinarySequence value);
 
     void putBool(boolean value);
@@ -43,7 +51,13 @@ public interface RecordSinkSPI {
 
     void putFloat(float value);
 
+    void putIPv4(int value);
+
     void putInt(int value);
+
+    // Used in RecordSinkFactory
+    @SuppressWarnings("unused")
+    void putInterval(Interval interval);
 
     void putLong(long value);
 
@@ -51,6 +65,10 @@ public interface RecordSinkSPI {
 
     void putLong256(Long256 value);
 
+    void putLong256(long l0, long l1, long l2, long l3);
+
+    // Used in RecordSinkFactory
+    @SuppressWarnings("unused")
     void putRecord(Record value);
 
     void putShort(short value);
@@ -68,6 +86,18 @@ public interface RecordSinkSPI {
     }
 
     void putTimestamp(long value);
+
+    void putVarchar(Utf8Sequence value);
+
+    default void putVarchar(CharSequence value) {
+        if (value == null) {
+            putVarchar((Utf8Sequence) null);
+        } else {
+            Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
+            sink.put(value);
+            putVarchar(sink);
+        }
+    }
 
     void skip(int bytes);
 }

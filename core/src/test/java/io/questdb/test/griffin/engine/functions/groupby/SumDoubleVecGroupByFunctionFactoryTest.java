@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,16 +24,17 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.Record;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
-        pageFrameMaxRows = 10_000;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
 
         Record[] expected = new Record[]{
                 new Record() {
@@ -68,18 +69,9 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery13(
-                "sum\n" +
-                        "NaN\n",
-                "select sum(f) from tab",
-                "create table tab as (select cast(null as double) f from long_sequence(33))",
-                null,
-                "insert into tab select 0.9822 from long_sequence(1)",
-                "sum\n" +
-                        "0.9822\n",
-                false,
-                true
-        );
+        assertQuery("sum\n" +
+                "null\n", "select sum(f) from tab", "create table tab as (select cast(null as double) f from long_sequence(33))", null, "insert into tab select 0.9822 from long_sequence(1)", "sum\n" +
+                "0.9822\n", false, true, false);
     }
 
     @Test

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,8 +40,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.Nullable;
 
 public class ToStrTimestampFunctionFactory implements FunctionFactory {
@@ -63,16 +63,16 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         Function fmt = args.getQuick(1);
-        CharSequence format = fmt.getStr(null);
+        CharSequence format = fmt.getStrA(null);
         if (format == null) {
             throw SqlException.$(argPositions.getQuick(1), "format must not be null");
         }
 
-        DateFormat timestampFormat = tlCompiler.get().compile(fmt.getStr(null));
+        DateFormat timestampFormat = tlCompiler.get().compile(fmt.getStrA(null));
         Function var = args.getQuick(0);
         if (var.isConstant()) {
             long value = var.getTimestamp(null);
-            if (value == Numbers.LONG_NaN) {
+            if (value == Numbers.LONG_NULL) {
                 return StrConstant.NULL;
             }
 
@@ -89,15 +89,15 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
         final Function arg;
         final DateFormat format;
         final DateLocale locale;
-        final StringSink sink1;
-        final StringSink sink2;
+        final StringSink sinkA;
+        final StringSink sinkB;
 
         public ToCharDateFFunc(Function arg, DateFormat format, DateLocale timestampLocale) {
             this.arg = arg;
             this.format = format;
             locale = timestampLocale;
-            sink1 = new StringSink();
-            sink2 = new StringSink();
+            sinkA = new StringSink();
+            sinkB = new StringSink();
         }
 
         @Override
@@ -106,33 +106,29 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            return toSink(rec, sink1);
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NaN) {
-                return;
-            }
-            toSink(value, sink);
+        public CharSequence getStrA(Record rec) {
+            return toSink(rec, sinkA);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return toSink(rec, sink2);
+            return toSink(rec, sinkB);
         }
 
         @Override
         public int getStrLen(Record rec) {
             long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NaN) {
-                return -1;
+            if (value != Numbers.LONG_NULL) {
+                sinkA.clear();
+                toSink(value, sinkA);
+                return sinkA.length();
             }
-            sink1.clear();
-            toSink(value, sink1);
-            return sink1.length();
+            return -1;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Override
@@ -143,15 +139,15 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
         @Nullable
         private CharSequence toSink(Record rec, StringSink sink) {
             final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NaN) {
-                return null;
+            if (value != Numbers.LONG_NULL) {
+                sink.clear();
+                toSink(value, sink);
+                return sink;
             }
-            sink.clear();
-            toSink(value, sink);
-            return sink;
+            return null;
         }
 
-        private void toSink(long value, CharSink sink) {
+        private void toSink(long value, Utf16Sink sink) {
             format.format(value, locale, "Z", sink);
         }
     }

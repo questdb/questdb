@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,6 +28,8 @@ import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.Nullable;
 
 public class ImplicitCastException extends RuntimeException implements FlyweightMessageContainer {
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
@@ -92,6 +94,22 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
                 .put(']');
     }
 
+    public static ImplicitCastException inconvertibleValue(Utf8Sequence value, int fromType, int toType) {
+        ImplicitCastException ice = instance();
+        ice.put("inconvertible value: ");
+        if (value != null) {
+            ice.put('`').put(value).put('`');
+        } else {
+            ice.put("null");
+        }
+
+        return ice.put(" [")
+                .put(ColumnType.nameOf(fromType))
+                .put(" -> ")
+                .put(ColumnType.nameOf(toType))
+                .put(']');
+    }
+
     public static ImplicitCastException inconvertibleValue(long value, int fromType, int toType) {
         return instance().put("inconvertible value: ")
                 .put(value)
@@ -138,8 +156,13 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
         return this;
     }
 
-    public ImplicitCastException put(CharSequence cs) {
+    public ImplicitCastException put(@Nullable CharSequence cs) {
         message.put(cs);
+        return this;
+    }
+
+    public ImplicitCastException put(@Nullable Utf8Sequence us) {
+        message.put(us);
         return this;
     }
 

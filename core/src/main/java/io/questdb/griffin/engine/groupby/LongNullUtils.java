@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.std.Numbers;
 
 public final class LongNullUtils {
-    private static final long[] LONG_NULLs = new long[ColumnType.MAX];
+    private static final long[] LONG_NULLs = new long[ColumnType.NULL];
 
     public static long getLongNull(int type) {
         return LONG_NULLs[ColumnType.tagOf(type)];
@@ -41,12 +41,12 @@ public final class LongNullUtils {
                 case ColumnType.LONG:
                 case ColumnType.TIMESTAMP:
                 case ColumnType.DATE:
-                    LONG_NULLs[i] = Numbers.LONG_NaN;
+                    LONG_NULLs[i] = Numbers.LONG_NULL;
                     break;
 
                 case ColumnType.INT:
                 case ColumnType.SYMBOL:
-                    LONG_NULLs[i] = Numbers.INT_NaN;
+                    LONG_NULLs[i] = Numbers.INT_NULL;
                     break;
 
                 case ColumnType.FLOAT:

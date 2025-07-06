@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,14 +25,16 @@
 package io.questdb.test.cairo.vm;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.test.cairo.TestRecord;
 import io.questdb.cairo.vm.MemoryPARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.tools.TestUtils;
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -40,6 +42,16 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class MemoryPARWImplTest {
+
+    @AfterClass
+    public static void afterClass() {
+        ColumnType.resetStringToDefault();
+    }
+
+    @BeforeClass
+    public static void beforeClass() {
+        ColumnType.makeUtf16DefaultString();
+    }
 
     @BeforeClass
     public static void setUpClass() {
@@ -659,10 +671,10 @@ public class MemoryPARWImplTest {
             long offset = 0;
             for (int i = 0; i < N; i++) {
                 mem.getLong256(offset, long256);
-                Assert.assertEquals(Numbers.LONG_NaN, long256.getLong0());
-                Assert.assertEquals(Numbers.LONG_NaN, long256.getLong1());
-                Assert.assertEquals(Numbers.LONG_NaN, long256.getLong2());
-                Assert.assertEquals(Numbers.LONG_NaN, long256.getLong3());
+                Assert.assertEquals(Numbers.LONG_NULL, long256.getLong0());
+                Assert.assertEquals(Numbers.LONG_NULL, long256.getLong1());
+                Assert.assertEquals(Numbers.LONG_NULL, long256.getLong2());
+                Assert.assertEquals(Numbers.LONG_NULL, long256.getLong3());
                 mem.getLong256(offset, sink);
                 Assert.assertEquals(0, sink.length());
                 offset += Long256.BYTES;
@@ -1005,7 +1017,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testSmallEven() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(2, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(4, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             MemoryCARWImplTest.assertStrings(mem);
         }
     }
@@ -1057,13 +1069,13 @@ public class MemoryPARWImplTest {
             for (int i = 0; i < N; i++) {
                 int flag = rnd.nextInt();
                 if ((flag % 4) == 0) {
-                    assertNull(mem.getStr(o));
+                    assertNull(mem.getStrA(o));
                     o += 4;
                 } else if ((flag % 2) == 0) {
-                    TestUtils.assertEquals("", mem.getStr(o));
+                    TestUtils.assertEquals("", mem.getStrA(o));
                     o += 4;
                 } else {
-                    TestUtils.assertEquals(rnd.nextChars(M), mem.getStr(o));
+                    TestUtils.assertEquals(rnd.nextChars(M), mem.getStrA(o));
                     o += M * 2 + 4;
                 }
             }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,16 +24,24 @@
 
 package io.questdb.griffin.engine.functions.test;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.SuspendEvent;
 import io.questdb.network.SuspendEventFactory;
 import io.questdb.std.IntList;
@@ -55,7 +63,7 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         long totalRows = args.getQuick(0).getLong(null);
         long backoffCount = args.getQuick(1).getLong(null);
         return new CursorFunction(new DataUnavailableRecordCursorFactory(totalRows, backoffCount, sqlExecutionContext.getCircuitBreaker()));
@@ -67,8 +75,6 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
     }
 
     private static class DataUnavailableRecordCursor implements NoRandomAccessRecordCursor {
-
-        private static final IODispatcherConfiguration ioDispatcherConfig = new DefaultIODispatcherConfiguration();
 
         private final long backoffCount;
         private final SqlExecutionCircuitBreaker circuitBreaker;
@@ -99,16 +105,21 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
                 return false;
             }
             if (attempts++ < backoffCount) {
-                SuspendEvent event = SuspendEventFactory.newInstance(ioDispatcherConfig);
+                SuspendEvent event = SuspendEventFactory.newInstance(DefaultIODispatcherConfiguration.INSTANCE);
                 if (eventCallback != null) {
                     eventCallback.onSuspendEvent(event);
                 }
-                throw DataUnavailableException.instance(new TableToken("foo", "foo", 1, false), "2022-01-01", event);
+                throw DataUnavailableException.instance(new TableToken("foo", "foo", 1, false, false, false), "2022-01-01", event);
             }
             rows++;
             record.of(rows);
             attempts = 0;
             return true;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
         }
 
         public void reset() {
@@ -138,7 +149,7 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        public RecordCursor getCursor(SqlExecutionContext executionContext) {
             cursor.reset();
             return cursor;
         }

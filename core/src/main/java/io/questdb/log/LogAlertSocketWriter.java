@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,9 +33,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -55,15 +53,15 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private static final String NAMESPACE_ENV = "NAMESPACE";
     private static final String ORG_ID_ENV = "ORGID";
     private final TemplateParser alertTemplate = new TemplateParser();
-    private final RingQueue<LogRecordSink> alertsSourceQueue;
+    private final RingQueue<LogRecordUtf8Sink> alertsSourceQueue;
     private final MicrosecondClock clock;
     private final FilesFacade ff;
     private final int level;
     private final NetworkFacade nf;
     private final CharSequenceObjHashMap<CharSequence> properties;
-    private final StringSink sink = new StringSink();
+    private final Utf8StringSink sink = new Utf8StringSink();
     private final SCSequence writeSequence;
-    private HttpLogRecordSink alertSink;
+    private HttpLogRecordUtf8Sink alertSink;
     private String alertTargets;
     private ObjList<TemplateNode> alertTemplateNodes;
     private int alertTemplateNodesLen;
@@ -76,9 +74,9 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private String outBufferSize;
     private String reconnectDelay;
     private LogAlertSocket socket;
-    private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
+    private final QueueConsumer<LogRecordUtf8Sink> alertsProcessor = this::onLogRecord;
 
-    public LogAlertSocketWriter(RingQueue<LogRecordSink> alertsSrc, SCSequence writeSequence, int level) {
+    public LogAlertSocketWriter(RingQueue<LogRecordUtf8Sink> alertsSrc, SCSequence writeSequence, int level) {
         this(
                 FilesFacadeImpl.INSTANCE,
                 NetworkFacadeImpl.INSTANCE,
@@ -94,7 +92,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
             FilesFacade ff,
             NetworkFacade nf,
             MicrosecondClock clock,
-            RingQueue<LogRecordSink> alertsSrc,
+            RingQueue<LogRecordUtf8Sink> alertsSrc,
             SCSequence writeSequence,
             int level,
             CharSequenceObjHashMap<CharSequence> properties
@@ -109,8 +107,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     }
 
     @TestOnly
-    public static void readFile(String location, long address, long addressSize, FilesFacade ff, CharSink sink) {
-        int templateFd = -1;
+    public static void readFile(String location, long address, long addressSize, FilesFacade ff, Utf8Sink sink) {
+        long templateFd = -1;
         try (Path path = new Path()) {
             // Paths for logger are typically derived from resources.
             // They may start with `/C:` on Windows OS, which is Java way of emphasising absolute path.
@@ -140,7 +138,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                         size
                 ));
             }
-            Chars.utf8toUtf16(address, address + size, sink);
+            Utf8s.strCpy(address, address + size, sink);
         } finally {
             ff.close(templateFd);
         }
@@ -194,7 +192,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                 nDefaultPort,
                 log
         );
-        alertSink = new HttpLogRecordSink(socket)
+        alertSink = new HttpLogRecordUtf8Sink(socket)
                 .putHeader(LogAlertSocket.localHostIp)
                 .setMark();
         loadLogAlertTemplate();
@@ -207,7 +205,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     }
 
     @TestOnly
-    public HttpLogRecordSink getAlertSink() {
+    public HttpLogRecordUtf8Sink getAlertSink() {
         return alertSink;
     }
 
@@ -247,8 +245,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     }
 
     @TestOnly
-    public void onLogRecord(LogRecordSink logRecord) {
-        final int len = logRecord.length();
+    public void onLogRecord(LogRecordUtf8Sink logRecord) {
+        final int len = logRecord.size();
         if ((logRecord.getLevel() & level) != 0 && len > 0) {
             alertTemplate.setDateValue(clock.getTicks());
             alertSink.rewindToMark();
@@ -261,8 +259,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                 }
             }
             sink.clear();
-            sink.put(logRecord);
-            sink.clear(sink.length() - Misc.EOL.length());
+            sink.put((Utf8Sequence) logRecord);
+            sink.clear(sink.size() - Misc.EOL.length());
             log.info().$("Sending: ").$(sink).$();
             socket.send(alertSink.$());
         }
@@ -340,7 +338,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                     sink
             );
             // originalTxt needs to be a static text and not a mutable sink because it's referred to in template nodes 
-            alertTemplate.parse(Chars.toString(sink), now, properties);
+            alertTemplate.parse(Utf8s.toString(sink), now, properties);
         }
         if (alertTemplate.getKeyOffset(MESSAGE_ENV) < 0) {
             throw new LogError(String.format(

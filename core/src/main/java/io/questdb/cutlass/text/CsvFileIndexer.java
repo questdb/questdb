@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,9 +38,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.DirectCharSink;
-import io.questdb.std.str.Path;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -60,138 +59,149 @@ public class CsvFileIndexer implements Closeable, Mutable {
     public static final long INDEX_ENTRY_SIZE = 2 * Long.BYTES;
     public static final CharSequence INDEX_FILE_NAME = "index.m";
     private static final Log LOG = LogFactory.getLog(CsvFileIndexer.class);
-    //A guess at how long could a timestamp string be, including long day, month name, etc.
-    //since we're only interested in timestamp field/col there's no point buffering whole line
-    //we'll copy field part to buffer only if current field is designated timestamp
+    private static final long MASK_CR = SwarUtils.broadcast((byte) '\r');
+    private static final long MASK_NEW_LINE = SwarUtils.broadcast((byte) '\n');
+    private static final long MASK_QUOTE = SwarUtils.broadcast((byte) '"');
+    // A guess at how long could a timestamp string be, including long day, month name, etc.
+    // since we're only interested in timestamp field/col there's no point buffering whole line
+    // we'll copy field part to buffer only if current field is designated timestamp
     private static final int MAX_TIMESTAMP_LENGTH = 100;
+    private final CairoConfiguration configuration;
     private final int dirMode;
     private final FilesFacade ff;
     private final int fieldRollBufLen;
     private final CharSequence inputRoot;
     private final long maxIndexChunkSize;
     final private ObjList<IndexOutputFile> outputFileDenseList = new ObjList<>();
-    //maps partitionFloors to output file descriptors
+    // maps partitionFloors to output file descriptors
     final private LongObjHashMap<IndexOutputFile> outputFileLookupMap = new LongObjHashMap<>();
-    //work dir path
-    private final Path path;
-    //timestamp field of current line
-    final private DirectByteCharSequence timestampField;
-    //used for timestamp parsing
+    // timestamp field of current line
+    final private DirectUtf8String timestampField;
+    // used for timestamp parsing
     private final TypeManager typeManager;
-    //used for timestamp parsing
-    private final DirectCharSink utf8Sink;
+    // used for timestamp parsing
+    private final DirectUtf16Sink utf16Sink;
+    private final DirectUtf8Sink utf8Sink;
     private boolean cancelled = false;
     private @Nullable ExecutionCircuitBreaker circuitBreaker;
     private byte columnDelimiter;
+    private long columnDelimiterMask;
     private boolean delayedOutQuote;
     private boolean eol;
     private int errorCount = 0;
     private boolean failOnTsError;
-    //input file descriptor (cached between initial boundary scan & indexing phases)
-    private int fd = -1;
+    // input file descriptor (cached between initial boundary scan & indexing phases)
+    private long fd = -1;
     private long fieldHi;
     private int fieldIndex;
-    //these two are pointers either into file read buffer or roll buffer
+    // these two are pointers either into file read buffer or roll buffer
     private long fieldLo;
     private long fieldRollBufCur;
     private long fieldRollBufPtr;
-    //if set to true then ignore first line of input file
+    // if set to true then ignore first line of input file
     private boolean header;
     private CharSequence importRoot;
     private boolean inQuote;
     private int index;
     private CharSequence inputFileName;
-    //fields taken & adjusted  from textLexer
+    // fields taken & adjusted  from textLexer
     private long lastLineStart;
     private long lastQuotePos = -1;
     private long lineCount;
     private long lineNumber;
-    //file offset of current start of buffered block
+    // file offset of current start of buffered block
     private long offset;
     private DateFormat partitionDirFormatMethod;
-    //used to map timestamp to output file
+    // used to map timestamp to output file
     private PartitionBy.PartitionFloorMethod partitionFloorMethod;
+    // work dir path
+    private Path path;
     private boolean rollBufferUnusable = false;
     private long sortBufferLength;
     private long sortBufferPtr;
-    //adapter used to parse timestamp column
+    // adapter used to parse timestamp column
     private TimestampAdapter timestampAdapter;
-    //position of timestamp column in csv (0-based)
+    // position of timestamp column in csv (0-based)
     private int timestampIndex;
     private long timestampValue;
     private boolean useFieldRollBuf = false;
-    private final CairoConfiguration configuration;
 
     public CsvFileIndexer(CairoConfiguration configuration) {
-        this.configuration = configuration;
-        final TextConfiguration textConfiguration = configuration.getTextConfiguration();
-        this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
-        this.typeManager = new TypeManager(textConfiguration, utf8Sink);
-        this.ff = configuration.getFilesFacade();
-        this.dirMode = configuration.getMkDirMode();
-        this.inputRoot = configuration.getSqlCopyInputRoot();
-        this.maxIndexChunkSize = configuration.getSqlCopyMaxIndexChunkSize();
-        this.fieldRollBufLen = MAX_TIMESTAMP_LENGTH;
-        this.fieldRollBufPtr = Unsafe.malloc(fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
-        this.fieldRollBufCur = fieldRollBufPtr;
-        this.timestampField = new DirectByteCharSequence();
-        this.failOnTsError = false;
-        this.path = new Path();
-        this.sortBufferPtr = -1;
-        this.sortBufferLength = 0;
+        try {
+            this.configuration = configuration;
+            final TextConfiguration textConfiguration = configuration.getTextConfiguration();
+            int utf8SinkSize = textConfiguration.getUtf8SinkSize();
+            this.utf16Sink = new DirectUtf16Sink(utf8SinkSize);
+            this.utf8Sink = new DirectUtf8Sink(utf8SinkSize);
+            this.typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink);
+            this.ff = configuration.getFilesFacade();
+            this.dirMode = configuration.getMkDirMode();
+            this.inputRoot = configuration.getSqlCopyInputRoot();
+            this.maxIndexChunkSize = configuration.getSqlCopyMaxIndexChunkSize();
+            this.fieldRollBufLen = MAX_TIMESTAMP_LENGTH;
+            this.fieldRollBufPtr = Unsafe.malloc(fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
+            this.fieldRollBufCur = fieldRollBufPtr;
+            this.timestampField = new DirectUtf8String();
+            this.failOnTsError = false;
+            this.path = new Path();
+            this.sortBufferPtr = -1;
+            this.sortBufferLength = 0;
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     @Override
     public final void clear() {
-        this.fieldLo = 0;
-        this.eol = false;
-        this.fieldIndex = 0;
-        this.inQuote = false;
-        this.delayedOutQuote = false;
-        this.lineNumber = 0;
-        this.lineCount = 0;
-        this.fieldRollBufCur = fieldRollBufPtr;
-        this.useFieldRollBuf = false;
-        this.rollBufferUnusable = false;
-        this.header = false;
-        this.errorCount = 0;
-        this.offset = -1;
-        this.timestampField.clear();
-        this.lastQuotePos = -1;
-        this.timestampValue = Long.MIN_VALUE;
+        fieldLo = 0;
+        eol = false;
+        fieldIndex = 0;
+        inQuote = false;
+        delayedOutQuote = false;
+        lineNumber = 0;
+        lineCount = 0;
+        fieldRollBufCur = fieldRollBufPtr;
+        useFieldRollBuf = false;
+        rollBufferUnusable = false;
+        header = false;
+        errorCount = 0;
+        offset = -1;
+        Misc.clear(timestampField);
+        lastQuotePos = -1;
+        timestampValue = Long.MIN_VALUE;
 
-        this.inputFileName = null;
-        this.importRoot = null;
-        this.timestampAdapter = null;
-        this.timestampIndex = -1;
-        this.partitionFloorMethod = null;
-        this.partitionDirFormatMethod = null;
-        this.columnDelimiter = -1;
+        inputFileName = null;
+        importRoot = null;
+        timestampAdapter = null;
+        timestampIndex = -1;
+        partitionFloorMethod = null;
+        partitionDirFormatMethod = null;
+        columnDelimiter = -1;
+        columnDelimiterMask = 0;
 
         closeOutputFiles();
         closeSortBuffer();
 
-        if (ff.close(fd)) {
+        if (ff != null && ff.close(fd)) {
             fd = -1;
         }
 
-        this.failOnTsError = false;
-        this.path.trimTo(0);
-        this.circuitBreaker = null;
-        this.cancelled = false;
+        failOnTsError = false;
+        if (path != null) {
+            path.trimTo(0);
+        }
+        circuitBreaker = null;
+        cancelled = false;
     }
 
     @Override
     public void close() {
-        if (fieldRollBufPtr != 0) {
-            Unsafe.free(fieldRollBufPtr, fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
-            fieldRollBufPtr = 0;
-        }
-
-        this.path.close();
-        this.typeManager.clear();
-        this.utf8Sink.close();
-
+        fieldRollBufPtr = Unsafe.free(fieldRollBufPtr, fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
+        path = Misc.free(path);
+        Misc.clear(typeManager);
+        Misc.free(utf16Sink);
+        Misc.free(utf8Sink);
         clear();
     }
 
@@ -264,7 +274,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     }
 
     public void indexLine(long ptr, long lo) throws TextException {
-        //this is fine because Long.MIN_VALUE is treated as null and would be rejected by partitioned tables
+        // this is fine because Long.MIN_VALUE is treated as null and would be rejected by partitioned tables
         if (timestampValue == Long.MIN_VALUE) {
             return;
         }
@@ -325,6 +335,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
         this.offset = 0;
         this.columnDelimiter = columnDelimiter;
+        this.columnDelimiterMask = SwarUtils.broadcast(columnDelimiter);
         if (timestampIndex < 0) {
             throw TextException.$("Timestamp index is not set [value=").put(timestampIndex).put(']');
         }
@@ -350,7 +361,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         }
     }
 
-    public void sort(int srcFd, long srcSize) {
+    public void sort(long srcFd, long srcSize) {
         if (srcSize < 1) {
             return;
         }
@@ -387,7 +398,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     private void closeOutputFiles() {
         Misc.freeObjListAndClear(outputFileDenseList);
-        this.outputFileLookupMap.clear();
+        Misc.clear(outputFileLookupMap);
     }
 
     private void closeSortBuffer() {
@@ -434,7 +445,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     private Path getPartitionIndexDir(long partitionKey) {
         path.of(importRoot).slash();
-        partitionDirFormatMethod.format(partitionKey, null, null, path);
+        partitionDirFormatMethod.format(partitionKey, DateFormatUtils.EN_LOCALE, null, path);
         return path;
     }
 
@@ -481,15 +492,31 @@ public class CsvFileIndexer implements Closeable, Mutable {
         long ptr = lo;
 
         while (ptr < hi) {
-            final byte c = Unsafe.getUnsafe().getByte(ptr++);
+            if (!rollBufferUnusable && !useFieldRollBuf && !delayedOutQuote && ptr < hi - 7) {
+                long word = Unsafe.getUnsafe().getLong(ptr);
+                long zeroBytesWord = SwarUtils.markZeroBytes(word ^ MASK_NEW_LINE)
+                        | SwarUtils.markZeroBytes(word ^ MASK_CR)
+                        | SwarUtils.markZeroBytes(word ^ MASK_QUOTE)
+                        | SwarUtils.markZeroBytes(word ^ columnDelimiterMask);
+                if (zeroBytesWord == 0) {
+                    ptr += 7;
+                    this.fieldHi += 7;
+                    continue;
+                } else {
+                    int firstIndex = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
+                    ptr += firstIndex;
+                    this.fieldHi += firstIndex;
+                }
+            }
 
+            final byte b = Unsafe.getUnsafe().getByte(ptr++);
             if (rollBufferUnusable) {
-                eol(ptr, c);
+                eol(ptr, b);
                 continue;
             }
 
             if (useFieldRollBuf) {
-                putToRollBuf(c);
+                putToRollBuf(b);
                 if (rollBufferUnusable) {
                     continue;
                 }
@@ -497,16 +524,16 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
             this.fieldHi++;
 
-            if (delayedOutQuote && c != '"') {
+            if (delayedOutQuote && b != '"') {
                 inQuote = delayedOutQuote = false;
             }
 
-            if (c == columnDelimiter) {
+            if (b == columnDelimiter) {
                 onColumnDelimiter(lo, ptr);
-            } else if (c == '"') {
+            } else if (b == '"') {
                 checkEol(lo);
                 onQuote();
-            } else if (c == '\n' || c == '\r') {
+            } else if (b == '\n' || b == '\r') {
                 onLineEnd(ptr, lo);
             } else {
                 checkEol(lo);
@@ -540,11 +567,11 @@ public class CsvFileIndexer implements Closeable, Mutable {
     @NotNull
     private IndexOutputFile prepareTargetFile(long partitionKey) {
         getPartitionIndexDir(partitionKey);
-        path.slash$();
+        path.slash();
 
-        if (!ff.exists(path)) {
-            int result = ff.mkdir(path, dirMode);
-            if (result != 0 && !ff.exists(path)) {//ignore because other worker might've created it
+        if (!ff.exists(path.$())) {
+            int result = ff.mkdir(path.$(), dirMode);
+            if (result != 0 && !ff.exists(path.$())) {//ignore because other worker might've created it
                 throw TextException.$("Couldn't create partition dir [path='").put(path).put("']");
             }
         }
@@ -560,7 +587,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         }
     }
 
-    //roll timestamp field if it's split over  read buffer boundaries
+    // roll timestamp field if it's split over read buffer boundaries
     private void rollField(long hi) {
         // lastLineStart is an offset from 'lo'
         // 'lo' is the address of incoming buffer
@@ -593,9 +620,9 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private void stashField(int fieldIndex, long ptr) {
         if (fieldIndex == timestampIndex && !header) {
             if (lastQuotePos > -1) {
-                timestampField.of(this.fieldLo, lastQuotePos - 1);
+                timestampField.of(fieldLo, lastQuotePos - 1);
             } else {
-                timestampField.of(this.fieldLo, this.fieldHi - 1);
+                timestampField.of(fieldLo, fieldHi - 1);
             }
 
             parseTimestamp();
@@ -635,8 +662,8 @@ public class CsvFileIndexer implements Closeable, Mutable {
             return;
         }
 
-        path.of(inputRoot).slash().concat(inputFileName).$();
-        this.fd = TableUtils.openRO(ff, path, LOG);
+        path.of(inputRoot).slash().concat(inputFileName);
+        this.fd = TableUtils.openRO(ff, path.$(), LOG);
 
         long len = ff.length(fd);
         if (len == -1) {
@@ -651,7 +678,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         final MemoryPMARImpl memory;
         final long partitionKey;
         int chunkNumber;
-        long dataSize;//partition data size in bytes
+        long dataSize; // partition data size in bytes
         long indexChunkSize;
 
         IndexOutputFile(FilesFacade ff, Path path, long partitionKey) {
@@ -659,8 +686,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
             this.indexChunkSize = 0;
             this.chunkNumber = 0;
             this.dataSize = 0;
-            this.memory = new MemoryPMARImpl(configuration.getCommitMode());
-
+            this.memory = new MemoryPMARImpl(configuration);
             nextChunk(ff, path);
         }
 
@@ -678,15 +704,16 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
             chunkNumber++; //start with file name like $workerIndex_$chunkIndex, e.g. 1_1
             indexChunkSize = 0;
-            path.put('_').put(chunkNumber).$();
+            path.put('_').put(chunkNumber);
 
-            if (ff.exists(path)) {
+            LPSZ lpsz = path.$();
+            if (ff.exists(lpsz)) {
                 throw TextException.$("index file already exists [path=").put(path).put(']');
             } else {
                 LOG.debug().$("created import index file [path='").$(path).$("']").$();
             }
 
-            this.memory.of(ff, path, ff.getMapPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+            this.memory.of(ff, lpsz, ff.getMapPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
         }
 
         private void sortAndClose() {

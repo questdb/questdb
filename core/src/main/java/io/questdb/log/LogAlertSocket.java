@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,9 +25,16 @@
 package io.questdb.log;
 
 import io.questdb.network.NetworkFacade;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -62,7 +69,7 @@ public class LogAlertSocket implements Closeable {
     private String alertTargets; // host[:port](,host[:port])*
     private long inBufferPtr;
     private long outBufferPtr;
-    private int socketFd = -1;
+    private long socketFd = -1;
 
     public LogAlertSocket(NetworkFacade nf, String alertTargets, Log log) {
         this(
@@ -120,6 +127,7 @@ public class LogAlertSocket implements Closeable {
             logNetworkConnectError("Could not create addr info with");
         } else {
             socketFd = nf.socketTcp(true);
+            nf.configureKeepAlive(socketFd);
             if (socketFd > -1) {
                 if (nf.connectAddrInfo(socketFd, addressInfoAddr) != 0) {
                     logNetworkConnectError("Could not connect with");
@@ -181,7 +189,7 @@ public class LogAlertSocket implements Closeable {
     @TestOnly
     public void logResponse(int len) {
         responseSink.clear();
-        Chars.utf8toUtf16(inBufferPtr, inBufferPtr + len, responseSink);
+        Utf8s.utf8ToUtf16(inBufferPtr, inBufferPtr + len, responseSink);
         final int responseLen = responseSink.length();
         int contentLength = 0;
         int lineStart = 0;
@@ -231,7 +239,7 @@ public class LogAlertSocket implements Closeable {
         int start = headerEndFound && contentLength == responseLen - lineStart ? lineStart : 0;
         $currentAlertHost(log.info().$("Received"))
                 .$(": ")
-                .$(responseSink, start, responseLen)
+                .$safe(responseSink, start, responseLen)
                 .$();
     }
 
@@ -252,7 +260,7 @@ public class LogAlertSocket implements Closeable {
                 long p = outBufferPtr;
                 boolean sendFail = false;
                 while (remaining > 0) {
-                    int n = nf.send(socketFd, p, remaining);
+                    int n = nf.sendRaw(socketFd, p, remaining);
                     if (n > 0) {
                         remaining -= n;
                         p += n;
@@ -260,7 +268,7 @@ public class LogAlertSocket implements Closeable {
                         $currentAlertHost(log.info().$("Could not send"))
                                 .$(" [errno=").$(nf.errno())
                                 .$(", size=").$(n)
-                                .$(", log=").$utf8(outBufferPtr, outBufferPtr + len).I$();
+                                .$(", log=").$safe(outBufferPtr, outBufferPtr + len).I$();
                         sendFail = true;
                         // do fail over, could not send
                         break;
@@ -269,7 +277,7 @@ public class LogAlertSocket implements Closeable {
                 if (!sendFail) {
                     // receive ack
                     p = inBufferPtr;
-                    final int n = nf.recv(socketFd, p, inBufferSize);
+                    final int n = nf.recvRaw(socketFd, p, inBufferSize);
                     if (n > 0) {
                         logResponse(n);
                         break;
@@ -287,7 +295,8 @@ public class LogAlertSocket implements Closeable {
                     $alertHost(
                             alertHostIdx,
                             log.info().$("Failing over from")
-                    ).$(" to"));
+                    ).$(" to")
+            );
             if (alertHostIdx == this.alertHostIdx) {
                 logFailOver.$(" with a delay of ")
                         .$(reconnectDelay / 1000000)
@@ -307,7 +316,7 @@ public class LogAlertSocket implements Closeable {
                     .$("Giving up sending after ")
                     .$(maxSendAttempts)
                     .$(" attempts: [")
-                    .$utf8(outBufferPtr, outBufferPtr + len)
+                    .$safe(outBufferPtr, outBufferPtr + len)
                     .I$();
         }
         return success;
@@ -393,7 +402,8 @@ public class LogAlertSocket implements Closeable {
                         throw new LogError(String.format(
                                 "Unexpected ':' found at position %d: %s",
                                 i,
-                                alertTargets));
+                                alertTargets
+                        ));
                     }
                     portIdx = i;
                     break;

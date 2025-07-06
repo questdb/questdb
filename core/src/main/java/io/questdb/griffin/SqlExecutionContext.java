@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,38 +25,69 @@
 package io.questdb.griffin;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.griffin.engine.window.WindowContext;
+import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-public interface SqlExecutionContext extends Closeable {
+public interface SqlExecutionContext extends Sinkable, Closeable {
 
-    void clearAnalyticContext();
+    // Returns true when the context doesn't require all SQL functions to be deterministic.
+    // Deterministic-only functions are enforced e.g. when compiling a mat view.
+    boolean allowNonDeterministicFunctions();
+
+    void clearWindowContext();
 
     @Override
     default void close() {
     }
 
-    void configureAnalyticContext(
+    void configureWindowContext(
             @Nullable VirtualRecord partitionByRecord,
             @Nullable RecordSink partitionBySink,
             @Transient @Nullable ColumnTypes keyTypes,
             boolean isOrdered,
-            boolean baseSupportsRandomAccess
+            int scanDirection,
+            int orderByDirection,
+            boolean baseSupportsRandomAccess,
+            int framingMode,
+            long rowsLo,
+            int rowsLoExprPos,
+            long rowsHi,
+            int rowsHiExprPos,
+            int exclusionKind,
+            int exclusionKindPos,
+            int timestampIndex,
+            boolean ignoreNulls,
+            int nullsDescPos
     );
 
-    AnalyticContext getAnalyticContext();
+    default void containsSecret(boolean b) {
+    }
+
+    default boolean containsSecret() {
+        return false;
+    }
 
     default Rnd getAsyncRandom() {
         return SharedRandom.getAsyncRandom(getCairoEngine().getConfiguration());
@@ -78,12 +109,12 @@ public interface SqlExecutionContext extends Closeable {
         return getCairoEngine().getMessageBus();
     }
 
-    default TableRecordMetadata getMetadata(TableToken tableToken) {
-        return getCairoEngine().getMetadata(tableToken);
+    default TableRecordMetadata getMetadataForWrite(TableToken tableToken, long desiredVersion) {
+        return getCairoEngine().getLegacyMetadata(tableToken, desiredVersion);
     }
 
-    default TableRecordMetadata getMetadata(TableToken tableToken, long structureVersion) {
-        return getCairoEngine().getMetadata(tableToken, structureVersion);
+    default TableRecordMetadata getMetadataForWrite(TableToken tableToken) {
+        return getMetadataForWrite(tableToken, TableUtils.ANY_TABLE_VERSION);
     }
 
     long getMicrosecondTimestamp();
@@ -111,8 +142,14 @@ public interface SqlExecutionContext extends Closeable {
         return getWorkerCount();
     }
 
-    default int getTableStatus(Path path, TableToken tableName) {
+    SqlExecutionCircuitBreaker getSimpleCircuitBreaker();
+
+    default int getTableStatus(Path path, CharSequence tableName) {
         return getCairoEngine().getTableStatus(path, tableName);
+    }
+
+    default int getTableStatus(Path path, TableToken tableToken) {
+        return getCairoEngine().getTableStatus(path, tableToken);
     }
 
     default TableToken getTableToken(CharSequence tableName) {
@@ -131,25 +168,62 @@ public interface SqlExecutionContext extends Closeable {
         return getCairoEngine().getTableTokenIfExists(tableName, lo, hi);
     }
 
+    WindowContext getWindowContext();
+
     int getWorkerCount();
 
     void initNow();
 
+    boolean isCacheHit();
+
     boolean isColumnPreTouchEnabled();
+
+    // Used to disable column pre-touch without affecting the explain plan
+    boolean isColumnPreTouchEnabledOverride();
+
+    // Returns true when where intrinsics are overridden, i.e. by a materialized view refresh
+    default boolean isOverriddenIntrinsics(TableToken tableToken) {
+        return false;
+    }
 
     boolean isParallelFilterEnabled();
 
+    boolean isParallelGroupByEnabled();
+
+    boolean isParallelReadParquetEnabled();
+
     boolean isTimestampRequired();
 
+    default boolean isUninterruptible() {
+        return false;
+    }
+
     boolean isWalApplication();
+
+    // This method is used to override intrinsic values in the query execution context
+    // Its initial usage is in the materialized view refresh
+    // where the queried timestamp of the base table is limited to the range affected since last refresh
+    default void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel) {
+    }
 
     void popTimestampRequiredFlag();
 
     void pushTimestampRequiredFlag(boolean flag);
 
+    void resetFlags();
+
+    void setAllowNonDeterministicFunction(boolean value);
+
+    void setCacheHit(boolean value);
+
+    void setCancelledFlag(AtomicBoolean cancelled);
+
     void setCloneSymbolTables(boolean cloneSymbolTables);
 
     void setColumnPreTouchEnabled(boolean columnPreTouchEnabled);
+
+    // Used to disable column pre-touch without affecting the explain plan
+    void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride);
 
     void setJitMode(int jitMode);
 
@@ -157,12 +231,21 @@ public interface SqlExecutionContext extends Closeable {
 
     void setParallelFilterEnabled(boolean parallelFilterEnabled);
 
+    void setParallelGroupByEnabled(boolean parallelGroupByEnabled);
+
+    void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled);
+
     void setRandom(Rnd rnd);
+
+    void setUseSimpleCircuitBreaker(boolean value);
+
+    default boolean shouldLogSql() {
+        return true;
+    }
 
     default void storeTelemetry(short event, short origin) {
     }
 
-    default boolean isUninterruptible() {
-        return false;
+    default void toSink(@NotNull CharSink<?> sink) {
     }
 }

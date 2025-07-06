@@ -1,0 +1,207 @@
+name: Build and Push Rust Test Libraries
+on:
+  workflow_dispatch:
+# This workflow is triggered manually from the Actions tab.
+# It's meant to be run on a PR that changes Rust test libraries code.
+
+# It builds native libraries for all supported platforms and pushes them to the current branch.
+# It splits the building process into 3 build jobs:
+# 1. build-macos - Builds native libraries for MacOS: both ARM and x64.
+#    It uses native runners for each platform, because cross compilation on MacOS is complicated.
+# 2. build-others - Builds native libraries for x64 Linux, ARM Linux and Windows.
+#    It uses cross-compilation for ARM Linux and Windows.
+#
+# Each build job saves the resulting binaries to the cache under a unique key
+# When all build jobs are finished, the collect-commit-and-push j ob restores the binaries from the cache
+# and pushes them to the current branch.
+
+jobs:
+  build-rust-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Build Rust Library
+        run: |
+          cd core/rust/qdb-sqllogictest
+          cargo build --release
+      - name: Copy Rust Library to the final directory
+        run: |
+          cp core/rust/qdb-sqllogictest/target/release/qdbsqllogictest.dll core/src/test/resources/io/questdb/bin/windows-x86-64/
+      - name: Save Windows Rust Library to Cache
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            core/src/test/resources/io/questdb/bin/windows-x86-64/qdbsqllogictest.dll
+          key: nativelibs-windows-rust-${{ github.sha }}
+          enableCrossOsArchive: true
+  build-all-macos:
+    strategy:
+      matrix:
+        # macos-14 = ARM M1
+        # macos-13 = x64
+        # if you change OS definitions then you need to change conditions in cache-save steps below
+        os: [ macos-14, macos-13 ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Build Rust Library
+        run: |
+          cd core/rust/qdb-sqllogictest
+          cargo clean
+          cargo build --release
+      - name: Copy darwin-aarch64 Rust Library to the final directory
+        if: ${{ matrix.os == 'macos-14' }}
+        run: |
+          mkdir -p core/src/test/resources/io/questdb/bin/darwin-aarch64/
+          cp core/rust/qdb-sqllogictest/target/release/libqdbsqllogictest.dylib core/src/test/resources/io/questdb/bin/darwin-aarch64/
+      - name: Copy darwin-x86-64 Rust Library to the final directory
+        if: ${{ matrix.os == 'macos-13' }}
+        run: |
+          mkdir -p core/src/test/resources/io/questdb/bin/darwin-x86-64/
+          cp core/rust/qdb-sqllogictest/target/release/libqdbsqllogictest.dylib core/src/test/resources/io/questdb/bin/darwin-x86-64/
+      - name: Save darwin-aarch64 Libraries to Cache
+        if: ${{ matrix.os == 'macos-14' }}
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            core/src/test/resources/io/questdb/bin/darwin-aarch64/libqdbsqllogictest.dylib
+          key: nativelibs-armosx-${{ github.sha }}
+      - name: Save darwin-x86-64 Libraries to Cache
+        if: ${{ matrix.os == 'macos-13' }}
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            core/src/test/resources/io/questdb/bin/darwin-x86-64/libqdbsqllogictest.dylib
+          key: nativelibs-osx-${{ github.sha }}
+  build-all-linux-x86-64:
+    runs-on: ubuntu-latest
+    # this is very bare container, we use it to restrict GLIBC to 2.28
+    # everything has to be installed on it manually
+    container:
+      image: debian:buster
+    steps:
+      - name: Install tools (CXX/NASM/Rust)
+        run: |
+          ldd --version
+          apt-get update -y
+          apt install git python3 wget ca-certificates build-essential zstd -y
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Install toolchains (Rust)
+        run: |
+          python3 ./.github/prepare_rust_env.py --match core/rust/qdbr/rust-toolchain.toml
+          echo "PATH=/github/home/.cargo/bin/:$PATH" >> "$GITHUB_ENV"
+      - name: Build linux-x86-64 Rust Library
+        run: |
+          cd core/rust/qdb-sqllogictest
+          cargo clean
+          cargo build --release
+          mkdir -p ../../src/test/resources/io/questdb/bin/linux-x86-64/
+          cp target/release/libqdbsqllogictest.so ../../src/test/resources/io/questdb/bin/linux-x86-64/
+      - name: Save linux-x86-64 Libraries to Cache
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            core/src/test/resources/io/questdb/bin/linux-x86-64/libqdbsqllogictest.so
+          key: nativelibs-linux-${{ github.sha }}
+  build-all-linux-aarch64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Install rs-cross
+        run: |
+          cargo install cross
+      - name: Build linux-aarch64 Rust Library
+        run: |
+          cd core/rust/qdb-sqllogictest
+          cargo clean
+          cross build --target aarch64-unknown-linux-gnu --release --target-dir `pwd`/target
+          mkdir -p ../../src/test/resources/io/questdb/bin/linux-aarch64/
+          cp target/aarch64-unknown-linux-gnu/release/libqdbsqllogictest.so ../../src/test/resources/io/questdb/bin/linux-aarch64/
+      - name: Check git status
+        run: |
+          git status
+      - name: Save linux-aarch64 Libraries to Cache
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            core/src/test/resources/io/questdb/bin/linux-aarch64/libqdbsqllogictest.so
+          key: nativelibs-armlinux-${{ github.sha }}
+  collect-commit-and-push:
+    needs: [ build-all-macos, build-rust-windows, build-all-linux-x86-64, build-all-linux-aarch64 ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Print file sizes before
+        run: |
+          mkdir -p ./core/src/test/resources/io/questdb/bin/
+          mkdir -p ./core/src/test/resources/io/questdb/bin/
+          find ./core/src/test/resources/io/questdb/bin/ -type f -exec ls -l {} \;
+          find ./core/src/main/bin/ -type f -exec ls -l {} \;
+      - name: Restore darwin-aarch64 Libraries from Cache
+        uses: actions/cache/restore@v3
+        with:
+          path: |
+            core/src/test/resources/io/questdb/bin/darwin-aarch64/libqdbsqllogictest.dylib
+          key: nativelibs-armosx-${{ github.sha }}
+      - name: Restore darwin-x86-64 Libraries from Cache
+        uses: actions/cache/restore@v3
+        with:
+          path: |
+            core/src/test/resources/io/questdb/bin/darwin-x86-64/libqdbsqllogictest.dylib
+          key: nativelibs-osx-${{ github.sha }}
+      - name: Restore linux-x86-64 Libraries from Cache
+        uses: actions/cache/restore@v3
+        with:
+          path: |
+            core/src/test/resources/io/questdb/bin/linux-x86-64/libqdbsqllogictest.so
+          key: nativelibs-linux-${{ github.sha }}
+      - name: Restore linux-aarch64 Libraries from Cache
+        uses: actions/cache/restore@v3
+        with:
+          path: |
+            core/src/test/resources/io/questdb/bin/linux-aarch64/libqdbsqllogictest.so
+          key: nativelibs-armlinux-${{ github.sha }}
+      - name: Restore Windows Rust Library from Cache
+        uses: actions/cache/restore@v3
+        with:
+          path: |
+            core/src/test/resources/io/questdb/bin/windows-x86-64/qdbsqllogictest.dll
+          key: nativelibs-windows-rust-${{ github.sha }}
+          enableCrossOsArchive: true
+      - name: Check git status before
+        run: |
+          git status
+      - name: Commit the files
+        run: |
+          git config --global user.name 'GitHub Actions - Rebuild Native Libraries'
+          git config --global user.email 'jaromir@questdb.io'
+          git add core/src/test/resources/io/questdb/bin/darwin-aarch64/libqdbsqllogictest.dylib
+          git add core/src/test/resources/io/questdb/bin/darwin-x86-64/libqdbsqllogictest.dylib
+          git add core/src/test/resources/io/questdb/bin/linux-x86-64/libqdbsqllogictest.so
+          git add core/src/test/resources/io/questdb/bin/linux-aarch64/libqdbsqllogictest.so
+          git add core/src/test/resources/io/questdb/bin/windows-x86-64/qdbsqllogictest.dll
+          
+          git commit -m "Rebuild Rust Test libraries"
+      - name: Check git status after
+        run: |
+          git status
+      - name: Print file sizes after
+        run: |
+          find ./core/src/test/resources/io/questdb/bin/ -type f -exec ls -l {} \;
+          find ./core/src/main/bin/ -type f -exec ls -l {} \;
+      - name: Push the files to the current branch
+        uses: ad-m/github-push-action@d91a481090679876dfc4178fef17f286781251df
+        # Why do we use a commit hash instead of a tag for the github-push-action?
+        # ad-m/github-push-action is not as well-known repo as e.g. actions/checkout, and therefore we trust it less.
+        # d91a48109 is the same as the tag v0.8.0, but it's guaranteed to be immutable.
+        # So even if a bad actor takes over the repo, and rewrites tags to point to malicious commits, we will still be safe.
+        with:
+          branch: ${{ github.head_ref || github.ref_name }}

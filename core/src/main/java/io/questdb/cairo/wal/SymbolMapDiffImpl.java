@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,13 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.vm.api.NullMemory;
+
+import static io.questdb.cairo.vm.Vm.STRING_LENGTH_BYTES;
+
 public class SymbolMapDiffImpl implements SymbolMapDiff {
     public static final int END_OF_SYMBOL_DIFFS = -1;
     public static final int END_OF_SYMBOL_ENTRIES = -1;
@@ -33,7 +40,7 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
     private int cleanSymbolCount;
     private int columnIndex = -1;
     private boolean nullFlag;
-    private int size;
+    private int recordCount;
 
     SymbolMapDiffImpl(WalEventCursor cursor) {
         this.cursor = cursor;
@@ -55,8 +62,8 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
     }
 
     @Override
-    public int getSize() {
-        return size;
+    public int getRecordCount() {
+        return recordCount;
     }
 
     @Override
@@ -72,14 +79,21 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
     void of(int columnIndex, int cleanSymbolCount, int size, boolean nullFlag) {
         this.columnIndex = columnIndex;
         this.cleanSymbolCount = cleanSymbolCount;
-        this.size = size;
+        this.recordCount = size;
         this.nullFlag = nullFlag;
         entry.clear();
     }
 
     public static class Entry implements SymbolMapDiffEntry {
         private int key;
-        private CharSequence symbol;
+        private MemoryCR memoryR;
+        private long symbolOffset;
+
+        @Override
+        public void appendSymbolTo(MemoryARW symbolMem) {
+            int len = memoryR.getInt(symbolOffset);
+            symbolMem.putBlockOfBytes(memoryR.addressOf(symbolOffset), len < 0 ? STRING_LENGTH_BYTES : Vm.getStorageLength(len));
+        }
 
         @Override
         public int getKey() {
@@ -88,16 +102,17 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
 
         @Override
         public CharSequence getSymbol() {
-            return symbol;
+            return memoryR.getStrA(symbolOffset);
         }
 
         void clear() {
-            of(-1, null);
+            of(-1, 0, NullMemory.INSTANCE);
         }
 
-        void of(int key, CharSequence symbol) {
+        void of(int key, long symbolOffset, MemoryCR symbolMem) {
             this.key = key;
-            this.symbol = symbol;
+            this.symbolOffset = symbolOffset;
+            this.memoryR = symbolMem;
         }
     }
 }

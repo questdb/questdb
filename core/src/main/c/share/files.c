@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,7 +30,9 @@
 #include "sysutil.h"
 
 #include <stdlib.h>
+#include <stdint.h>
 #include <dirent.h>
+#include <string.h>
 #include <sys/errno.h>
 #include <sys/time.h>
 #include <sys/mount.h>
@@ -38,7 +40,6 @@
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
         (JNIEnv *e, jclass cl, jint fd, jlong address, jlong len, jlong offset) {
-
     off_t writeOffset = offset;
     ssize_t written;
 
@@ -135,6 +136,16 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readNonNegativeInt
         return -1;
     }
     return result;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readIntAsUnsignedLong
+        (JNIEnv *e, jclass cl, jint fd, jlong offset) {
+    uint32_t result;
+    ssize_t readLen = pread((int) fd, (void *) &result, sizeof(jint), (off_t) offset);
+    if (readLen != sizeof(uint32_t)) {
+        return -1;
+    }
+    return (jlong) result;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readNonNegativeLong
@@ -363,25 +374,34 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
         (JNIEnv *e, jclass cl, jlong lpszName, jlong size) {
-
     jint fd = open((const char *) lpszName, O_CREAT | O_RDWR, 0644);
-
     if (fd < 0) {
         // error opening / creating file
-        return fd;
+        return -1;
     }
 
     jlong fileSize = Java_io_questdb_std_Files_length(e, cl, fd);
     if (fileSize > 0) {
-        if (flock((int) fd, LOCK_EX | LOCK_NB) == 0) {
+        ssize_t res;
+        RESTARTABLE(flock((int) fd, LOCK_EX | LOCK_NB), res);
+        if (res == 0) {
             // truncate file to 0 byte
             if (ftruncate(fd, 0) == 0) {
                 // allocate file to `size`
                 if (Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE) {
-                    // downgrade to shared lock
-                    if (flock((int) fd, LOCK_SH) == 0) {
-                        // success
-                        return fd;
+                    // Zero the file and msync, so that we have no unpleasant side effects like non-zero bytes read on ZFS.
+                    // See https://github.com/questdb/questdb/issues/4756
+                    void *addr = mmap(NULL, (size_t) size, PROT_READ | PROT_WRITE, MAP_SHARED, (int) fd, 0);
+                    if (addr != MAP_FAILED) {
+                        memset(addr, 0, size);
+                        if (msync(addr, size, MS_SYNC) == 0) {
+                            munmap(addr, (size_t) size);
+                            // finally, downgrade to shared lock
+                            if (flock((int) fd, LOCK_SH) == 0) {
+                                // success
+                                return fd;
+                            }
+                        }
                     }
                 }
             }

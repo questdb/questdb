@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,31 +28,37 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 
-public abstract class AbstractTableNameRegistry implements TableNameRegistry {
-    // drop marker must contain special symbols to avoid a table created by the same name
-    protected final TableNameRegistryFileStore nameStore;
-    private ConcurrentHashMap<TableToken> nameTokenMap;
-    private ConcurrentHashMap<ReverseTableMapItem> reverseNameTokenMap;
+import java.util.Map;
 
-    public AbstractTableNameRegistry(CairoConfiguration configuration) {
-        this.nameStore = new TableNameRegistryFileStore(configuration);
+public abstract class AbstractTableNameRegistry implements TableNameRegistry {
+    protected final CairoEngine engine;
+    // drop marker must contain special symbols to avoid a table created by the same name
+    protected final TableNameRegistryStore nameStore;
+    protected final TableFlagResolver tableFlagResolver;
+    protected ConcurrentHashMap<ReverseTableMapItem> dirNameToTableTokenMap;
+    protected ConcurrentHashMap<TableToken> tableNameToTableTokenMap;
+
+    public AbstractTableNameRegistry(CairoEngine engine, TableFlagResolver tableFlagResolver) {
+        this.engine = engine;
+        this.nameStore = new TableNameRegistryStore(engine.configuration, tableFlagResolver);
+        this.tableFlagResolver = tableFlagResolver;
     }
 
     @Override
-    public void close() {
-        nameTokenMap.clear();
-        reverseNameTokenMap.clear();
+    public synchronized void close() {
+        tableNameToTableTokenMap.clear();
+        dirNameToTableTokenMap.clear();
         Misc.free(nameStore);
     }
 
     @Override
     public TableToken getTableToken(CharSequence tableName) {
-        return nameTokenMap.get(tableName);
+        return tableNameToTableTokenMap.get(tableName);
     }
 
     @Override
     public TableToken getTableTokenByDirName(String dirName) {
-        ReverseTableMapItem rmi = reverseNameTokenMap.get(dirName);
+        ReverseTableMapItem rmi = dirNameToTableTokenMap.get(dirName);
         if (rmi != null && !rmi.isDropped()) {
             return rmi.getToken();
         }
@@ -62,7 +68,7 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     @Override
     public int getTableTokenCount(boolean includeDropped) {
         int count = 0;
-        for (ReverseTableMapItem entry : reverseNameTokenMap.values()) {
+        for (ReverseTableMapItem entry : dirNameToTableTokenMap.values()) {
             if (includeDropped || !entry.isDropped()) {
                 count++;
             }
@@ -73,7 +79,7 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     @Override
     public void getTableTokens(ObjHashSet<TableToken> target, boolean includeDropped) {
         target.clear();
-        for (ReverseTableMapItem entry : reverseNameTokenMap.values()) {
+        for (ReverseTableMapItem entry : dirNameToTableTokenMap.values()) {
             if (includeDropped || !entry.isDropped()) {
                 target.add(entry.getToken());
             }
@@ -82,25 +88,80 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
 
     @Override
     public TableToken getTokenByDirName(CharSequence dirName) {
-        ReverseTableMapItem entry = reverseNameTokenMap.get(dirName);
+        ReverseTableMapItem entry = dirNameToTableTokenMap.get(dirName);
         return entry == null ? null : entry.getToken();
     }
 
     @Override
     public boolean isTableDropped(TableToken tableToken) {
-        ReverseTableMapItem rmi = reverseNameTokenMap.get(tableToken.getDirName());
+        if (tableToken.isWal()) {
+            return isWalTableDropped(tableToken.getDirName());
+        }
+        TableToken currentTableToken = tableNameToTableTokenMap.get(tableToken.getTableName());
+        return currentTableToken == LOCKED_DROP_TOKEN;
+    }
+
+    @Override
+    public boolean isWalTableDropped(CharSequence tableDir) {
+        ReverseTableMapItem rmi = dirNameToTableTokenMap.get(tableDir);
         return rmi != null && rmi.isDropped();
     }
 
     @Override
-    public void resetMemory() {
+    public synchronized void reconcile() {
+        for (Map.Entry<CharSequence, TableToken> e : tableNameToTableTokenMap.entrySet()) {
+            TableToken tableNameTableToken = e.getValue();
+
+            if (TableNameRegistry.isLocked(tableNameTableToken)) {
+                continue;
+            }
+
+            ReverseTableMapItem dirNameTableToken = dirNameToTableTokenMap.get(tableNameTableToken.getDirName());
+
+            if (dirNameTableToken == null) {
+                throw new IllegalStateException("table " + tableNameTableToken + " does not have directory mapping");
+            }
+
+            if (dirNameTableToken.isDropped()) {
+                throw new IllegalStateException("table " + tableNameTableToken + " should not be in dropped state");
+            }
+
+            if (dirNameTableToken.getToken().getTableId() != tableNameTableToken.getTableId()) {
+                throw new IllegalStateException("table " + tableNameTableToken + " ID mismatch");
+            }
+        }
+        for (Map.Entry<CharSequence, ReverseTableMapItem> e : dirNameToTableTokenMap.entrySet()) {
+            ReverseTableMapItem item = e.getValue();
+            TableToken dirToNameToken = item.getToken();
+            TableToken tokenByName = tableNameToTableTokenMap.get(dirToNameToken.getTableName());
+            if (item.isDropped()) {
+                if (tokenByName != null && tokenByName.equals(dirToNameToken)) {
+                    throw new IllegalStateException("table " + tokenByName.getTableName()
+                            + " is dropped but still present in table name registry");
+                }
+            } else {
+                if (tokenByName == null) {
+                    throw new IllegalStateException("table " + dirToNameToken.getTableName()
+                            + " is not dropped but name is not present in table name registry");
+                }
+
+                if (!dirToNameToken.equals(tokenByName)) {
+                    throw new IllegalStateException("table " + dirToNameToken.getTableName() + " tokens mismatch");
+                }
+            }
+        }
+    }
+
+    @Override
+    public synchronized void resetMemory() {
         nameStore.resetMemory();
     }
 
     void setNameMaps(
-            ConcurrentHashMap<TableToken> nameTableTokenMap,
-            ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap) {
-        this.nameTokenMap = nameTableTokenMap;
-        this.reverseNameTokenMap = reverseTableNameTokenMap;
+            ConcurrentHashMap<TableToken> tableNameToTableTokenMap,
+            ConcurrentHashMap<ReverseTableMapItem> dirNameToTableTokenMap
+    ) {
+        this.tableNameToTableTokenMap = tableNameToTableTokenMap;
+        this.dirNameToTableTokenMap = dirNameToTableTokenMap;
     }
 }

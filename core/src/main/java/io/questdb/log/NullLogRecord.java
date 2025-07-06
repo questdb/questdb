@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,12 @@
 
 package io.questdb.log;
 
-import io.questdb.std.Sinkable;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 
@@ -40,12 +45,17 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
-    public LogRecord $(CharSequence sequence) {
+    public LogRecord $(@Nullable CharSequence sequence) {
         return this;
     }
 
     @Override
-    public LogRecord $(CharSequence sequence, int lo, int hi) {
+    public LogRecord $(@Nullable Utf8Sequence sequence) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $(@Nullable DirectUtf8Sequence sequence) {
         return this;
     }
 
@@ -75,22 +85,22 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
-    public LogRecord $(Throwable e) {
+    public LogRecord $(@Nullable Throwable e) {
         return this;
     }
 
     @Override
-    public LogRecord $(File x) {
+    public LogRecord $(@Nullable File x) {
         return this;
     }
 
     @Override
-    public LogRecord $(Object x) {
+    public LogRecord $(@Nullable Object x) {
         return this;
     }
 
     @Override
-    public LogRecord $(Sinkable x) {
+    public LogRecord $(@Nullable Sinkable x) {
         return this;
     }
 
@@ -115,12 +125,47 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public LogRecord $safe(@NotNull CharSequence sequence, int lo, int hi) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $safe(@Nullable DirectUtf8Sequence sequence) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $safe(@Nullable Utf8Sequence sequence) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $safe(long lo, long hi) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $safe(@Nullable CharSequence sequence) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $size(long memoryBytes) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $substr(int from, @Nullable DirectUtf8Sequence sequence) {
+        return this;
+    }
+
+    @Override
     public LogRecord $ts(long x) {
         return this;
     }
 
     @Override
-    public LogRecord $utf8(long lo, long hi) {
+    public LogRecord $uuid(long lo, long hi) {
         return this;
     }
 
@@ -135,17 +180,27 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public Utf8Sink put(@Nullable Utf8Sequence us) {
+        return this;
+    }
+
+    @Override
+    public Utf8Sink put(byte b) {
+        return this;
+    }
+
+    @Override
     public LogRecord put(char c) {
         return this;
     }
 
     @Override
-    public LogRecord ts() {
+    public Utf8Sink putNonAscii(long lo, long hi) {
         return this;
     }
 
     @Override
-    public LogRecord utf8(CharSequence sequence) {
+    public LogRecord ts() {
         return this;
     }
 }

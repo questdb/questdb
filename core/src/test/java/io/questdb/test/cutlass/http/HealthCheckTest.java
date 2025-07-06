@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.Metrics;
 import io.questdb.network.NetworkFacadeImpl;
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -55,30 +56,34 @@ public class HealthCheckTest {
             .withLookingForStuckThread(true)
             .build();
 
+    @Before
+    public void setUp() throws Exception {
+        Metrics.ENABLED.clear();
+    }
+
     @Test
     public void testHealthyViaRootPathWhenMetricsDisabled() throws Exception {
-        testHealthy(Metrics.disabled(), healthCheckOnRootRequest);
+        testHealthy(healthCheckOnRootRequest);
     }
 
     @Test
     public void testHealthyViaRootPathWhenMetricsEnabled() throws Exception {
-        testHealthy(Metrics.enabled(), healthCheckOnRootRequest);
+        testHealthy(healthCheckOnRootRequest);
     }
 
     @Test
     public void testHealthyViaStatusPathWhenMetricsDisabled() throws Exception {
-        testHealthy(Metrics.disabled(), healthCheckRequest);
+        testHealthy(healthCheckRequest);
     }
 
     @Test
     public void testHealthyViaStatusPathWhenMetricsEnabled() throws Exception {
-        testHealthy(Metrics.enabled(), healthCheckRequest);
+        testHealthy(healthCheckRequest);
     }
 
-    public void testUnhealthy(Metrics metrics, boolean pessimisticHealthCheck, String expectedResponse) throws Exception {
+    public void testUnhealthy(boolean pessimisticHealthCheck, String expectedResponse) throws Exception {
         new HttpHealthCheckTestBuilder()
                 .withTempFolder(temp)
-                .withMetrics(metrics)
                 .withPessimisticHealthCheck(pessimisticHealthCheck)
                 .withInjectedUnhandledError()
                 .run(engine -> new SendAndReceiveRequestBuilder()
@@ -99,11 +104,12 @@ public class HealthCheckTest {
                 "Unhandled errors: 1\r\n" +
                 "00\r\n" +
                 "\r\n";
-        testUnhealthy(Metrics.enabled(), true, expectedResponse);
+        testUnhealthy(true, expectedResponse);
     }
 
     @Test
     public void testUnhealthyWhenMetricsDisabled() throws Exception {
+        Metrics.ENABLED.disable();
         // Unhandled error detection is based on metrics, so we expect the health check to return HTTP 200.
         final String expectedResponse = "HTTP/1.1 200 OK\r\n" +
                 "Server: questDB/1.0\r\n" +
@@ -115,7 +121,7 @@ public class HealthCheckTest {
                 "Status: Healthy\r\n" +
                 "00\r\n" +
                 "\r\n";
-        testUnhealthy(Metrics.disabled(), true, expectedResponse);
+        testUnhealthy(true, expectedResponse);
     }
 
     @Test
@@ -131,13 +137,12 @@ public class HealthCheckTest {
                 "Status: Healthy\r\n" +
                 "00\r\n" +
                 "\r\n";
-        testUnhealthy(Metrics.enabled(), false, expectedResponse);
+        testUnhealthy(false, expectedResponse);
     }
 
-    private void testHealthy(Metrics metrics, String request) throws Exception {
+    private void testHealthy(String request) throws Exception {
         new HttpHealthCheckTestBuilder()
                 .withTempFolder(temp)
-                .withMetrics(metrics)
                 .run(engine -> {
                     final String expectedResponse = "HTTP/1.1 200 OK\r\n" +
                             "Server: questDB/1.0\r\n" +

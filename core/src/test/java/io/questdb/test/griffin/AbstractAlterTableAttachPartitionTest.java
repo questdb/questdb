@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Before;
@@ -39,7 +39,7 @@ import org.junit.Rule;
 import org.junit.rules.TestName;
 
 
-abstract class AbstractAlterTableAttachPartitionTest extends AbstractGriffinTest {
+abstract class AbstractAlterTableAttachPartitionTest extends AbstractCairoTest {
     final static StringSink partitions = new StringSink();
     @Rule
     public TestName testName = new TestName();

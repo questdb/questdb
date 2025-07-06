@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,11 +26,12 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.std.datetime.microtime.Timestamps.toMicros;
 
 public class MonthTimestampSampler implements TimestampSampler {
-    private final int monthCount;
+    private final int stepMonths;
     private int startDay;
     private int startHour;
     private int startMicros;
@@ -38,18 +39,28 @@ public class MonthTimestampSampler implements TimestampSampler {
     private int startMin;
     private int startSec;
 
-    public MonthTimestampSampler(int monthCount) {
-        this.monthCount = monthCount;
+    public MonthTimestampSampler(int stepMonths) {
+        this.stepMonths = stepMonths;
+    }
+
+    @Override
+    public long getApproxBucketSize() {
+        return Timestamps.MONTH_MICROS_APPROX * stepMonths;
     }
 
     @Override
     public long nextTimestamp(long timestamp) {
-        return addMonth(timestamp, monthCount);
+        return addMonth(timestamp, stepMonths);
+    }
+
+    @Override
+    public long nextTimestamp(long timestamp, int numSteps) {
+        return addMonth(timestamp, numSteps * stepMonths);
     }
 
     @Override
     public long previousTimestamp(long timestamp) {
-        return addMonth(timestamp, -monthCount);
+        return addMonth(timestamp, -stepMonths);
     }
 
     @Override
@@ -58,7 +69,7 @@ public class MonthTimestampSampler implements TimestampSampler {
         final boolean leap = Timestamps.isLeapYear(y);
         int m = Timestamps.getMonthOfYear(value, y, leap);
         // target month
-        int nextMonth = ((m - 1) / monthCount) * monthCount + 1;
+        int nextMonth = ((m - 1) / stepMonths) * stepMonths + 1;
         int d = startDay > 0 ? startDay : 1;
         return toMicros(y, leap, d, nextMonth, startHour, startMin, startSec, startMillis, startMicros);
     }
@@ -76,8 +87,8 @@ public class MonthTimestampSampler implements TimestampSampler {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("MonthTsSampler");
+    public void toSink(@NotNull CharSink<?> sink) {
+        sink.putAscii("MonthTsSampler");
     }
 
     private long addMonth(long timestamp, int monthCount) {

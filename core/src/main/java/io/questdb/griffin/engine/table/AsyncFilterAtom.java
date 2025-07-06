@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,34 +26,43 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StatefulAtom;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
 import java.util.concurrent.atomic.LongAdder;
 
-public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
-
+public class AsyncFilterAtom implements StatefulAtom, Plannable {
     public static final LongAdder PRE_TOUCH_BLACK_HOLE = new LongAdder();
-
+    private final IntList columnTypes;
     private final Function filter;
+    private final boolean forceDisablePreTouch;
     private final ObjList<Function> perWorkerFilters;
     private final PerWorkerLocks perWorkerLocks;
-    private final IntList preTouchColumnTypes;
+    private final double preTouchThreshold;
     private boolean preTouchEnabled;
+    // used to disable column pre-touch without affecting the explain plan
+    private boolean preTouchEnabledOverride;
 
     public AsyncFilterAtom(
             @NotNull CairoConfiguration configuration,
             @NotNull Function filter,
             @Nullable ObjList<Function> perWorkerFilters,
-            @Nullable IntList preTouchColumnTypes
+            @NotNull IntList columnTypes
     ) {
         this.filter = filter;
         this.perWorkerFilters = perWorkerFilters;
@@ -62,31 +71,20 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
         } else {
             perWorkerLocks = null;
         }
-        this.preTouchColumnTypes = preTouchColumnTypes;
-    }
-
-    public int acquireFilter(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
-        if (perWorkerLocks == null) {
-            return -1;
-        }
-        if (workerId == -1 && owner) {
-            // Owner thread is free to use the original filter anytime.
-            return -1;
-        }
-        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
+        this.columnTypes = columnTypes;
+        this.forceDisablePreTouch = !configuration.isSqlParallelFilterPreTouchEnabled();
+        this.preTouchThreshold = configuration.getSqlParallelFilterPreTouchThreshold();
     }
 
     @Override
     public void close() {
-        Misc.free(filter);
         Misc.freeObjList(perWorkerFilters);
     }
 
     public Function getFilter(int filterId) {
-        if (filterId == -1) {
+        if (filterId == -1 || perWorkerFilters == null) {
             return filter;
         }
-        assert perWorkerFilters != null;
         return perWorkerFilters.getQuick(filterId);
     }
 
@@ -97,22 +95,32 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
             final boolean current = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
             try {
-                Function.init(perWorkerFilters, symbolTableSource, executionContext);
+                Function.init(perWorkerFilters, symbolTableSource, executionContext, filter);
             } finally {
                 executionContext.setCloneSymbolTables(current);
             }
         }
         preTouchEnabled = executionContext.isColumnPreTouchEnabled();
+        preTouchEnabledOverride = executionContext.isColumnPreTouchEnabledOverride();
     }
 
-    @Override
-    public void initCursor() {
-        filter.initCursor();
-        if (perWorkerFilters != null) {
-            // Initialize all per-worker filters on the query owner thread to avoid
-            // DataUnavailableException thrown on worker threads when filtering.
-            Function.initCursor(perWorkerFilters);
+    /**
+     * Attempts to acquire a slot for the given worker thread.
+     * On success, a {@link #releaseFilter(int)} call must follow.
+     *
+     * @throws io.questdb.cairo.CairoException when circuit breaker has tripped
+     */
+    public int maybeAcquireFilter(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
+        if (perWorkerLocks == null) {
+            return -1;
         }
+        if (workerId == -1 && owner) {
+            // Owner thread is free to use its own private filter anytime.
+            return -1;
+        }
+        // All other threads, e.g. worker or work stealing threads, must always acquire a lock
+        // to use shared resources.
+        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
     }
 
     /**
@@ -122,20 +130,22 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
      * in parallel, on multiple threads, instead of relying on the "query owner" thread
      * to do it later serially.
      *
-     * @param record record to use
-     * @param rows   rows to pre-touch
+     * @param record        record to use
+     * @param rows          rows to pre-touch
+     * @param frameRowCount total number of rows in the frame
      */
-    public void preTouchColumns(PageAddressCacheRecord record, DirectLongList rows) {
-        if (!preTouchEnabled || preTouchColumnTypes == null) {
+    public void preTouchColumns(PageFrameMemoryRecord record, DirectLongList rows, long frameRowCount) {
+        // Only pre-touch if the filter selectivity is high, i.e. when reading the column values may involve random I/O.
+        if (!isPreTouchEnabled() || !preTouchEnabledOverride || rows.size() > frameRowCount * preTouchThreshold) {
             return;
         }
         // We use a LongAdder as a black hole to make sure that the JVM JIT compiler keeps the load instructions in place.
         long sum = 0;
-        for (long p = 0; p < rows.size(); p++) {
+        for (long p = 0, n = rows.size(); p < n; p++) {
             long r = rows.get(p);
             record.setRowIndex(r);
-            for (int i = 0; i < preTouchColumnTypes.size(); i++) {
-                int columnType = preTouchColumnTypes.getQuick(i);
+            for (int i = 0; i < columnTypes.size(); i++) {
+                int columnType = columnTypes.getQuick(i);
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.BOOLEAN:
                         sum += record.getBool(i) ? 1 : 0;
@@ -146,7 +156,11 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                     case ColumnType.SHORT:
                         sum += record.getShort(i);
                         break;
+                    case ColumnType.CHAR:
+                        sum += record.getChar(i);
+                        break;
                     case ColumnType.INT:
+                    case ColumnType.IPv4:
                     case ColumnType.SYMBOL: // We're interested in pre-touching pages, so we read the symbol key only.
                         sum += record.getInt(i);
                         break;
@@ -156,17 +170,15 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                         sum += record.getLong(i);
                         break;
                     case ColumnType.FLOAT:
-                        sum += record.getFloat(i);
+                        sum += (long) record.getFloat(i);
                         break;
                     case ColumnType.DOUBLE:
-                        sum += record.getDouble(i);
+                        sum += (long) record.getDouble(i);
                         break;
                     case ColumnType.LONG256:
                         Long256 l256 = record.getLong256A(i);
+                        // Touch only the first part of Long256.
                         sum += l256.getLong0();
-                        sum += l256.getLong1();
-                        sum += l256.getLong2();
-                        sum += l256.getLong3();
                         break;
                     case ColumnType.GEOBYTE:
                         sum += record.getGeoByte(i);
@@ -181,21 +193,19 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                         sum += record.getGeoLong(i);
                         break;
                     case ColumnType.STRING:
-                        CharSequence cs = record.getStr(i);
-                        if (cs != null && cs.length() > 0) {
-                            // Touch the first page of the string contents only.
-                            sum += cs.charAt(0);
-                        }
+                        // Touch only the first page of the string contents.
+                        sum += record.getStrLen(i);
+                        break;
+                    case ColumnType.VARCHAR:
+                        // Touch only the header of the varchar.
+                        sum += record.getVarcharSize(i);
                         break;
                     case ColumnType.BINARY:
-                        BinarySequence bs = record.getBin(i);
-                        if (bs != null && bs.length() > 0) {
-                            // Touch the first page of the binary contents only.
-                            sum += bs.byteAt(0);
-                        }
+                        // Touch only the first page of the binary contents.
+                        sum += record.getBinLen(i);
                         break;
                     case ColumnType.UUID:
-                        sum += record.getLong128Hi(i);
+                        // Touch only the first part of UUID.
                         sum += record.getLong128Lo(i);
                         break;
                 }
@@ -206,14 +216,20 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
     }
 
     public void releaseFilter(int filterId) {
-        if (perWorkerLocks == null) {
-            return;
+        if (perWorkerLocks != null) {
+            perWorkerLocks.releaseSlot(filterId);
         }
-        perWorkerLocks.releaseSlot(filterId);
     }
 
     @Override
     public void toPlan(PlanSink sink) {
         sink.val(filter);
+        if (isPreTouchEnabled()) {
+            sink.val(" [pre-touch]");
+        }
+    }
+
+    private boolean isPreTouchEnabled() {
+        return preTouchEnabled && !forceDisablePreTouch;
     }
 }

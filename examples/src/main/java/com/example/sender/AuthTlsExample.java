@@ -4,20 +4,18 @@ import io.questdb.client.Sender;
 
 public class AuthTlsExample {
     public static void main(String[] args) {
-        try (Sender sender = Sender.builder()
-                .address("clever-black-363-c1213c97.ilp.b04c.questdb.net:32074")
-                .enableTls()
-                .enableAuth("admin").authToken("GwBXoGG5c6NoUTLXnzMxw_uNiVa8PKobzx5EiuylMW0")
-                .build()) {
-            sender.table("inventors")
-                    .symbol("born", "Austrian Empire")
-                    .longColumn("id", 0)
-                    .stringColumn("name", "Nicola Tesla")
+        try (Sender sender = Sender.fromConfig("tcps::addr=clever-black-363-c1213c97.ilp.b04c.questdb.net:32074;user=admin;token=GwBXoGG5c6NoUTLXnzMxw_uNiVa8PKobzx5EiuylMW0;")) {
+            sender.table("trades")
+                    .symbol("symbol", "ETH-USD")
+                    .symbol("side", "sell")
+                    .doubleColumn("price", 2615.54)
+                    .doubleColumn("amount", 0.00044)
                     .atNow();
-            sender.table("inventors")
-                    .symbol("born", "USA")
-                    .longColumn("id", 1)
-                    .stringColumn("name", "Thomas Alva Edison")
+            sender.table("trades")
+                    .symbol("symbol", "TC-USD")
+                    .symbol("side", "sell")
+                    .doubleColumn("price", 39269.98)
+                    .doubleColumn("amount", 0.001)
                     .atNow();
         }
     }

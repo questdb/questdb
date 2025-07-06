@@ -1,0 +1,9 @@
+[package]
+name = "async_read"
+version = "0.0.0"
+edition = "2018"
+
+[dependencies]
+parquet2 = { path = "../../" }
+tokio = { version = "1", features = ["macros", "fs", "rt-multi-thread"] }
+async-compat = "0.2"

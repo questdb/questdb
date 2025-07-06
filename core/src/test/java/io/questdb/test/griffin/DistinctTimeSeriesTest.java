@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,20 +24,15 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.tools.TestUtils;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class DistinctTimeSeriesTest extends AbstractGriffinTest {
-
-    private static final Log LOG = LogFactory.getLog(DistinctTimeSeriesTest.class);
+public class DistinctTimeSeriesTest extends AbstractCairoTest {
 
     @Test
     public void testAllTypes() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            execute(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -59,29 +54,21 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
                             " rnd_char() t," +
                             " CAST(now() as LONG256) l256" + // Semi-random to not change saved txt file result
                             " from long_sequence(500)" +
-                            ") timestamp (ts) partition by DAY",
-                    sqlExecutionContext);
+                            ") timestamp (ts) partition by DAY");
 
             // create a copy of 'x' as our expected result set
-            compiler.compile("create table y as (select * from x)", sqlExecutionContext);
+            execute("create table y as (select * from x)");
 
             // copy 'x' into itself, thus duplicating every row
-            compiler.compile("insert into x select * from x", sqlExecutionContext);
+            execute("insert into x select * from x");
 
-            TestUtils.assertSqlCursors(
-                    compiler,
-                    sqlExecutionContext,
+            assertSqlCursors(
                     "y",
-                    "select distinct * from x",
-                    LOG
+                    "select distinct * from x"
             );
 
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "select distinct * from x where 1 != 1",
-                    sink,
-                    "i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n"
+            assertSql(
+                    "i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n", "select distinct * from x where 1 != 1"
             );
         });
     }
@@ -100,7 +87,7 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
                         "8\tibm\t1970-01-06T19:31:50.000000Z\n" +
                         "9\tmsft\t1970-01-06T19:37:20.000000Z\n" +
                         "10\tibm\t1970-01-06T19:42:50.000000Z\n",
-                "select distinct * from x",
+                "select distinct * from x order by ts",
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -110,14 +97,14 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
                         ") timestamp (ts) partition by DAY",
                 "ts",
                 true,
-                false
+                true
         ));
     }
 
     @Test
     public void testEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            execute(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -139,15 +126,11 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
                             " rnd_char() t," +
                             " CAST(now() as LONG256) l256" + // Semi-random to not change saved txt file result
                             " from long_sequence(0)" +
-                            ") timestamp (ts) partition by DAY",
-                    sqlExecutionContext);
+                            ") timestamp (ts) partition by DAY"
+            );
 
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "select distinct * from x",
-                    sink,
-                    "i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n"
+            assertSql(
+                    "i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n", "select distinct * from x"
             );
         });
     }
@@ -166,9 +149,9 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
                     "ibm\t1970-01-06T19:31:50.000000Z\n" +
                     "msft\t1970-01-06T19:37:20.000000Z\n" +
                     "ibm\t1970-01-06T19:42:50.000000Z\n";
-            assertQuery13(
+            assertQuery(
                     expected,
-                    "select distinct sym, ts from x",
+                    "select distinct sym, ts from x order by ts",
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -181,7 +164,8 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
                     "insert into x values (11, 'ibm', '1970-01-06T19:42:50.000000Z')",
                     expected,
                     true,
-                    false
+                    false,
+                    true
             );
         });
     }
@@ -200,9 +184,9 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
                     "ibm\t1970-01-06T19:04:20.000000Z\n" +
                     "msft\t1970-01-06T18:58:50.000000Z\n" +
                     "msft\t1970-01-06T18:53:20.000000Z\n";
-            assertQuery13(
+            assertQuery(
                     expected,
-                    "select distinct sym, ts from (x order by ts desc)",
+                    "select distinct sym, ts from (x order by ts desc) order by ts desc",
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -214,6 +198,7 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
                     // duplicate timestamp and symbol shouldn't change the result
                     "insert into x values (11, 'ibm', '1970-01-06T19:42:50.000000Z')",
                     expected,
+                    true,
                     true,
                     false
             );

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,27 +24,19 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.PropertyKey;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class MinIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class MinIntVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
-        pageFrameMaxRows = 10_000;
-        assertQuery13(
-                "avg\n" +
-                        "5261.376146789\n",
-                "select round(avg(f),9) avg from tab",
-                "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))",
-                null,
-                "alter table tab add column b int",
-                "avg\n" +
-                        "5261.376146789\n",
-                false,
-                true
-        );
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
+        assertQuery("avg\n" +
+                "5261.376146789\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b int", "avg\n" +
+                "5261.376146789\n", false, true, false);
 
         assertQuery(
                 "avg\tmin\n" +
@@ -59,34 +51,16 @@ public class MinIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery13(
-                "min\n" +
-                        "NaN\n",
-                "select min(f) from tab",
-                "create table tab as (select cast(null as int) f from long_sequence(33))",
-                null,
-                "insert into tab select 4567866 from long_sequence(1)",
-                "min\n" +
-                        "4567866\n",
-                false,
-                true
-        );
+        assertQuery("min\n" +
+                "null\n", "select min(f) from tab", "create table tab as (select cast(null as int) f from long_sequence(33))", null, "insert into tab select 4567866 from long_sequence(1)", "min\n" +
+                "4567866\n", false, true, false);
     }
 
     @Test
     public void testMaxIntOrNullThenMaxInt() throws Exception {
-        assertQuery13(
-                "min\n" +
-                        "NaN\n",
-                "select min(f) from tab",
-                "create table tab as (select cast(null as int) f from long_sequence(33))",
-                null,
-                "insert into tab select 2147483647 from long_sequence(1)",
-                "min\n" +
-                        "2147483647\n",
-                false,
-                true
-        );
+        assertQuery("min\n" +
+                "null\n", "select min(f) from tab", "create table tab as (select cast(null as int) f from long_sequence(33))", null, "insert into tab select 2147483647 from long_sequence(1)", "min\n" +
+                "2147483647\n", false, true, false);
     }
 
     @Test

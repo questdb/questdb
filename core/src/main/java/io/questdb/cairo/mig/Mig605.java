@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,16 +37,16 @@ final class Mig605 {
         MigrationActions.LOG.info().$("updating column type IDs [table=").$(migrationContext.getTablePath()).I$();
         final FilesFacade ff = migrationContext.getFf();
         Path path = migrationContext.getTablePath();
-        path.concat(META_FILE_NAME).$();
+        path.concat(META_FILE_NAME);
 
-        if (!ff.exists(path)) {
+        if (!ff.exists(path.$())) {
             MigrationActions.LOG.error().$("meta file does not exist, nothing to migrate [path=").$(path).I$();
             return;
         }
 
         // Metadata file should already be backed up
         try (final MemoryMARW rwMem = migrationContext.getRwMemory()) {
-            rwMem.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_MIG_MMAP);
+            rwMem.of(ff, path.$(), ff.getPageSize(), ff.length(path.$()), MemoryTag.NATIVE_MIG_MMAP);
 
             // column count
             final int columnCount = rwMem.getInt(TableUtils.META_OFFSET_COUNT);

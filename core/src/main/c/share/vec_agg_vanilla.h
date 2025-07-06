@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -53,6 +53,10 @@ int64_t minLong_Vanilla(int64_t *pl, int64_t count);
 
 int64_t maxLong_Vanilla(int64_t *pl, int64_t count);
 
-bool hasNull_Vanilla(int32_t *pi, int64_t count);
+int64_t sumShort_Vanilla(int16_t *ps, int64_t count);
+
+int32_t minShort_Vanilla(int16_t *ps, int64_t count);
+
+int32_t maxShort_Vanilla(int16_t *ps, int64_t count);
 
 #endif //VECT_VANILLA_H

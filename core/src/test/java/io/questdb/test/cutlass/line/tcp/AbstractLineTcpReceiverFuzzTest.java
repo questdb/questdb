@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,16 +24,23 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.*;
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.cutlass.line.tcp.load.LineData;
 import io.questdb.test.cutlass.line.tcp.load.TableData;
 import io.questdb.test.tools.TestUtils;
@@ -42,7 +49,11 @@ import org.junit.Before;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -51,6 +62,7 @@ import static io.questdb.cairo.ColumnType.*;
 @RunWith(Parameterized.class)
 abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
+    protected static final Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
     static final int UPPERCASE_TABLE_RANDOMIZE_FACTOR = 2;
     private static final int MAX_NUM_OF_SKIPPED_COLS = 2;
     private static final int NEW_COLUMN_RANDOMIZE_FACTOR = 2;
@@ -90,7 +102,6 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     private boolean exerciseTags = true;
     private int newColumnFactor = -1;
     private int nonAsciiValueFactor = -1;
-    private boolean sendStringsAsSymbols = false;
     private boolean sendSymbolsWithSpace = false;
     private SOCountDownLatch threadPushFinished;
     private long timestampMark = -1;
@@ -106,18 +117,38 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         });
     }
 
-    @Before
-    public void setUp() {
-        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
-        super.setUp();
+    public void runTest() throws Exception {
+        runTest((factoryType, thread, token, event, segment, position) -> {
+            String tableName = token.getTableName();
+            if (walEnabled) {
+                // There is no locking as such in WAL, so we treat writer return as an unlock event.
+                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_GET) {
+                    handleWriterUnlockEvent(tableName);
+                    handleWriterGetEvent(tableName);
+                }
+                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
+                    handleWriterUnlockEvent(tableName);
+                    handleWriterReturnEvent(tableName);
+                }
+            } else {
+                if (factoryType == PoolListener.SRC_SEQUENCER_METADATA && event == PoolListener.EV_UNLOCKED) {
+                    handleWriterUnlockEvent(tableName);
+                }
+                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_GET) {
+                    handleWriterGetEvent(tableName);
+                }
+                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
+                    handleWriterReturnEvent(tableName);
+                }
+            }
+        }, 250);
     }
 
     @Before
-    public void setUp2() {
-        long s0 = System.currentTimeMillis();
-        long s1 = System.nanoTime();
-        random = new Rnd(s0, s1);
-        getLog().info().$("random seed : ").$(random.getSeed0()).$(", ").$(random.getSeed1()).$();
+    public void setUp() {
+        super.setUp();
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
+        random = TestUtils.generateRandom(getLog());
     }
 
     private CharSequence addColumn(LineData line, int colIndex) {
@@ -175,40 +206,41 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             throw new RuntimeException("Table name is missing");
         }
         try (TableReader reader = getReader(tableName)) {
-            getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+            getLog().info().$("table.getName(): ").$safe(table.getName()).$(", tableName: ").$safe(tableName)
                     .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
             final TableReaderMetadata metadata = reader.getMetadata();
             final CharSequence expected = table.generateRows(metadata);
-            getLog().info().$(table.getName()).$(" expected:\n").utf8(expected).$();
+            getLog().info().$safe(table.getName()).$(" expected:\n").$safe(expected).$();
 
             if (timestampMark < 0L) {
-                final TableReaderRecordCursor cursor = reader.getCursor();
-                // Assert reader min timestamp
-                long txnMinTs = reader.getMinTimestamp();
-                int timestampIndex = reader.getMetadata().getTimestampIndex();
-                if (cursor.hasNext()) {
-                    long dataMinTs = cursor.getRecord().getLong(timestampIndex);
-                    Assert.assertEquals(dataMinTs, txnMinTs);
-                    cursor.toTop();
-                }
+                try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
+                    // Assert reader min timestamp
+                    long txnMinTs = reader.getMinTimestamp();
+                    int timestampIndex = reader.getMetadata().getTimestampIndex();
+                    if (cursor.hasNext()) {
+                        long dataMinTs = cursor.getRecord().getLong(timestampIndex);
+                        Assert.assertEquals(dataMinTs, txnMinTs);
+                        cursor.toTop();
+                    }
 
-                try {
-                    assertCursorTwoPass(expected, cursor, metadata);
-                } catch (AssertionError e) {
-                    throw new AssertionError("Table: " + table.getName(), e);
+                    try {
+                        assertCursorTwoPass(expected, cursor, metadata);
+                    } catch (AssertionError e) {
+                        throw new AssertionError("Table: " + table.getName(), e);
+                    }
                 }
             } else {
-                try (
-                        SqlCompiler compiler = new SqlCompiler(engine);
-                        SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-                ) {
-                    final String sql = tableName + " where timestamp > " + timestampMark;
-                    try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                            getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
-                                    .$(", table.size(): ").$(table.size()).$(", cursor.size(): ").$(cursor.size()).$();
-                            assertCursorTwoPass(expected, cursor, metadata);
-                        }
+                final String sql = tableName + " where timestamp > " + timestampMark;
+                try (RecordCursorFactory factory = select(sql)) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        // Extract for safe logging
+                        CharSequence name = table.getName();
+                        int size = table.size();
+                        long cursorSize = cursor.size();
+
+                        getLog().info().$("table.getName(): ").$(name).$(", tableName: ").$safe(tableName)
+                                .$(", table.size(): ").$(size).$(", cursor.size(): ").$(cursorSize).$();
+                        assertCursorTwoPass(expected, cursor, metadata);
                     }
                 }
             }
@@ -271,7 +303,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 return valueBase + postfix;
             case STRING:
                 postfix = Character.toString(shouldFuzz(nonAsciiValueFactor) ? nonAsciiChars[random.nextInt(nonAsciiChars.length)] : random.nextChar());
-                return sendStringsAsSymbols ? valueBase + postfix : "\"" + valueBase + postfix + "\"";
+                return "\"" + valueBase + postfix + "\"";
             default:
                 return valueBase;
         }
@@ -318,18 +350,18 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     boolean checkTable(TableData table) throws SqlException {
         final CharSequence tableName = tableNames.get(table.getName());
         if (tableName == null) {
-            getLog().info().$(table.getName()).$(" has not been created yet").$();
+            getLog().info().$safe(table.getName()).$(" has not been created yet").$();
             return false;
         }
 
         if (timestampMark < 0L) {
             try (TableReader reader = getReader(tableName)) {
-                getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+                getLog().info().$("table.getName(): ").$safe(table.getName()).$(", tableName: ").$safe(tableName)
                         .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
                 return table.size() <= reader.size();
             } catch (CairoException ex) {
                 if (ex.getFlyweightMessage().toString().contains("table does not exist")) {
-                    getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+                    getLog().info().$("table.getName(): ").$safe(table.getName()).$(", tableName: ").$safe(tableName)
                             .$(", table.size(): ").$(table.size()).$(", reader.size(): table does not exist").$();
                     return table.size() <= 0;
                 } else {
@@ -338,26 +370,38 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             }
         }
 
-        try (
-                SqlCompiler compiler = new SqlCompiler(engine);
-                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
-        ) {
-            final String sql = tableName + " where timestamp > " + timestampMark;
-            try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                    getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
-                            .$(", table.size(): ").$(table.size()).$(", cursor.size(): ").$(cursor.size()).$();
-                    return table.size() <= cursor.size();
-                }
-            } catch (SqlException ex) {
-                if (ex.getFlyweightMessage().toString().contains("table does not exist")
-                        || ex.getFlyweightMessage().toString().contains("table directory is of unknown format")) {
-                    getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
-                            .$(", table.size(): ").$(table.size()).$(", cursor.size(): table does not exist").$();
-                    return table.size() <= 0;
-                } else {
-                    throw ex;
-                }
+        final String sql = tableName + " where timestamp > " + timestampMark;
+        try (RecordCursorFactory factory = select(sql)) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+
+                // Extract vars for safe logging
+                long size = cursor.size();
+                int tableSize = table.size();
+                CharSequence name = table.getName();
+
+                getLog().info().$("table.getName(): ")
+                        .$safe(name).$(", tableName: ").$safe(tableName)
+                        .$(", table.size(): ").$(tableSize)
+                        .$(", cursor.size(): ").$(size).$();
+                return tableSize <= size;
+            }
+        } catch (SqlException ex) {
+            if (ex.getFlyweightMessage().toString().contains("table does not exist")
+                    || ex.getFlyweightMessage().toString().contains("table directory is of unknown format")) {
+
+                // Extract vars for safe logging
+                int size = table.size();
+                CharSequence name = table.getName();
+
+                getLog().info().$("table.getName(): ")
+                        .$safe(name).$(", tableName: ").$safe(tableName)
+                        .$(", table.size(): ").$(size)
+                        .$(", cursor.size(): table does not exist")
+                        .$();
+
+                return size <= 0;
+            } else {
+                throw ex;
             }
         }
     }
@@ -432,8 +476,10 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         Assert.assertEquals(0, failureCounter.get());
     }
 
-    void initFuzzParameters(int duplicatesFactor, int columnReorderingFactor, int columnSkipFactor, int newColumnFactor, int nonAsciiValueFactor,
-                            boolean diffCasesInColNames, boolean exerciseTags, boolean sendStringsAsSymbols, boolean sendSymbolsWithSpace) {
+    void initFuzzParameters(
+            int duplicatesFactor, int columnReorderingFactor, int columnSkipFactor, int newColumnFactor, int nonAsciiValueFactor,
+            boolean diffCasesInColNames, boolean exerciseTags, boolean sendSymbolsWithSpace
+    ) {
         this.duplicatesFactor = duplicatesFactor;
         this.columnReorderingFactor = columnReorderingFactor;
         this.columnSkipFactor = columnSkipFactor;
@@ -441,10 +487,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         this.newColumnFactor = newColumnFactor;
         this.diffCasesInColNames = diffCasesInColNames;
         this.exerciseTags = exerciseTags;
-        this.sendStringsAsSymbols = sendStringsAsSymbols;
         this.sendSymbolsWithSpace = sendSymbolsWithSpace;
-
-        symbolAsFieldSupported = sendStringsAsSymbols;
     }
 
     void initLoadParameters(int numOfLines, int numOfIterations, int numOfThreads, int numOfTables, long waitBetweenIterationsMillis) {
@@ -480,33 +523,6 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         return getTableName(pinTablesToThreads ? threadId : random.nextInt(numOfTables), true);
     }
 
-    void runTest() throws Exception {
-        runTest((factoryType, thread, token, event, segment, position) -> {
-            String tableName = token.getTableName();
-            if (walEnabled) {
-                // There is no locking as such in WAL, so we treat writer return as an unlock event.
-                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_GET) {
-                    handleWriterUnlockEvent(tableName);
-                    handleWriterGetEvent(tableName);
-                }
-                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
-                    handleWriterUnlockEvent(tableName);
-                    handleWriterReturnEvent(tableName);
-                }
-            } else {
-                if (factoryType == PoolListener.SRC_METADATA && event == PoolListener.EV_UNLOCKED) {
-                    handleWriterUnlockEvent(tableName);
-                }
-                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_GET) {
-                    handleWriterGetEvent(tableName);
-                }
-                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
-                    handleWriterReturnEvent(tableName);
-                }
-            }
-        }, 250);
-    }
-
     void runTest(PoolListener listener, long minIdleMsBeforeWriterRelease) throws Exception {
         runInContext(receiver -> {
             Assert.assertEquals(0, tables.size());
@@ -535,7 +551,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 getLog().error().$(e).$();
                 setError(e.getMessage());
             } finally {
-                for (int i = 0; i < numOfThreads; i++) {
+                for (int i = 0; i < sockets.size(); i++) {
                     final Socket socket = sockets.get(i);
                     socket.close();
                 }

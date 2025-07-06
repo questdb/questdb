@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import io.questdb.griffin.Plannable;
 import io.questdb.std.*;
 
 
-//Metadata describing join conditions
+// Metadata describing join conditions
 public class JoinContext implements Mutable, Plannable {
     public static final ObjectFactory<JoinContext> FACTORY = JoinContext::new;
     private static final int TYPICAL_NUMBER_OF_JOIN_COLUMNS = 4;

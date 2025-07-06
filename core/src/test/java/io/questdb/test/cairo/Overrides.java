@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,736 +24,293 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.BuildInformationHolder;
+import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
-import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.SqlWalMode;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.FreeOnExit;
+import io.questdb.PropServerConfiguration;
+import io.questdb.PropertyKey;
+import io.questdb.ServerConfigurationException;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cutlass.json.JsonException;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.RostiAllocFacade;
-import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.test.AbstractCairoTest;
 
-public class Overrides implements ConfigurationOverrides {
-    private String attachableDirSuffix = null;
-    private CharSequence backupDir;
-    private DateFormat backupDirTimestampFormat;
-    private int binaryEncodingMaxLength = -1;
-    private int capacity = -1;
-    private SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
-    private Boolean columnPreTouchEnabled = null;
-    private long columnPurgeRetryDelay = -1;
-    private int columnVersionPurgeQueueCapacity = -1;
-    private int columnVersionTaskPoolCapacity = -1;
-    private Boolean copyPartitionOnAttach = null;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Properties;
+
+import static io.questdb.cairo.DebugUtils.LOG;
+
+public class Overrides {
+    private static final BuildInformationHolder buildInformationHolder = new BuildInformationHolder();
+    private final Properties defaultProperties = new Properties();
+    private final Properties properties = new Properties();
+    private boolean changed = true;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
-    private int o3PartitionSplitMaxCount = -1;
-    private long partitionO3SplitThreshold;
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
-    private long dataAppendPageSize = -1;
-    private CharSequence defaultMapType;
-    private int defaultTableWriteMode = SqlWalMode.WAL_NOT_SET;
+    private CairoConfiguration defaultConfiguration;
+    private Map<String, String> env = null;
     private FactoryProvider factoryProvider = null;
     private FilesFacade ff;
-    private boolean hideTelemetryTable = false;
-    private String inputRoot = null;
-    private String inputWorkRoot = null;
-    private Boolean ioURingEnabled = null;
-    private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
+    private boolean freeLeakedReaders = false;
+    private boolean isHiddenTelemetryTable = false;
     private boolean mangleTableDirNames = true;
-    private int maxFileNameLength = -1;
-    private int maxOpenPartitions = -1;
-    private int maxUncommittedRows = -1;
-    private int o3ColumnMemorySize = -1;
-    private long o3MaxLag = -1;
-    private long o3MinLag = -1;
-    private boolean o3QuickSortEnabled = false;
-    private int pageFrameMaxRows = -1;
-    private int pageFrameReduceQueueCapacity = -1;
-    private int pageFrameReduceShardCount = -1;
-    private Boolean parallelFilterEnabled = null;
-    private int parallelImportStatusLogKeepNDays = -1;
-    private int queryCacheEventQueueCapacity = -1;
-    private int recreateDistressedSequencerAttempts = 3;
-    private int repeatMigrationsFromVersion = -1;
-    private int rndFunctionMemoryMaxPages = -1;
-    private int rndFunctionMemoryPageSize = -1;
+    private CairoConfiguration propsConfig;
     private RostiAllocFacade rostiAllocFacade = null;
-    private int sampleByIndexSearchPageSize;
-    private String snapshotInstanceId = null;
-    private Boolean snapshotRecoveryEnabled = null;
-    private long spinLockTimeout = -1;
-    private int sqlCopyBufferSize = 1024 * 1024;
-    private int sqlJoinMetadataMaxResizes = -1;
-    private int sqlJoinMetadataPageSize = -1;
-    private int tableRegistryCompactionThreshold;
-    private long walApplyTableTimeQuote = -1;
-    private long walPurgeInterval = -1;
-    private long walSegmentRolloverRowCount = -1;
-    private int walTxnNotificationQueueCapacity = -1;
-    private long writerAsyncCommandBusyWaitTimeout = -1;
-    private long writerAsyncCommandMaxTimeout = -1;
-    private int writerCommandQueueCapacity = 4;
-    private long writerCommandQueueSlotSize = 2048L;
-    private Boolean writerMixedIOEnabled = null;
+    private long spinLockTimeout = AbstractCairoTest.DEFAULT_SPIN_LOCK_TIMEOUT;
 
-    @Override
-    public String getAttachableDirSuffix() {
-        return attachableDirSuffix;
+    public Overrides() {
+        resetToDefaultTestProperties(defaultProperties);
     }
 
-    @Override
-    public CharSequence getBackupDir() {
-        return backupDir;
+    public void freeLeakedReaders(boolean freeLeakedReaders) {
+        this.freeLeakedReaders = freeLeakedReaders;
     }
 
-    @Override
-    public DateFormat getBackupDirTimestampFormat() {
-        return backupDirTimestampFormat;
+    public boolean freeLeakedReaders() {
+        return freeLeakedReaders;
     }
 
-    @Override
-    public int getBinaryEncodingMaxLength() {
-        return binaryEncodingMaxLength;
+    public CairoConfiguration getConfiguration(String root) {
+        if (!properties.isEmpty()) {
+            if (changed) {
+                this.propsConfig = getTestConfiguration(root, defaultProperties, properties);
+                changed = false;
+            }
+            return this.propsConfig;
+        } else {
+            return getDefaultConfiguration(root);
+        }
     }
 
-    @Override
-    public int getCapacity() {
-        return capacity;
+    public Map<String, String> getEnv() {
+        return env != null ? env : System.getenv();
     }
 
-    @Override
-    public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-        return circuitBreakerConfiguration;
-    }
-
-    @Override
-    public long getColumnPurgeRetryDelay() {
-        return columnPurgeRetryDelay;
-    }
-
-    @Override
-    public int getColumnVersionPurgeQueueCapacity() {
-        return columnVersionPurgeQueueCapacity;
-    }
-
-    @Override
-    public int getColumnVersionTaskPoolCapacity() {
-        return columnVersionTaskPoolCapacity;
-    }
-
-    @Override
-    public Boolean getCopyPartitionOnAttach() {
-        return copyPartitionOnAttach;
-    }
-
-    @Override
-    public long getCurrentMicros() {
-        return currentMicros;
-    }
-
-    @Override
-    public long getDataAppendPageSize() {
-        return dataAppendPageSize;
-    }
-
-    @Override
-    public CharSequence getDefaultMapType() {
-        return defaultMapType;
-    }
-
-    @Override
-    public int getDefaultTableWriteMode() {
-        return defaultTableWriteMode;
-    }
-
-    @Override
     public FactoryProvider getFactoryProvider() {
         return factoryProvider;
     }
 
-    @Override
     public FilesFacade getFilesFacade() {
         return ff;
     }
 
-    @Override
-    public int getInactiveReaderMaxOpenPartitions() {
-        return maxOpenPartitions;
-    }
-
-    @Override
     public String getInputRoot() {
-        return inputRoot;
+        return null;
     }
 
-    @Override
     public String getInputWorkRoot() {
-        return inputWorkRoot;
+        return null;
     }
 
-    @Override
-    public int getJitMode() {
-        return jitMode;
-    }
-
-    @Override
-    public int getMaxFileNameLength() {
-        return maxFileNameLength;
-    }
-
-    @Override
-    public int getMaxUncommittedRows() {
-        return maxUncommittedRows;
-    }
-
-    @Override
-    public int getO3ColumnMemorySize() {
-        return o3ColumnMemorySize;
-    }
-
-    @Override
-    public long getO3MaxLag() {
-        return o3MaxLag;
-    }
-
-    @Override
-    public long getO3MinLag() {
-        return o3MinLag;
-    }
-
-    @Override
-    public int getO3PartitionSplitMaxCount() {
-        return o3PartitionSplitMaxCount;
-    }
-
-    @Override
-    public int getPageFrameMaxRows() {
-        return pageFrameMaxRows;
-    }
-
-    @Override
-    public int getPageFrameReduceQueueCapacity() {
-        return pageFrameReduceQueueCapacity;
-    }
-
-    @Override
-    public int getPageFrameReduceShardCount() {
-        return pageFrameReduceShardCount;
-    }
-
-    @Override
-    public int getParallelImportStatusLogKeepNDays() {
-        return parallelImportStatusLogKeepNDays;
-    }
-
-    @Override
-    public long getPartitionO3SplitThreshold() {
-        return partitionO3SplitThreshold;
-    }
-
-    @Override
-    public int getQueryCacheEventQueueCapacity() {
-        return queryCacheEventQueueCapacity;
-    }
-
-    @Override
-    public int getRecreateDistressedSequencerAttempts() {
-        return recreateDistressedSequencerAttempts;
-    }
-
-    @Override
-    public int getRepeatMigrationsFromVersion() {
-        return repeatMigrationsFromVersion;
-    }
-
-    @Override
-    public int getRndFunctionMemoryMaxPages() {
-        return rndFunctionMemoryMaxPages;
-    }
-
-    @Override
-    public int getRndFunctionMemoryPageSize() {
-        return rndFunctionMemoryPageSize;
-    }
-
-    @Override
     public RostiAllocFacade getRostiAllocFacade() {
         return rostiAllocFacade;
     }
 
-    @Override
-    public int getSampleByIndexSearchPageSize() {
-        return sampleByIndexSearchPageSize;
-    }
-
-    @Override
-    public String getSnapshotInstanceId() {
-        return snapshotInstanceId;
-    }
-
-    @Override
-    public Boolean getSnapshotRecoveryEnabled() {
-        return snapshotRecoveryEnabled;
-    }
-
-    @Override
     public long getSpinLockTimeout() {
         return spinLockTimeout;
     }
 
-    @Override
-    public int getSqlCopyBufferSize() {
-        return sqlCopyBufferSize;
-    }
-
-    @Override
-    public int getSqlJoinMetadataMaxResizes() {
-        return sqlJoinMetadataMaxResizes;
-    }
-
-    @Override
-    public int getSqlJoinMetadataPageSize() {
-        return sqlJoinMetadataPageSize;
-    }
-
-    @Override
-    public int getTableRegistryCompactionThreshold() {
-        return tableRegistryCompactionThreshold;
-    }
-
-    @Override
     public MicrosecondClock getTestMicrosClock() {
         return testMicrosClock;
     }
 
-    @Override
-    public long getWalApplyTableTimeQuote() {
-        return walApplyTableTimeQuote;
-    }
-
-    @Override
-    public long getWalPurgeInterval() {
-        return walPurgeInterval;
-    }
-
-    @Override
-    public long getWalSegmentRolloverRowCount() {
-        return walSegmentRolloverRowCount;
-    }
-
-    @Override
-    public int getWalTxnNotificationQueueCapacity() {
-        return walTxnNotificationQueueCapacity;
-    }
-
-    @Override
-    public long getWriterAsyncCommandBusyWaitTimeout() {
-        return writerAsyncCommandBusyWaitTimeout;
-    }
-
-    @Override
-    public long getWriterAsyncCommandMaxTimeout() {
-        return writerAsyncCommandMaxTimeout;
-    }
-
-    @Override
-    public int getWriterCommandQueueCapacity() {
-        return writerCommandQueueCapacity;
-    }
-
-    @Override
-    public long getWriterCommandQueueSlotSize() {
-        return writerCommandQueueSlotSize;
-    }
-
-    @Override
-    public Boolean isColumnPreTouchEnabled() {
-        return columnPreTouchEnabled;
-    }
-
-    @Override
     public boolean isHidingTelemetryTable() {
-        return hideTelemetryTable;
+        return isHiddenTelemetryTable;
     }
 
-    @Override
-    public Boolean isIoURingEnabled() {
-        return ioURingEnabled;
-    }
-
-    @Override
-    public boolean isO3QuickSortEnabled() {
-        return o3QuickSortEnabled;
-    }
-
-    @Override
-    public Boolean isParallelFilterEnabled() {
-        return parallelFilterEnabled;
-    }
-
-    @Override
-    public Boolean isWriterMixedIOEnabled() {
-        return writerMixedIOEnabled;
-    }
-
-    @Override
     public boolean mangleTableDirNames() {
         return mangleTableDirNames;
     }
 
-    @Override
     public void reset() {
-        hideTelemetryTable = false;
-        maxUncommittedRows = -1;
-        o3MaxLag = -1;
-        o3MinLag = -1;
         currentMicros = -1;
         testMicrosClock = defaultMicrosecondClock;
-        sampleByIndexSearchPageSize = -1;
-        defaultMapType = null;
-        writerAsyncCommandBusyWaitTimeout = -1;
-        writerAsyncCommandMaxTimeout = -1;
-        pageFrameMaxRows = -1;
-        jitMode = SqlJitMode.JIT_MODE_ENABLED;
-        rndFunctionMemoryPageSize = -1;
-        rndFunctionMemoryMaxPages = -1;
-        spinLockTimeout = -1;
-        snapshotInstanceId = null;
-        snapshotRecoveryEnabled = null;
-        parallelFilterEnabled = null;
-        writerMixedIOEnabled = null;
-        columnPreTouchEnabled = null;
-        writerCommandQueueCapacity = 4;
-        queryCacheEventQueueCapacity = -1;
-        pageFrameReduceShardCount = -1;
-        pageFrameReduceQueueCapacity = -1;
-        columnVersionPurgeQueueCapacity = -1;
-        columnVersionTaskPoolCapacity = -1;
         rostiAllocFacade = null;
-        sqlCopyBufferSize = 1024 * 1024;
-        sqlJoinMetadataPageSize = -1;
-        sqlJoinMetadataMaxResizes = -1;
-        ioURingEnabled = null;
-        parallelImportStatusLogKeepNDays = -1;
-        defaultTableWriteMode = SqlWalMode.WAL_NOT_SET;
-        copyPartitionOnAttach = null;
-        attachableDirSuffix = null;
         ff = null;
-        dataAppendPageSize = -1;
-        o3QuickSortEnabled = false;
-        walSegmentRolloverRowCount = -1;
         mangleTableDirNames = true;
-        walPurgeInterval = -1;
-        tableRegistryCompactionThreshold = -1;
-        maxOpenPartitions = -1;
-        walApplyTableTimeQuote = -1;
-        repeatMigrationsFromVersion = -1;
         factoryProvider = null;
+        env = null;
+        isHiddenTelemetryTable = false;
+        properties.clear();
+        changed = true;
+        spinLockTimeout = AbstractCairoTest.DEFAULT_SPIN_LOCK_TIMEOUT;
+        freeLeakedReaders = false;
     }
 
-    @Override
-    public void setAttachableDirSuffix(String attachableDirSuffix) {
-        this.attachableDirSuffix = attachableDirSuffix;
-    }
-
-    @Override
-    public void setBackupDir(CharSequence backupDir) {
-        this.backupDir = backupDir;
-    }
-
-    @Override
-    public void setBackupDirTimestampFormat(DateFormat backupDirTimestampFormat) {
-        this.backupDirTimestampFormat = backupDirTimestampFormat;
-    }
-
-    @Override
-    public void setBinaryEncodingMaxLength(int binaryEncodingMaxLength) {
-        this.binaryEncodingMaxLength = binaryEncodingMaxLength;
-    }
-
-    @Override
-    public void setCapacity(int capacity) {
-        this.capacity = capacity;
-    }
-
-    @Override
-    public void setCircuitBreakerConfiguration(SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration) {
-        this.circuitBreakerConfiguration = circuitBreakerConfiguration;
-    }
-
-    @Override
-    public void setColumnPreTouchEnabled(Boolean columnPreTouchEnabled) {
-        this.columnPreTouchEnabled = columnPreTouchEnabled;
-    }
-
-    @Override
-    public void setColumnPurgeRetryDelay(long columnPurgeRetryDelay) {
-        this.columnPurgeRetryDelay = columnPurgeRetryDelay;
-    }
-
-    @Override
-    public void setColumnVersionPurgeQueueCapacity(int columnVersionPurgeQueueCapacity) {
-        this.columnVersionPurgeQueueCapacity = columnVersionPurgeQueueCapacity;
-    }
-
-    @Override
-    public void setColumnVersionTaskPoolCapacity(int columnVersionTaskPoolCapacity) {
-        this.columnVersionTaskPoolCapacity = columnVersionTaskPoolCapacity;
-    }
-
-    @Override
-    public void setCopyPartitionOnAttach(Boolean copyPartitionOnAttach) {
-        this.copyPartitionOnAttach = copyPartitionOnAttach;
-    }
-
-    @Override
     public void setCurrentMicros(long currentMicros) {
         this.currentMicros = currentMicros;
     }
 
-    @Override
-    public void setDataAppendPageSize(long dataAppendPageSize) {
-        this.dataAppendPageSize = dataAppendPageSize;
+    public void setIsHidingTelemetryTable(boolean val) {
+        this.isHiddenTelemetryTable = val;
     }
 
-    @Override
-    public void setDefaultMapType(CharSequence defaultMapType) {
-        this.defaultMapType = defaultMapType;
-    }
-
-    @Override
-    public void setDefaultTableWriteMode(int defaultTableWriteMode) {
-        this.defaultTableWriteMode = defaultTableWriteMode;
-    }
-
-    @Override
-    public void setFactoryProvider(FactoryProvider factoryProvider) {
-        this.factoryProvider = factoryProvider;
-    }
-
-    @Override
-    public void setFilesFacade(FilesFacade ff) {
-        this.ff = ff;
-    }
-
-    @Override
-    public void setHideTelemetryTable(boolean hideTelemetryTable) {
-        this.hideTelemetryTable = hideTelemetryTable;
-    }
-
-    @Override
-    public void setInactiveReaderMaxOpenPartitions(int maxOpenPartitions) {
-        this.maxOpenPartitions = maxOpenPartitions;
-    }
-
-    @Override
-    public void setInputRoot(String inputRoot) {
-        this.inputRoot = inputRoot;
-    }
-
-    @Override
-    public void setInputWorkRoot(String inputWorkRoot) {
-        this.inputWorkRoot = inputWorkRoot;
-    }
-
-    @Override
-    public void setIoURingEnabled(Boolean ioURingEnabled) {
-        this.ioURingEnabled = ioURingEnabled;
-    }
-
-    @Override
-    public void setJitMode(int jitMode) {
-        this.jitMode = jitMode;
-    }
-
-    @Override
     public void setMangleTableDirNames(boolean mangle) {
         this.mangleTableDirNames = mangle;
     }
 
-    @Override
-    public void setMaxFileNameLength(int maxFileNameLength) {
-        this.maxFileNameLength = maxFileNameLength;
+    public void setProperty(PropertyKey propertyKey, long value) {
+        setProperty(propertyKey, String.valueOf(value));
     }
 
-    @Override
-    public void setMaxUncommittedRows(int maxUncommittedRows) {
-        this.maxUncommittedRows = maxUncommittedRows;
+    public void setProperty(PropertyKey propertyKey, String value) {
+        String propertyPath = propertyKey.getPropertyPath();
+        if (value != null) {
+            String existing = properties.getProperty(propertyPath);
+            if (existing == null) {
+                if (value.equals(defaultProperties.get(propertyPath))) {
+                    return;
+                }
+            }
+            properties.setProperty(propertyPath, value);
+            changed = !Chars.equalsNc(value, existing);
+        } else {
+            changed = properties.remove(propertyPath) != null;
+        }
     }
 
-    @Override
-    public void setO3ColumnMemorySize(int size) {
-        o3ColumnMemorySize = size;
+    public void setProperty(PropertyKey propertyKey, boolean value) {
+        setProperty(propertyKey, value ? "true" : "false");
     }
 
-    @Override
-    public void setO3MaxLag(long o3MaxLag) {
-        this.o3MaxLag = o3MaxLag;
-    }
-
-    @Override
-    public void setO3MinLag(long minLag) {
-        o3MinLag = minLag;
-    }
-
-    @Override
-    public void setO3PartitionSplitMaxCount(int o3PartitionSplitMaxCount) {
-        this.o3PartitionSplitMaxCount = o3PartitionSplitMaxCount;
-    }
-
-    @Override
-    public void setO3QuickSortEnabled(boolean o3QuickSortEnabled) {
-        this.o3QuickSortEnabled = o3QuickSortEnabled;
-    }
-
-    @Override
-    public void setPageFrameMaxRows(int pageFrameMaxRows) {
-        this.pageFrameMaxRows = pageFrameMaxRows;
-    }
-
-    @Override
-    public void setPageFrameReduceQueueCapacity(int pageFrameReduceQueueCapacity) {
-        this.pageFrameReduceQueueCapacity = pageFrameReduceQueueCapacity;
-    }
-
-    @Override
-    public void setPageFrameReduceShardCount(int pageFrameReduceShardCount) {
-        this.pageFrameReduceShardCount = pageFrameReduceShardCount;
-    }
-
-    @Override
-    public void setParallelFilterEnabled(Boolean parallelFilterEnabled) {
-        this.parallelFilterEnabled = parallelFilterEnabled;
-    }
-
-    @Override
-    public void setParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays) {
-        this.parallelImportStatusLogKeepNDays = parallelImportStatusLogKeepNDays;
-    }
-
-    @Override
-    public void setPartitionO3SplitThreshold(long value) {
-        this.partitionO3SplitThreshold = value;
-    }
-
-    @Override
-    public void setQueryCacheEventQueueCapacity(int queryCacheEventQueueCapacity) {
-        this.queryCacheEventQueueCapacity = queryCacheEventQueueCapacity;
-    }
-
-    @Override
-    public void setRecreateDistressedSequencerAttempts(int recreateDistressedSequencerAttempts) {
-        this.recreateDistressedSequencerAttempts = recreateDistressedSequencerAttempts;
-    }
-
-    @Override
-    public void setRegistryCompactionThreshold(int value) {
-        tableRegistryCompactionThreshold = value;
-    }
-
-    @Override
-    public void setRepeatMigrationsFromVersion(int value) {
-        repeatMigrationsFromVersion = value;
-    }
-
-    @Override
-    public void setRndFunctionMemoryMaxPages(int rndFunctionMemoryMaxPages) {
-        this.rndFunctionMemoryMaxPages = rndFunctionMemoryMaxPages;
-    }
-
-    @Override
-    public void setRndFunctionMemoryPageSize(int rndFunctionMemoryPageSize) {
-        this.rndFunctionMemoryPageSize = rndFunctionMemoryPageSize;
-    }
-
-    @Override
     public void setRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {
         this.rostiAllocFacade = rostiAllocFacade;
     }
 
-    @Override
-    public void setSampleByIndexSearchPageSize(int sampleByIndexSearchPageSize) {
-        this.sampleByIndexSearchPageSize = sampleByIndexSearchPageSize;
+    private static CairoConfiguration getTestConfiguration(String installRoot, Properties defaultProperties, Properties properties) {
+        Properties props = new Properties();
+        props.putAll(defaultProperties);
+        if (properties != null) {
+            props.putAll(properties);
+        }
+
+        PropServerConfiguration propCairoConfiguration;
+        try {
+            propCairoConfiguration = new PropServerConfiguration(
+                    installRoot,
+                    props,
+                    null,
+                    new HashMap<>(),
+                    LOG,
+                    buildInformationHolder,
+                    FilesFacadeImpl.INSTANCE,
+                    MicrosecondClockImpl.INSTANCE,
+                    (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE,
+                    false
+            );
+        } catch (ServerConfigurationException | JsonException e) {
+            throw new RuntimeException(e);
+        }
+        propCairoConfiguration.init(null, new FreeOnExit());
+        return propCairoConfiguration.getCairoConfiguration();
     }
 
-    @Override
-    public void setSnapshotInstanceId(String snapshotInstanceId) {
-        this.snapshotInstanceId = snapshotInstanceId;
+    private static void resetToDefaultTestProperties(Properties properties) {
+        properties.clear();
+        properties.setProperty(PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.CIRCUIT_BREAKER_THROTTLE.getPropertyPath(), "5");
+        properties.setProperty(PropertyKey.QUERY_TIMEOUT.getPropertyPath(), "0");
+        properties.setProperty(PropertyKey.CAIRO_SQL_CREATE_TABLE_COLUMN_MODEL_POOL_CAPACITY.getPropertyPath(), "32");
+        properties.setProperty(PropertyKey.CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY.getPropertyPath(), "1024");
+        properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY.getPropertyPath(), "64");
+        properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER.getPropertyPath(), "2");
+        properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY.getPropertyPath(), "10");
+        properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY.getPropertyPath(), "64");
+        properties.setProperty(PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY.getPropertyPath(), "16");
+        properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE.getPropertyPath(), "2097152");
+        properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE.getPropertyPath(), "16384");
+        properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE.getPropertyPath(), "1048576");
+        properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE.getPropertyPath(), "1048576");
+        properties.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_CAPACITY.getPropertyPath(), "128");
+        properties.setProperty(PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE.getPropertyPath(), "16384");
+        properties.setProperty(PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE.getPropertyPath(), "1073741824");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY.getPropertyPath(), "32");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD.getPropertyPath(), "1000");
+        properties.setProperty(PropertyKey.CAIRO_ID_GENERATE_STEP.getPropertyPath(), "512");
+        properties.setProperty(PropertyKey.CAIRO_IDLE_CHECK_INTERVAL.getPropertyPath(), "100");
+        properties.setProperty(PropertyKey.CAIRO_INACTIVE_READER_TTL.getPropertyPath(), "-10000");
+        properties.setProperty(PropertyKey.CAIRO_INACTIVE_WRITER_TTL.getPropertyPath(), "-10000");
+        properties.setProperty(PropertyKey.CAIRO_WAL_INACTIVE_WRITER_TTL.getPropertyPath(), "-10000");
+        properties.setProperty(PropertyKey.CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY.getPropertyPath(), "8");
+        properties.setProperty(PropertyKey.CAIRO_MAX_CRASH_FILES.getPropertyPath(), "1");
+        properties.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS.getPropertyPath(), "1000");
+        properties.setProperty(PropertyKey.CAIRO_O3_CALLBACK_QUEUE_CAPACITY.getPropertyPath(), "1024");
+        properties.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE.getPropertyPath(), "1048576");
+        properties.setProperty(PropertyKey.CAIRO_O3_COPY_QUEUE_CAPACITY.getPropertyPath(), "1024");
+        properties.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS.getPropertyPath(), "15");
+        properties.setProperty(PropertyKey.CAIRO_COMMIT_LAG.getPropertyPath(), "300000000");
+        properties.setProperty(PropertyKey.CAIRO_O3_OPEN_COLUMN_QUEUE_CAPACITY.getPropertyPath(), "1024");
+        properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_QUEUE_CAPACITY.getPropertyPath(), "1024");
+        properties.setProperty(PropertyKey.CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY.getPropertyPath(), "1024");
+        properties.setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY.getPropertyPath(), "32");
+        properties.setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY.getPropertyPath(), "32");
+        properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE.getPropertyPath(), "524288");
+        properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY.getPropertyPath(), "64");
+        properties.setProperty(PropertyKey.CAIRO_SQL_QUERY_REGISTRY_POOL_SIZE.getPropertyPath(), "8");
+        properties.setProperty(PropertyKey.CAIRO_READER_POOL_MAX_SEGMENTS.getPropertyPath(), "5");
+        properties.setProperty(PropertyKey.CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY.getPropertyPath(), "8");
+        properties.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION.getPropertyPath(), "-1");
+        properties.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT.getPropertyPath(), "5000");
+        properties.setProperty(PropertyKey.CAIRO_CHARACTER_STORE_CAPACITY.getPropertyPath(), "64");
+        properties.setProperty(PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE.getPropertyPath(), "1048576");
+        properties.setProperty(PropertyKey.CAIRO_SQL_COPY_MAX_INDEX_CHUNK_SIZE.getPropertyPath(), "1048576");
+        properties.setProperty(PropertyKey.CAIRO_SQL_DISTINCT_TIMESTAMP_KEY_CAPACITY.getPropertyPath(), "256");
+        properties.setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_MAX_PAGES.getPropertyPath(), "1024");
+        properties.setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES.getPropertyPath(), "1024");
+        properties.setProperty(PropertyKey.CAIRO_SQL_JOIN_METADATA_MAX_RESIZES.getPropertyPath(), "10");
+        properties.setProperty(PropertyKey.CAIRO_SQL_MAP_MAX_PAGES.getPropertyPath(), "1024");
+        properties.setProperty(PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES.getPropertyPath(), "64");
+        properties.setProperty(PropertyKey.CAIRO_WRITER_FO_OPTS.getPropertyPath(), "o_async");
+        properties.setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_SLOT_SIZE.getPropertyPath(), "1024");
+        properties.setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY.getPropertyPath(), "4");
+        properties.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT.getPropertyPath(), "1000");
+        properties.setProperty(PropertyKey.CAIRO_WAL_WRITER_POOL_MAX_SEGMENTS.getPropertyPath(), "5");
+        properties.setProperty(PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE.getPropertyPath(), "1000");
+        properties.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT.getPropertyPath(), "20");
+        properties.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA.getPropertyPath(), "1000");
+        properties.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA.getPropertyPath(), "-1");
+        properties.setProperty(PropertyKey.CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY.getPropertyPath(), "1024");
+        properties.setProperty(PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT.getPropertyPath(), "8192");
+        properties.setProperty(PropertyKey.HTTP_TEXT_TIMESTAMP_ADAPTER_POOL_CAPACITY.getPropertyPath(), "16");
+        properties.setProperty(PropertyKey.HTTP_TEXT_LEXER_STRING_POOL_CAPACITY.getPropertyPath(), "32");
+        properties.setProperty(PropertyKey.HTTP_TEXT_ROLL_BUFFER_SIZE.getPropertyPath(), "4096");
+        properties.setProperty(PropertyKey.HTTP_TEXT_ROLL_BUFFER_LIMIT.getPropertyPath(), "16384");
+        properties.setProperty(PropertyKey.HTTP_TEXT_MAX_REQUIRED_DELIMITER_STDDEV.getPropertyPath(), "0.35");
+        properties.setProperty(PropertyKey.TELEMETRY_QUEUE_CAPACITY.getPropertyPath(), "16");
+        properties.setProperty(PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD.getPropertyPath(), "0");
+        properties.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE.getPropertyPath(), "4096");
+        properties.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES.getPropertyPath(), "1024");
+        properties.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES.getPropertyPath(), "1024");
+        properties.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_PAGES.getPropertyPath(), "1024");
+        properties.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES.getPropertyPath(), "128");
+        properties.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_PAGE_SIZE.getPropertyPath(), "1024");
+        properties.setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE.getPropertyPath(), "32");
+        properties.setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY.getPropertyPath(), "64");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS.getPropertyPath(), "1000");
+        properties.setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT.getPropertyPath(), "4");
+        properties.setProperty(PropertyKey.DEBUG_ENABLE_TEST_FACTORIES.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.CAIRO_O3_MAX_LAG.getPropertyPath(), "300000");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getPropertyPath(), "false");
     }
 
-    @Override
-    public void setSnapshotRecoveryEnabled(Boolean snapshotRecoveryEnabled) {
-        this.snapshotRecoveryEnabled = snapshotRecoveryEnabled;
-    }
-
-    @Override
-    public void setSpinLockTimeout(long spinLockTimeout) {
-        this.spinLockTimeout = spinLockTimeout;
-    }
-
-    @Override
-    public void setSqlCopyBufferSize(int sqlCopyBufferSize) {
-        this.sqlCopyBufferSize = sqlCopyBufferSize;
-    }
-
-    @Override
-    public void setSqlJoinMetadataMaxResizes(int sqlJoinMetadataMaxResizes) {
-        this.sqlJoinMetadataMaxResizes = sqlJoinMetadataMaxResizes;
-    }
-
-    @Override
-    public void setSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize) {
-        this.sqlJoinMetadataPageSize = sqlJoinMetadataPageSize;
-    }
-
-    @Override
-    public void setTestMicrosClock(MicrosecondClock testMicrosClock) {
-        this.testMicrosClock = testMicrosClock;
-    }
-
-    public void setWalApplyTableTimeQuote(long walApplyTableTimeQuote) {
-        this.walApplyTableTimeQuote = walApplyTableTimeQuote;
-    }
-
-    @Override
-    public void setWalPurgeInterval(long walPurgeInterval) {
-        this.walPurgeInterval = walPurgeInterval;
-    }
-
-    @Override
-    public void setWalSegmentRolloverRowCount(long walSegmentRolloverRowCount) {
-        this.walSegmentRolloverRowCount = walSegmentRolloverRowCount;
-    }
-
-    @Override
-    public void setWalTxnNotificationQueueCapacity(int walTxnNotificationQueueCapacity) {
-        this.walTxnNotificationQueueCapacity = walTxnNotificationQueueCapacity;
-    }
-
-    @Override
-    public void setWriterAsyncCommandBusyWaitTimeout(long writerAsyncCommandBusyWaitTimeout) {
-        this.writerAsyncCommandBusyWaitTimeout = writerAsyncCommandBusyWaitTimeout;
-    }
-
-    @Override
-    public void setWriterAsyncCommandMaxTimeout(long writerAsyncCommandMaxTimeout) {
-        this.writerAsyncCommandMaxTimeout = writerAsyncCommandMaxTimeout;
-    }
-
-    @Override
-    public void setWriterCommandQueueCapacity(int writerCommandQueueCapacity) {
-        this.writerCommandQueueCapacity = writerCommandQueueCapacity;
-    }
-
-    @Override
-    public void setWriterCommandQueueSlotSize(long writerCommandQueueSlotSize) {
-        this.writerCommandQueueSlotSize = writerCommandQueueSlotSize;
-    }
-
-    @Override
-    public void setWriterMixedIOEnabled(Boolean writerMixedIOEnabled) {
-        this.writerMixedIOEnabled = writerMixedIOEnabled;
+    private CairoConfiguration getDefaultConfiguration(String root) {
+        if (defaultConfiguration != null) {
+            return defaultConfiguration;
+        }
+        defaultConfiguration = getTestConfiguration(root, defaultProperties, null);
+        return defaultConfiguration;
     }
 }

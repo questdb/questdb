@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,14 +34,31 @@ import java.io.FileInputStream;
 import java.io.InputStreamReader;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
-import java.security.*;
+import java.security.AlgorithmParameters;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.KeyFactory;
+import java.security.KeyPairGenerator;
+import java.security.NoSuchAlgorithmException;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.Signature;
+import java.security.SignatureException;
 import java.security.interfaces.ECKey;
-import java.security.spec.*;
+import java.security.spec.AlgorithmParameterSpec;
+import java.security.spec.ECGenParameterSpec;
+import java.security.spec.ECParameterSpec;
+import java.security.spec.ECPoint;
+import java.security.spec.ECPrivateKeySpec;
+import java.security.spec.ECPublicKeySpec;
+import java.security.spec.InvalidKeySpecException;
+import java.security.spec.InvalidParameterSpecException;
 import java.util.Base64;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class AuthUtils {
+    public static final int CHALLENGE_LEN = 512;
     public static final String EC_ALGORITHM = "EC";
     public static final String EC_CURVE = "secp256r1";
     // there are 2 types of signatures:
@@ -90,7 +107,7 @@ public final class AuthUtils {
                 int nTokens = 0;
                 line = r.readLine();
                 nLine++;
-                while (null != line) {
+                while (line != null) {
                     Matcher m = TOKEN_PATTERN.matcher(line);
                     if (!m.matches()) {
                         break;
@@ -126,7 +143,7 @@ public final class AuthUtils {
 
                 PublicKey publicKey = AuthUtils.toPublicKey(tokens[2], tokens[3]);
                 publicKeyByKeyId.put(keyId, publicKey);
-            } while (null != line);
+            } while (line != null);
         } catch (Exception ex) {
             throw new IllegalArgumentException("IO error, failed to read auth db file " + authDbPath + " at line " + nLine, ex);
         }

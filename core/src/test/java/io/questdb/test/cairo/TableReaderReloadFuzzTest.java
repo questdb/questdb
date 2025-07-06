@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,15 +24,18 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.test.AbstractGriffinTest;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
@@ -43,8 +46,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.test.cairo.TableReaderTest.assertOpenPartitionCount;
 import static org.junit.Assert.assertEquals;
 
-public class TableReaderReloadFuzzTest extends AbstractGriffinTest {
+public class TableReaderReloadFuzzTest extends AbstractCairoTest {
     private static final int ADD = 0;
+    private static final int CONVERT = 3;
     private static final Log LOG = LogFactory.getLog(TableReaderReloadFuzzTest.class);
     private static final int MAX_NUM_OF_INSERTS = 10;
     private static final int MAX_NUM_OF_STRUCTURE_CHANGES = 10;
@@ -54,7 +58,7 @@ public class TableReaderReloadFuzzTest extends AbstractGriffinTest {
     private static final long ONE_YEAR = 365 * 24 * 60 * 60 * 1000L * 1000L;
     private static final int REMOVE = 1;
     private static final int RENAME = 2;
-    private final AtomicInteger columNameGen = new AtomicInteger(0);
+    private final AtomicInteger columnNameGen = new AtomicInteger(0);
     private final ObjList<Column> columns = new ObjList<>();
     private final IntList removableColumns = new IntList();
     private Rnd random;
@@ -76,19 +80,23 @@ public class TableReaderReloadFuzzTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testExplosion() throws SqlException {
-        final String tableName = "exploding";
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).timestamp()) {
-            CreateTableTestUtils.create(model);
-        }
+    public void testConvertPartition() {
+        testFuzzReload(10, 1);
+    }
 
-        try (TableWriter writer = newTableWriter(configuration, tableName, metrics)) {
+    @Test
+    public void testExplosion() throws Exception {
+        final String tableName = "exploding";
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).timestamp();
+        AbstractCairoTest.create(model);
+
+        try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
             TableWriter.Row row = writer.newRow(0L);
             row.append();
             writer.commit();
 
-            try (TableReader reader = newTableReader(configuration, tableName)) {
-                TestUtils.printSql(compiler, sqlExecutionContext, tableName, sink);
+            try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
+                engine.print(tableName, sink, sqlExecutionContext);
 
                 for (int i = 0; i < 64; i++) {
                     writer.addColumn("col" + i, ColumnType.INT);
@@ -128,15 +136,15 @@ public class TableReaderReloadFuzzTest extends AbstractGriffinTest {
         }
     }
 
-    private void changeTableStructure(int addFactor, int removeFactor, int renameFactor, TableWriter writer) {
+    private void changeTableStructure(int addFactor, int removeFactor, int renameFactor, int convertFactor, TableWriter writer) {
         final TableRecordMetadata writerMetadata = writer.getMetadata();
         final int numOfStructureChanges = MIN_NUM_OF_STRUCTURE_CHANGES + random.nextInt(MAX_NUM_OF_STRUCTURE_CHANGES - MIN_NUM_OF_STRUCTURE_CHANGES);
         for (int j = 0; j < numOfStructureChanges; j++) {
-            final int structureChangeType = selectStructureChange(addFactor, removeFactor, renameFactor);
+            final int structureChangeType = selectStructureChange(addFactor, removeFactor, renameFactor, convertFactor);
             switch (structureChangeType) {
                 case ADD:
                     final int columnType = random.nextInt(12) + 1;
-                    writer.addColumn("col" + columNameGen.incrementAndGet(), columnType);
+                    writer.addColumn("col" + columnNameGen.incrementAndGet(), columnType);
                     break;
                 case REMOVE:
                     final int removeIndex = selectColumn(writerMetadata);
@@ -147,7 +155,27 @@ public class TableReaderReloadFuzzTest extends AbstractGriffinTest {
                 case RENAME:
                     final int renameIndex = selectColumn(writerMetadata);
                     if (renameIndex > -1) {
-                        writer.renameColumn(writerMetadata.getColumnName(renameIndex), "col" + columNameGen.incrementAndGet());
+                        writer.renameColumn(writerMetadata.getColumnName(renameIndex), "col" + columnNameGen.incrementAndGet());
+                    }
+                    break;
+                case CONVERT:
+                    final int partitionCount = writer.getPartitionCount();
+                    final boolean convert = partitionCount > 2 && random.nextBoolean();
+                    if (convert) {
+                        final int partition = Math.max(0, random.nextInt(partitionCount - 1));
+                        final boolean delete = random.nextBoolean();
+                        final boolean isParquet = writer.getPartitionParquetFileSize(partition) > 0;
+                        final long timestamp = writer.getPartitionTimestamp(partition);
+                        if (isParquet) {
+                            writer.convertPartitionParquetToNative(timestamp);
+                        } else {
+                            writer.convertPartitionNativeToParquet(timestamp);
+                            if (delete) {
+                                writer.convertPartitionNativeToParquet(writer.getPartitionTimestamp(1));
+                                writer.removePartition(writer.getPartitionTimestamp(0));
+                            }
+                        }
+                        ingest(writer);
                     }
                     break;
                 default:
@@ -157,10 +185,9 @@ public class TableReaderReloadFuzzTest extends AbstractGriffinTest {
     }
 
     private void createTable() {
-        try (TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, PartitionBy.DAY)) {
-            model.timestamp();
-            CreateTableTestUtils.create(model);
-        }
+        TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, PartitionBy.DAY);
+        model.timestamp();
+        AbstractCairoTest.create(model);
     }
 
     private ObjList<Column> extractLiveColumns(TableRecordMetadata metadata) {
@@ -202,24 +229,39 @@ public class TableReaderReloadFuzzTest extends AbstractGriffinTest {
         return -1;
     }
 
-    private int selectStructureChange(int addFactor, int removeFactor, int renameFactor) {
-        final int x = random.nextInt(addFactor + removeFactor + renameFactor);
+    private int selectStructureChange(int addFactor, int removeFactor, int renameFactor, int convertFactor) {
+        final int x = random.nextInt(addFactor + removeFactor + renameFactor + convertFactor);
         if (x < addFactor) {
             return ADD;
         }
         if (x < addFactor + removeFactor) {
             return REMOVE;
         }
-        return RENAME;
+        if (x < addFactor + removeFactor + renameFactor) {
+            return RENAME;
+        }
+        return CONVERT;
     }
 
     private void testFuzzReload(int numOfReloads, int addFactor, int removeFactor, int renameFactor) {
+        testFuzzReload(numOfReloads, addFactor, removeFactor, renameFactor, 0);
+    }
+
+    private void testFuzzReload(int numOfReloads, int convertFactor) {
+        testFuzzReload(numOfReloads, 0, 0, 0, convertFactor);
+    }
+
+    private void testFuzzReload(int numOfReloads, int addFactor, int removeFactor, int renameFactor, int convertFactor) {
         createTable();
-        try (TableWriter writer = newTableWriter(configuration, "all", metrics)) {
-            try (TableReader reader = newTableReader(configuration, "all")) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
+            try (TableReader reader = newOffPoolReader(configuration, "all")) {
                 for (int i = 0; i < numOfReloads; i++) {
                     ingest(writer);
-                    changeTableStructure(addFactor, removeFactor, renameFactor, writer);
+                    reader.reload();
+                    for (int j = 0; j < reader.getPartitionCount(); j++) {
+                        reader.openPartition(j);
+                    }
+                    changeTableStructure(addFactor, removeFactor, renameFactor, convertFactor, writer);
                     reader.reload();
                     assertReaderWriterMetadata(writer, reader);
                     assertOpenPartitionCount(reader);

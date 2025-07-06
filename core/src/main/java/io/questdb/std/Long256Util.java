@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,16 +27,18 @@ package io.questdb.std;
 public class Long256Util {
 
     public static void add(Long256 dst, long v0, long v1, long v2, long v3) {
-        boolean isNull = v0 == Numbers.LONG_NaN &&
-                v1 == Numbers.LONG_NaN &&
-                v2 == Numbers.LONG_NaN &&
-                v3 == Numbers.LONG_NaN;
+        boolean isNull = v0 == Numbers.LONG_NULL
+                && v1 == Numbers.LONG_NULL
+                && v2 == Numbers.LONG_NULL
+                && v3 == Numbers.LONG_NULL;
 
         if (isNull) {
-            dst.setAll(Numbers.LONG_NaN,
-                    Numbers.LONG_NaN,
-                    Numbers.LONG_NaN,
-                    Numbers.LONG_NaN);
+            dst.setAll(
+                    Numbers.LONG_NULL,
+                    Numbers.LONG_NULL,
+                    Numbers.LONG_NULL,
+                    Numbers.LONG_NULL
+            );
         } else {
             // The sum will overflow if both top bits are set (x & y) or if one of them
             // is (x | y), and a carry from the lower place happened. If such a carry
@@ -65,30 +67,33 @@ public class Long256Util {
     // this method is used by byte-code generator
     public static int compare(Long256 a, Long256 b) {
 
-        if (a.getLong3() < b.getLong3()) {
-            return -1;
-        }
-
-        if (a.getLong3() > b.getLong3()) {
+        // Special handling for NULLs. Q: Why is it needed?
+        // A: We use 4xLong.MIN_VALUEs to represent Long256 null value.
+        // However, Long256 is unsigned and Long.MIN_VALUE has the highest bit is 1, all others bits are 0.
+        // Without this special handling some values would be considered higher than NULL and some lower.
+        // Having nulls values in the middle of the range would be confusing. INT and LONG types consider NULL
+        // to be the lowest possible value so we follow the same convention here.
+        if (Long256Impl.isNull(a)) {
+            return Long256Impl.isNull(b) ? 0 : -1;
+        } else if (Long256Impl.isNull(b)) {
             return 1;
         }
 
-        if (a.getLong2() < b.getLong2()) {
-            return -1;
+        int cmp = Long.compareUnsigned(a.getLong3(), b.getLong3());
+        if (cmp != 0) {
+            return cmp;
         }
 
-        if (a.getLong2() > b.getLong2()) {
-            return 1;
+        cmp = Long.compareUnsigned(a.getLong2(), b.getLong2());
+        if (cmp != 0) {
+            return cmp;
         }
 
-        if (a.getLong1() < b.getLong1()) {
-            return -1;
+        cmp = Long.compareUnsigned(a.getLong1(), b.getLong1());
+        if (cmp != 0) {
+            return cmp;
         }
 
-        if (a.getLong1() > b.getLong1()) {
-            return 1;
-        }
-
-        return Long.compare(a.getLong0(), b.getLong0());
+        return Long.compareUnsigned(a.getLong0(), b.getLong0());
     }
 }

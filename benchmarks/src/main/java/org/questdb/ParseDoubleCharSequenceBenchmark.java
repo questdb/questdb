@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,8 @@
 package org.questdb;
 
 import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8s;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -42,7 +43,7 @@ import java.util.concurrent.TimeUnit;
 public class ParseDoubleCharSequenceBenchmark {
     private static final int N = 100;
     private final static List<String> doubles = new ArrayList<>();
-    private static final DirectByteCharSequence flyweight = new DirectByteCharSequence();
+    private static final DirectUtf8String flyweight = new DirectUtf8String();
     private final long mem = Unsafe.malloc(8 * 1024, MemoryTag.NATIVE_DEFAULT);
 
     public static void main(String[] args) throws RunnerException {
@@ -66,7 +67,7 @@ public class ParseDoubleCharSequenceBenchmark {
             String s = Double.toString(rnd.nextDouble());
             doubles.add(s);
             Unsafe.getUnsafe().putInt(p, s.length());
-            Chars.asciiStrCpy(s, p + 4);
+            Utf8s.strCpyAscii(s, p + 4);
             p += s.length() + 4;
         }
     }
@@ -108,7 +109,7 @@ public class ParseDoubleCharSequenceBenchmark {
         for (int i = 0; i < N; i++) {
             int len = Unsafe.getUnsafe().getInt(p);
             flyweight.of(p + 4, p + 4 + len);
-            sum += Numbers.parseDouble(flyweight);
+            sum += Numbers.parseDouble(flyweight.asAsciiCharSequence());
             p += 4 + len;
         }
         return sum;

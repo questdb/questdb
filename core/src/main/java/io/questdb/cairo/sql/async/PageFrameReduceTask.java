@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,46 +25,106 @@
 package io.questdb.cairo.sql.async;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.PageAddressCache;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.MemoryTag;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.StringSink;
 
-import java.io.Closeable;
+public class PageFrameReduceTask implements QuietCloseable, Mutable {
+    public static final byte TYPE_FILTER = 0;
+    public static final byte TYPE_GROUP_BY = 1;
+    public static final byte TYPE_GROUP_BY_NOT_KEYED = 2;
+    private static final String exceptionMessage = "unexpected filter error";
 
-public class PageFrameReduceTask implements Closeable {
-
-    // Used to pass the list of column page frame addresses to a JIT-compiled filter.
-    private final DirectLongList columns;
-    private final long pageFrameQueueCapacity;
-    private final DirectLongList rows;
+    private final DirectLongList auxAddresses;
+    private final DirectLongList dataAddresses;
+    private final StringSink errorMsg = new StringSink();
+    private final DirectLongList filteredRows; // Used for TYPE_FILTER.
+    private final PageFrameMemoryPool frameMemoryPool;
+    private final long frameQueueCapacity;
+    private int errorMessagePosition;
     private int frameIndex = Integer.MAX_VALUE;
+    private PageFrameMemory frameMemory;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId;
+    private boolean isCancelled;
+    private boolean isOutOfMemory;
+    private byte type;
 
-    public PageFrameReduceTask(CairoConfiguration configuration) {
-        this.rows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
-        this.columns = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
-        this.pageFrameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
+    public PageFrameReduceTask(CairoConfiguration configuration, int memoryTag) {
+        try {
+            this.frameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
+            this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
+            this.dataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
+            this.auxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
+            // We don't need to cache anything when reducing,
+            // and use page frame memory only, hence cache size of 1.
+            this.frameMemoryPool = new PageFrameMemoryPool(1);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    @Override
+    public void clear() {
+        filteredRows.resetCapacity();
+        dataAddresses.resetCapacity();
+        auxAddresses.resetCapacity();
+        frameMemoryPool.clear();
     }
 
     @Override
     public void close() {
-        Misc.free(rows);
-        Misc.free(columns);
+        Misc.free(frameMemoryPool);
+        Misc.free(filteredRows);
+        Misc.free(dataAddresses);
+        Misc.free(auxAddresses);
     }
 
-    public DirectLongList getColumns() {
-        return columns;
+    /**
+     * Returns list of pointers to aux vectors (var-size columns only).
+     */
+    public DirectLongList getAuxAddresses() {
+        return auxAddresses;
+    }
+
+    /**
+     * Returns list of pointers to data vectors.
+     */
+    public DirectLongList getDataAddresses() {
+        return dataAddresses;
+    }
+
+    public int getErrorMessagePosition() {
+        return errorMessagePosition;
+    }
+
+    public CharSequence getErrorMsg() {
+        return errorMsg;
+    }
+
+    public DirectLongList getFilteredRows() {
+        return filteredRows;
     }
 
     public int getFrameIndex() {
         return frameIndex;
     }
 
+    public PageFrameMemory getFrameMemory() {
+        return frameMemory;
+    }
+
     public long getFrameRowCount() {
-        return this.frameSequence.getFrameRowCount(frameIndex);
+        return frameSequence.getFrameRowCount(frameIndex);
     }
 
     public PageFrameSequence<?> getFrameSequence() {
@@ -80,24 +140,97 @@ public class PageFrameReduceTask implements Closeable {
         return frameSequenceId;
     }
 
-    public PageAddressCache getPageAddressCache() {
-        return frameSequence.getPageAddressCache();
+    public byte getType() {
+        return type;
     }
 
-    public DirectLongList getRows() {
-        return rows;
+    public boolean hasError() {
+        return errorMsg.length() > 0;
+    }
+
+    public boolean isCancelled() {
+        return isCancelled;
+    }
+
+    public boolean isOutOfMemory() {
+        return isOutOfMemory;
     }
 
     public void of(PageFrameSequence<?> frameSequence, int frameIndex) {
         this.frameSequence = frameSequence;
+        this.frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         this.frameSequenceId = frameSequence.getId();
+        this.type = frameSequence.getTaskType();
         this.frameIndex = frameIndex;
-        rows.clear();
+        errorMsg.clear();
+        isCancelled = false;
+        isOutOfMemory = false;
+        frameMemory = null;
+        filteredRows.clear();
     }
 
-    public void resetCapacities() {
-        rows.resetCapacity();
-        columns.resetCapacity();
+    public PageFrameMemory populateFrameMemory() {
+        frameMemory = frameMemoryPool.navigateTo(frameIndex);
+        return frameMemory;
+    }
+
+    // Must be called after populateFrameMemory.
+    public void populateJitData() {
+        assert frameMemory != null;
+        assert frameMemory.getFrameIndex() == frameIndex;
+
+        final PageFrameAddressCache pageAddressCache = frameSequence.getPageFrameAddressCache();
+        final long columnCount = pageAddressCache.getColumnCount();
+
+        dataAddresses.clear();
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            dataAddresses.add(frameMemory.getPageAddress(columnIndex));
+        }
+
+        auxAddresses.clear();
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            auxAddresses.add(
+                    pageAddressCache.isVarSizeColumn(columnIndex)
+                            ? frameMemory.getAuxPageAddress(columnIndex)
+                            : 0
+            );
+        }
+
+        final long rowCount = getFrameRowCount();
+        if (filteredRows.getCapacity() < rowCount) {
+            filteredRows.setCapacity(rowCount);
+        }
+    }
+
+    public void releaseFrameMemory() {
+        Misc.free(frameMemoryPool);
+        frameMemory = null;
+    }
+
+    // same as clear(), but also releases frame pool memory
+    public void reset() {
+        clear();
+        releaseFrameMemory();
+    }
+
+    public void setErrorMsg(Throwable th) {
+        if (th instanceof FlyweightMessageContainer) {
+            errorMsg.put(((FlyweightMessageContainer) th).getFlyweightMessage());
+        } else {
+            final String msg = th.getMessage();
+            errorMsg.put(msg != null ? msg : exceptionMessage);
+        }
+
+        if (th instanceof CairoException) {
+            final CairoException ce = (CairoException) th;
+            isCancelled = ce.isCancellation();
+            isOutOfMemory = ce.isOutOfMemory();
+            errorMessagePosition = ce.getPosition();
+        }
+    }
+
+    public void setType(byte type) {
+        this.type = type;
     }
 
     void collected() {
@@ -106,13 +239,6 @@ public class PageFrameReduceTask implements Closeable {
 
     void collected(boolean forceCollect) {
         final long frameCount = frameSequence.getFrameCount();
-        // We have to reset capacity only on max all queue items
-        // What we are avoiding here is resetting capacity on 1000 frames given our queue size
-        // is 32 items. If our particular producer resizes queue items to 10x of the initial size
-        // we let these sizes stick until produce starts to wind down.
-        if (forceCollect || frameIndex >= frameCount - pageFrameQueueCapacity) {
-            resetCapacities();
-        }
 
         // we assume that frame indexes are published in ascending order
         // and when we see the last index, we would free up the remaining resources
@@ -121,5 +247,14 @@ public class PageFrameReduceTask implements Closeable {
         }
 
         frameSequence = null;
+        frameMemory = null;
+
+        // We have to reset capacity only on max all queue items
+        // What we are avoiding here is resetting capacity on 1000 frames given our queue size
+        // is 32 items. If our particular producer resizes queue items to 10x of the initial size
+        // we let these sizes stick until produce starts to wind down.
+        if (forceCollect || frameIndex >= frameCount - frameQueueCapacity) {
+            reset();
+        }
     }
 }

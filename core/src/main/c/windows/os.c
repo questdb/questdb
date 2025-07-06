@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -54,6 +54,11 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_getRss
 JNIEXPORT jint JNICALL Java_io_questdb_std_Os_errno
         (JNIEnv *e, jclass cl) {
     return (jint) (intptr_t) TlsGetValue(dwTlsIndexLastError);
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Os_getEnvironmentType
+        (JNIEnv *e, jclass cl) {
+    return 0; // no-op
 }
 
 typedef struct {
@@ -143,7 +148,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Os_setCurrentThreadAffinity0
     }
     return 0;
 }
-
 
 #define exp7           10000000LL     //1E+7     //C-file part
 #define exp9         1000000000LL     //1E+9

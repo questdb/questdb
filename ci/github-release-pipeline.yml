@@ -1,0 +1,105 @@
+trigger:
+  branches:
+    exclude:
+      - "*"
+  tags:
+    include:
+      - '*.*.*'
+
+pr: none
+
+stages:
+  - stage: BuildAndRunOnAzure
+    displayName: "Building Binaires"
+    jobs:
+      - job: RunOn
+        displayName: "on Azure workers"
+        strategy:
+          matrix:
+            linux-jdk17:
+              imageName: 'ubuntu-latest'
+              poolName: "Azure Pipelines"
+              os: Linux
+              jdk: "1.17"
+            windows:
+              imageName: "windows-latest"
+              poolName: "Azure Pipelines"
+              os: macOS
+              jdk: "1.17"
+        pool:
+          vmImage: $(imageName)
+          name: $(poolName)
+        timeoutInMinutes: 60
+        steps:
+          - checkout: self
+            fetchDepth: 1
+            lfs: false
+            submodules: true
+          - task: Maven@3
+            displayName: "Building QuestDB"
+            inputs:
+              mavenPomFile: "core/pom.xml"
+              goals: "package"
+              options:
+                "-DskipTests -Dhttp.keepAlive=false -P build-web-console,build-binaries"
+              jdkVersionOption: $(jdk)
+          - task: CopyFiles@2
+            inputs:
+              SourceFolder: '$(build.sourcesDirectory)/core/target'
+              Contents: '$(build.sourcesDirectory)/core/target/questdb-*.gz'
+              TargetFolder: '$(build.artifactstagingdirectory)'
+          - task: PublishBuildArtifacts@1
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'drop'
+              publishLocation: 'Container'
+
+  - stage: Release_Artifacts
+    displayName: "Release binaries to github"
+    dependsOn:
+      - BuildAndRunOnAzure
+    jobs:
+      - job: Release
+        pool:
+          vmImage: 'ubuntu-24.04'
+        steps:
+          - checkout: self
+            fetchDepth: 1
+            lfs: false
+            submodules: false
+            persistCredentials: true
+
+          - task: DownloadBuildArtifacts@1
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'drop'
+              downloadPath: '$(System.ArtifactsDirectory)'
+              cleanDestinationFolder: true
+
+          - script: |
+              # Do not continue on errors
+              set -e
+              
+              tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
+              echo "Checking if release ${tag_name} already exists..."
+              
+              release_tag=$(gh release view ${tag_name} | grep -E "url:.*github.*/tag/" | sed 's#.*/##')
+              echo "Using release tag ${release_tag}"
+              
+              gh release upload ${release_tag} $(Build.ArtifactStagingDirectory)/drop/*.gz
+              gh release edit ${release_tag} --draft=false --latest
+            env:
+              GITHUB_TOKEN: $(GITHUB_TOKEN)
+
+          - script: |
+              sudo apt-get update
+              cd "$(Build.SourcesDirectory)"/pkg/ami/marketplace
+              make install_aws_plugin
+              make build_release
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_DEFAULT_REGION: eu-west-1
+            displayName: "AMI: Deploy public image"
+

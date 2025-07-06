@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.str;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class LengthFunctionFactoryTest extends AbstractGriffinTest {
+public class LengthFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBinSimple() throws Exception {
@@ -99,4 +99,23 @@ public class LengthFunctionFactoryTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testVarcharSimple() throws Exception {
+        assertQuery(
+                "v\tlength\n" +
+                        "abc\t3\n" +
+                        "едно-две-три\t12\n" +
+                        "едно-две-три\t12\n" +
+                        "x\t1\n" +
+                        "x\t1\n",
+                "select v,length(v) from x",
+                "create table x as (" +
+                        "select rnd_varchar('abc','x','','едно-две-три',NULL) as v\n" +
+                        "from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
 }

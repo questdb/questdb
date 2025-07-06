@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,53 +24,91 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
-import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.tools.TestUtils;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class OrderByAdviceTest extends AbstractGriffinTest {
+public class OrderByAdviceTest extends AbstractCairoTest {
+
+    @Test
+    public void testCreateDesignatedTimestampFromMultipleOrderBy() throws Exception {
+        assertQuery(
+                "a\tt\n" +
+                        "1\t1970-01-01T00:00:00.000000Z\n" +
+                        "2\t1970-01-01T00:00:00.001000Z\n" +
+                        "3\t1970-01-01T00:00:00.002000Z\n" +
+                        "4\t1970-01-01T00:00:00.003000Z\n" +
+                        "5\t1970-01-01T00:00:00.004000Z\n" +
+                        "6\t1970-01-01T00:00:00.005000Z\n" +
+                        "7\t1970-01-01T00:00:00.006000Z\n" +
+                        "8\t1970-01-01T00:00:00.007000Z\n" +
+                        "9\t1970-01-01T00:00:00.008000Z\n",
+                "select * from x order by t, a",
+                "create table x as (" +
+                        "select" +
+                        " x a," +
+                        " timestamp_sequence(0, 1000) t" +
+                        " from long_sequence(9)" +
+                        ")",
+                "t",
+                true,
+                true
+        );
+    }
 
     @Test
     public void testDistinctWithOrderBy() throws Exception {
-        assertQuery("b\n2\n1\n0\n",
+        assertQuery(
+                "b\n2\n1\n0\n",
                 "select distinct b from x order by b desc;",
                 "create table x as (" +
                         "select" +
                         " x a," +
                         " x % 3 b" +
                         " from long_sequence(9)" +
-                        ")", null);
+                        ")",
+                null,
+                true,
+                true
+        );
     }
 
     @Test
     public void testDistinctWithOrderByAnotherColumn() throws Exception {
-        try {
-            assertQuery("b\n1\n2\n0\n",
-                    "select distinct b from x order by a desc;",
+        assertMemoryLeak(() -> {
+            execute(
                     "create table x as (" +
                             "select" +
                             " x a," +
                             " x % 3 b" +
                             " from long_sequence(9)" +
-                            ")", null);
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "ORDER BY expressions must appear in select list.");
-        }
+                            ")"
+            );
+
+            assertException(
+                    "select distinct b from x order by a desc;",
+                    34,
+                    "ORDER BY expressions must appear in select list."
+            );
+        });
     }
 
     @Test
     public void testDistinctWithOrderByIndex() throws Exception {
-        assertQuery("b\n2\n1\n0\n",
+        assertQuery(
+                "b\n2\n1\n0\n",
                 "select distinct b from x order by 1 desc;",
                 "create table x as (" +
                         "select" +
                         " x a," +
                         " x % 3 b" +
                         " from long_sequence(9)" +
-                        ")", null);
+                        ")",
+                null,
+                true,
+                true
+        );
     }
 
     @Test
@@ -87,7 +125,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "ABB\t1233285715\n" +
                 "DXR\t1275864035\n";
 
-        assertQuery13(
+        assertQuery(
                 "sym\tspread\n",
                 "select sym, ask-bid spread from x where ts IN '1970-01-03' order by spread",
                 "create table x (\n" +
@@ -104,7 +142,8 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "    from long_sequence(10)) timestamp (ts)",
                 expected,
                 true,
-                true
+                true,
+                false
         );
     }
 
@@ -115,7 +154,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "ABB\t0.9809851788419132\n" +
                 "HBC\t0.9940353811420282\n";
 
-        assertQuery13(
+        assertQuery(
                 "sym\tmaxp\n",
                 "select sym , max(price) maxp from x where ts IN '1970-01-04' order by maxp",
                 "create table x (\n" +
@@ -130,8 +169,8 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "    from long_sequence(1000)) timestamp (ts)",
                 expected,
                 true,
-                true
-
+                true,
+                false
         );
     }
 
@@ -142,7 +181,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "HBC\t0.008427132543617488\n" +
                 "ABB\t0.008444033230580739\n";
 
-        assertQuery13(
+        assertQuery(
                 "sym\tmaxp\n",
                 "select sym, min(price) maxp from x where ts in '1970-01-04' order by maxp",
                 "create table x (\n" +
@@ -157,15 +196,16 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "    from long_sequence(1000)) timestamp (ts)",
                 expected,
                 true,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testNoKeyGroupBy() throws Exception {
-        assertQuery13(
-                "column\nNaN\n",
-                "select sum(price)/count() from x where price>0",
+        assertQuery(
+                "column\nnull\n",
+                "select sum(price) / count() from x where price > 0",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
@@ -179,7 +219,8 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "column\n" +
                         "0.48510032025339733\n",
                 false,
-                true
+                true,
+                false
         );
     }
 
@@ -197,7 +238,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "HBC\t0.7905675319675964\t1970-01-03T00:24:00.000000Z\n" +
                 "HBC\t0.6508594025855301\t1970-01-03T00:18:00.000000Z\n";
 
-        assertQuery13(
+        assertQuery(
                 "k\tprice\tts\n",
                 "select sym k, price, ts from x order by k, ts desc",
                 "create table x (\n" +
@@ -212,70 +253,87 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "    from long_sequence(10)) timestamp (ts)",
                 expected,
                 true,
-                true
-
+                true,
+                false
         );
     }
 
     @Test
     public void testOrderByGeoByte() throws Exception {
-        assertQuery("id\tgeo\n",
+        assertQuery(
+                "id\tgeo\n",
                 "select * from pos order by geo desc",
                 "CREATE TABLE pos (" +
                         "  id int," +
                         "  geo GEOHASH(5b) " +
-                        ")", null,
+                        ")",
+                null,
                 "insert into pos  values ( 1,##00001), ( 2,##00010), ( 3, ##00011 ), ( 16, ##10000 )",
                 "id\tgeo\n" +
                         "16\th\n" +
                         "3\t3\n" +
                         "2\t2\n" +
                         "1\t1\n",
-                true, true, false);
+                true,
+                true,
+                false
+        );
     }
 
     @Test
     public void testOrderByGeoInt1() throws Exception {
-        assertQuery("id\tgeo\n",
+        assertQuery(
+                "id\tgeo\n",
                 "select * from pos order by geo desc",
                 "CREATE TABLE pos (" +
                         "  id int," +
                         "  geo GEOHASH(20b) " +
-                        ")", null,
+                        ")",
+                null,
                 "insert into pos  values ( 1,##00000000000000000001), ( 2,##00000000000000000010), ( 3, ##00000000000000000011 ), ( 16, ##00000000000000010000 )",
                 "id\tgeo\n" +
                         "16\t000h\n" +
                         "3\t0003\n" +
                         "2\t0002\n" +
                         "1\t0001\n",
-                true, true, false);
+                true,
+                true,
+                false
+        );
     }
 
     @Test
     public void testOrderByGeoInt2() throws Exception {
-        assertQuery("id\tgeo\n",
+        assertQuery(
+                "id\tgeo\n",
                 "select * from pos order by geo desc",
                 "CREATE TABLE pos (" +
                         "  id int," +
                         "  geo GEOHASH(17b) " +
-                        ")", null,
+                        ")",
+                null,
                 "insert into pos  values ( 1,##00000000000000001), ( 2,##00000000000000010), ( 3, ##00000000000000011 ), ( 16, ##00000000000010000 )",
                 "id\tgeo\n" +
                         "16\t00000000000010000\n" +
                         "3\t00000000000000011\n" +
                         "2\t00000000000000010\n" +
                         "1\t00000000000000001\n",
-                true, true, false);
+                true,
+                true,
+                false
+        );
     }
 
     @Test
     public void testOrderByGeoLong() throws Exception {
-        assertQuery("id\tgeo\n",
+        assertQuery(
+                "id\tgeo\n",
                 "select * from pos order by geo desc",
                 "CREATE TABLE pos (" +
                         "  id int," +
                         "  geo GEOHASH(35b) " +
-                        ")", null,
+                        ")",
+                null,
                 "insert into pos  values ( 1,##00000000000000000000000000000000001), ( 2,##00000000000000000000000000000000010), " +
                         "( 3, ##00000000000000000000000000000000011 ), ( 16, ##00000000000000000000000000000010000 )",
                 "id\tgeo\n" +
@@ -283,24 +341,32 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "3\t0000003\n" +
                         "2\t0000002\n" +
                         "1\t0000001\n",
-                true, true, false);
+                true,
+                true,
+                false
+        );
     }
 
     @Test
     public void testOrderByGeoShort() throws Exception {
-        assertQuery("id\tgeo\n",
+        assertQuery(
+                "id\tgeo\n",
                 "select * from pos order by geo desc",
                 "CREATE TABLE pos (" +
                         "  id int," +
                         "  geo GEOHASH(10b) " +
-                        ")", null,
+                        ")",
+                null,
                 "insert into pos  values ( 1,##0000000001), ( 2,##0000000010), ( 3, ##0000000011 ), ( 16, ##0000010000 )",
                 "id\tgeo\n" +
                         "16\t0h\n" +
                         "3\t03\n" +
                         "2\t02\n" +
                         "1\t01\n",
-                true, true, false);
+                true,
+                true,
+                false
+        );
     }
 
     @Test
@@ -335,7 +401,8 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
     @Test
     public void testOrderByPriority_columnAliases() throws Exception {
-        assertQuery("aliased\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
+        assertQuery(
+                "aliased\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
                 "select a as aliased from x order by aliased asc, aliased desc;",
                 "create table x as (" +
                         "select" +
@@ -344,12 +411,15 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         " from long_sequence(9)" +
                         ")",
                 null,
-                true, true);
+                true,
+                true
+        );
     }
 
     @Test
     public void testOrderByPriority_columnDoubleAliased() throws Exception {
-        assertQuery("a1\ta2\n" +
+        assertQuery(
+                "a1\ta2\n" +
                         "1\t1\n" +
                         "2\t2\n" +
                         "3\t3\n" +
@@ -367,12 +437,15 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         " from long_sequence(9)" +
                         ")",
                 null,
-                true, true);
+                true,
+                true
+        );
     }
 
     @Test
     public void testOrderByPriority_columnLiteralsMixedWithPositions() throws Exception {
-        assertQuery("a\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
+        assertQuery(
+                "a\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
                 "select a from x order by a asc, 1 desc;",
                 "create table x as (" +
                         "select" +
@@ -381,12 +454,15 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         " from long_sequence(9)" +
                         ")",
                 null,
-                true, true);
+                true,
+                true
+        );
     }
 
     @Test
     public void testOrderByPriority_columnNameLiteral() throws Exception {
-        assertQuery("a\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
+        assertQuery(
+                "a\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
                 "select a from x order by a asc, a desc;",
                 "create table x as (" +
                         "select" +
@@ -395,12 +471,15 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         " from long_sequence(9)" +
                         ")",
                 null,
-                true, true);
+                true,
+                true
+        );
     }
 
     @Test
     public void testOrderByPriority_columnNameLiteral_differentCases() throws Exception {
-        assertQuery("a\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
+        assertQuery(
+                "a\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
                 "select a from x order by a asc, A desc;",
                 "create table x as (" +
                         "select" +
@@ -409,12 +488,15 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         " from long_sequence(9)" +
                         ")",
                 null,
-                true, true);
+                true,
+                true
+        );
     }
 
     @Test
     public void testOrderByPriority_columnPositions() throws Exception {
-        assertQuery("a\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
+        assertQuery(
+                "a\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
                 "select a from x order by 1 asc, 1 desc;",
                 "create table x as (" +
                         "select" +
@@ -423,12 +505,15 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         " from long_sequence(9)" +
                         ")",
                 null,
-                true, true);
+                true,
+                true
+        );
     }
 
     @Test
     public void testOrderByPriority_columnQuoted() throws Exception {
-        assertQuery("a\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
+        assertQuery(
+                "a\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
                 "select a from x order by \"a\" asc, \"a\" desc;",
                 "create table x as (" +
                         "select" +
@@ -437,12 +522,15 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         " from long_sequence(9)" +
                         ")",
                 null,
-                true, true);
+                true,
+                true
+        );
     }
 
     @Test
     public void testOrderByPriority_columnsInterleaved() throws Exception {
-        assertQuery("a\tb\n" +
+        assertQuery(
+                "a\tb\n" +
                         "9\t0\n" +
                         "6\t0\n" +
                         "3\t0\n" +
@@ -460,12 +548,15 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         " from long_sequence(9)" +
                         ")",
                 null,
-                true, true);
+                true,
+                true
+        );
     }
 
     @Test
     public void testOrderByTwoGeoHashes1() throws Exception {
-        assertQuery("id\tgeo1\tgeo3\n",
+        assertQuery(
+                "id\tgeo1\tgeo3\n",
                 "select * from pos order by geo1 asc, geo3 desc",
                 "CREATE TABLE pos (" +
                         "  id int," +
@@ -477,12 +568,16 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "2\t1\t002\n" +
                         "1\t1\t001\n" +
                         "4\t4\t004\n",
-                true, true, false);
+                true,
+                true,
+                false
+        );
     }
 
     @Test
     public void testOrderByTwoGeoHashes2() throws Exception {
-        assertQuery("id\tgeo1\tgeo3\n",
+        assertQuery(
+                "id\tgeo1\tgeo3\n",
                 "select * from pos order by geo1 asc, geo3 desc",
                 "CREATE TABLE pos (" +
                         "  id int," +
@@ -495,7 +590,10 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "3\t0000001\th00\n" +
                         "1\t0000001\t001\n" +
                         "2\t1000000\th00\n",
-                true, true, false);
+                true,
+                true,
+                false
+        );
     }
 
     @Test
@@ -509,7 +607,6 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "BB\t-1575378703\t806715481\t1970-01-03T00:24:00.000000Z\n" +
                 "BB\t-1191262516\t-2041844972\t1970-01-03T00:18:00.000000Z\n" +
                 "AA\t315515118\t1548800833\t1970-01-03T00:00:00.000000Z\n";
-
 
         assertQuery(
                 "sym\tbid\task\tts\n",
@@ -545,7 +642,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "CC\t73575701\t-948263339\t1970-01-03T00:06:00.000000Z\n" +
                 "AA\t315515118\t1548800833\t1970-01-03T00:00:00.000000Z\n";
 
-        assertQuery13(
+        assertQuery(
                 "sym\tbid\task\tts\n",
                 "select * from x order by ts desc",
                 "create table x (\n" +
@@ -554,7 +651,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "    ask int,\n" +
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
-                "ts",
+                "ts###desc",
                 "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
                         "        rnd_int() bid, \n" +
                         "        rnd_int() ask, \n" +
@@ -562,7 +659,8 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "    from long_sequence(10)) timestamp (ts)",
                 expected,
                 true,
-                true
+                true,
+                false
         );
     }
 
@@ -673,22 +771,48 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     @Test
     public void testSingleSymbolSearchOrderByAliasAndTimestampDescEmpty() throws Exception {
         TestMatchFunctionFactory.clear();
+        assertMemoryLeak(() -> {
+            assertQueryNoLeakCheck(
+                    "k\tprice\tts\n",
+                    "select sym k, price, ts from x where 1 = 2 and sym = 'HBC' and test_match() and ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc",
+                    "create table x (\n" +
+                            "    sym symbol index,\n" +
+                            "    price double,\n" +
+                            "    ts timestamp\n" +
+                            ") timestamp(ts) partition by DAY",
+                    null,
+                    true,
+                    true
 
+            );
+            Assert.assertTrue(TestMatchFunctionFactory.isClosed());
+        });
+    }
+
+    @Test
+    public void testSkipDesignatedTimestampFromMultipleOrderBy() throws Exception {
         assertQuery(
-                "k\tprice\tts\n",
-                "select sym k, price, ts from x where 1 = 2 and sym = 'HBC' and test_match() and ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
+                "a\tt\n" +
+                        "-1148479920\t1970-01-01T00:00:00.000000Z\n" +
+                        "-948263339\t1970-01-01T00:00:00.005000Z\n" +
+                        "-727724771\t1970-01-01T00:00:00.003000Z\n" +
+                        "73575701\t1970-01-01T00:00:00.004000Z\n" +
+                        "315515118\t1970-01-01T00:00:00.001000Z\n" +
+                        "592859671\t1970-01-01T00:00:00.007000Z\n" +
+                        "1326447242\t1970-01-01T00:00:00.006000Z\n" +
+                        "1548800833\t1970-01-01T00:00:00.002000Z\n" +
+                        "1868723706\t1970-01-01T00:00:00.008000Z\n",
+                "select * from x order by a, t",
+                "create table x as (" +
+                        "select" +
+                        " rnd_int() a," +
+                        " timestamp_sequence(0, 1000) t" +
+                        " from long_sequence(9)" +
+                        ")",
                 null,
                 true,
                 true
-
         );
-
-        Assert.assertTrue(TestMatchFunctionFactory.isClosed());
     }
 
     @Test
@@ -1043,27 +1167,28 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "    from long_sequence(1000)) timestamp (ts)",
                 expected,
                 true
-
         );
     }
 
     @Test
     public void testSymbolSearchOrderByAliasAndTimestampDescEmpty() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery(
-                "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym in ('HBC', 'ABB') and 1 = 3 and test_match() and ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                true,
-                true
+        assertMemoryLeak(() -> {
+            assertQueryNoLeakCheck(
+                    "k\tprice\tts\n",
+                    "select sym k, price, ts from x where sym in ('HBC', 'ABB') and 1 = 3 and test_match() and ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc",
+                    "create table x (\n" +
+                            "    sym symbol index,\n" +
+                            "    price double,\n" +
+                            "    ts timestamp\n" +
+                            ") timestamp(ts) partition by DAY",
+                    null,
+                    true,
+                    true
 
-        );
-        Assert.assertTrue(TestMatchFunctionFactory.isClosed());
+            );
+            Assert.assertTrue(TestMatchFunctionFactory.isClosed());
+        });
     }
 
     @Test
@@ -1347,10 +1472,9 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                 "HBC\t0.5716129058692643\t1970-01-03T09:48:00.000000Z\n" +
                 "DXR\t0.05094182589333662\t1970-01-03T09:54:00.000000Z\n";
 
-        assertQuery13(
+        assertQuery(
                 "k\tprice\tts\n",
-                "select sym k, price, ts from x where ts<'1970-01-04T10:30:00.000Z'",
-                "create table x (\n" +
+                "select sym k, price, ts from x where ts<'1970-01-04T10:30:00.000Z'", "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +
                         "    ts timestamp\n" +
@@ -1362,8 +1486,8 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "    from long_sequence(100)) timestamp (ts)",
                 expected,
                 true,
-                true
-
+                true,
+                false
         );
     }
 

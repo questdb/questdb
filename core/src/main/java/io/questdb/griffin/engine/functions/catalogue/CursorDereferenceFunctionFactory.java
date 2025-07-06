@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -55,7 +55,7 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
         Function columnNameFunction = args.getQuick(1);
         RecordMetadata metadata = cursorFunction.getMetadata();
         // name is always constant
-        final CharSequence columnName = columnNameFunction.getStr(null);
+        final CharSequence columnName = columnNameFunction.getStrA(null);
         final int columnIndex = metadata.getColumnIndexQuiet(columnName);
         if (columnIndex == -1) {
             throw SqlException.invalidColumn(argPositions.getQuick(1), columnName);
@@ -91,7 +91,7 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return cursorFunction.getRecord(rec).getInt(columnIndex);
+            return cursorFunction.extendedOps().getRecord(rec).getInt(columnIndex);
         }
 
         @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -46,8 +46,13 @@ public class RndIntCCFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         int lo = args.getQuick(0).getInt(null);
         int hi = args.getQuick(1).getInt(null);
         int nanRate = args.getQuick(2).getInt(null);
@@ -79,7 +84,7 @@ public class RndIntCCFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             if ((rnd.nextInt() % nanRate) == 1) {
-                return Numbers.INT_NaN;
+                return Numbers.INT_NULL;
             }
             return lo + rnd.nextPositiveInt() % range;
         }
@@ -90,8 +95,18 @@ public class RndIntCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isRandom() {
+            return true;
+        }
+
+        @Override
+        public boolean shouldMemoize() {
+            return true;
         }
 
         @Override

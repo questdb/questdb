@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
 
 public final class LongAdapter extends AbstractTypeAdapter implements TimestampCompatibleAdapter {
 
@@ -38,12 +38,12 @@ public final class LongAdapter extends AbstractTypeAdapter implements TimestampC
     private LongAdapter() {
     }
 
-    public long getLong(DirectByteCharSequence value) throws Exception {
+    public long getLong(DirectUtf8Sequence value) throws Exception {
         return Numbers.parseLong(value);
     }
 
     @Override
-    public long getTimestamp(DirectByteCharSequence value) throws Exception {
+    public long getTimestamp(DirectUtf8Sequence value) throws Exception {
         return getLong(value);
     }
 
@@ -53,8 +53,8 @@ public final class LongAdapter extends AbstractTypeAdapter implements TimestampC
     }
 
     @Override
-    public boolean probe(DirectByteCharSequence text) {
-        if (text.length() > 2 && text.charAt(0) == '0' && text.charAt(1) != '.') {
+    public boolean probe(DirectUtf8Sequence text) {
+        if (text.size() > 2 && text.byteAt(0) == '0' && text.byteAt(1) != '.') {
             return false;
         }
         try {
@@ -66,7 +66,7 @@ public final class LongAdapter extends AbstractTypeAdapter implements TimestampC
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putLong(column, SqlKeywords.isNullKeyword(value) ? Numbers.LONG_NaN : getLong(value));
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
+        row.putLong(column, SqlKeywords.isNullKeyword(value) ? Numbers.LONG_NULL : getLong(value));
     }
 }

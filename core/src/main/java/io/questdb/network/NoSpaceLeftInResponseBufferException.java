@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,12 +25,29 @@
 package io.questdb.network;
 
 import io.questdb.cutlass.http.HttpException;
+import io.questdb.std.ThreadLocal;
 
 public class NoSpaceLeftInResponseBufferException extends HttpException {
-    public final static NoSpaceLeftInResponseBufferException INSTANCE;
+    private static final ThreadLocal<NoSpaceLeftInResponseBufferException> tlException = new ThreadLocal<>(NoSpaceLeftInResponseBufferException::new);
 
-    static {
-        INSTANCE = new NoSpaceLeftInResponseBufferException();
-        INSTANCE.put("no space left in response buffer");
+    private long bytesRequired;
+
+    public NoSpaceLeftInResponseBufferException() {
+        super();
+        put("no space left in response buffer");
+    }
+
+    public static NoSpaceLeftInResponseBufferException instance(long bytesRequired) {
+        NoSpaceLeftInResponseBufferException ex = tlException.get();
+        ex.bytesRequired = bytesRequired;
+        return ex;
+    }
+
+    public long getBytesRequired() {
+        return bytesRequired;
+    }
+
+    public void setBytesRequired(long bytesRequired) {
+        this.bytesRequired = bytesRequired;
     }
 }

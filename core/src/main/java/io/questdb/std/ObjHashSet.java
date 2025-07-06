@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -74,6 +74,12 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
         }
     }
 
+    public void addAll(ObjList<? extends T> that) {
+        for (int i = 0, n = that.size(); i < n; i++) {
+            this.add(that.getQuick(i));
+        }
+    }
+
     public boolean addAt(int index, T key) {
         if (addAt0(index, key)) {
             list.add(key);
@@ -96,6 +102,10 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
 
     public T get(int index) {
         return list.getQuick(index);
+    }
+
+    public ObjList<T> getList() {
+        return list;
     }
 
     @Override

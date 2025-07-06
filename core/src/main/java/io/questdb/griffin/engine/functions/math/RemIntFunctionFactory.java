@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class RemIntFunctionFactory implements FunctionFactory {
@@ -58,7 +59,15 @@ public class RemIntFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return left.getInt(rec) % right.getInt(rec);
+            int l = this.left.getInt(rec);
+            if (l == Numbers.INT_NULL) {
+                return Numbers.INT_NULL;
+            }
+            int r = this.right.getInt(rec);
+            if (r == 0 || r == Numbers.INT_NULL) {
+                return Numbers.INT_NULL;
+            }
+            return l % r;
         }
 
         @Override

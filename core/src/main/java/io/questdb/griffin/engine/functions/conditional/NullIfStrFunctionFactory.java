@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class NullIfStrFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "nullif(SS)";
@@ -49,9 +50,7 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function strFunc1 = args.getQuick(0);
-        Function strFunc2 = args.getQuick(1);
-        return new Func(strFunc1, strFunc2);
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
     private static class Func extends StrFunction implements BinaryFunction {
@@ -79,16 +78,16 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            CharSequence cs1 = strFunc1.getStr(rec);
+        public CharSequence getStrA(Record rec) {
+            CharSequence cs1 = strFunc1.getStrA(rec);
             if (cs1 == null) {
                 return null;
             }
-            CharSequence cs2 = strFunc2.getStr(rec);
-            if (cs2 == null) {
-                return null;
+            CharSequence cs2 = strFunc2.getStrA(rec);
+            if (cs2 == null || !Chars.equals(cs1, cs2)) {
+                return cs1;
             }
-            return Chars.equals(cs1, cs2) ? null : cs1;
+            return null;
         }
 
         @Override
@@ -98,10 +97,10 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             CharSequence cs2 = strFunc2.getStrB(rec);
-            if (cs2 == null) {
-                return null;
+            if (cs2 == null || !Chars.equals(cs1, cs2)) {
+                return cs1;
             }
-            return Chars.equals(cs1, cs2) ? null : cs1;
+            return null;
         }
     }
 }

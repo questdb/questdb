@@ -1,0 +1,19 @@
+# name: test/sql/copy/parquet/parquet_4972.test
+# description: Issue #4972: QDB Unable to Read Parquet File
+# group: [parquet]
+
+require parquet
+
+query I
+SELECT feature_shaded_hallucinatory_dactylology FROM parquet_scan('data/parquet-testing/bug4972.parquet')
+----
+3
+4
+2
+2
+4
+4
+1
+4
+3
+0

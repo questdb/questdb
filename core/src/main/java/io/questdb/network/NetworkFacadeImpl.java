@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,76 +27,80 @@ package io.questdb.network;
 import io.questdb.log.Log;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 
 public class NetworkFacadeImpl implements NetworkFacade {
     public static final NetworkFacade INSTANCE = new NetworkFacadeImpl();
 
     @Override
-    public void abortAccept(int fd) {
+    public void abortAccept(long fd) {
         Net.abortAccept(fd);
     }
 
     @Override
-    public int accept(int serverFd) {
+    public long accept(long serverFd) {
         return Net.accept(serverFd);
     }
 
     @Override
-    public boolean bindTcp(int fd, int address, int port) {
+    public boolean bindTcp(long fd, int address, int port) {
         return Net.bindTcp(fd, address, port);
     }
 
     @Override
-    public boolean bindTcp(int fd, CharSequence ipv4Address, int port) {
+    public boolean bindTcp(long fd, CharSequence ipv4Address, int port) {
         return Net.bindTcp(fd, ipv4Address, port);
     }
 
     @Override
-    public boolean bindUdp(int fd, int ipv4Address, int port) {
+    public boolean bindUdp(long fd, int ipv4Address, int port) {
         return Net.bindUdp(fd, ipv4Address, port);
     }
 
     @Override
-    public void bumpFdCount(int fd) {
-        Files.bumpFileCount(fd);
+    public long bumpFdCount(int fd) {
+        return Files.createUniqueFd(fd);
     }
 
     @Override
-    public int close(int fd) {
+    public int close(long fd) {
         return Net.close(fd);
     }
 
     @Override
-    public void close(int fd, Log logger) {
+    public void close(long fd, Log logger) {
         if (close(fd) != 0) {
-            logger.error().$("could not close [fd=").$(fd).$(", errno=").$(errno()).$(']').$();
+            logger.error().$("could not close [fd=").$(fd).$(", errno=").$(errno()).I$();
         }
     }
 
     @Override
-    public int configureLinger(int fd, int seconds) {
+    public void configureKeepAlive(long fd) {
+        Net.configureKeepAlive(fd);
+    }
+
+    @Override
+    public int configureLinger(long fd, int seconds) {
         return Net.configureLinger(fd, seconds);
     }
 
     @Override
-    public void configureNoLinger(int fd) {
+    public void configureNoLinger(long fd) {
         Net.configureNoLinger(fd);
     }
 
     @Override
-    public int configureNonBlocking(int fd) {
+    public int configureNonBlocking(long fd) {
         return Net.configureNonBlocking(fd);
     }
 
     @Override
-    public int connect(int fd, long pSockaddr) {
+    public int connect(long fd, long pSockaddr) {
         return Net.connect(fd, pSockaddr);
     }
 
     @Override
-    public int connectAddrInfo(int fd, long pAddrInfo) {
+    public int connectAddrInfo(long fd, long pAddrInfo) {
         return Net.connectAddrInfo(fd, pAddrInfo);
     }
 
@@ -141,27 +145,27 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
-    public long getPeerIP(int fd) {
+    public long getPeerIP(long fd) {
         return Net.getPeerIP(fd);
     }
 
     @Override
-    public int getSndBuf(int fd) {
+    public int getSndBuf(long fd) {
         return Net.getSndBuf(fd);
     }
 
     @Override
-    public boolean join(int fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address) {
+    public boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address) {
         return Net.join(fd, bindIPv4Address, groupIPv4Address);
     }
 
     @Override
-    public boolean join(int fd, int bindIPv4, int groupIPv4) {
+    public boolean join(long fd, int bindIPv4, int groupIPv4) {
         return Net.join(fd, bindIPv4, groupIPv4);
     }
 
     @Override
-    public void listen(int serverFd, int backlog) {
+    public void listen(long serverFd, int backlog) {
         Net.listen(serverFd, backlog);
     }
 
@@ -176,77 +180,77 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
-    public int peek(int fd, long buffer, int bufferLen) {
+    public int peekRaw(long fd, long buffer, int bufferLen) {
         return Net.peek(fd, buffer, bufferLen);
     }
 
     @Override
-    public int recv(int fd, long buffer, int bufferLen) {
+    public int recvRaw(long fd, long buffer, int bufferLen) {
         return Net.recv(fd, buffer, bufferLen);
     }
 
     @Override
-    public int recvmmsg(int fd, long msgVec, int msgCount) {
+    public int recvmmsgRaw(long fd, long msgVec, int msgCount) {
         return Net.recvmmsg(fd, msgVec, msgCount);
     }
 
     @Override
-    public int resolvePort(int fd) {
+    public int resolvePort(long fd) {
         return Net.resolvePort(fd);
     }
 
     @Override
-    public int send(int fd, long buffer, int bufferLen) {
+    public int sendRaw(long fd, long buffer, int bufferLen) {
         return Net.send(fd, buffer, bufferLen);
     }
 
     @Override
-    public int sendTo(int fd, long ptr, int len, long socketAddress) {
+    public int sendToRaw(long fd, long ptr, int len, long socketAddress) {
         return Net.sendTo(fd, ptr, len, socketAddress);
     }
 
     @Override
-    public int setMulticastInterface(int fd, CharSequence address) {
+    public int setMulticastInterface(long fd, CharSequence address) {
         return Net.setMulticastInterface(fd, Net.parseIPv4(address));
     }
 
     @Override
-    public int setMulticastInterface(int fd, int ipv4Address) {
+    public int setMulticastInterface(long fd, int ipv4Address) {
         return Net.setMulticastInterface(fd, ipv4Address);
     }
 
     @Override
-    public int setMulticastLoop(int fd, boolean loop) {
+    public int setMulticastLoop(long fd, boolean loop) {
         return Net.setMulticastLoop(fd, loop);
     }
 
     @Override
-    public int setMulticastTtl(int fd, int ttl) {
+    public int setMulticastTtl(long fd, int ttl) {
         return Net.setMulticastTtl(fd, ttl);
     }
 
     @Override
-    public int setRcvBuf(int fd, int size) {
+    public int setRcvBuf(long fd, int size) {
         return Net.setRcvBuf(fd, size);
     }
 
     @Override
-    public int setReusePort(int fd) {
+    public int setReusePort(long fd) {
         return Net.setReusePort(fd);
     }
 
     @Override
-    public boolean setSndBuf(int fd, int size) {
+    public boolean setSndBuf(long fd, int size) {
         return Net.setSndBuf(fd, size) == 0;
     }
 
     @Override
-    public int setTcpNoDelay(int fd, boolean noDelay) {
+    public int setTcpNoDelay(long fd, boolean noDelay) {
         return Net.setTcpNoDelay(fd, noDelay);
     }
 
     @Override
-    public int shutdown(int fd, int how) {
+    public int shutdown(long fd, int how) {
         return Net.shutdown(fd, how);
     }
 
@@ -261,12 +265,12 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
-    public int socketTcp(boolean blocking) {
+    public long socketTcp(boolean blocking) {
         return Net.socketTcp(blocking);
     }
 
     @Override
-    public int socketUdp() {
+    public long socketUdp() {
         return Net.socketUdp();
     }
 
@@ -274,36 +278,12 @@ public class NetworkFacadeImpl implements NetworkFacade {
      * Return true if a disconnect happened, false otherwise.
      **/
     @Override
-    public boolean testConnection(int fd, long buffer, int bufferSize) {
+    public boolean testConnection(long fd, long buffer, int bufferSize) {
         if (fd == -1) {
             return true;
         }
 
         final int nRead = Net.peek(fd, buffer, bufferSize);
-
-        if (nRead == 0) {
-            return false;
-        }
-
-        if (nRead < 0) {
-            return true;
-        }
-
-        // Read \r\n from the input stream and discard it since some HTTP clients
-        // send these chars as a keep alive in between requests.
-        int index = 0;
-        while (index < nRead) {
-            byte b = Unsafe.getUnsafe().getByte(buffer + index);
-            if (b != (byte) '\r' && b != (byte) '\n') {
-                break;
-            }
-            index++;
-        }
-
-        if (index > 0) {
-            Net.recv(fd, buffer, index);
-        }
-
-        return false;
+        return nRead < 0;
     }
 }

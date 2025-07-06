@@ -6,30 +6,75 @@ steps:
   - bash: sudo sysctl -w fs.file-max=500000
     displayName: "Increase file count on Linux"
     condition: eq(variables['os'], 'Linux')
-  - task: Cache@2
-    inputs:
-      key: '"questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"'
-      restoreKeys: |
-        "questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"
-      path: $(MAVEN_CACHE_FOLDER)
 
   - task: Cache@2
+    displayName: "Cache non-default Maven"
+    continueOnError: true
     inputs:
       key: '"maven_version" | "$(MAVEN_VERSION)"'
-      restoreKeys: mykey | "$(MAVEN_VERSION)"
       path: $(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)
       cacheHitVar: MVN_CACHE_RESTORED
     condition: ne(variables['MAVEN_VERSION_OPTION'], 'Default')
-
-  - script: 'wget https://www.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip'
-    condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'), ne(variables['os'], 'Windows'))
-  - script: "powershell -Command \"(new-object System.Net.WebClient).DownloadFile('https://www.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip','$(build.sourcesdirectory)\\apache-maven-$(MAVEN_VERSION)-bin.zip')\""
-    condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'), eq(variables['os'], 'Windows'))
+  - task: Cache@2
+    displayName: "Cache .m2/repository"
+    continueOnError: true
+    inputs:
+      key: '"questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"'
+      path: $(MAVEN_CACHE_FOLDER)
+  - task: Cache@2
+    displayName: "Cache .cargo/registry"
+    continueOnError: true
+    inputs:
+      key: '"cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)" | "$(LINUX_GLIBC_VERSION)" | **/Cargo.lock'
+      restoreKeys: |
+        "cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)" | "$(LINUX_GLIBC_VERSION)"
+      path: $(CARGO_HOME)/registry
+    condition: |
+      and(
+        startsWith(variables['testset'], 'coverage'),
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+      )
+  - pwsh: New-Item -Path "$HOME/.m2/repository" -ItemType Directory -Force
+    displayName: "Ensure .m2/repository exists (PowerShell)"
+    condition: eq(variables['os'], 'Windows')
+  - bash: mkdir -p "$HOME/.m2/repository"
+    displayName: "Ensure .m2/repository exists (bash)"
+    condition: ne(variables['os'], 'Windows')
+  - script: 'wget https://archive.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip'
+    displayName: "Get non-default Maven (bash)"
+    condition: |
+      and(
+        ne(variables['MAVEN_VERSION_OPTION'], 'Default'), 
+        ne(variables.MVN_CACHE_RESTORED, 'true'), 
+        ne(variables['os'], 'Windows')
+      )
+  - pwsh: |
+      "(new-object System.Net.WebClient).DownloadFile('https://www.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip','$(build.sourcesdirectory)/apache-maven-$(MAVEN_VERSION)-bin.zip')"
+    displayName: "Get non-default Maven (PowerShell)"
+    condition: |
+      and(
+        ne(variables['MAVEN_VERSION_OPTION'], 'Default'), 
+        ne(variables.MVN_CACHE_RESTORED, 'true'), 
+        eq(variables['os'], 'Windows')
+      )
   - task: ExtractFiles@1
     inputs:
       archiveFilePatterns: 'apache-maven-$(MAVEN_VERSION)-bin.zip'
       destinationFolder: '$(build.sourcesdirectory)/maven'
     condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'))
+
+  - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
+    displayName: "Ensure Rust is installed"
+    # Note, the `prepare_rust_env.py` script exports a number of variables.
+
+  - template: install-llvm.yml
+    parameters:
+      shouldRun: |
+        and(
+          startsWith(variables['testset'], 'coverage'),
+          eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+          eq(variables['System.PullRequest.IsFork'], 'false')
+        )
 
   - task: Maven@3
     displayName: "Compile with Maven"
@@ -39,18 +84,20 @@ steps:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       options:
-        "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) $(MAVEN_RUN_OPTS)"
+        "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -P qdbr-release $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
-    condition:
-      or(eq(variables['SOURCE_CODE_CHANGED'], 'false'), eq(variables['testset'],
-      'none'))
+    condition: |
+      or(
+        eq(variables['testset'], 'none'),
+        eq(variables['SOURCE_CODE_CHANGED'], 'false')
+      )
   - task: Maven@3
     displayName: "Run tests"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
       mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
       mavenPomFile: "pom.xml"
-      mavenOptions: "$(MAVEN_OPTS)"
+      mavenOptions: "-Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
       goals: "clean test"
       options:
         "--batch-mode --quiet -Dtest.include=$(includeTests)
@@ -60,6 +107,8 @@ steps:
         -Dsurefire.failIfNoSpecifiedTests=false
          $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
+    env:
+      QDB_TEST_WINDOWS_SYMLINKS: "1"
     timeoutInMinutes: 55
     condition: |
       and(
@@ -75,24 +124,41 @@ steps:
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "test"
       options:
-        "--batch-mode --quiet -Dtest.include=$(includeTests)
+        "--batch-mode -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
+        -P qdbr-coverage
         $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
       codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
       codeCoverageClassFilter: "$(COVERAGE_DIFF)"
+    env:
+      QDB_TEST_WINDOWS_SYMLINKS: "1"
     timeoutInMinutes: 55
     condition: |
       and(
-        eq(variables['testset'], 'coverage'),
-        eq(variables['SOURCE_CODE_CHANGED'], 'true')
+        startsWith(variables['testset'], 'coverage'),
+        eq(variables['System.PullRequest.IsFork'], 'false'),
+        or( 
+            eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
+            eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+        )
       )
-  - bash: |
-      find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_CRASH_LOG)"' \;
+
+  - bash: find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_CRASH_LOG)"' \;
     displayName: "Tests failed -- rename crash dump"
     workingDirectory: $(Build.SourcesDirectory)/core/
-    condition: failed()
+    condition: and(failed(), not(eq(variables['os'], 'Windows')))
+  - task: PowerShell@2
+    inputs:
+      targetType: "inline"
+      script: |
+        Get-ChildItem -Path . -Filter "hs_*.log" -File | ForEach-Object {
+            Move-Item -Path $_.FullName -Destination "$(ARCHIVED_CRASH_LOG)"
+        }
+      workingDirectory: $(Build.SourcesDirectory)\core\
+    displayName: "Tests failed -- rename crash dump -- windows"
+    condition: and(failed(), eq(variables['os'], 'Windows'))
   - task: PublishBuildArtifacts@1
     displayName: "Tests failed -- Upload crash logs"
     condition: failed()
@@ -101,7 +167,7 @@ steps:
       artifactName: CrashDump
   - task: ArchiveFiles@2
     displayName: "Tests failed -- Compress logs"
-    condition: not(succeeded())
+    condition: failed()
     inputs:
       rootFolderOrFile: $(QDB_LOG_W_FILE_LOCATION)
       includeRootFolder: false
@@ -109,26 +175,84 @@ steps:
       quiet: true
   - task: PublishBuildArtifacts@1
     displayName: "Tests failed -- Upload logs"
-    condition: not(succeeded())
+    condition: failed()
     inputs:
       pathToPublish: $(ARCHIVED_LOGS)
       artifactName: MavenFailedTestsLogs
+
   - bash: |
-      mv $(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco.exec $(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco-$(System.JobId).exec
-    displayName: "Rename jacoco cover report"
-    workingDirectory: $(Build.SourcesDirectory)/core/
+      set -eux
+      mv core/CCReport43F6D5EF/jacoco.exec $(testset).exec
+    displayName: "Prepare partial JaCoCo report for upload"
     condition: |
-      and(and(
-        eq(variables['testset'], 'coverage'),
-        eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
-      ), succeeded())
+      and(
+        startsWith(variables['testset'], 'coverage'),
+        eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
   - task: PublishBuildArtifacts@1
-    displayName: "Publish jacoco report"
+    displayName: "Upload partial JaCoCo report"
     condition: |
-      and(and(
-        eq(variables['testset'], 'coverage'),
-        eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
-      ), succeeded())
+      and(
+        startsWith(variables['testset'], 'coverage'),
+        eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
     inputs:
-      pathToPublish: "$(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco-$(system.JobId).exec"
+      pathToPublish: $(Build.SourcesDirectory)/$(testset).exec
       artifactName: jacoco-coverage
+  - bash: |
+      set -eux
+      export PATH=$LLVM_TOOLS_PATH:$PATH
+      # List profraw files for debugging purposes
+      find . -name \*.profraw
+      CANDIDATE_FILES="core/rust/qdbr/questdbr-cargo-test.profraw core/questdbr-junit.profraw"
+      PROFRAW_FILES=$(for f in $CANDIDATE_FILES; do [ -f "$f" ] && echo -n "$f "; done)
+      PROFRAW_FILES=${PROFRAW_FILES% }
+      if [ -z "$PROFRAW_FILES" ]; then
+        echo "LLVM profiling files not found"
+        exit -1
+      fi
+      llvm-profdata merge -sparse -o $(testset).profdata $PROFRAW_FILES
+    displayName: "Create partial Rust coverage report in LLVM format"
+    condition: |
+      and(
+        startsWith(variables['testset'], 'coverage'),
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
+  - task: PublishBuildArtifacts@1
+    displayName: "Upload partial Rust coverage report"
+    condition: |
+      and(
+        startsWith(variables['testset'], 'coverage'),
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
+    inputs:
+      pathToPublish: $(Build.SourcesDirectory)/$(testset).profdata
+      artifactName: rust-llvm-coverage
+  - bash: |
+      set -eux
+      QUESTDBR_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/questdbr-* -type f -executable)
+      mkdir rust-coverage-binaries
+      mv core/target/rust-maven-plugin/qdbr/debug/libquestdbr.so rust-coverage-binaries/
+      mv $QUESTDBR_TEST_BIN rust-coverage-binaries/questdbr-test-binary
+    displayName: "Prepare Rust binaries for upload"
+    condition: |
+      and(
+        eq(variables['testset'], 'coverage-griffin'),
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
+  - task: PublishBuildArtifacts@1
+    displayName: "Upload Rust binaries needed to merge coverage files"
+    condition: |
+      and(
+        eq(variables['testset'], 'coverage-griffin'),
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
+    inputs:
+      pathToPublish: $(Build.SourcesDirectory)/rust-coverage-binaries
+      artifactName: rust-llvm-coverage

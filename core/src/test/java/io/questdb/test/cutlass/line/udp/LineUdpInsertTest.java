@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,11 +24,19 @@
 
 package io.questdb.test.cutlass.line.udp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.LineUdpSender;
-import io.questdb.cutlass.line.udp.*;
+import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
+import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
+import io.questdb.cutlass.line.udp.LineUdpReceiver;
+import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
+import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
@@ -45,7 +53,14 @@ import java.util.function.Consumer;
 public abstract class LineUdpInsertTest extends AbstractCairoTest {
 
     protected static final int LOCALHOST = Net.parseIPv4("127.0.0.1");
-    protected static final LineUdpReceiverConfiguration RCVR_CONF = new DefaultLineUdpReceiverConfiguration();
+    protected static boolean useLegacyString = true;
+    protected static final LineUdpReceiverConfiguration RCVR_CONF = new DefaultLineUdpReceiverConfiguration() {
+        @Override
+        public boolean isUseLegacyStringDefault() {
+            return useLegacyString;
+        }
+    };
+
     protected static final int PORT = RCVR_CONF.getPort();
 
     protected static void assertReader(String tableName, String expected) {
@@ -55,7 +70,7 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
 
     protected static void assertReader(String tableName, String expected, String... expectedExtraStringColumns) {
         refreshTablesInBaseEngine();
-        try (TableReader reader = newTableReader(new DefaultTestCairoConfiguration(root), tableName)) {
+        try (TableReader reader = newOffPoolReader(new DefaultTestCairoConfiguration(root), tableName)) {
             TestUtils.assertReader(expected, reader, sink);
             if (expectedExtraStringColumns != null) {
                 TableReaderMetadata meta = reader.getMetadata();
@@ -73,8 +88,8 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                                      String expected,
                                      Consumer<AbstractLineSender> senderConsumer,
                                      String... expectedExtraStringColumns) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
+        assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                     if (event == PoolListener.EV_RETURN && name.getTableName().equals(tableName)
@@ -84,9 +99,8 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                 });
                 try (AbstractLineProtoUdpReceiver receiver = createLineProtoReceiver(engine)) {
                     if (columnType != ColumnType.UNDEFINED) {
-                        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-                            TestUtils.create(model.col(targetColumnName, columnType).timestamp(), engine);
-                        }
+                        TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE);
+                        TestUtils.createTable(engine, model.col(targetColumnName, columnType).timestamp());
                     }
                     receiver.start();
                     try (AbstractLineSender sender = createLineProtoSender()) {
@@ -108,7 +122,7 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
 
     protected static AbstractLineProtoUdpReceiver createLineProtoReceiver(CairoEngine engine) {
         AbstractLineProtoUdpReceiver lpr;
-        if (Os.type == Os.LINUX_AMD64) {
+        if (Os.isLinux()) {
             lpr = new LinuxMMLineUdpReceiver(RCVR_CONF, engine, null);
         } else {
             lpr = new LineUdpReceiver(RCVR_CONF, engine, null);

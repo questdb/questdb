@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,12 +27,12 @@ package io.questdb.griffin.engine.functions.math;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CotDoubleFunctionFactory implements FunctionFactory {
@@ -54,7 +54,7 @@ public class CotDoubleFunctionFactory implements FunctionFactory {
         return new CotFunction(args.getQuick(0));
     }
 
-    private static class CotFunction extends DoubleFunction implements ScalarFunction, UnaryFunction {
+    private static class CotFunction extends DoubleFunction implements Function, UnaryFunction {
         final Function angleRad;
 
         public CotFunction(Function angleRad) {
@@ -69,7 +69,7 @@ public class CotDoubleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             double angle = angleRad.getDouble(rec);
-            if (Double.isNaN(angle) || Double.isInfinite(angle)) {
+            if (Numbers.isNull(angle)) {
                 return Double.NaN;
             }
             return 1.0 / Math.tan(angle);

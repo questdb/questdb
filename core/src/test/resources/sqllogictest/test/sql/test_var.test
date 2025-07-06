@@ -1,0 +1,103 @@
+# test incorrect usage of VAR_SAMP function
+
+statement error
+SELECT VAR_SAMP()
+----
+db error: ERROR: function `VAR_SAMP` requires arguments: VAR_SAMP(DOUBLE)
+
+
+statement error
+SELECT VAR_POP()
+----
+db error: ERROR: function `VAR_POP` requires arguments: VAR_POP(DOUBLE)
+
+
+statement error
+SELECT VAR_SAMP(1, 2, 3)
+----
+db error: ERROR: wrong number of arguments for function `VAR_SAMP`; expected: 1, provided: 3
+
+
+statement error
+SELECT VAR_POP(1, 2, 3)
+----
+db error: ERROR: wrong number of arguments for function `VAR_POP`; expected: 1, provided: 3
+
+
+
+statement error
+SELECT VAR_SAMP(VAR_SAMP(1))
+----
+db error: ERROR: Aggregate function cannot be passed as an argument
+
+
+
+statement error
+SELECT VAR_POP(VAR_POP(1))
+----
+db error: ERROR: Aggregate function cannot be passed as an argument
+
+
+
+# test sample variance on scalar values
+query RR
+SELECT VAR_SAMP(3), VAR_SAMP(NULL)
+----
+NULL NULL
+
+
+
+# test population variance on scalar values
+query RR
+SELECT VAR_POP(3), VAR_POP(NULL)
+----
+0.000000 NULL
+
+
+
+# test variance on a set of values
+statement ok
+CREATE TABLE integers(x INT);
+
+statement ok
+INSERT INTO integers VALUES (10), (10), (20), (25), (30)
+
+query R
+SELECT VAR_SAMP(x) FROM integers
+----
+80.000000
+
+
+query R
+SELECT VAR_POP(x) FROM integers
+----
+64.000000
+
+
+# test var on empty set
+query RR
+SELECT VAR_SAMP(x) FROM integers WHERE x > 100
+----
+NULL
+
+
+# test var on empty set
+query RR
+SELECT VAR_POP(x) FROM integers WHERE x > 100
+----
+NULL
+
+
+# test var with only null inputs
+query RR
+SELECT VAR_SAMP(NULL), FROM integers
+----
+NULL
+
+
+# test var with only null inputs
+query RR
+SELECT VAR_POP(NULL), FROM integers
+----
+NULL
+

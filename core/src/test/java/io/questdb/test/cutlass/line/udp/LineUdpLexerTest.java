@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.line.udp;
 
-import io.questdb.cutlass.line.LineProtoException;
+import io.questdb.cutlass.line.LineException;
 import io.questdb.cutlass.line.udp.CachedCharSequence;
 import io.questdb.cutlass.line.udp.CharSequenceCache;
 import io.questdb.cutlass.line.udp.LineUdpLexer;
@@ -33,6 +33,7 @@ import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -41,7 +42,7 @@ import org.junit.Test;
 import java.util.HashMap;
 import java.util.Map;
 
-public class LineUdpLexerTest {
+public class LineUdpLexerTest extends AbstractCairoTest {
 
     private final static LineUdpLexer lexer = new LineUdpLexer(4096);
     protected final StringSink sink = new StringSink();
@@ -282,7 +283,7 @@ public class LineUdpLexerTest {
         assertThat("违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n", "违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n");
     }
 
-    protected void assertError(CharSequence line, int state, int code, int position) throws LineProtoException {
+    protected void assertError(CharSequence line, int state, int code, int position) throws LineException {
         byte[] bytes = line.toString().getBytes(Files.UTF_8);
         long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
@@ -306,11 +307,11 @@ public class LineUdpLexerTest {
         }
     }
 
-    protected void assertThat(CharSequence expected, CharSequence line) throws LineProtoException {
+    protected void assertThat(CharSequence expected, CharSequence line) throws LineException {
         assertThat(expected, line.toString().getBytes(Files.UTF_8));
     }
 
-    protected void assertThat(CharSequence expected, byte[] line) throws LineProtoException {
+    protected void assertThat(CharSequence expected, byte[] line) throws LineException {
         final int len = line.length;
         long mem = Unsafe.malloc(line.length, MemoryTag.NATIVE_DEFAULT);
         try {

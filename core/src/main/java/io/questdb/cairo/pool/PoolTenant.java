@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,17 +26,17 @@ package io.questdb.cairo.pool;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.Nullable;
 
-public interface PoolTenant extends QuietCloseable {
+public interface PoolTenant<T extends PoolTenant<T>> extends QuietCloseable {
 
     /**
      * Pool tenant must keep track of the Entry it belongs to and provide this entry when requested. Entry is
      * usually assigned to the tenant in the constructor.
      *
-     * @param <T> typically type of the subclass
      * @return entry instance.
      */
-    <T> AbstractMultiTenantPool.Entry<T> getEntry();
+    AbstractMultiTenantPool.Entry<T> getEntry();
 
     /**
      * Opaque index, which is usually assigned to tenant in the constructor. Tenant instances must keep it safe and
@@ -64,7 +64,15 @@ public interface PoolTenant extends QuietCloseable {
      * Pool informs the reader that the instance is being returned to the new owner and the new owner expects
      * the reader to be fully up-to-date with all data and metadata changes.
      */
-    void refresh();
+    void refresh(@Nullable ResourcePoolSupervisor<T> supervisor);
+
+    /**
+     * Pool informs the reader that the instance is being returned to the new owner and the new owner expects
+     * the reader to have the same state, e.g. txn number, as the given source tenant.
+     */
+    default void refreshAt(@Nullable ResourcePoolSupervisor<T> supervisor, T srcTenant) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Refreshes value of the Table Token to the one it was created with.

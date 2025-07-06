@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,8 +26,23 @@ package io.questdb.test.cutlass;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.network.IOContext;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.IODispatchers;
+import io.questdb.network.IOOperation;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.PlainSocketFactory;
+import io.questdb.network.SuspendEvent;
+import io.questdb.network.SuspendEventFactory;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -83,9 +98,9 @@ public class IODispatcherHeartbeatTest {
                 Rnd rnd = new Rnd();
                 long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
 
-                int[] fds = new int[connections];
+                long[] fds = new long[connections];
                 for (int i = 0; i < fds.length; i++) {
-                    int fd = Net.socketTcp(true);
+                    long fd = Net.socketTcp(true);
                     Net.configureNonBlocking(fd);
                     fds[i] = fd;
                 }
@@ -109,7 +124,7 @@ public class IODispatcherHeartbeatTest {
                             Assert.assertEquals(1, Net.send(fds[idx], buf, 1));
                         }
                         dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor)) ;
+                        dispatcher.drainIOQueue(processor);
                     }
                 } finally {
                     Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
@@ -161,9 +176,9 @@ public class IODispatcherHeartbeatTest {
                 IORequestProcessor<TestContext> processor = new TestProcessor(clock);
                 long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
 
-                int[] fds = new int[connections];
+                long[] fds = new long[connections];
                 for (int i = 0; i < fds.length; i++) {
-                    int fd = Net.socketTcp(true);
+                    long fd = Net.socketTcp(true);
                     Net.configureNonBlocking(fd);
                     fds[i] = fd;
                 }
@@ -181,7 +196,7 @@ public class IODispatcherHeartbeatTest {
                     for (int i = 0; i < tickCount; i++) {
                         clock.setCurrent(i);
                         dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor)) ;
+                        dispatcher.drainIOQueue(processor);
                     }
 
                     TestUtils.assertEventually(() -> {
@@ -237,7 +252,7 @@ public class IODispatcherHeartbeatTest {
                 IORequestProcessor<TestContext> processor = new SuspendingTestProcessor(clock, suspendEvent);
                 long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
 
-                int fd = Net.socketTcp(true);
+                long fd = Net.socketTcp(true);
                 Net.configureNonBlocking(fd);
 
                 long sockAddr = Net.sockaddr("127.0.0.1", 9001);
@@ -257,7 +272,7 @@ public class IODispatcherHeartbeatTest {
                     for (int i = 0; i < tickCount; i++) {
                         clock.setCurrent(i);
                         dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor)) ;
+                        dispatcher.drainIOQueue(processor);
                     }
 
                     TestUtils.assertEventually(() -> {
@@ -306,7 +321,7 @@ public class IODispatcherHeartbeatTest {
                 IORequestProcessor<TestContext> processor = new SuspendingTestProcessor(clock, suspendEvent);
                 long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
 
-                int fd = Net.socketTcp(true);
+                long fd = Net.socketTcp(true);
                 Net.configureNonBlocking(fd);
 
                 long sockAddr = Net.sockaddr("127.0.0.1", 9001);
@@ -327,7 +342,7 @@ public class IODispatcherHeartbeatTest {
                     for (; tick.get() < tickCount; tick.incrementAndGet()) {
                         clock.setCurrent(tick.get());
                         dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor)) ;
+                        dispatcher.drainIOQueue(processor);
                     }
 
                     // Trigger the event and wait until the dispatcher handles it.
@@ -335,7 +350,7 @@ public class IODispatcherHeartbeatTest {
                     TestUtils.assertEventually(() -> {
                         clock.setCurrent(tick.incrementAndGet());
                         dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor)) ;
+                        dispatcher.drainIOQueue(processor);
                         Assert.assertTrue(suspendEvent.isClosedByAtLeastOneSide());
                     }, 10);
                 } finally {
@@ -387,7 +402,7 @@ public class IODispatcherHeartbeatTest {
                 IORequestProcessor<TestContext> processor = new SuspendingTestProcessor(clock, suspendEvent);
                 long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
 
-                int fd = Net.socketTcp(true);
+                long fd = Net.socketTcp(true);
                 Net.configureNonBlocking(fd);
 
                 long sockAddr = Net.sockaddr("127.0.0.1", 9001);
@@ -407,7 +422,7 @@ public class IODispatcherHeartbeatTest {
                     for (int i = 0; i < tickCount; i++) {
                         clock.setCurrent(i);
                         dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor)) ;
+                        dispatcher.drainIOQueue(processor);
                     }
 
                     TestUtils.assertEventually(() -> {
@@ -437,7 +452,7 @@ public class IODispatcherHeartbeatTest {
         }
 
         @Override
-        public boolean onRequest(int operation, TestContext context) {
+        public boolean onRequest(int operation, TestContext context, IODispatcher<TestContext> dispatcher) {
             context.checkInvariant(operation, clock.getTicks());
             if (operation != IOOperation.HEARTBEAT && !alreadySuspended) {
                 context.suspendEvent = suspendEvent;
@@ -464,15 +479,15 @@ public class IODispatcherHeartbeatTest {
     private static class TestContext extends IOContext<TestContext> {
         private final long buffer = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
         private final IODispatcher<TestContext> dispatcher;
-        private final int fd;
         private final long heartbeatInterval;
         boolean isPreviousEventHeartbeat = true;
         long previousHeartbeatTs;
         long previousReadTs;
         SuspendEvent suspendEvent;
 
-        public TestContext(int fd, IODispatcher<TestContext> dispatcher, long heartbeatInterval) {
-            this.fd = fd;
+        public TestContext(long fd, IODispatcher<TestContext> dispatcher, long heartbeatInterval) {
+            super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG);
+            socket.of(fd);
             this.dispatcher = dispatcher;
             this.heartbeatInterval = heartbeatInterval;
         }
@@ -508,17 +523,11 @@ public class IODispatcherHeartbeatTest {
         @Override
         public void close() {
             Unsafe.free(buffer, 4, MemoryTag.NATIVE_DEFAULT);
-            suspendEvent = Misc.free(suspendEvent);
+            super.close();
         }
 
-        @Override
         public IODispatcher<TestContext> getDispatcher() {
             return dispatcher;
-        }
-
-        @Override
-        public int getFd() {
-            return fd;
         }
 
         @Override
@@ -540,7 +549,7 @@ public class IODispatcherHeartbeatTest {
         }
 
         @Override
-        public boolean onRequest(int operation, TestContext context) {
+        public boolean onRequest(int operation, TestContext context, IODispatcher<TestContext> dispatcher) {
             context.checkInvariant(operation, clock.getTicks());
             context.getDispatcher().registerChannel(context, operation);
             return true;

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,8 @@
 package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
@@ -56,7 +58,7 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
     /**
      * Adds key to hash set preserving key uniqueness.
      *
-     * @param key immutable sequence of characters.
+     * @param key key to be added.
      * @return false if key is already in the set and true otherwise.
      */
     public boolean add(int key) {
@@ -70,6 +72,12 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
     }
 
     public final void addAll(IntHashSet that) {
+        for (int i = 0, k = that.size(); i < k; i++) {
+            add(that.get(i));
+        }
+    }
+
+    public final void addAll(IntList that) {
         for (int i = 0, k = that.size(); i < k; i++) {
             add(that.get(i));
         }
@@ -108,10 +116,6 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
             }
         }
         return true;
-    }
-
-    public boolean excludes(int key) {
-        return keyIndex(key) > -1;
     }
 
     public int get(int index) {
@@ -154,7 +158,7 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         list.toSink(sink, noEntryKeyValue);
     }
 

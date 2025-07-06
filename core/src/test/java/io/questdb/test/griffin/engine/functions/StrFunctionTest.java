@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -41,7 +42,7 @@ public class StrFunctionTest {
 
     private static final StrFunction function = new StrFunction() {
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return "a";
         }
 
@@ -118,7 +119,7 @@ public class StrFunctionTest {
 
     @Test
     public void testCastToDateNull() {
-        Assert.assertEquals(Numbers.LONG_NaN, new StrConstant(null).getDate(null));
+        Assert.assertEquals(Numbers.LONG_NULL, new StrConstant(null).getDate(null));
     }
 
     @Test
@@ -252,6 +253,11 @@ public class StrFunctionTest {
     }
 
     @Test
+    public void testCastToIPv4() {
+        Assert.assertEquals("23.200.41.90", TestUtils.ipv4ToString(new StrConstant("23.200.41.90").getIPv4(null)));
+    }
+
+    @Test
     public void testCastToInt() {
         Assert.assertEquals(1345, new StrConstant("1345").getInt(null));
     }
@@ -273,7 +279,7 @@ public class StrFunctionTest {
 
     @Test
     public void testCastToIntNull() {
-        Assert.assertEquals(Numbers.INT_NaN, new StrConstant(null).getInt(null));
+        Assert.assertEquals(Numbers.INT_NULL, new StrConstant(null).getInt(null));
     }
 
     @Test
@@ -318,7 +324,7 @@ public class StrFunctionTest {
 
     @Test
     public void testCastToLongNull() {
-        Assert.assertEquals(Numbers.LONG_NaN, new StrConstant(null).getLong(null));
+        Assert.assertEquals(Numbers.LONG_NULL, new StrConstant(null).getLong(null));
     }
 
     @Test
@@ -403,27 +409,12 @@ public class StrFunctionTest {
 
     @Test
     public void testCastToTimestampNull() {
-        Assert.assertEquals(Numbers.LONG_NaN, new StrConstant(null).getTimestamp(null));
+        Assert.assertEquals(Numbers.LONG_NULL, new StrConstant(null).getTimestamp(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoByte() {
-        function.getGeoByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoInt() {
-        function.getGeoInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoLong() {
-        function.getGeoLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoShort() {
-        function.getGeoShort(null);
+    public void testGetArray() {
+        function.getArray(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -442,6 +433,51 @@ public class StrFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoByte() {
+        function.getGeoByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoInt() {
+        function.getGeoInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoLong() {
+        function.getGeoLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoShort() {
+        function.getGeoShort(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Hi() {
+        function.getLong128Hi(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Lo() {
+        function.getLong128Lo(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256() {
+        function.getLong256(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256A() {
+        function.getLong256A(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256B() {
+        function.getLong256B(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetRecordCursorFactory() {
         function.getRecordCursorFactory();
     }
@@ -452,7 +488,7 @@ public class StrFunctionTest {
     }
 
     @Test
-    public void testGetSym() {
+    public void testGetSymbol() {
         TestUtils.assertEquals("a", function.getSymbol(null));
     }
 
@@ -461,19 +497,17 @@ public class StrFunctionTest {
         TestUtils.assertEquals("a", function.getSymbolB(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testLong256() {
-        function.getLong256(null, null);
+    @Test
+    public void testGetVarcharA() {
+        Utf8Sequence value = function.getVarcharA(null);
+        Assert.assertNotNull(value);
+        TestUtils.assertEquals("a", value.toString());
     }
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testLong256A() {
-        function.getLong256A(null);
+    @Test
+    public void testGetVarcharB() {
+        Utf8Sequence value = function.getVarcharB(null);
+        Assert.assertNotNull(value);
+        TestUtils.assertEquals("a", value.toString());
     }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testLong256B() {
-        function.getLong256B(null);
-    }
-
 }

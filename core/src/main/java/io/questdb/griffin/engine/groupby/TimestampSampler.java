@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,15 +24,21 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.std.Sinkable;
+import io.questdb.std.str.Sinkable;
 
 public interface TimestampSampler extends Sinkable {
+
+    long getApproxBucketSize();
 
     default long getBucketSize() {
         throw new UnsupportedOperationException();
     }
 
-    long nextTimestamp(long timestamp);
+    default long nextTimestamp(long timestamp) {
+        return nextTimestamp(timestamp, 1);
+    }
+
+    long nextTimestamp(long timestamp, int numSteps);
 
     long previousTimestamp(long timestamp);
 

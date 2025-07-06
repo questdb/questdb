@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ package io.questdb.std;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -37,11 +37,12 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     public static final LenComparator COMPARATOR = new LenComparator();
     public static final CharSequenceHashSet WHITESPACE = new CharSequenceHashSet();
     public static final IntHashSet WHITESPACE_CH = new IntHashSet();
+    private static final String NULL_SENTINEL = "NULL_SENTINEL";
     private final ObjectPool<FloatingSequencePair> csPairPool;
     private final ObjectPool<FloatingSequence> csPool;
     private final CharSequence flyweightSequence = new InternalFloatingSequence();
-    private final IntStack parkedPosition = new IntStack();
-    private final ArrayDeque<CharSequence> parkedUnparsed = new ArrayDeque<>();
+    private final IntStack stashedNumbers = new IntStack();
+    private final ArrayDeque<CharSequence> stashedStrings = new ArrayDeque<>();
     private final IntObjHashMap<ObjList<CharSequence>> symbols = new IntObjHashMap<>();
     private final ArrayDeque<CharSequence> unparsed = new ArrayDeque<>();
     private final IntStack unparsedPosition = new IntStack();
@@ -111,6 +112,13 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         return immutableOf(value);
     }
 
+    public static CharSequence unquoteIfNoDots(CharSequence value) {
+        if (Chars.isQuoted(value) && Chars.indexOf(value, '.') == -1) {
+            return value.subSequence(1, value.length() - 1);
+        }
+        return immutableOf(value);
+    }
+
     public void backTo(int position, CharSequence lastSeen) {
         if (position < 0 || position > _len) {
             throw new IndexOutOfBoundsException();
@@ -161,7 +169,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     }
 
     public boolean hasUnparsed() {
-        return unparsed.size() > 0;
+        return !unparsed.isEmpty();
     }
 
     public CharSequence immutableBetween(int lo, int hi) {
@@ -190,7 +198,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
 
     @Override
     public CharSequence next() {
-        if (unparsed.size() > 0) {
+        if (!unparsed.isEmpty()) {
             this._lo = unparsedPosition.pollLast();
             this._pos = unparsedPosition.pollLast();
 
@@ -293,8 +301,8 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         return last = flyweightSequence;
     }
 
-    public void of(CharSequence cs) {
-        of(cs, 0, cs == null ? 0 : cs.length());
+    public void of(CharSequence content) {
+        of(content, 0, content == null ? 0 : content.length());
     }
 
     public void of(CharSequence cs, int lo, int hi) {
@@ -322,20 +330,21 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         this.unparsed.clear();
         this.unparsedPosition.clear();
         this.last = null;
-        this.parkedPosition.clear();
-        this.parkedUnparsed.clear();
+        this.stashedNumbers.clear();
+        this.stashedStrings.clear();
     }
 
     public void stash() {
         int count = 0;
-        while (unparsed.size() > 0) {
-            parkedUnparsed.push(unparsed.pop());
-            parkedPosition.push(unparsedPosition.pop());
-            parkedPosition.push(unparsedPosition.pop());
+        while (!unparsed.isEmpty()) {
+            stashedStrings.push(unparsed.pop());
+            stashedNumbers.push(unparsedPosition.pop());
+            stashedNumbers.push(unparsedPosition.pop());
             count++;
         }
-        parkedPosition.push(getPosition());
-        parkedPosition.push(count);
+        stashedStrings.push(next != null ? next : NULL_SENTINEL);
+        stashedNumbers.push(getPosition());
+        stashedNumbers.push(count);
         // clear next because we create a new parsing context
         next = null;
     }
@@ -355,19 +364,21 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     }
 
     public void unstash() {
-        int count = parkedPosition.pop();
-        _pos = parkedPosition.pop();
+        int count = stashedNumbers.pop();
+        _pos = stashedNumbers.pop();
+        next = stashedStrings.pop();
+        if (next == NULL_SENTINEL) {
+            next = null;
+        }
 
         unparsed.clear();
         unparsedPosition.clear();
         while (count > 0) {
-            unparsed.push(parkedUnparsed.pop());
-            unparsedPosition.push(parkedPosition.pop()); // last
-            unparsedPosition.push(parkedPosition.pop()); // pos
+            unparsed.push(stashedStrings.pop());
+            unparsedPosition.push(stashedNumbers.pop()); // last
+            unparsedPosition.push(stashedNumbers.pop()); // pos
             count--;
         }
-        // clear next because we create a new parsing context
-        next = null;
     }
 
     private static CharSequence findToken0(char c, CharSequence content, int _pos, int _len, IntObjHashMap<ObjList<CharSequence>> symbols) {
@@ -444,7 +455,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         @NotNull
         @Override
         public String toString() {
-            final CharSink b = Misc.getThreadLocalBuilder();
+            final Utf16Sink b = Misc.getThreadLocalSink();
             b.put(cs0);
             if (sep != NO_SEPARATOR) {
                 b.put(sep);
@@ -461,7 +472,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         }
     }
 
-    public class FloatingSequence extends AbstractCharSequence implements Mutable {
+    public class FloatingSequence extends AbstractCharSequence implements Mutable, BufferWindowCharSequence {
         int hi;
         int lo;
 
@@ -493,6 +504,13 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
 
         public void setLo(int lo) {
             this.lo = lo;
+        }
+
+        @Override
+        public void shiftLo(int positiveOffset) {
+            assert positiveOffset > -1;
+            this.lo += positiveOffset;
+            assert lo < hi;
         }
 
         @Override

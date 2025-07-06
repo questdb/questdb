@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,19 +28,18 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class FirstTimestampGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class FirstTimestampGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
-
-        compiler.compile("create table tab (f timestamp)", sqlExecutionContext);
+        execute("create table tab (f timestamp)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -50,20 +49,19 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractGriffinTes
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select first(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(Numbers.LONG_NaN, record.getTimestamp(0));
+                Assert.assertEquals(Numbers.LONG_NULL, record.getTimestamp(0));
             }
         }
     }
 
     @Test
     public void testFirstNull() throws SqlException {
-
-        compiler.compile("create table tab (f timestamp)", sqlExecutionContext);
+        execute("create table tab (f timestamp)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -77,20 +75,19 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractGriffinTes
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select first(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(Numbers.LONG_NaN, record.getTimestamp(0));
+                Assert.assertEquals(Numbers.LONG_NULL, record.getTimestamp(0));
             }
         }
     }
 
     @Test
     public void testNonNull() throws SqlException {
-
-        compiler.compile("create table tab (f timestamp)", sqlExecutionContext);
+        execute("create table tab (f timestamp)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -101,7 +98,7 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractGriffinTes
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = compiler.compile("select first(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -113,8 +110,7 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractGriffinTes
 
     @Test
     public void testSomeNull() throws SqlException {
-
-        compiler.compile("create table tab (f timestamp)", sqlExecutionContext);
+        execute("create table tab (f timestamp)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -127,7 +123,7 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractGriffinTes
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select first(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select first(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());

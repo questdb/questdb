@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,7 +34,12 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.Transient;
+import io.questdb.std.str.Sinkable;
 
 public class RndStringListFunctionFactory implements FunctionFactory {
     @Override
@@ -43,7 +48,13 @@ public class RndStringListFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         if (args == null) {
             return new RndStrFunction(3, 10, 1);
         }
@@ -63,7 +74,7 @@ public class RndStringListFunctionFactory implements FunctionFactory {
             if (f.isConstant()) {
                 final int typeTag = ColumnType.tagOf(f.getType());
                 if (typeTag == ColumnType.STRING || typeTag == ColumnType.NULL) {
-                    symbols.add(Chars.toString(f.getStr(null)));
+                    symbols.add(Chars.toString(f.getStrA(null)));
                     continue;
                 }
                 if (typeTag == ColumnType.CHAR) {
@@ -86,18 +97,28 @@ public class RndStringListFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return symbols.getQuick(rnd.nextPositiveInt() % count);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return getStr(rec);
+            return getStrA(rec);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isRandom() {
+            return true;
         }
 
         @Override

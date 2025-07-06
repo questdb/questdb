@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,9 +24,17 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.log.Log;
@@ -35,14 +43,16 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.NotNull;
 
 class AsyncFilteredRecordCursor implements RecordCursor {
-
     private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
-    private static final String exceptionMessage = "timeout, query aborted";
+
     private final Function filter;
+    // Used for random access: we may have to deserialize Parquet page frame.
+    private final PageFrameMemoryPool frameMemoryPool;
     private final boolean hasDescendingOrder;
-    private final PageAddressCacheRecord record;
+    private final PageFrameMemoryRecord record;
     private boolean allFramesActive;
     private long cursor = -1;
     private int frameIndex;
@@ -53,16 +63,68 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     private boolean isOpen;
     // The OG rows remaining, used to reset the counter when re-running cursor from top().
     private long ogRowsRemaining;
-    private PageAddressCacheRecord recordB;
+    private PageFrameMemoryRecord recordB;
     private DirectLongList rows;
     // Artificial limit on remaining rows to be returned from this cursor.
     // It is typically copied from LIMIT clause on SQL statement.
     private long rowsRemaining;
 
-    public AsyncFilteredRecordCursor(Function filter, int scanDirection) {
+    public AsyncFilteredRecordCursor(@NotNull CairoConfiguration configuration, Function filter, int scanDirection) {
         this.filter = filter;
         this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
-        record = new PageAddressCacheRecord();
+        record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+        frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+    }
+
+    @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
+        if (frameIndex == -1) {
+            fetchNextFrame();
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        }
+
+        if (rowsRemaining < 1) {
+            return;
+        }
+
+        // We have rows in the current frame we still need to dispatch
+        if (frameRowIndex < frameRowCount) {
+            long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowsRemaining);
+            rowsRemaining -= frameRowsLeft;
+            frameRowIndex += frameRowsLeft;
+            counter.add(frameRowsLeft);
+            if (rowsRemaining < 1) {
+                frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
+                return;
+            }
+        }
+
+        // Release the previous queue item.
+        // There is no identity check here because this check
+        // had been done when 'cursor' was assigned.
+        collectCursor(false);
+
+        while (frameIndex < frameLimit) {
+            fetchNextFrame();
+            if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
+                long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowsRemaining);
+                rowsRemaining -= frameRowsLeft;
+                frameRowIndex += frameRowsLeft;
+                counter.add(frameRowsLeft);
+                if (rowsRemaining < 1) {
+                    frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
+                    return;
+                } else {
+                    collectCursor(false);
+                }
+            }
+
+            if (!allFramesActive) {
+                throwTimeoutException();
+            }
+
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        }
     }
 
     @Override
@@ -83,6 +145,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 }
                 frameSequence.clear();
             }
+            Misc.free(frameMemoryPool);
             isOpen = false;
         }
     }
@@ -90,6 +153,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     public void freeRecords() {
         Misc.free(record);
         Misc.free(recordB);
+        Misc.free(frameMemoryPool);
     }
 
     @Override
@@ -102,7 +166,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         if (recordB != null) {
             return recordB;
         }
-        recordB = new PageAddressCacheRecord(record);
+        recordB = new PageFrameMemoryRecord(record, PageFrameMemoryRecord.RECORD_B_LETTER);
         return recordB;
     }
 
@@ -146,7 +210,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         }
 
         if (!allFramesActive) {
-            throw CairoException.nonCritical().put(exceptionMessage).setInterruption(true);
+            throwTimeoutException();
         }
         return false;
     }
@@ -157,9 +221,15 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return 0;
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
-        ((PageAddressCacheRecord) record).setFrameIndex(Rows.toPartitionIndex(atRowId));
-        ((PageAddressCacheRecord) record).setRowIndex(Rows.toLocalRowID(atRowId));
+        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
+        frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);
+        frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
     }
 
     @Override
@@ -168,22 +238,67 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void toTop() {
-        // Check if we at the top already and there is nothing to do.
-        if (frameIndex == 0 && frameRowIndex == 0) {
-            return;
+    public void skipRows(Counter rowCount) throws DataUnavailableException {
+        if (frameIndex == -1) {
+            fetchNextFrame();
         }
+
+        long rowCountLeft = Math.min(rowsRemaining, rowCount.get());
+
+        // We have rows in the current frame we still need to dispatch
+        if (frameRowIndex < frameRowCount) {
+            long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowCountLeft);
+            rowsRemaining -= frameRowsLeft;
+            frameRowIndex += frameRowsLeft;
+            rowCountLeft -= frameRowsLeft;
+            rowCount.dec(frameRowsLeft);
+            if (rowCountLeft == 0) {
+                return;
+            }
+        }
+
+        // Release the previous queue item.
+        // There is no identity check here because this check
+        // had been done when 'cursor' was assigned.
+        collectCursor(false);
+
+        while (frameIndex < frameLimit) {
+            fetchNextFrame();
+            if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
+                long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowCountLeft);
+                rowsRemaining -= frameRowsLeft;
+                frameRowIndex += frameRowsLeft;
+                rowCountLeft -= frameRowsLeft;
+                rowCount.dec(frameRowsLeft);
+                if (rowCountLeft == 0) {
+                    return;
+                }
+            }
+
+            collectCursor(false);
+
+            if (!allFramesActive) {
+                throwTimeoutException();
+            }
+        }
+    }
+
+    @Override
+    public void toTop() {
         collectCursor(false);
         filter.toTop();
         frameSequence.toTop();
         rowsRemaining = ogRowsRemaining;
+        // Don't reset frameLimit here since its value is used to prepare frame sequence for dispatch only once.
         frameIndex = -1;
+        frameRowIndex = -1;
+        frameRowCount = -1;
         allFramesActive = true;
     }
 
     private boolean checkLimit() {
         if (--rowsRemaining < 0) {
-            frameSequence.cancel();
+            frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
             return false;
         }
         return true;
@@ -196,6 +311,9 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             // because we updated frameIndex and loop can exit due to lack of frames.
             // Non-update of 'cursor' could cause double-free.
             cursor = -1;
+            // We also need to clear the record as it's initialized with the task's
+            // page frame memory that is now closed.
+            record.clear();
         }
     }
 
@@ -218,13 +336,23 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                             .$(", active=").$(frameSequence.isActive())
                             .$(", cursor=").$(cursor)
                             .I$();
+
+                    if (task.hasError()) {
+                        throw CairoException.nonCritical()
+                                .position(task.getErrorMessagePosition())
+                                .put(task.getErrorMsg())
+                                .setCancellation(task.isCancelled())
+                                .setInterruption(task.isCancelled())
+                                .setOutOfMemory(task.isOutOfMemory());
+                    }
+
                     allFramesActive &= frameSequence.isActive();
-                    rows = task.getRows();
+                    rows = task.getFilteredRows();
                     frameRowCount = rows.size();
                     frameIndex = task.getFrameIndex();
                     frameRowIndex = 0;
                     if (frameRowCount > 0 && frameSequence.isActive()) {
-                        record.setFrameIndex(task.getFrameIndex());
+                        record.init(task.getFrameMemory());
                         break;
                     } else {
                         // Force reset frame size if frameSequence was canceled or failed.
@@ -237,9 +365,19 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                     Os.pause();
                 }
             } while (frameIndex < frameLimit);
-        } catch (Throwable e) {
-            LOG.critical().$("unexpected error [ex=").$(e).I$();
-            throw CairoException.nonCritical().put(exceptionMessage).setInterruption(true);
+        } catch (Throwable th) {
+            if (th instanceof CairoException) {
+                CairoException ce = (CairoException) th;
+                if (ce.isInterruption() || ce.isCancellation()) {
+                    LOG.error().$("filter error [ex=").$safe(((CairoException) th).getFlyweightMessage()).I$();
+                    throwTimeoutException();
+                } else {
+                    LOG.error().$("filter error [ex=").$(th).I$();
+                    throw ce;
+                }
+            }
+            LOG.error().$("filter error [ex=").$(th).I$();
+            throw CairoException.nonCritical().put(th.getMessage());
         }
     }
 
@@ -247,17 +385,28 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         return hasDescendingOrder ? (frameRowCount - frameRowIndex - 1) : frameRowIndex;
     }
 
+    private void throwTimeoutException() {
+        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
+            throw CairoException.queryCancelled();
+        } else {
+            throw CairoException.queryTimedOut();
+        }
+    }
+
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) {
         isOpen = true;
         this.frameSequence = frameSequence;
+        this.rowsRemaining = rowsRemaining;
+        ogRowsRemaining = rowsRemaining;
         frameIndex = -1;
         frameLimit = -1;
-        ogRowsRemaining = rowsRemaining;
-        this.rowsRemaining = rowsRemaining;
+        frameRowIndex = -1;
+        frameRowCount = -1;
         allFramesActive = true;
-        record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
+        frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
+        record.of(frameSequence.getSymbolTableSource());
         if (recordB != null) {
-            recordB.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
+            recordB.of(frameSequence.getSymbolTableSource());
         }
     }
 }

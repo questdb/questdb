@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,7 +43,7 @@ public interface MapValue extends Record {
 
     void addShort(int index, short value);
 
-    long getAddress();
+    void copyFrom(MapValue value);
 
     boolean getBool(int index);
 
@@ -57,15 +57,33 @@ public interface MapValue extends Record {
 
     float getFloat(int index);
 
+    int getIPv4(int index);
+
     int getInt(int index);
 
     long getLong(int index);
 
     short getShort(int index);
 
+    /**
+     * Depending on Map implementation, returns either the key-value pair start address (FastMap)
+     * or the value address (other Maps).
+     * <p>
+     * In any case, the returned value can be used to make a {@link Map#valueAt(long)} call.
+     */
+    long getStartAddress();
+
     long getTimestamp(int index);
 
     boolean isNew();
+
+    void maxInt(int index, int value);
+
+    void maxLong(int index, long value);
+
+    void minInt(int index, int value);
+
+    void minLong(int index, long value);
 
     void putBool(int index, boolean value);
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,9 +25,14 @@
 package io.questdb.test.cutlass.line.udp;
 
 import io.questdb.ServerMain;
-import io.questdb.cairo.*;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -36,17 +41,30 @@ import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
-import io.questdb.std.str.Path;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cutlass.line.AbstractLinePartitionReadOnlyTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
-import static io.questdb.cairo.TableUtils.createTable;
+import java.time.temporal.ChronoUnit;
+
 import static io.questdb.test.tools.TestUtils.*;
 
 public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyTest {
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        TestUtils.unchecked(() -> createDummyConfiguration(
+                        "cairo.max.uncommitted.rows=500",
+                        "cairo.commit.lag=2000",
+                        "cairo.o3.max.lag=2000",
+                        "line.udp.enabled=true"
+                )
+        );
+    }
 
     @Test
     public void testActivePartitionReadOnlyAndNoO3UDP() throws Exception {
@@ -65,7 +83,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                                     .tag("s", "lobster")
                                     .field("l", 88)
                                     .field("i", 2124)
-                                    .at(timestampNano[tickerId]);
+                                    .at(timestampNano[tickerId], ChronoUnit.NANOS);
                         }
                         sender.flush();
                     } finally {
@@ -96,7 +114,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                                     .tag("s", "lobster")
                                     .field("l", 88)
                                     .field("i", 2124)
-                                    .at(timestampNano[tickerId]);
+                                    .at(timestampNano[tickerId], ChronoUnit.NANOS);
                         }
                         sender.flush();
                     } finally {
@@ -127,7 +145,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                                     .tag("s", "lobster")
                                     .field("l", 88)
                                     .field("i", 2124)
-                                    .at(timestampNano[tickerId]);
+                                    .at(timestampNano[tickerId], ChronoUnit.NANOS);
                         }
                         sender.flush();
                     } finally {
@@ -158,7 +176,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                                     .tag("s", "lobster")
                                     .field("l", 88)
                                     .field("i", 2124)
-                                    .at(timestampNano[tickerId]);
+                                    .at(timestampNano[tickerId], ChronoUnit.NANOS);
                         }
                         sender.flush();
                     } finally {
@@ -183,7 +201,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
-                    SqlCompiler compiler = new SqlCompiler(qdb.getEngine());
+                    SqlCompiler compiler = qdb.getEngine().getSqlCompiler();
                     SqlExecutionContext context = TestUtils.createSqlExecutionCtx(qdb.getEngine())
             ) {
                 qdb.start();
@@ -192,22 +210,18 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 // create a table with 4 partitions and 1111 rows
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
                 TableToken tableToken;
-                try (
-                        TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
-                                .col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("s", ColumnType.SYMBOL).symbolCapacity(32)
-                                .timestamp("ts");
-                        MemoryMARW mem = Vm.getMARWInstance();
-                        Path path = new Path().of(cairoConfig.getRoot())
-                ) {
-                    tableToken = engine.lockTableName(tableName, 1, false);
-                    Assert.assertNotNull(tableToken);
-                    engine.registerTableToken(tableToken);
-                    createTable(cairoConfig, mem, path.concat(tableToken), tableModel, 1, tableToken.getDirName());
-                    compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4), context);
-                    engine.unlockTableName(tableToken);
-                }
+                TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
+                        .col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL).symbolCapacity(32)
+                        .timestamp("ts");
+                tableToken = engine.lockTableName(tableName, 1, false, false);
+                Assert.assertNotNull(tableToken);
+                createTable(tableModel, cairoConfig, ColumnType.VERSION, 1, tableToken);
+                engine.registerTableToken(tableToken);
+                CharSequence insertSql = insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4);
+                engine.execute(insertSql, context);
+                engine.unlockTableName(tableToken);
                 Assert.assertNotNull(tableToken);
 
                 // set partition read-only state
@@ -231,8 +245,9 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                         compiler,
                         context,
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        Misc.getThreadLocalBuilder(),
-                        TABLE_START_CONTENT);
+                        Misc.getThreadLocalSink(),
+                        TABLE_START_CONTENT
+                );
 
                 // run the test
                 test.run();
@@ -272,7 +287,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                             compiler,
                             context,
                             "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                            Misc.getThreadLocalBuilder(),
+                            Misc.getThreadLocalSink(),
                             finallyExpected);
                 }
 

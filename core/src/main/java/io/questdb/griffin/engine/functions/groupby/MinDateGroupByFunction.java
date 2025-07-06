@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,17 +44,13 @@ public class MinDateGroupByFunction extends DateFunction implements GroupByFunct
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putDate(valueIndex, arg.getDate(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        long min = mapValue.getDate(valueIndex);
-        long next = arg.getDate(record);
-        if (next != Numbers.LONG_NaN && next < min || min == Numbers.LONG_NaN) {
-            mapValue.putDate(valueIndex, next);
-        }
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
+        mapValue.minLong(valueIndex, arg.getDate(record));
     }
 
     @Override
@@ -73,13 +69,47 @@ public class MinDateGroupByFunction extends DateFunction implements GroupByFunct
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DATE);
     }
 
     @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcMin = srcValue.getDate(valueIndex);
+        long destMin = destValue.getDate(valueIndex);
+        if (srcMin != Numbers.LONG_NULL && (srcMin < destMin || destMin == Numbers.LONG_NULL)) {
+            destValue.putDate(valueIndex, srcMin);
+        }
+    }
+
+    @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putDate(valueIndex, Numbers.LONG_NaN);
+        mapValue.putDate(valueIndex, Numbers.LONG_NULL);
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

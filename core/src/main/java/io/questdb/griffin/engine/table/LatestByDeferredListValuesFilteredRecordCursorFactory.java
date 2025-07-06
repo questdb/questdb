@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,32 +38,34 @@ import org.jetbrains.annotations.Nullable;
  * When the LATEST BY is applied to symbol column QuestDB knows all distinct symbol values
  * and in many cases can stop before scanning all the data when it finds all the expected values
  */
-public class LatestByDeferredListValuesFilteredRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+public class LatestByDeferredListValuesFilteredRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
+    private final int columnIndex;
     private final LatestByValueListRecordCursor cursor;
     private final ObjList<Function> excludedSymbolFuncs;
     private final Function filter;
-    private final int frameSymbolIndex;
     private final ObjList<Function> includedSymbolFuncs;
 
     public LatestByDeferredListValuesFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             @Transient @Nullable ObjList<Function> includedSymbolFuncs,
             @Transient @Nullable ObjList<Function> excludedSymbolFuncs,
             @Nullable Function filter,
-            @NotNull IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        super(metadata, dataFrameCursorFactory);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
         this.includedSymbolFuncs = includedSymbolFuncs != null ? new ObjList<>(includedSymbolFuncs) : null;
         this.excludedSymbolFuncs = excludedSymbolFuncs != null ? new ObjList<>(excludedSymbolFuncs) : null;
         this.filter = filter;
-        frameSymbolIndex = columnIndexes.getQuick(columnIndex);
+        this.columnIndex = columnIndex;
         cursor = new LatestByValueListRecordCursor(
+                configuration,
+                metadata,
                 columnIndex,
                 filter,
-                columnIndexes,
                 configuration.getDefaultSymbolCapacity(),
                 includedSymbolFuncs != null && includedSymbolFuncs.size() > 0,
                 excludedSymbolFuncs != null && excludedSymbolFuncs.size() > 0
@@ -72,13 +74,14 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
 
     public LatestByDeferredListValuesFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
-            RecordMetadata metadata,
-            DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull RecordMetadata metadata,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int latestByIndex,
             Function filter,
-            IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        this(configuration, metadata, dataFrameCursorFactory, latestByIndex, null, null, filter, columnIndexes);
+        this(configuration, metadata, partitionFrameCursorFactory, latestByIndex, null, null, filter, columnIndexes, columnSizeShifts);
     }
 
     @Override
@@ -92,10 +95,10 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
         sink.optAttr("filter", filter);
         sink.optAttr("includedSymbols", includedSymbolFuncs);
         sink.optAttr("excludedSymbols", excludedSymbolFuncs);
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
-    private void lookupDeferredSymbols(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+    private void lookupDeferredSymbols(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
         // If symbol values are restricted by a list in the query by syntax
         // sym in ('val1', 'val2', 'val3')
         // or similar we need to resolve string values into int symbol keys to search the table faster.
@@ -103,11 +106,11 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
         if (includedSymbolFuncs != null) {
             IntHashSet symbolKeys = cursor.getIncludedSymbolKeys();
             symbolKeys.clear();
-            StaticSymbolTable symbolMapReader = dataFrameCursor.getSymbolTable(frameSymbolIndex);
+            StaticSymbolTable symbolMapReader = pageFrameCursor.getSymbolTable(columnIndex);
             for (int i = 0, n = includedSymbolFuncs.size(); i < n; i++) {
                 Function symbolFunc = includedSymbolFuncs.getQuick(i);
-                symbolFunc.init(dataFrameCursor, executionContext);
-                int key = symbolMapReader.keyOf(symbolFunc.getStr(null));
+                symbolFunc.init(pageFrameCursor, executionContext);
+                int key = symbolMapReader.keyOf(symbolFunc.getStrA(null));
                 if (key != SymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(key);
                 }
@@ -117,11 +120,11 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
         if (excludedSymbolFuncs != null) {
             IntHashSet symbolKeys = cursor.getExcludedSymbolKeys();
             symbolKeys.clear();
-            StaticSymbolTable symbolMapReader = dataFrameCursor.getSymbolTable(frameSymbolIndex);
+            final StaticSymbolTable symbolMapReader = pageFrameCursor.getSymbolTable(columnIndex);
             for (int i = 0, n = excludedSymbolFuncs.size(); i < n; i++) {
                 Function symbolFunc = excludedSymbolFuncs.getQuick(i);
-                symbolFunc.init(dataFrameCursor, executionContext);
-                int key = symbolMapReader.keyOf(symbolFunc.getStr(null));
+                symbolFunc.init(pageFrameCursor, executionContext);
+                int key = symbolMapReader.keyOf(symbolFunc.getStrA(null));
                 if (key != SymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(key);
                 }
@@ -133,16 +136,16 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     protected void _close() {
         super._close();
         Misc.free(filter);
-        this.cursor.destroy();
+        Misc.free(cursor);
     }
 
     @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
+    protected RecordCursor initRecordCursor(
+            PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        lookupDeferredSymbols(dataFrameCursor, executionContext);
-        cursor.of(dataFrameCursor, executionContext);
+        lookupDeferredSymbols(pageFrameCursor, executionContext);
+        cursor.of(pageFrameCursor, executionContext);
         return cursor;
     }
 }

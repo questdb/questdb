@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,47 +26,39 @@ package io.questdb.test.griffin;
 
 import io.questdb.TelemetryConfigLogger;
 import io.questdb.tasks.TelemetryTask;
-import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.tools.TestUtils;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class HideTelemetryTablesTest extends AbstractGriffinTest {
+public class HideTelemetryTablesTest extends AbstractCairoTest {
 
     @Test
     public void testHide() throws Exception {
-        configOverrideHideTelemetryTable(true);
+        node1.getConfigurationOverrides().setIsHidingTelemetryTable(true);
 
         assertMemoryLeak(() -> {
-            compiler.compile("create table test(a int)", sqlExecutionContext);
-            compiler.compile("create table " + TelemetryTask.TABLE_NAME + "(a int)", sqlExecutionContext);
-            compiler.compile("create table " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + "(a int)", sqlExecutionContext);
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
-                    sink,
-                    "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                            "1\ttest\t\tNONE\t1000\t300000000\n"
+            execute("create table test(a int)");
+            execute("create table " + TelemetryTask.TABLE_NAME + "(a int)");
+            execute("create table " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + "(a int)");
+            assertSql(
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                            "1\ttest\t\tNONE\t1000\t300000000\n", "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
             );
         });
     }
 
     @Test
     public void testShow() throws Exception {
+        node1.getConfigurationOverrides().setIsHidingTelemetryTable(false);
 
         assertMemoryLeak(() -> {
-            compiler.compile("create table test(a int)", sqlExecutionContext);
-            compiler.compile("create table " + TelemetryTask.TABLE_NAME + "(a int)", sqlExecutionContext);
-            compiler.compile("create table " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + "(a int)", sqlExecutionContext);
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() order by 2",
-                    sink,
-                    "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+            execute("create table test(a int)");
+            execute("create table " + TelemetryTask.TABLE_NAME + "(a int)");
+            execute("create table " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + "(a int)");
+            assertSql(
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
                             "2\ttelemetry\t\tNONE\t1000\t300000000\n" +
                             "3\ttelemetry_config\t\tNONE\t1000\t300000000\n" +
-                            "1\ttest\t\tNONE\t1000\t300000000\n"
+                            "1\ttest\t\tNONE\t1000\t300000000\n", "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() order by 2"
             );
         });
     }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,50 +49,53 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LtTimestampFunction(args.getQuick(0), args.getQuick(1));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class LtTimestampFunction extends NegatableBooleanFunction implements BinaryFunction {
-        private final Function left;
-        private final Function right;
+    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
+        private final Function leftFunc;
+        private final Function rightFunc;
 
-        public LtTimestampFunction(Function left, Function right) {
-            this.left = left;
-            this.right = right;
+        public Func(Function leftFunc, Function rightFunc) {
+            this.leftFunc = leftFunc;
+            this.rightFunc = rightFunc;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            long left = this.left.getTimestamp(rec);
-            if (left != Numbers.LONG_NaN) {
-                long right = this.right.getTimestamp(rec);
-                if (right != Numbers.LONG_NaN) {
-                    return negated == (left >= right);
-                }
-            }
-            return false;
+            return Numbers.lessThan(
+                    leftFunc.getTimestamp(rec),
+                    rightFunc.getTimestamp(rec),
+                    negated
+            );
         }
 
         @Override
         public Function getLeft() {
-            return left;
+            return leftFunc;
         }
 
         @Override
         public Function getRight() {
-            return right;
+            return rightFunc;
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(left);
+            sink.val(leftFunc);
             if (negated) {
                 sink.val(">=");
             } else {
                 sink.val('<');
             }
-            sink.val(right);
+            sink.val(rightFunc);
         }
     }
 }

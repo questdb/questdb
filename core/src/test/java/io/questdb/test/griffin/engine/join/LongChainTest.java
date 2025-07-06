@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,12 +27,14 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.griffin.engine.join.LongChain;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class LongChainTest {
     @SuppressWarnings("unused")
@@ -40,25 +42,25 @@ public class LongChainTest {
 
     @Test
     public void testAll() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (LongChain chain = new LongChain(1024 * 1024, Integer.MAX_VALUE)) {
+        assertMemoryLeak(() -> {
+            try (LongChain chain = new LongChain(1024, Integer.MAX_VALUE)) {
                 final int N = 1000;
                 final int nChains = 10;
                 final Rnd rnd = new Rnd();
-                final LongList heads = new LongList(nChains);
+                final IntList tails = new IntList(nChains);
                 final ObjList<LongList> expectedValues = new ObjList<>();
 
                 for (int i = 0; i < nChains; i++) {
                     LongList expected = new LongList(N);
-                    heads.add(populateChain(chain, rnd, expected));
+                    tails.add(populateChain(chain, rnd, expected));
                     expectedValues.add(expected);
                     Assert.assertEquals(N, expected.size());
                 }
                 Assert.assertEquals(nChains, expectedValues.size());
 
-                // values are be in reverse order
+                // values are expected in reverse order
                 for (int i = 0; i < nChains; i++) {
-                    LongChain.TreeCursor cursor = chain.getCursor(heads.getQuick(i));
+                    LongChain.Cursor cursor = chain.getCursor(tails.getQuick(i));
                     LongList expected = expectedValues.get(i);
                     int count = 0;
                     while (cursor.hasNext()) {
@@ -71,17 +73,14 @@ public class LongChainTest {
         });
     }
 
-    private long populateChain(LongChain chain, Rnd rnd, LongList expectedValues) {
-        long head = -1;
-        long tail = -1;
+    private int populateChain(LongChain chain, Rnd rnd, LongList expectedValues) {
+        int tail = -1;
         for (int i = 0; i < 1000; i++) {
             long expected = rnd.nextLong();
             tail = chain.put(expected, tail);
             expectedValues.add(expected);
-            if (i == 0) {
-                head = tail;
-            }
         }
-        return head;
+        expectedValues.reverse();
+        return tail;
     }
 }

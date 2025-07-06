@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class CaseFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "case(V)";
@@ -67,14 +68,13 @@ public class CaseFunctionFactory implements FunctionFactory {
 
         // compute return type in this loop
         for (int i = 0; i < n; i += 2) {
-            Function bool = args.getQuick(i);
-            Function value = args.getQuick(i + 1);
-
+            final Function bool = args.getQuick(i);
             if (!ColumnType.isBoolean(bool.getType())) {
                 throw SqlException.position(argPositions.getQuick(i)).put("BOOLEAN expected, found ").put(ColumnType.nameOf(bool.getType()));
             }
 
-            returnType = CaseCommon.getCommonType(returnType, value.getType(), argPositions.getQuick(i + 1));
+            final Function value = args.getQuick(i + 1);
+            returnType = CaseCommon.getCommonType(returnType, value.getType(), argPositions.getQuick(i + 1), "CASE values cannot be bind variables");
 
             vars.add(bool);
             vars.add(value);
@@ -84,7 +84,7 @@ public class CaseFunctionFactory implements FunctionFactory {
         }
 
         if (elseBranch != null) {
-            returnType = CaseCommon.getCommonType(returnType, elseBranch.getType(), elseBranchPosition);
+            returnType = CaseCommon.getCommonType(returnType, elseBranch.getType(), elseBranchPosition, "CASE values cannot be bind variables");
             argsToPoke.add(elseBranch);
         }
 
@@ -116,5 +116,10 @@ public class CaseFunctionFactory implements FunctionFactory {
         };
 
         return CaseCommon.getCaseFunction(position, returnType, picker, argsToPoke);
+    }
+
+    @Override
+    public int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) throws SqlException {
+        throw SqlException.$(sqlPos, "CASE values cannot be bind variables");
     }
 }

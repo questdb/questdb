@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,21 +30,31 @@ import java.util.Arrays;
  * Unlike {@link CharSequenceHashSet} doesn't keep an additional list for faster iteration and index-based access
  * and also has a slightly higher load factor. One more difference is that this set doesn't support {@code null} keys.
  */
-public class CompactCharSequenceHashSet extends AbstractCharSequenceHashSet {
-
+public class CompactCharSequenceHashSet implements Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
+    private final int initialCapacity;
+    private final double loadFactor;
+    private int capacity;
+    private int free;
+    private String[] keys;
+    private int mask;
 
     public CompactCharSequenceHashSet() {
         this(MIN_INITIAL_CAPACITY);
     }
 
-    private CompactCharSequenceHashSet(int initialCapacity) {
+    public CompactCharSequenceHashSet(int initialCapacity) {
         this(initialCapacity, 0.6);
     }
 
-    private CompactCharSequenceHashSet(int initialCapacity, double loadFactor) {
-        super(initialCapacity, loadFactor);
-        clear();
+    public CompactCharSequenceHashSet(int initialCapacity, double loadFactor) {
+        if (loadFactor <= 0d || loadFactor >= 1d) {
+            throw new IllegalArgumentException("0 < loadFactor < 1");
+        }
+
+        this.loadFactor = loadFactor;
+        this.initialCapacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
+        resetCapacity();
     }
 
     /**
@@ -71,6 +81,12 @@ public class CompactCharSequenceHashSet extends AbstractCharSequenceHashSet {
         }
     }
 
+    @Override
+    public void clear() {
+        Arrays.fill(keys, null);
+        free = capacity;
+    }
+
     public boolean contains(CharSequence key) {
         return keyIndex(key) < 0;
     }
@@ -79,19 +95,27 @@ public class CompactCharSequenceHashSet extends AbstractCharSequenceHashSet {
         return keyIndex(key) > -1;
     }
 
-    public CharSequence keyAt(int index) {
-        int index1 = -index - 1;
-        return keys[index1];
+    public int keyIndex(CharSequence key) {
+        int hashCode = Chars.hashCode(key);
+        int index = hashCode & mask;
+        if (keys[index] == null) {
+            return index;
+        }
+        if (hashCode == keys[index].hashCode() && Chars.equals(key, keys[index])) {
+            return -index - 1;
+        }
+        return probe(key, index, hashCode);
     }
 
-    @Override
-    public int remove(CharSequence key) {
-        int keyIndex = keyIndex(key);
-        if (keyIndex < 0) {
-            removeAt(keyIndex);
-            return -keyIndex - 1;
-        }
-        return -1;
+    public void resetCapacity() {
+        free = capacity = this.initialCapacity;
+        final int len = Numbers.ceilPow2((int) (capacity / loadFactor));
+        keys = new String[len];
+        mask = len - 1;
+    }
+
+    public int size() {
+        return capacity - free;
     }
 
     @Override
@@ -99,30 +123,31 @@ public class CompactCharSequenceHashSet extends AbstractCharSequenceHashSet {
         return Arrays.toString(keys);
     }
 
+    private int probe(CharSequence key, int index, int hashCode) {
+        do {
+            index = (index + 1) & mask;
+            if (keys[index] == null) {
+                return index;
+            }
+            if (hashCode == keys[index].hashCode() && Chars.equals(key, keys[index])) {
+                return -index - 1;
+            }
+        } while (true);
+    }
+
     private void rehash() {
         int newCapacity = capacity * 2;
         free = capacity = newCapacity;
         int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
-        CharSequence[] oldKeys = keys;
-        keys = new CharSequence[len];
+        String[] oldKeys = keys;
+        keys = new String[len];
         mask = len - 1;
         for (int i = 0, n = oldKeys.length; i < n; i++) {
-            CharSequence key = oldKeys[i];
-            if (key != noEntryKey) {
+            String key = oldKeys[i];
+            if (key != null) {
                 keys[keyIndex(key)] = key;
                 free--;
             }
         }
-    }
-
-    @Override
-    protected void erase(int index) {
-        keys[index] = noEntryKey;
-    }
-
-    @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        erase(from);
     }
 }

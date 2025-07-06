@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,26 +24,18 @@
 
 package io.questdb.test.griffin.engine.functions.regex;
 
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class NotMatchCharFunctionFactoryTest extends AbstractGriffinTest {
+public class NotMatchCharFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCheckCharacter() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
-
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name !~ 'H'", sqlExecutionContext).getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true, sink);
-                    Assert.assertEquals(sink.toString().indexOf('H'), -1);
-                }
-            }
+            execute("create table x as (select rnd_str() name from long_sequence(2000))");
+            engine.print("select * from x where name !~ 'H'", sink, sqlExecutionContext);
+            Assert.assertEquals(-1, sink.toString().indexOf('H'));
         });
     }
 }

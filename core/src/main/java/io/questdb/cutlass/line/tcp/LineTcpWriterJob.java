@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,11 +30,9 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -45,7 +43,6 @@ class LineTcpWriterJob implements Job, Closeable {
     private final long commitInterval;
     private final Metrics metrics;
     private final MillisecondClock millisecondClock;
-    private final Path path = new Path();
     private final RingQueue<LineTcpMeasurementEvent> queue;
     private final LineTcpMeasurementScheduler scheduler;
     private final Sequence sequence;
@@ -75,15 +72,13 @@ class LineTcpWriterJob implements Job, Closeable {
 
     @Override
     public void close() {
-        LOG.info().$("line protocol writer closing [threadId=").$(workerId).$(']').$();
+        LOG.info().$("line protocol writer closing [workerId=").$(workerId).I$();
         // Finish all jobs in the queue before stopping
         for (int n = 0; n < queue.getCycle(); n++) {
             if (!run(workerId, Job.TERMINATING_STATUS)) {
                 break;
             }
         }
-
-        Misc.free(path);
     }
 
     @Override
@@ -123,7 +118,7 @@ class LineTcpWriterJob implements Job, Closeable {
                             .$("commit failed [table=").$(assignedTables.getQuick(n).getTableToken())
                             .$(",ex=").$(ex)
                             .I$();
-                    metrics.health().incrementUnhandledErrors();
+                    metrics.healthMetrics().incrementUnhandledErrors();
                 }
             }
             // if no tables, just use the default commit interval
@@ -161,7 +156,7 @@ class LineTcpWriterJob implements Job, Closeable {
                                 nextCommitTime = millisecondClock.getTicks();
                                 LOG.info()
                                         .$("assigned table to writer thread [tableName=").$(tud.getTableToken())
-                                        .$(", threadId=").$(workerId)
+                                        .$(", workerId=").$(workerId)
                                         .I$();
                             }
                             event.append();
@@ -170,9 +165,9 @@ class LineTcpWriterJob implements Job, Closeable {
                         tud.setWriterInError();
                         LOG.critical()
                                 .$("closing writer because of error [table=").$(tud.getTableToken())
-                                .$(",ex=").$(ex)
+                                .$(", ex=").$(ex)
                                 .I$();
-                        metrics.health().incrementUnhandledErrors();
+                        metrics.healthMetrics().incrementUnhandledErrors();
                         closeWriter = true;
                         event.createWriterReleaseEvent(tud, false);
                         // This is a critical error, so we treat it as an unhandled one.

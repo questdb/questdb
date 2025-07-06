@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,13 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 
 class SelectedRecordCursor implements RecordCursor {
     private final IntList columnCrossIndex;
@@ -46,8 +49,13 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
+        baseCursor.calculateSize(circuitBreaker, counter);
+    }
+
+    @Override
     public void close() {
-        baseCursor.close();
+        baseCursor = Misc.free(baseCursor);
     }
 
     @Override
@@ -89,8 +97,18 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void skipRows(Counter rowCount) throws DataUnavailableException {
+        baseCursor.skipRows(rowCount);
+    }
+
+    @Override
     public void toTop() {
         baseCursor.toTop();
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return baseCursor.preComputedStateSize();
     }
 
     void of(RecordCursor cursor) {

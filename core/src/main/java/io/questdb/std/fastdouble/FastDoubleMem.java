@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,12 +45,10 @@ final class FastDoubleMem {
                 b[i] = Unsafe.getUnsafe().getByte(str + startIndex + i);
             }
             double v = Double.parseDouble(new String(b, StandardCharsets.ISO_8859_1));
-            if (rejectOverflow && (
-                    v == Double.POSITIVE_INFINITY
+            if (rejectOverflow &&
+                    (v == Double.POSITIVE_INFINITY
                             || v == Double.NEGATIVE_INFINITY
-                            || v == 0.0
-            )
-            ) {
+                            || v == 0.0)) {
                 throw NumericException.INSTANCE;
             }
             return v;

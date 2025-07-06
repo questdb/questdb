@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,6 +44,10 @@ import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCursor, Closeable {
     protected final Function offsetFunc;
     protected final int offsetFuncPos;
+    protected final Function sampleFromFunc;
+    protected final int sampleFromFuncPos;
+    protected final Function sampleToFunc;
+    protected final int sampleToFuncPos;
     protected final TimestampSampler timestampSampler;
     protected final Function timezoneNameFunc;
     protected final int timezoneNameFuncPos;
@@ -59,13 +63,21 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) {
         this.timestampSampler = timestampSampler;
         this.timezoneNameFunc = timezoneNameFunc;
         this.timezoneNameFuncPos = timezoneNameFuncPos;
         this.offsetFunc = offsetFunc;
         this.offsetFuncPos = offsetFuncPos;
+        this.sampleFromFunc = sampleFromFunc;
+        this.sampleFromFuncPos = sampleFromFuncPos;
+        this.sampleToFunc = sampleToFunc;
+        this.sampleToFuncPos = sampleToFuncPos;
     }
 
     @Override
@@ -80,15 +92,15 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
         offsetFunc.init(base, executionContext);
         rules = null;
 
-        final CharSequence tz = timezoneNameFunc.getStr(null);
+        final CharSequence tz = timezoneNameFunc.getStrA(null);
         if (tz != null) {
             try {
                 long opt = Timestamps.parseOffset(tz);
                 if (opt == Long.MIN_VALUE) {
                     // this is timezone name
                     // fixed rules means the timezone does not have historical or daylight time changes
-                    rules = TimestampFormatUtils.enLocale.getZoneRules(
-                            Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
+                    rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
+                            Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
                             RESOLUTION_MICROS
                     );
                 } else {
@@ -104,10 +116,10 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
             nextDstUtc = Long.MAX_VALUE;
         }
 
-        final CharSequence offset = offsetFunc.getStr(null);
+        final CharSequence offset = offsetFunc.getStrA(null);
         if (offset != null) {
             final long val = Timestamps.parseOffset(offset);
-            if (val == Numbers.LONG_NaN) {
+            if (val == Numbers.LONG_NULL) {
                 // bad value for offset
                 throw SqlException.$(offsetFuncPos, "invalid offset: ").put(offset);
             }

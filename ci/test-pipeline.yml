@@ -4,6 +4,7 @@ pr:
   branches:
     include:
       - master
+  drafts: false
 
 variables:
   QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)/tests.log"
@@ -12,8 +13,8 @@ variables:
   excludeTests: ""
   includeTests: "%regex[.*[^o].class]"
   MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
-  MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m"
-  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30"
+  MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3g"
+  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 "
   MAVEN_VERSION: "version"
   MAVEN_VERSION_OPTION: "Default"
 
@@ -23,58 +24,27 @@ stages:
     jobs:
       - template: templates/check-changes-job.yml
 
-  - stage: SelfHostedRunTestsBranches
-    displayName: "Self Hosted Running tests"
+  - stage: SelfHostedRunGriffin
+    displayName: "SelfHosted Griffin And Fuzz tests"
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     dependsOn:
       - CheckChanges
     jobs:
-      - job: StartArmAgent
-        displayName: "Start ARM Agent"
-        pool:
-          vmImage: "ubuntu-latest"
-        steps:
-          - checkout: none
-          - bash: |
-              echo "buildno: $(Build.BuildId)"
-              echo ${AZURE_DEVOPS_CLI_PAT} | az devops login
-            env:
-              AZURE_DEVOPS_CLI_PAT: $(System.AccessToken)
-            displayName: "Login Azure DevOps Extension"
-          - bash:
-              az devops configure --defaults
-              organization=$(System.TeamFoundationCollectionUri)
-              project=$(System.TeamProject) --use-git-aliases true
-            displayName: "Set default Azure DevOps organization and project"
-          - task: LambdaInvokeFunction@1
-            displayName: "Start Agent 1"
-            name: "Start_Agent1"
-            inputs:
-              awsCredentials: "ondemand-dev"
-              regionName: "eu-west-1"
-              functionName: "ondemand-pipeline"
-              payload: |
-                {
-                  "pool": "arm64",
-                  "buildid": "$(Build.BuildId)"
-                }
-              outputVariable: "functionResult"
-          - bash: |
-              echo "Instance: $(functionResult)"
-            name: "Display_Instance"
-            displayName: "Display Instance"
-          - bash: |
-              echo "Starting agent... for pool arm64"
-              POOLID=$(az pipelines pool list | jq '.[]| select(.name == "arm64") | .id' -r)
-              while [ "$(az pipelines agent list --pool-id $POOLID | jq '.[]| select(.name == "arm64-$(Build.BuildId)") | .enabled' -r)" != "true" ]
-              do
-                echo "Still waiting for agent arm64-$(Build.BuildId) ... "
-                sleep 3
-              done
-              echo "Agent found ..."
-            name: "Check_agent"
-            displayName: "Check agent"
+      - template: templates/start-self-hosted-job.yml
       - template: templates/self-hosted-jobs.yml
+    variables:
+      includeTests: "**/griffin/**,**/cairo/**"
+
+  - stage: SelfHostedRunOther
+    displayName: "SelfHosted Other tests"
+    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/start-self-hosted-job.yml
+      - template: templates/self-hosted-jobs.yml
+    variables:
+      excludeTests: "**/griffin/**,**/cairo/**"
 
   - stage: HostedRunTestsBranches
     displayName: "Hosted Running tests"
@@ -90,6 +60,13 @@ stages:
     jobs:
       - template: templates/hosted-cover-jobs.yml
 
+  - stage: JavaAndRustLint
+    displayName: "Rust Test and Lint"
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/aux-job.yml
+
   - stage: CoverageReports
     displayName: "Coverage Report"
     dependsOn:
@@ -101,51 +78,105 @@ stages:
         pool:
           vmImage: "ubuntu-latest"
         variables:
-          SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
+          RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
           CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
           COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
-        condition: |
-          and(
-            and(
-              eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
-              eq(variables['SOURCE_CODE_CHANGED'], 'true')
-            ),
-            eq(variables['System.PullRequest.IsFork'], 'false')
-          )
+          SHOULD_RUN: $[ and( or( eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo') ), eq(variables['System.PullRequest.IsFork'], 'false') )]
+          jdk: "1.17"
+
+        # Coverage Job is required to run by a validation rule, but there's no point in running the steps
+        # if there were no code changes. Therefore we define SHOULD_RUN and use it as a condition in all steps.
         steps:
           - checkout: self
             fetchDepth: 1
             lfs: false
             submodules: false
+          - download: current
+            artifact: jacoco-coverage
+            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
+          - download: current
+            artifact: rust-llvm-coverage
+            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
+          - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
+            displayName: "Ensure Rust is installed"
+            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
+          - template: templates/install-llvm.yml
+            parameters:
+              shouldRun: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
           - task: Cache@2
+            continueOnError: true
+            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
             inputs:
               key: '"questdb_main" | "maven"'
-              restoreKeys: |
               path: $(MAVEN_CACHE_FOLDER)
           - task: Maven@3
             displayName: "Compile with Maven"
+            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
-              options: "compile -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
-              jdkVersionOption: "1.11"
-          - download: current
-            artifact: jacoco-coverage
+              goals: "compile"
+              options: "--batch-mode -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+              jdkVersionOption: $(jdk)
           - task: Maven@3
-            displayName: "Merge coverage reports"
+            displayName: "Merge partial JaCoCo reports"
+            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
             inputs:
               mavenPomFile: "ci/jacoco-merge.xml"
               goals: "verify"
               options:
-                "-Dhttp.keepAlive=false -DincludeRoot=$(Pipeline.Workspace)
+                "--batch-mode -Dhttp.keepAlive=false -DincludeRoot=$(Pipeline.Workspace)
                 -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate
                 -DcoverDiff=$(COVERAGE_DIFF)
                 -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
-          - bash:
-              $JAVA_HOME_11_X64/bin/java -jar
-              $(Build.SourcesDirectory)/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar
-              -c $(Pipeline.Workspace)/jacoco-aggregate/jacoco.xml
-              --github-token $(GH_TOKEN) --repo "questdb/questdb" --pr
-              $(System.PullRequest.PullRequestNumber)
-              -t  $(DIFF_COVER_THRESHOLD_PCT) -type jacoco;
-            displayName: "Diff coverage PR report"
+              jdkVersionOption: $(jdk)
+          - bash: |
+              set -eux
+              export PATH=$LLVM_TOOLS_PATH:$PATH
+              ls -al $(Pipeline.Workspace)/rust-llvm-coverage
+
+              # Merge partial profdata files into the complete report
+              llvm-profdata merge -sparse -o questdbr.profdata $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata
+
+              # Compile the merged coverage report into an HTML report
+              llvm-cov show \
+                --format=html \
+                --output-dir=rust-llvm-coverage \
+                --ignore-filename-regex='(\.cargo/registry|rustc/.*\.rs)' \
+                --instr-profile=questdbr.profdata \
+                --object $(Pipeline.Workspace)/rust-llvm-coverage/libquestdbr.so \
+                --object $(Pipeline.Workspace)/rust-llvm-coverage/questdbr-test-binary
+
+              # Export the merged coverage report to LCOV format
+              llvm-cov export \
+                --format=lcov \
+                --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
+                --instr-profile=questdbr.profdata \
+                --object $(Pipeline.Workspace)/rust-llvm-coverage/libquestdbr.so \
+                --object $(Pipeline.Workspace)/rust-llvm-coverage/questdbr-test-binary \
+                > questdbr.lcov.dat
+
+              # Convert LCOV coverage results to Cobertura XML format
+              # https://www.collabora.com/news-and-blog/blog/2021/03/24/rust-integrating-llvm-source-base-code-coverage-with-gitlab/
+              curl -LsSf https://astral.sh/uv/install.sh | sh
+              uv run --with lcov_cobertura python3 -m lcov_cobertura \
+                  questdbr.lcov.dat \
+                  --output cobertura.xml \
+                  --base-dir core/rust/qdbr/src
+            displayName: "Merge partial Rust reports"
+            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
+
+          - bash: |
+              set -eux
+              COVER_ARGS=""
+              for f in "$(Pipeline.Workspace)/jacoco-aggregate/jacoco.xml"; do
+                [ -f "$f" ] && COVER_ARGS="-type jacoco --cover $f"
+              done
+              [ -f cobertura.xml ] && COVER_ARGS="$COVER_ARGS -type cobertura --cover cobertura.xml"
+
+              $JAVA_HOME_17_X64/bin/java -jar \
+                $(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar \
+                $COVER_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \
+                -t $(DIFF_COVER_THRESHOLD_PCT) --github-token $(GH_TOKEN)
+            displayName: "Post combined report to GitHub"
+            condition: eq(variables['SHOULD_RUN'], 'true')

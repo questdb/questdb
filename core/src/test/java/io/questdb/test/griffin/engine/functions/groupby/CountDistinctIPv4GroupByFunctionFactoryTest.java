@@ -1,0 +1,75 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2024 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.griffin.engine.functions.groupby;
+
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Test;
+
+public class CountDistinctIPv4GroupByFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testNonKeyedHappy() throws Exception {
+        String expected = "count_distinct\n" +
+                "20\n";
+        assertQuery(
+                expected,
+                "select count_distinct(a) from x",
+                "create table x as (select rnd_ipv4() a from long_sequence(20))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testSampleBy() throws Exception {
+        execute("create table x (ts timestamp, ip ipv4) timestamp(ts);");
+        execute("insert into x values ('2000-01-01', '192.168.1.1'), ('2000-01-01T04:30', '192.168.1.2'), ('2000-01-01T05:30', '192.168.1.3'), ('2000-01-03', '192.168.1.1');");
+
+        String expectedDefault = "ts\tcount_distinct\n" +
+                "2000-01-01T00:00:00.000000Z\t3\n" +
+                "2000-01-03T00:00:00.000000Z\t1\n";
+        assertQuery(
+                expectedDefault,
+                "select ts, count_distinct(ip) from x sample by 1d",
+                "ts",
+                true,
+                true
+        );
+
+        String expectedInterpolated = "ts\tcount_distinct\n" +
+                "2000-01-01T00:00:00.000000Z\t3\n" +
+                "2000-01-02T00:00:00.000000Z\t2\n" +
+                "2000-01-03T00:00:00.000000Z\t1\n";
+        assertQuery(
+                expectedInterpolated,
+                "select ts, count_distinct(ip) from x sample by 1d fill(linear)",
+                "ts",
+                true,
+                true
+        );
+    }
+
+}

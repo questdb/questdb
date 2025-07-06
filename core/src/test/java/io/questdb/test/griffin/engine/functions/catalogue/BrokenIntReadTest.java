@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,16 +24,18 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.*;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.std.FilesFacade;
-import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.std.TestFilesFacadeImpl;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
 
-public class BrokenIntReadTest extends AbstractGriffinTest {
+public class BrokenIntReadTest extends AbstractCairoTest {
 
     @Test
     public void testFailToReadInt_ColumnCountOfFirstTable() throws Exception {
@@ -138,9 +140,9 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
     }
 
     private void createTables(FilesFacade ff) {
-        try (TableModel model = new TableModel(new DefaultTestCairoConfiguration(root) {
+        TableModel model = new TableModel(new DefaultTestCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
         }, "x", PartitionBy.NONE)
@@ -148,13 +150,12 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
                 .col("productName", ColumnType.STRING)
                 .col("supplier", ColumnType.SYMBOL)
                 .col("category", ColumnType.SYMBOL)
-                .timestamp()) {
-            CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
-        }
+                .timestamp();
+        CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
 
-        try (TableModel model = new TableModel(new DefaultTestCairoConfiguration(root) {
+        model = new TableModel(new DefaultTestCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
         }, "y", PartitionBy.NONE)
@@ -163,13 +164,12 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
                 .col("supplier", ColumnType.SYMBOL)
                 .col("category", ColumnType.SYMBOL)
 
-                .timestamp()) {
-            CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
-        }
+                .timestamp();
+        CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
 
-        try (TableModel model = new TableModel(new DefaultTestCairoConfiguration(root) {
+        model = new TableModel(new DefaultTestCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
         }, "z", PartitionBy.NONE)
@@ -177,25 +177,20 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
                 .col("productName", ColumnType.STRING)
                 .col("supplier", ColumnType.SYMBOL)
                 .col("category", ColumnType.SYMBOL)
-                .timestamp()) {
-            CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
-        }
+                .timestamp();
+        CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
     }
 
     private void testFailOnRead(int i, String expected) throws Exception {
         ff = new BrokenIntRead(i);
         assertMemoryLeak(ff, () -> {
             createTables(ff);
-            printSqlResult3(
+            printSqlResult(
                     expected,
                     "pg_catalog.pg_attrdef order by 1",
                     null,
-                    null,
-                    null,
                     true,
-                    false,
-                    false,
-                    null
+                    false
             );
         });
     }
@@ -216,7 +211,7 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
         }
 
         @Override
-        public long read(int fd, long buf, long len, long offset) {
+        public long read(long fd, long buf, long len, long offset) {
             callCount++;
             if (callCount == failOnCount) {
                 return -1;

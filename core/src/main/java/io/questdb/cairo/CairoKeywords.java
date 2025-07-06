@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -62,11 +62,28 @@ public class CairoKeywords {
 
     }
 
+    public static boolean isMeta(long lpsz) {
+        long i = lpsz;
+        return Unsafe.getUnsafe().getByte(i++) == '_'
+                && Unsafe.getUnsafe().getByte(i++) == 'm'
+                && Unsafe.getUnsafe().getByte(i++) == 'e'
+                && Unsafe.getUnsafe().getByte(i++) == 't'
+                && Unsafe.getUnsafe().getByte(i) == 'a';
+    }
+
     public static boolean isSeq(long lpsz) {
         long i = lpsz;
         return Unsafe.getUnsafe().getByte(i++) == 's'
                 && Unsafe.getUnsafe().getByte(i++) == 'e'
                 && Unsafe.getUnsafe().getByte(i) == 'q';
+    }
+
+    public static boolean isTxn(long lpsz) {
+        long i = lpsz;
+        return Unsafe.getUnsafe().getByte(i++) == '_'
+                && Unsafe.getUnsafe().getByte(i++) == 't'
+                && Unsafe.getUnsafe().getByte(i++) == 'x'
+                && Unsafe.getUnsafe().getByte(i) == 'n';
     }
 
     public static boolean isTxnSeq(long lpsz) {
@@ -86,23 +103,6 @@ public class CairoKeywords {
         return Unsafe.getUnsafe().getByte(i++) == 'w'
                 && Unsafe.getUnsafe().getByte(i++) == 'a'
                 && Unsafe.getUnsafe().getByte(i) == 'l';
-    }
-
-    public static boolean isTxn(long lpsz) {
-        long i = lpsz;
-        return Unsafe.getUnsafe().getByte(i++) == '_'
-                && Unsafe.getUnsafe().getByte(i++) == 't'
-                && Unsafe.getUnsafe().getByte(i++) == 'x'
-                && Unsafe.getUnsafe().getByte(i) == 'n';
-    }
-
-    public static boolean isMeta(long lpsz) {
-        long i = lpsz;
-        return Unsafe.getUnsafe().getByte(i++) == '_'
-                && Unsafe.getUnsafe().getByte(i++) == 'm'
-                && Unsafe.getUnsafe().getByte(i++) == 'e'
-                && Unsafe.getUnsafe().getByte(i++) == 't'
-                && Unsafe.getUnsafe().getByte(i) == 'a';
     }
 
     public static int length(long lpsz) {

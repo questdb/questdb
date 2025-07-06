@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,57 +32,52 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.CompactIntHashSet;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 
 public class CountDistinctIntGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final ObjList<CompactIntHashSet> sets = new ObjList<>();
-    private int setIndex;
+    private final GroupByIntHashSet setA;
+    private final GroupByIntHashSet setB;
     private int valueIndex;
 
-    public CountDistinctIntGroupByFunction(Function arg) {
+    public CountDistinctIntGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
+        setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.INT_NULL);
+        setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.INT_NULL);
     }
 
     @Override
     public void clear() {
-        sets.clear();
-        setIndex = 0;
+        setA.resetPtr();
+        setB.resetPtr();
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        final CompactIntHashSet set;
-        if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new CompactIntHashSet());
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        int val = arg.getInt(record);
+        if (val != Numbers.INT_NULL) {
+            mapValue.putLong(valueIndex, 1);
+            setA.of(0).add(val);
+            mapValue.putLong(valueIndex + 1, setA.ptr());
         } else {
-            set = sets.getQuick(setIndex);
+            mapValue.putLong(valueIndex, 0);
+            mapValue.putLong(valueIndex + 1, 0);
         }
-        set.clear();
-
-        final int val = arg.getInt(record);
-        if (val != Numbers.INT_NaN) {
-            set.add(val);
-            mapValue.putLong(valueIndex, 1L);
-        } else {
-            mapValue.putLong(valueIndex, 0L);
-        }
-        mapValue.putInt(valueIndex + 1, setIndex++);
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        final CompactIntHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
-        final int val = arg.getInt(record);
-        if (val != Numbers.INT_NaN) {
-            final int index = set.keyIndex(val);
-            if (index < 0) {
-                return;
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
+        int val = arg.getInt(record);
+        if (val != Numbers.INT_NULL) {
+            long ptr = mapValue.getLong(valueIndex + 1);
+            final long index = setA.of(ptr).keyIndex(val);
+            if (index >= 0) {
+                setA.addAt(index, val);
+                mapValue.addLong(valueIndex, 1);
+                mapValue.putLong(valueIndex + 1, setA.ptr());
             }
-            set.addAt(index, val);
-            mapValue.addLong(valueIndex, 1);
         }
     }
 
@@ -102,40 +97,94 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     }
 
     @Override
+    public int getSampleByFlags() {
+        return GroupByFunction.SAMPLE_BY_FILL_ALL;
+    }
+
+    @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG); // count
+        columnTypes.add(ColumnType.LONG); // GroupByIntHashSet pointer
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
-        columnTypes.add(ColumnType.INT);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcCount = srcValue.getLong(valueIndex);
+        if (srcCount == 0 || srcCount == Numbers.LONG_NULL) {
+            return;
+        }
+        long srcPtr = srcValue.getLong(valueIndex + 1);
+
+        long destCount = destValue.getLong(valueIndex);
+        if (destCount == 0 || destCount == Numbers.LONG_NULL) {
+            destValue.putLong(valueIndex, srcCount);
+            destValue.putLong(valueIndex + 1, srcPtr);
+            return;
+        }
+        long destPtr = destValue.getLong(valueIndex + 1);
+
+        setA.of(destPtr);
+        setB.of(srcPtr);
+
+        if (setA.size() > (setB.size() >>> 1)) {
+            setA.merge(setB);
+            destValue.putLong(valueIndex, setA.size());
+            destValue.putLong(valueIndex + 1, setA.ptr());
+        } else {
+            // Set A is significantly smaller than set B, so we merge it into set B.
+            setB.merge(setA);
+            destValue.putLong(valueIndex, setB.size());
+            destValue.putLong(valueIndex + 1, setB.ptr());
+        }
+    }
+
+    @Override
+    public void setAllocator(GroupByAllocator allocator) {
+        setA.setAllocator(allocator);
+        setB.setAllocator(allocator);
     }
 
     @Override
     public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0L);
+        mapValue.putLong(valueIndex, 0);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
     public void setLong(MapValue mapValue, long value) {
         mapValue.putLong(valueIndex, value);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
-    public void toTop() {
-        UnaryFunction.super.toTop();
-        setIndex = 0;
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

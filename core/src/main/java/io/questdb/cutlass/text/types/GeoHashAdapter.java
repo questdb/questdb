@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.IntObjHashMap;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
 
 public final class GeoHashAdapter extends AbstractTypeAdapter {
 
@@ -54,17 +54,17 @@ public final class GeoHashAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public boolean probe(DirectByteCharSequence text) {
+    public boolean probe(DirectUtf8Sequence text) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
-        row.putGeoStr(column, SqlKeywords.isNullKeyword(value) ? null : value);
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
+        row.putGeoVarchar(column, SqlKeywords.isNullKeyword(value) ? null : value);
     }
 
     static {
-        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
             int type = ColumnType.getGeoHashTypeWithBits(b);
             typeToAdapterMap.put(type, new GeoHashAdapter(type));
         }

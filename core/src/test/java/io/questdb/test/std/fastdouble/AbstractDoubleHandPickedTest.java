@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,8 +25,8 @@
 package io.questdb.test.std.fastdouble;
 
 import io.questdb.std.NumericException;
-import io.questdb.std.Os;
 import io.questdb.std.fastdouble.FastDoubleMath;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -77,10 +77,7 @@ abstract class AbstractDoubleHandPickedTest {
 
     @Test
     public void testErrorCases() throws IOException {
-        String file = io.questdb.std.Files.getResourcePath(getClass().getResource("/fastdouble/FastDoubleParser_testcases.txt"));
-        if (Os.isWindows() && file.charAt(0) == '/') {
-            file = file.substring(1);
-        }
+        String file = TestUtils.getTestResourcePath("/fastdouble/FastDoubleParser_testcases.txt");
         Path p = Paths.get(file);
         Files.lines(p)
                 .flatMap(line -> Arrays.stream(line.split(",")))
@@ -263,7 +260,8 @@ abstract class AbstractDoubleHandPickedTest {
         testLegalInputWithPrefixAndSuffix("before0x1234p0after", 8, 0x1234p0);
         testLegalInputWithPrefixAndSuffix("before0x123.45p0after", 10, 0x123.45p0);
         testLegalInputWithPrefixAndSuffix("Outside Clinger fast path (min_clinger_significand + 1, min_clinger_exponent - 1)",
-                "before1e-23after", 5, 1e-23);
+                "before1e-23after", 5, 1e-23
+        );
         testLegalInputWithPrefixAndSuffix("before9007199254740992.e-256after", 22, 9007199254740992.e-256);
     }
 

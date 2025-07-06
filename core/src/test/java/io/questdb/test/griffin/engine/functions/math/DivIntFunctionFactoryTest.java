@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,20 +26,20 @@ package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.math.DivIntFunctionFactory;
 import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class DivIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testDivByZero() throws SqlException {
-        call(24, 0).andAssert(Numbers.INT_NaN);
+        call(24, 0).andAssert(Numbers.INT_NULL);
     }
 
     @Test
     public void testLeftNan() throws SqlException {
-        call(Numbers.INT_NaN, 5).andAssert(Numbers.INT_NaN);
+        call(Numbers.INT_NULL, 5).andAssert(Numbers.INT_NULL);
     }
 
     @Test
@@ -49,7 +49,7 @@ public class DivIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testRightNan() throws SqlException {
-        call(123, Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
+        call(123, Numbers.INT_NULL).andAssert(Numbers.INT_NULL);
     }
 
     @Test

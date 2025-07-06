@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -38,7 +38,7 @@ import org.junit.Test;
  * int -> short, byte
  * short -> byte
  */
-public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
+public class ImplicitTypeConversionsTest extends AbstractCairoTest {
 
     @Test
     public void testInsertDoubleAsByte_Causes_Overflow_and_throws_exception() throws Exception {
@@ -78,7 +78,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertDoubleAsFloat_ReturnsApproximateValue() throws Exception {
-        testInsert("double", "12345.6789", "float", "12345.6784");
+        testInsert("double", "12345.6789", "float", "12345.679");
     }
 
     @Test
@@ -118,7 +118,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertDoubleAsInt_ReturnsMinValue() throws Exception {
-        testInsert("double", "-2147483648.0", "int", "NaN");//see Numbers.append:127
+        testInsert("double", "-2147483648.0", "int", "null");//see Numbers.append:127
     }
 
     @Test
@@ -340,7 +340,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertLongAsInt_ReturnsMinValue() throws Exception {
-        testInsert("long", "-2147483648", "int", "NaN"); //see Numbers.append:127
+        testInsert("long", "-2147483648", "int", "null"); //see Numbers.append:127
     }
 
     @Test
@@ -370,7 +370,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertNonZeroDoubleAsFloat_ReturnsValueWithoutFraction() throws Exception {
-        testInsert("double", "2.34567", "float", "2.3457");//formatting issue, number is stored properly
+        testInsert("double", "2.34567", "float", "2.34567");//formatting issue, number is stored properly
     }
 
     @Test
@@ -395,7 +395,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertZeroDoubleAsFloat_ReturnsExactValue() throws Exception {
-        testInsert("double", "0.0", "float", "0.0000");
+        testInsert("double", "0.0", "float", "0.0");
     }
 
     //double->int
@@ -524,8 +524,8 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     private void testInsert(String valueType, String value, String targetColumnType, String expectedValue) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tab(x " + targetColumnType + " );", sqlExecutionContext);
-            executeInsert("insert into tab values (cast(" + value + " as " + valueType + " ));");
+            execute("create table tab(x " + targetColumnType + " );");
+            execute("insert into tab values (cast(" + value + " as " + valueType + " ));");
 
             String expected = "x\n" + expectedValue + "\n";
 
@@ -538,16 +538,14 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
     }
 
     private void testInsertCausesException(String valueType, String value, String targetColumnType) throws Exception {
-        try {
-            assertMemoryLeak(() -> {
-                compiler.compile("create table tab(x " + targetColumnType + " );", sqlExecutionContext);
-                executeInsert("insert into tab values (cast(" + value + " as " + valueType + " ));");
-            });
-
-            Assert.fail("SqlException should be thrown!");
-        } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
-        }
+        assertMemoryLeak(() -> {
+            try {
+                execute("create table tab(x " + targetColumnType + " );");
+                execute("insert into tab values (cast(" + value + " as " + valueType + " ));");
+                Assert.fail("SqlException should be thrown!");
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+            }
+        });
     }
-
 }

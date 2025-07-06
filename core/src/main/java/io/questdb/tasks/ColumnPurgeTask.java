@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,8 @@ package io.questdb.tasks;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
+import io.questdb.std.Transient;
+import org.jetbrains.annotations.NotNull;
 
 public class ColumnPurgeTask implements Mutable {
     public static final int BLOCK_SIZE = 4;
@@ -100,9 +102,14 @@ public class ColumnPurgeTask implements Mutable {
         return updatedColumnInfo;
     }
 
+    public boolean isEmpty() {
+        return tableName == null;
+    }
+
     public void of(
+            @NotNull
             TableToken tableName,
-            CharSequence columnName,
+            String columnName,
             int tableId,
             long truncateVersion,
             int columnType,
@@ -120,16 +127,34 @@ public class ColumnPurgeTask implements Mutable {
     }
 
     public void of(
+            @NotNull
             TableToken tableName,
-            CharSequence columnName,
+            String columnName,
             int tableId,
             int truncateVersion,
             int columnType,
             int partitionBy,
             long updateTxn,
-            LongList columnVersions
+            @Transient LongList columnVersions
     ) {
         of(tableName, columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
         this.updatedColumnInfo.add(columnVersions);
+    }
+
+    public void of(
+            @NotNull
+            TableToken tableName,
+            String columnName,
+            int tableId,
+            int truncateVersion,
+            int columnType,
+            int partitionBy,
+            long updateTxn,
+            @Transient LongList columnVersions,
+            int columnVersionsLo,
+            int columnVersionsHi
+    ) {
+        of(tableName, columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
+        this.updatedColumnInfo.add(columnVersions, columnVersionsLo, columnVersionsHi);
     }
 }

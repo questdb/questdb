@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,28 +25,45 @@
 package io.questdb.test.cutlass.http;
 
 import io.questdb.FactoryProvider;
-import io.questdb.Metrics;
 import io.questdb.TelemetryJob;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.cutlass.http.*;
-import io.questdb.cutlass.http.processors.*;
+import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHandlerFactory;
+import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.processors.HealthCheckProcessor;
+import io.questdb.cutlass.http.processors.JsonQueryProcessor;
+import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
+import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
+import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
+import io.questdb.cutlass.http.processors.TextImportProcessor;
+import io.questdb.cutlass.http.processors.TextQueryProcessor;
 import io.questdb.cutlass.text.CopyRequestJob;
-import io.questdb.griffin.*;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.QueryFutureUpdateListener;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import org.jetbrains.annotations.NotNull;
 
-import java.util.concurrent.BrokenBarrierException;
 import java.util.function.LongSupplier;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -57,24 +74,24 @@ public class HttpQueryTestBuilder {
     private String copyInputRoot;
     private FactoryProvider factoryProvider;
     private FilesFacade filesFacade = new TestFilesFacadeImpl();
-    private Boolean healthCheckAuthRequired;
+    private byte httpHealthCheckAuthType = SecurityContext.AUTH_TYPE_NONE;
+    private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private long maxWriterWaitTimeout = 30_000L;
-    private Metrics metrics;
     private MicrosecondClock microsecondClock;
+    private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private long queryTimeout = -1;
     private HttpServerConfigurationBuilder serverConfigBuilder;
-    private SqlExecutionContextImpl sqlExecutionContext;
+    private ObjList<SqlExecutionContextImpl> sqlExecutionContexts;
     private long startWriterWaitTimeout = 500;
-    private Boolean staticContentAuthRequired;
     private boolean telemetry;
     private String temp;
     private HttpRequestProcessorBuilder textImportProcessor;
     private int workerCount = 1;
 
-    public SqlExecutionContextImpl getSqlExecutionContext() {
-        return sqlExecutionContext;
+    public ObjList<SqlExecutionContextImpl> getSqlExecutionContexts() {
+        return sqlExecutionContexts;
     }
 
     public int getWorkerCount() {
@@ -91,47 +108,39 @@ public class HttpQueryTestBuilder {
             final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder
                     .withBaseDir(baseDir)
                     .withFactoryProvider(factoryProvider)
-                    .withStaticContentAuthRequired(staticContentAuthRequired != null ? staticContentAuthRequired : true)
-                    .withHealthCheckAuthRequired(healthCheckAuthRequired != null ? healthCheckAuthRequired : true)
-                    .build();
-            if (metrics == null) {
-                metrics = Metrics.enabled();
-            }
-
-            final WorkerPool workerPool = new TestWorkerPool(workerCount, metrics);
+                    .withStaticContentAuthRequired(httpStaticContentAuthType)
+                    .withHealthCheckAuthRequired(httpHealthCheckAuthType)
+                    .withNanosClock(nanosecondClock)
+                    .build(configuration);
+            final WorkerPool workerPool = new TestWorkerPool(workerCount, httpConfiguration.getMetrics());
 
             CairoConfiguration cairoConfiguration = configuration;
             if (cairoConfiguration == null) {
                 cairoConfiguration = new DefaultTestCairoConfiguration(baseDir) {
                     @Override
-                    public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+                    public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                         return new DefaultSqlExecutionCircuitBreakerConfiguration() {
                             @Override
-                            public long getTimeout() {
+                            public long getQueryTimeout() {
                                 return queryTimeout > 0 || queryTimeout == SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK
                                         ? queryTimeout
-                                        : super.getTimeout();
+                                        : super.getQueryTimeout();
                             }
                         };
                     }
 
                     @Override
-                    public LongSupplier getCopyIDSupplier() {
+                    public @NotNull LongSupplier getCopyIDSupplier() {
                         return () -> 0;
                     }
 
-                    public FilesFacade getFilesFacade() {
+                    public @NotNull FilesFacade getFilesFacade() {
                         return filesFacade;
                     }
 
                     @Override
-                    public MicrosecondClock getMicrosecondClock() {
+                    public @NotNull MicrosecondClock getMicrosecondClock() {
                         return microsecondClock != null ? microsecondClock : super.getMicrosecondClock();
-                    }
-
-                    @Override
-                    public boolean getSimulateCrashEnabled() {
-                        return true;
                     }
 
                     @Override
@@ -161,8 +170,9 @@ public class HttpQueryTestBuilder {
                 };
             }
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
+                    CairoEngine engine = new CairoEngine(cairoConfiguration);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
             ) {
                 TelemetryJob telemetryJob = null;
                 if (telemetry) {
@@ -170,71 +180,64 @@ public class HttpQueryTestBuilder {
                 }
 
                 if (cairoConfiguration.getSqlCopyInputRoot() != null) {
-                    CopyRequestJob copyRequestJob = new CopyRequestJob(engine, workerCount, null);
+                    CopyRequestJob copyRequestJob = new CopyRequestJob(engine, workerCount);
                     workerPool.assign(copyRequestJob);
                     workerPool.freeOnExit(copyRequestJob);
                 }
 
-                httpServer.bind(new HttpRequestProcessorFactory() {
+                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+
+                httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    public ObjList<String> getUrls() {
+                        return new ObjList<>("/upload");
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return "/upload";
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestHandler newInstance() {
                         return textImportProcessor != null ? textImportProcessor.create(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 workerPool.getWorkerCount()
-                        ) : new TextImportProcessor(engine);
+                        ) : new TextImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
                     }
                 });
 
-                this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount) {
-                    @Override
-                    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-                        return queryFutureUpdateListener != null ? queryFutureUpdateListener : QueryFutureUpdateListener.EMPTY;
-                    }
-                };
+                this.sqlExecutionContexts = new ObjList<>();
 
-                httpServer.bind(new HttpRequestProcessorFactory() {
+                httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
-                    public String getUrl() {
-                        return "/query";
+                    public ObjList<String> getUrls() {
+                        return new ObjList<>("/query");
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestHandler newInstance() {
+                        SqlExecutionContextImpl newContext = new SqlExecutionContextImpl(engine, workerCount) {
+                            @Override
+                            public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+                                return queryFutureUpdateListener != null ? queryFutureUpdateListener : QueryFutureUpdateListener.EMPTY;
+                            }
+                        };
+
+                        sqlExecutionContexts.add(newContext);
+
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                new SqlCompiler(engine),
-                                sqlExecutionContext
+                                newContext
                         );
                     }
                 });
 
-                httpServer.bind(new HttpRequestProcessorFactory() {
+                httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
-                    public String getUrl() {
-                        return "/exp";
+                    public ObjList<String> getUrls() {
+                        return httpConfiguration.getContextPathExport();
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestHandler newInstance() {
                         return new TextQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
@@ -243,48 +246,46 @@ public class HttpQueryTestBuilder {
                     }
                 });
 
-                httpServer.bind(new HttpRequestProcessorFactory() {
+                httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
-                    public String getUrl() {
-                        return "/chk";
+                    public ObjList<String> getUrls() {
+                        return httpConfiguration.getContextPathTableStatus();
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestHandler newInstance() {
                         return new TableStatusCheckProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
                     }
                 });
 
-                httpServer.bind(new HttpRequestProcessorFactory() {
+                httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
-                    public String getUrl() {
-                        return "/exec";
+                    public ObjList<String> getUrls() {
+                        return httpConfiguration.getContextPathExec();
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestHandler newInstance() {
                         return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine, 1);
                     }
                 });
 
-                httpServer.bind(new HttpRequestProcessorFactory() {
+                httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
-                    public String getUrl() {
-                        return "/status";
+                    public ObjList<String> getUrls() {
+                        return new ObjList<>("/status");
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestHandler newInstance() {
                         return new HealthCheckProcessor(httpConfiguration);
                     }
                 });
 
-                QueryCache.configure(httpConfiguration, metrics);
-
                 workerPool.start(LOG);
 
                 try {
-                    code.run(engine);
+                    code.run(engine, sqlExecutionContext);
                 } finally {
                     workerPool.halt();
 
@@ -326,8 +327,8 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
-    public HttpQueryTestBuilder withHealthCheckAuthRequired(boolean healthCheckAuthRequired) {
-        this.healthCheckAuthRequired = healthCheckAuthRequired;
+    public HttpQueryTestBuilder withHealthCheckAuthRequired(byte httpHealthCheckAuthType) {
+        this.httpHealthCheckAuthType = httpHealthCheckAuthType;
         return this;
     }
 
@@ -341,13 +342,13 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
-    public HttpQueryTestBuilder withMetrics(Metrics metrics) {
-        this.metrics = metrics;
+    public HttpQueryTestBuilder withMicrosecondClock(MicrosecondClock clock) {
+        this.microsecondClock = clock;
         return this;
     }
 
-    public HttpQueryTestBuilder withMicrosecondClock(MicrosecondClock clock) {
-        this.microsecondClock = clock;
+    public HttpQueryTestBuilder withNanosClock(NanosecondClock nanosecondClock) {
+        this.nanosecondClock = nanosecondClock;
         return this;
     }
 
@@ -361,8 +362,8 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
-    public HttpQueryTestBuilder withStaticContentAuthRequired(boolean staticContentAuthRequired) {
-        this.staticContentAuthRequired = staticContentAuthRequired;
+    public HttpQueryTestBuilder withStaticContentAuthRequired(byte httpStaticContentAuthType) {
+        this.httpStaticContentAuthType = httpStaticContentAuthType;
         return this;
     }
 
@@ -383,12 +384,12 @@ public class HttpQueryTestBuilder {
 
     @FunctionalInterface
     public interface HttpClientCode {
-        void run(CairoEngine engine) throws InterruptedException, SqlException, BrokenBarrierException;
+        void run(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws Exception;
     }
 
     @FunctionalInterface
     public interface HttpRequestProcessorBuilder {
-        HttpRequestProcessor create(
+        HttpRequestHandler create(
                 JsonQueryProcessorConfiguration configuration,
                 CairoEngine engine,
                 int workerCount

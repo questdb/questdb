@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LtDoubleVVFunctionFactory implements FunctionFactory {
@@ -62,9 +63,10 @@ public class LtDoubleVVFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated
-                    ? left.getDouble(rec) >= right.getDouble(rec)
-                    : left.getDouble(rec) < right.getDouble(rec);
+            final double l = left.getDouble(rec);
+            final double r = right.getDouble(rec);
+            final boolean eq = Numbers.equals(l, r);
+            return negated ? (eq || l > r) : (!eq && l < r);
         }
 
         @Override

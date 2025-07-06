@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,21 +38,21 @@ public class O3BasketTest extends AbstractTest {
         O3Basket basket = new O3Basket();
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
 
-        basket.ensureCapacity(configuration, 5, 2);
+        basket.checkCapacity(configuration, 5, 2);
         assertBasket(basket, 5, 2);
         basket.clear();
         assertBasket(basket, 5, 2);
 
         basket.clear();
-        basket.ensureCapacity(configuration, 8, 2);
+        basket.checkCapacity(configuration, 8, 2);
         assertBasket(basket, 8, 2);
 
         basket.clear();
-        basket.ensureCapacity(configuration, 8, 4);
+        basket.checkCapacity(configuration, 8, 4);
         assertBasket(basket, 8, 4);
 
         basket.clear();
-        basket.ensureCapacity(configuration, 3, 1);
+        basket.checkCapacity(configuration, 3, 1);
         assertBasket(basket, 3, 1);
 
     }

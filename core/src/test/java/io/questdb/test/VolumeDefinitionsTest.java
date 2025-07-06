@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,8 +41,8 @@ import java.util.function.Consumer;
 
 public class VolumeDefinitionsTest {
 
-    private final static Rnd rnd = new Rnd();
-    private final static StringSink sink = new StringSink();
+    private static final Rnd rnd = new Rnd();
+    private static final StringSink sink = new StringSink();
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     private Path path;

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,33 +30,37 @@ import io.questdb.cairo.sql.Record;
 
 public interface MapKey extends RecordSinkSPI {
 
+    // Updates key size for var-sized keys and returns the size.
+    long commit();
+
+    void copyFrom(MapKey srcKey);
+
     default boolean create() {
         return createValue().isNew();
     }
 
+    // Commits implicitly.
     MapValue createValue();
 
-    default MapValue createValue2() {
-        throw new UnsupportedOperationException();
-    }
+    // Same as createValue(), but doesn't calculate hash code.
+    MapValue createValue(long hashCode);
 
-    default MapValue createValue3() {
-        throw new UnsupportedOperationException();
-    }
-
+    // Commits implicitly.
     MapValue findValue();
 
-    default MapValue findValue2() {
-        throw new UnsupportedOperationException();
-    }
+    // Commits implicitly.
+    MapValue findValue2();
 
-    default MapValue findValue3() {
-        throw new UnsupportedOperationException();
-    }
+    // Commits implicitly.
+    MapValue findValue3();
+
+    // Must be called after commit.
+    long hash();
 
     default boolean notFound() {
         return findValue() == null;
     }
 
     void put(Record record, RecordSink sink);
+
 }

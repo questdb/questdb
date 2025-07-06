@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -75,11 +75,11 @@ public class SubTimestampFunctionFactory implements FunctionFactory {
             long l = left.getTimestamp(rec);
             long r = right.getTimestamp(rec);
 
-            if (l != Numbers.LONG_NaN && r != Numbers.LONG_NaN) {
+            if (l != Numbers.LONG_NULL && r != Numbers.LONG_NULL) {
                 return l - r;
             }
 
-            return Numbers.LONG_NaN;
+            return Numbers.LONG_NULL;
         }
 
         @Override

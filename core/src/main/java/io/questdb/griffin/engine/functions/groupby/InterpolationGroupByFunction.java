@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,17 +25,22 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.InterpolationUtil;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
-public class InterpolationGroupByFunction implements GroupByFunction {
+public class InterpolationGroupByFunction implements GroupByFunction, FunctionExtension {
     private final GroupByFunction wrappedFunction;
     private long current;
     private long endTime;
@@ -53,18 +58,28 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        wrappedFunction.computeFirst(mapValue, record);
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        wrappedFunction.computeFirst(mapValue, record, rowId);
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        wrappedFunction.computeNext(mapValue, record);
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
+        wrappedFunction.computeNext(mapValue, record, rowId);
+    }
+
+    @Override
+    public FunctionExtension extendedOps() {
+        return this;
+    }
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getArrayLength() {
-        return wrappedFunction.getArrayLength();
+        return wrappedFunction.extendedOps().getArrayLength();
     }
 
     @Override
@@ -144,12 +159,22 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
+    public final int getIPv4(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public int getInt(Record rec) {
         int value = wrappedFunction.getInt(rec);
         if (interpolating) {
             return (int) InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getInt(target));
         }
         return value;
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -172,7 +197,7 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public void getLong256(Record rec, CharSink sink) {
+    public void getLong256(Record rec, CharSink<?> sink) {
         wrappedFunction.getLong256(rec, sink);
     }
 
@@ -188,7 +213,7 @@ public class InterpolationGroupByFunction implements GroupByFunction {
 
     @Override
     public Record getRecord(Record rec) {
-        return wrappedFunction.getRecord(rec);
+        return wrappedFunction.extendedOps().getRecord(rec);
     }
 
     @Override
@@ -206,23 +231,13 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return wrappedFunction.getStr(rec);
+    public CharSequence getStrA(Record rec) {
+        return wrappedFunction.getStrA(rec);
     }
 
     @Override
-    public CharSequence getStr(Record rec, int arrayIndex) {
-        return wrappedFunction.getStr(rec, arrayIndex);
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-        wrappedFunction.getStr(rec, sink);
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink, int arrayIndex) {
-        wrappedFunction.getStr(rec, sink, arrayIndex);
+    public CharSequence getStrA(Record rec, int arrayIndex) {
+        return wrappedFunction.extendedOps().getStrA(rec, arrayIndex);
     }
 
     @Override
@@ -232,7 +247,7 @@ public class InterpolationGroupByFunction implements GroupByFunction {
 
     @Override
     public CharSequence getStrB(Record rec, int arrayIndex) {
-        return wrappedFunction.getStrB(rec, arrayIndex);
+        return wrappedFunction.extendedOps().getStrB(rec, arrayIndex);
     }
 
     @Override
@@ -242,7 +257,7 @@ public class InterpolationGroupByFunction implements GroupByFunction {
 
     @Override
     public int getStrLen(Record rec, int arrayIndex) {
-        return wrappedFunction.getStrLen(rec, arrayIndex);
+        return wrappedFunction.extendedOps().getStrLen(rec, arrayIndex);
     }
 
     @Override
@@ -266,8 +281,33 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        wrappedFunction.pushValueTypes(columnTypes);
+    public int getValueIndex() {
+        return wrappedFunction.getValueIndex();
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(Record rec) {
+        return wrappedFunction.getVarcharA(rec);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
+        return wrappedFunction.getVarcharB(rec);
+    }
+
+    @Override
+    public int getVarcharSize(Record rec) {
+        return wrappedFunction.getVarcharSize(rec);
+    }
+
+    @Override
+    public void initValueIndex(int valueIndex) {
+        wrappedFunction.initValueIndex(valueIndex);
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        wrappedFunction.initValueTypes(columnTypes);
     }
 
     @Override

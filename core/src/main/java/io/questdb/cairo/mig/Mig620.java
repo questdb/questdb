@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.TableUtils.setPathForPartition;
+import static io.questdb.cairo.TableUtils.setPathForNativePartition;
 import static io.questdb.cairo.mig.MigrationUtils.openFileSafe;
 
 public class Mig620 {
@@ -104,8 +104,8 @@ public class Mig620 {
         }
     }
 
-    private static void dFile(Path path, CharSequence columnName) {
-        path.concat(columnName).put('.').put('d').$();
+    private static LPSZ dFile(Path path, CharSequence columnName) {
+        return path.concat(columnName).put('.').put('d').$();
     }
 
     private static long getColumnNameOffset(int columnCount) {
@@ -135,8 +135,8 @@ public class Mig620 {
     }
 
 
-    private static int openRO(FilesFacade ff, LPSZ path) {
-        final int fd = ff.openRO(path);
+    private static long openRO(FilesFacade ff, LPSZ path) {
+        final long fd = ff.openRO(path);
         if (fd > -1) {
             Mig620.LOG.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
             return fd;
@@ -149,7 +149,7 @@ public class Mig620 {
         final int columnCount = metaMem.getInt(META_OFFSET_COUNT_MIG);
         long offset = getColumnNameOffset(columnCount);
         for (int metaIndex = 0; metaIndex < columnCount; metaIndex++) {
-            String name = Chars.toString(metaMem.getStr(offset));
+            String name = Chars.toString(metaMem.getStrA(offset));
             columnNames.add(name);
             offset += Vm.getStorageLength(name);
         }
@@ -168,7 +168,7 @@ public class Mig620 {
     private static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen) {
         try {
             if (ff.exists(topFile(path, name))) {
-                final int fd = openRO(ff, path);
+                final long fd = openRO(ff, path.$());
                 try {
                     long n;
                     if ((n = ff.readNonNegativeLong(fd, 0)) < 0) {
@@ -220,16 +220,15 @@ public class Mig620 {
         tops.add(partitionTimestamp);
 
         path.trimTo(pathLen);
-        setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
-        int partitionPathLen = path.length();
+        setPathForNativePartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
+        int partitionPathLen = path.size();
 
         if (ff.exists(path.put(Files.SEPARATOR).$())) {
             for (int i = 0; i < columnCount; i++) {
                 path.trimTo(partitionPathLen);
                 String columnName = columnNames.get(i);
-                dFile(path, columnName);
                 long columnTop = -1;
-                if (ff.exists(path)) {
+                if (ff.exists(dFile(path, columnName))) {
                     columnTop = readColumnTop(ff, path.trimTo(partitionPathLen), columnName, partitionPathLen);
                 }
                 tops.add(columnTop);
@@ -313,9 +312,9 @@ public class Mig620 {
     static void migrate(MigrationContext migrationContext) {
         final FilesFacade ff = migrationContext.getFf();
         final Path path = migrationContext.getTablePath();
-        int pathLen = path.length();
+        int pathLen = path.size();
 
-        path.concat(TXN_FILE_NAME_MIG).$();
+        path.concat(TXN_FILE_NAME_MIG);
         EngineMigration.backupFile(
                 ff,
                 path,
@@ -324,7 +323,7 @@ public class Mig620 {
                 425
         );
 
-        try (MemoryMARW txMemory = openFileSafe(ff, path, TX_OFFSET_MAP_WRITER_COUNT_MIG + 8)) {
+        try (MemoryMARW txMemory = openFileSafe(ff, path.$(), TX_OFFSET_MAP_WRITER_COUNT_MIG + 8)) {
             int symbolCount = txMemory.getInt(TX_OFFSET_MAP_WRITER_COUNT_MIG);
             long partitionSizeOffset = TX_OFFSET_MAP_WRITER_COUNT_MIG + 4 + symbolCount * 8L;
             int partitionTableSize = txMemory.size() > partitionSizeOffset ? txMemory.getInt(partitionSizeOffset) : 0;

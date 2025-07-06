@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,7 +39,6 @@ import org.junit.Test;
 import static io.questdb.test.griffin.GriffinParserTestUtils.intervalToString;
 
 public class IntrinsicModelTest {
-
     private static final StringSink sink = new StringSink();
     private final LongList a = new LongList();
     private final LongList b = new LongList();
@@ -152,7 +151,6 @@ public class IntrinsicModelTest {
     public void testDateCeilYYYYMMDDHmsSU() throws NumericException {
         assertDateCeil("2015-02-28T07:21:44.556012Z", "2015-02-28T07:21:44.556011");
     }
-    //////////////////////////////
 
     @Test
     public void testDateCeilYYYYMMDDNonLeap() throws NumericException {
@@ -325,29 +323,39 @@ public class IntrinsicModelTest {
         IntervalUtils.parseIntervalEx(intervalStr, 0, intervalStr.length(), 0, out, IntervalOperation.INTERSECT);
         IntervalUtils.applyLastEncodedIntervalEx(out);
         IntervalUtils.invert(out);
-        TestUtils.assertEquals("[{lo=, hi=2018-01-10T10:29:59.999999Z},{lo=2018-01-10T11:00:00.000001Z, hi=2018-01-12T10:29:59.999999Z},{lo=2018-01-12T11:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]",
-                intervalToString(out));
+        TestUtils.assertEquals(
+                "[{lo=, hi=2018-01-10T10:29:59.999999Z},{lo=2018-01-10T11:00:00.000001Z, hi=2018-01-12T10:29:59.999999Z},{lo=2018-01-12T11:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]",
+                intervalToString(out)
+        );
     }
 
     @Test
     public void testParseLongInterval22() throws Exception {
-        assertShortInterval("[{lo=2015-03-12T10:00:00.000000Z, hi=2015-03-12T10:05:00.999999Z},{lo=2015-03-12T10:30:00.000000Z, hi=2015-03-12T10:35:00.999999Z},{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:05:00.999999Z},{lo=2015-03-12T11:30:00.000000Z, hi=2015-03-12T11:35:00.999999Z},{lo=2015-03-12T12:00:00.000000Z, hi=2015-03-12T12:05:00.999999Z},{lo=2015-03-12T12:30:00.000000Z, hi=2015-03-12T12:35:00.999999Z},{lo=2015-03-12T13:00:00.000000Z, hi=2015-03-12T13:05:00.999999Z},{lo=2015-03-12T13:30:00.000000Z, hi=2015-03-12T13:35:00.999999Z},{lo=2015-03-12T14:00:00.000000Z, hi=2015-03-12T14:05:00.999999Z},{lo=2015-03-12T14:30:00.000000Z, hi=2015-03-12T14:35:00.999999Z}]",
-                "2015-03-12T10:00:00;5m;30m;10");
-    }
-
-    @Test
-    public void testParseLongMinusInterval() throws Exception {
-        assertShortInterval("[{lo=2015-03-12T10:00:00.000000Z, hi=2015-03-12T10:05:00.999999Z},{lo=2015-03-12T10:30:00.000000Z, hi=2015-03-12T10:35:00.999999Z},{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:05:00.999999Z}]",
-                "2015-03-12T11:00:00;5m;-30m;3");
-        assertShortInterval("[{lo=2014-11-12T11:00:00.000000Z, hi=2014-11-12T11:05:00.999999Z},{lo=2015-01-12T11:00:00.000000Z, hi=2015-01-12T11:05:00.999999Z},{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:05:00.999999Z}]",
-                "2015-03-12T11:00:00;5m;-2M;3");
-        assertShortInterval("[{lo=2013-03-12T11:00:00.000000Z, hi=2013-03-12T11:05:00.999999Z},{lo=2014-03-12T11:00:00.000000Z, hi=2014-03-12T11:05:00.999999Z},{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:05:00.999999Z}]",
-                "2015-03-12T11:00:00;5m;-1y;3");
+        assertShortInterval(
+                "[{lo=2015-03-12T10:00:00.000000Z, hi=2015-03-12T10:05:00.999999Z},{lo=2015-03-12T10:30:00.000000Z, hi=2015-03-12T10:35:00.999999Z},{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:05:00.999999Z},{lo=2015-03-12T11:30:00.000000Z, hi=2015-03-12T11:35:00.999999Z},{lo=2015-03-12T12:00:00.000000Z, hi=2015-03-12T12:05:00.999999Z},{lo=2015-03-12T12:30:00.000000Z, hi=2015-03-12T12:35:00.999999Z},{lo=2015-03-12T13:00:00.000000Z, hi=2015-03-12T13:05:00.999999Z},{lo=2015-03-12T13:30:00.000000Z, hi=2015-03-12T13:35:00.999999Z},{lo=2015-03-12T14:00:00.000000Z, hi=2015-03-12T14:05:00.999999Z},{lo=2015-03-12T14:30:00.000000Z, hi=2015-03-12T14:35:00.999999Z}]",
+                "2015-03-12T10:00:00;5m;30m;10"
+        );
     }
 
     @Test
     public void testParseLongInterval32() throws Exception {
         assertShortInterval("[{lo=2016-03-21T00:00:00.000000Z, hi=2021-03-21T23:59:59.999999Z}]", "2016-03-21;3y;6M;5");
+    }
+
+    @Test
+    public void testParseLongMinusInterval() throws Exception {
+        assertShortInterval(
+                "[{lo=2015-03-12T10:00:00.000000Z, hi=2015-03-12T10:05:00.999999Z},{lo=2015-03-12T10:30:00.000000Z, hi=2015-03-12T10:35:00.999999Z},{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:05:00.999999Z}]",
+                "2015-03-12T11:00:00;5m;-30m;3"
+        );
+        assertShortInterval(
+                "[{lo=2014-11-12T11:00:00.000000Z, hi=2014-11-12T11:05:00.999999Z},{lo=2015-01-12T11:00:00.000000Z, hi=2015-01-12T11:05:00.999999Z},{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:05:00.999999Z}]",
+                "2015-03-12T11:00:00;5m;-2M;3"
+        );
+        assertShortInterval(
+                "[{lo=2013-03-12T11:00:00.000000Z, hi=2013-03-12T11:05:00.999999Z},{lo=2014-03-12T11:00:00.000000Z, hi=2014-03-12T11:05:00.999999Z},{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:05:00.999999Z}]",
+                "2015-03-12T11:00:00;5m;-1y;3"
+        );
     }
 
     @Test
@@ -489,7 +497,7 @@ public class IntrinsicModelTest {
     private void assertIntersect(String expected) {
         out.add(a);
         out.add(b);
-        IntervalUtils.intersectInplace(out, a.size());
+        IntervalUtils.intersectInPlace(out, a.size());
         TestUtils.assertEquals(expected, intervalToString(out));
     }
 

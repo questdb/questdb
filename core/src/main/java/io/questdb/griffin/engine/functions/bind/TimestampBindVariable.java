@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,18 +25,17 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 
-class TimestampBindVariable extends TimestampFunction implements ScalarFunction, Mutable {
+class TimestampBindVariable extends TimestampFunction implements Mutable {
     long value;
 
     @Override
     public void clear() {
-        this.value = Numbers.LONG_NaN;
+        this.value = Numbers.LONG_NULL;
     }
 
     @Override
@@ -45,12 +44,17 @@ class TimestampBindVariable extends TimestampFunction implements ScalarFunction,
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isNonDeterministic() {
         return true;
     }
 
     @Override
     public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public boolean isThreadSafe() {
         return true;
     }
 

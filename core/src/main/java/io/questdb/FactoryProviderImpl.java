@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,17 +24,23 @@
 
 package io.questdb;
 
+import io.questdb.cairo.DefaultWalJobFactory;
+import io.questdb.cairo.WalJobFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cairo.wal.BasicWalInitializerFactory;
-import io.questdb.cairo.wal.WalInitializerFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
-import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
+import io.questdb.cutlass.http.DefaultHttpCookieHandler;
+import io.questdb.cutlass.http.DefaultHttpHeaderParserFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
+import io.questdb.cutlass.http.HttpCookieHandler;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
-import io.questdb.griffin.SqlCompilerFactory;
-import io.questdb.griffin.SqlCompilerFactoryImpl;
+import io.questdb.cutlass.pgwire.modern.DefaultPgWireAuthenticatorFactoryModern;
+import io.questdb.network.PlainSocketFactory;
+import io.questdb.network.SocketFactory;
+import org.jetbrains.annotations.NotNull;
 
 public class FactoryProviderImpl implements FactoryProvider {
+    private final DefaultWalJobFactory defaultWalJobFactory = new DefaultWalJobFactory();
+    private final HttpAuthenticatorFactory httpAuthenticatorFactory;
     private final LineAuthenticatorFactory lineAuthenticatorFactory;
     private final PgWireAuthenticatorFactory pgWireAuthenticatorFactory;
     private final SecurityContextFactory securityContextFactory;
@@ -42,36 +48,62 @@ public class FactoryProviderImpl implements FactoryProvider {
     public FactoryProviderImpl(ServerConfiguration configuration) {
         this.lineAuthenticatorFactory = ServerMain.getLineAuthenticatorFactory(configuration);
         this.securityContextFactory = ServerMain.getSecurityContextFactory(configuration);
-        this.pgWireAuthenticatorFactory = ServerMain.getPgWireAuthenticatorFactory(configuration);
+        this.pgWireAuthenticatorFactory = new DefaultPgWireAuthenticatorFactoryModern(configuration);
+        this.httpAuthenticatorFactory = ServerMain.getHttpAuthenticatorFactory(configuration);
     }
 
     @Override
-    public HttpAuthenticatorFactory getHttpAuthenticatorFactory() {
-        return DefaultHttpAuthenticatorFactory.INSTANCE;
+    public @NotNull HttpAuthenticatorFactory getHttpAuthenticatorFactory() {
+        return httpAuthenticatorFactory;
     }
 
     @Override
-    public LineAuthenticatorFactory getLineAuthenticatorFactory() {
+    public @NotNull HttpCookieHandler getHttpCookieHandler() {
+        return DefaultHttpCookieHandler.INSTANCE;
+    }
+
+    @Override
+    public @NotNull DefaultHttpHeaderParserFactory getHttpHeaderParserFactory() {
+        return DefaultHttpHeaderParserFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull SocketFactory getHttpMinSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull SocketFactory getHttpSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull LineAuthenticatorFactory getLineAuthenticatorFactory() {
         return lineAuthenticatorFactory;
     }
 
     @Override
-    public PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
+    public @NotNull SocketFactory getLineSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull SocketFactory getPGWireSocketFactory() {
+        return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
         return pgWireAuthenticatorFactory;
     }
 
     @Override
-    public SecurityContextFactory getSecurityContextFactory() {
+    public @NotNull SecurityContextFactory getSecurityContextFactory() {
         return securityContextFactory;
     }
 
     @Override
-    public SqlCompilerFactory getSqlCompilerFactory() {
-        return SqlCompilerFactoryImpl.INSTANCE;
-    }
-
-    @Override
-    public WalInitializerFactory getWalInitializerFactory() {
-        return BasicWalInitializerFactory.INSTANCE;
+    public @NotNull WalJobFactory getWalJobFactory() {
+        return defaultWalJobFactory;
     }
 }

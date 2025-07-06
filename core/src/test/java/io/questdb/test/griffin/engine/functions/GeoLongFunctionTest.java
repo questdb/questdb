@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,15 +27,15 @@ package io.questdb.test.griffin.engine.functions;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.GeoLongFunction;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.GeoLongFunction;
 import io.questdb.std.NumericException;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class GeoLongFunctionTest extends AbstractGriffinTest {
+public class GeoLongFunctionTest extends AbstractCairoTest {
     private static final long hash;
     private static final GeoLongFunction function = new GeoLongFunction(
             ColumnType.getGeoHashTypeWithBits(40)
@@ -46,10 +46,15 @@ public class GeoLongFunctionTest extends AbstractGriffinTest {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return true;
         }
     };
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetArray() {
+        function.getArray(null);
+    }
 
     @Test
     public void testSimple() {

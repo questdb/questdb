@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 
 import java.sql.*;
+import java.time.temporal.ChronoUnit;
 import java.util.Properties;
 
 public class Table2IlpCopier {
@@ -60,7 +61,7 @@ public class Table2IlpCopier {
                     }
                     int timestampIndex = getTimestampIndex(columnNames, columnTypes, params.getSourceTimestampColumnName());
 
-                    try (Sender sender = buildLineTcpSender(params)) {
+                    try (Sender sender = buildSender(params)) {
                         String tableName = params.getDestinationTableName();
 
                         try {
@@ -75,6 +76,7 @@ public class Table2IlpCopier {
                                     start = microsecondClock.getTicks();
                                 }
                             }
+                            sender.flush();
                         } catch (Exception th) {
                             try {
                                 sender.flush();
@@ -96,8 +98,12 @@ public class Table2IlpCopier {
         return totalSentLines;
     }
 
-    private static Sender buildLineTcpSender(Table2Ilp.Table2IlpParams params) {
-        Sender.LineSenderBuilder senderBuilder = Sender.builder();
+    private static Sender buildSender(Table2Ilp.Table2IlpParams params) {
+        if (params.getDestinationIlpConnection() != null) {
+            return Sender.builder(params.getDestinationIlpConnection()).build();
+        }
+
+        Sender.LineSenderBuilder senderBuilder = Sender.builder(Sender.Transport.TCP);
         senderBuilder.address(params.getDestinationIlpHost() + ":" + params.getDestinationIlpPort());
         if (params.enableDestinationTls()) {
             senderBuilder.enableTls();
@@ -128,7 +134,6 @@ public class Table2IlpCopier {
         properties.setProperty("sslmode", "disable");
         properties.setProperty("binaryTransfer", "true");
         properties.setProperty("preferQueryMode", "extendedForPrepared");
-        properties.setProperty("options", "-c statement_timeout=" + Integer.MAX_VALUE);
         return DriverManager.getConnection(connectionString, properties);
     }
 
@@ -143,7 +148,7 @@ public class Table2IlpCopier {
             }
             return microEpoch;
         }
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 
     private static int getTimestampIndex(String[] columnNames, int[] columnTypes, String sourceTimestampColumnName) {
@@ -209,8 +214,8 @@ public class Table2IlpCopier {
                     case Types.TIMESTAMP:
                         if (i != timestampIndex) {
                             long microEpoch = getMicroEpoch(resultSet, i + 1);
-                            if (microEpoch != Numbers.LONG_NaN && !resultSet.wasNull()) {
-                                sender.timestampColumn(columnName, microEpoch);
+                            if (microEpoch != Numbers.LONG_NULL && !resultSet.wasNull()) {
+                                sender.timestampColumn(columnName, microEpoch, ChronoUnit.MICROS);
                             }
                         }
                         break;
@@ -218,6 +223,7 @@ public class Table2IlpCopier {
                     case Types.CHAR:
                     case Types.VARCHAR:
                     case Types.LONGVARCHAR:
+                    case Types.OTHER:
                         String value = resultSet.getString(i + 1);
                         if (value != null && !resultSet.wasNull()) {
                             sender.stringColumn(columnName, resultSet.getString(i + 1));
@@ -231,6 +237,6 @@ public class Table2IlpCopier {
         }
 
         long microEpoch = getMicroEpoch(resultSet, timestampIndex + 1);
-        sender.at(microEpoch * 1000);
+        sender.at(microEpoch, ChronoUnit.MICROS);
     }
 }

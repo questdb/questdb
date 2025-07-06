@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ public class TableColumnMetadataTest {
     public void testHasIndex() {
         TableColumnMetadata metadata = new TableColumnMetadata("x", ColumnType.INT, true, 0, true, null);
         Assert.assertEquals(0, metadata.getIndexValueBlockCapacity());
-        Assert.assertTrue(metadata.isIndexed());
+        Assert.assertTrue(metadata.isSymbolIndexFlag());
         Assert.assertTrue(metadata.isSymbolTableStatic());
     }
 
@@ -42,7 +42,7 @@ public class TableColumnMetadataTest {
     public void testNoIndex() {
         TableColumnMetadata metadata = new TableColumnMetadata("x", ColumnType.INT, false, 0, false, null);
         Assert.assertEquals(0, metadata.getIndexValueBlockCapacity());
-        Assert.assertFalse(metadata.isIndexed());
+        Assert.assertFalse(metadata.isSymbolIndexFlag());
         Assert.assertFalse(metadata.isSymbolTableStatic());
     }
 

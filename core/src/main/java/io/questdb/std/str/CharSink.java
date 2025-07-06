@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,168 +24,212 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.Sinkable;
-import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-public interface CharSink extends CharSinkBase {
+/**
+ * A sink that does not expose its storage format. Users of this interface must
+ * not make any assumptions about the storage format.
+ */
+@SuppressWarnings("unchecked")
+public interface CharSink<T extends CharSink<?>> {
 
-    int encodeSurrogate(char c, CharSequence in, int pos, int hi);
-
-    default CharSink encodeUtf8(CharSequence cs) {
-        return encodeUtf8(cs, 0, cs.length());
-    }
-
-    default CharSink encodeUtf8(CharSequence cs, int lo, int hi) {
-        int i = lo;
-        while (i < hi) {
-            char c = cs.charAt(i++);
-            if (c < 128) {
-                putUtf8Special(c);
-            } else {
-                i = putUtf8Internal(cs, hi, i, c);
-            }
+    default void escapeJsonStrChar(char c) {
+        switch (c) {
+            case '\b':
+                putAscii("\\b");
+                break;
+            case '\f':
+                putAscii("\\f");
+                break;
+            case '\n':
+                putAscii("\\n");
+                break;
+            case '\r':
+                putAscii("\\r");
+                break;
+            case '\t':
+                putAscii("\\t");
+                break;
+            default:
+                putAscii("\\u00");
+                put(c >> 4);
+                putAscii(Numbers.hexDigits[c & 15]);
+                break;
         }
-        return this;
     }
 
-    default CharSink encodeUtf8AndQuote(CharSequence cs) {
-        put('\"').encodeUtf8(cs).put('\"');
-        return this;
-    }
-
-    default void fill(char c, int n) {
+    /**
+     * Assumes the char is ASCII and appends it to the sink n times.
+     * If the char is non-ASCII, it may append a corrupted char, depending
+     * on the implementation.
+     */
+    default void fillAscii(char c, int n) {
         for (int i = 0; i < n; i++) {
-            put(c);
+            putAscii(c);
         }
     }
 
-    default void flush() {
-    }
+    int getEncoding();
 
-    default char[] getDoubleDigitsBuffer() {
-        throw new UnsupportedOperationException();
-    }
-
-    default CharSink put(CharSequence cs) {
-        throw new UnsupportedOperationException();
-    }
-
-    default CharSink put(CharSequence cs, int lo, int hi) {
+    default T put(@NotNull CharSequence cs, int lo, int hi) {
         for (int i = lo; i < hi; i++) {
             put(cs.charAt(i));
         }
-        return this;
+        return (T) this;
     }
 
-    @Override
-    CharSink put(char c);
-
-    default CharSink put(int value) {
-        Numbers.append(this, value);
-        return this;
-    }
-
-    default CharSink put(long value) {
-        Numbers.append(this, value);
-        return this;
-    }
-
-    default CharSink put(long lo, long hi) {
-        for (long addr = lo; addr < hi; addr += Character.BYTES) {
-            put(Unsafe.getUnsafe().getChar(addr));
+    default T put(@Nullable Sinkable sinkable) {
+        if (sinkable != null) {
+            sinkable.toSink(this);
         }
-        return this;
+        return (T) this;
     }
 
-    default CharSink put(float value, int scale) {
-        Numbers.append(this, value, scale);
-        return this;
+    T put(char c);
+
+    default T put(@Nullable CharSequence cs) {
+        if (cs != null) {
+            for (int i = 0, n = cs.length(); i < n; i++) {
+                put(cs.charAt(i));
+            }
+        }
+        return (T) this;
     }
 
-    default CharSink put(double value) {
+    /**
+     * Appends a UTF-8-encoded sequence to this sink.
+     * <br>
+     * For impls that care about the distinction between ASCII and non-ASCII:
+     * If the sequence's `isAscii` status is false, this sink's `isAscii`
+     * status drops to false as well.
+     */
+    T put(@Nullable Utf8Sequence us);
+
+    /**
+     * Appends a string representation of the supplied number to this sink.
+     */
+    default T put(int value) {
         Numbers.append(this, value);
-        return this;
+        return (T) this;
     }
 
-    default CharSink put(double value, int scale) {
-        Numbers.append(this, value, scale);
-        return this;
+    /**
+     * Appends a string representation of the supplied number to this sink.
+     */
+    default T put(long value) {
+        Numbers.append(this, value);
+        return (T) this;
     }
 
-    default CharSink put(boolean value) {
-        this.put(value ? "true" : "false");
-        return this;
+    /**
+     * Appends a string representation of the supplied number to this sink.
+     */
+    default T put(float value) {
+        Numbers.append(this, value);
+        return (T) this;
     }
 
-    default CharSink put(Throwable e) {
-        throw new UnsupportedOperationException();
+    /**
+     * Appends a string representation of the supplied number to this sink.
+     */
+    default T put(double value) {
+        Numbers.append(this, value);
+        return (T) this;
     }
 
-    default CharSink put(Sinkable sinkable) {
-        sinkable.toSink(this);
-        return this;
+    /**
+     * Appends a string representation of the supplied boolean to this sink.
+     */
+    default T put(boolean value) {
+        return putAscii(value ? "true" : "false");
     }
 
-    default CharSink put(char[] chars, int start, int len) {
+    /**
+     * Appends an ASCII char to this sink. If the char is non-ASCII, it may append a
+     * corrupted char, depending on the implementation.
+     */
+    T putAscii(char c);
+
+    /**
+     * Appends a sequence of ASCII chars to this sink. If some chars are non-ASCII,
+     * it may append corrupted chars, depending on the implementation.
+     */
+    T putAscii(@Nullable CharSequence cs);
+
+    /**
+     * Appends a range of ASCII chars from the supplied array. If some chars are
+     * non-ASCII, it may append corrupted chars, depending on the implementation.
+     */
+    default T putAscii(char @NotNull [] chars, int start, int len) {
         for (int i = 0; i < len; i++) {
-            put(chars[i + start]);
+            putAscii(chars[i + start]);
         }
-        return this;
+        return (T) this;
     }
 
-    default CharSink putEOL() {
-        return put(Misc.EOL);
+    /**
+     * Appends a range of ASCII chars from the supplied sequence to this sink.
+     * If some chars are non-ASCII, it may append corrupted chars, depending on
+     * the implementation.
+     */
+    default T putAscii(@NotNull CharSequence cs, int start, int len) {
+        for (int i = start; i < len; i++) {
+            putAscii(cs.charAt(i));
+        }
+        return (T) this;
     }
 
-    default CharSink putISODate(long value) {
+    default T putAsciiQuoted(@NotNull CharSequence cs) {
+        putAscii('\"').putAscii(cs).putAscii('\"');
+        return (T) this;
+    }
+
+    default T putEOL() {
+        return putAscii(Misc.EOL);
+    }
+
+    default T putISODate(long value) {
         TimestampFormatUtils.appendDateTimeUSec(this, value);
-        return this;
+        return (T) this;
     }
 
-    default CharSink putISODateMillis(long value) {
-        io.questdb.std.datetime.millitime.DateFormatUtils.appendDateTime(this, value);
-        return this;
+    default T putISODateMillis(long value) {
+        DateFormatUtils.appendDateTime(this, value);
+        return (T) this;
     }
 
-    default CharSink putQuoted(CharSequence cs) {
-        put('\"').put(cs).put('\"');
-        return this;
+    /**
+     * Accepts a range of memory addresses from lo to hi (exclusive), expecting it to
+     * point to a block of valid UTF-8 bytes, and appends it to this sink.
+     * <br>
+     * For impls that care about the distinction between ASCII and non-ASCII:
+     * Drops the `isAscii` status of this sink.
+     */
+    T putNonAscii(long lo, long hi);
+
+    default T putQuoted(@NotNull CharSequence cs) {
+        putAscii('\"').put(cs).putAscii('\"');
+        return (T) this;
     }
 
-    default CharSink putUtf8(char c) {
-        if (c < 128) {
-            putUtf8Special(c);
-        } else if (c < 2048) {
-            put((char) (192 | c >> 6)).put((char) (128 | c & 63));
-        } else if (Character.isSurrogate(c)) {
-            put('?');
-        } else {
-            put((char) (224 | c >> 12)).put((char) (128 | c >> 6 & 63)).put((char) (128 | c & 63));
-        }
-        return this;
+    default T putQuoted(@NotNull Utf8Sequence cs) {
+        putAscii('\"').put(cs).putAscii('\"');
+        return (T) this;
     }
 
-    default CharSink putUtf8(long lo, long hi) {
-        Chars.utf8toUtf16(lo, hi, this);
-        return this;
-    }
-
-    default int putUtf8Internal(CharSequence cs, int hi, int i, char c) {
-        if (c < 2048) {
-            put((char) (192 | c >> 6)).put((char) (128 | c & 63));
-        } else if (Character.isSurrogate(c)) {
-            i = encodeSurrogate(c, cs, i, hi);
-        } else {
-            put((char) (224 | c >> 12)).put((char) (128 | c >> 6 & 63)).put((char) (128 | c & 63));
-        }
-        return i;
-    }
-
-    default void putUtf8Special(char c) {
-        put(c);
+    default T putSize(long bytes) {
+        long b = bytes == Long.MIN_VALUE ? Long.MAX_VALUE : Math.abs(bytes);
+        return (T) (b < 1024L ? put(bytes).put(' ').put('B')
+                : b <= 0xfffccccccccccccL >> 40 ? put(Math.round(bytes / 0x1p10 * 1000.0) / 1000.0).put(" KiB")
+                : b <= 0xfffccccccccccccL >> 30 ? put(Math.round(bytes / 0x1p20 * 1000.0) / 1000.0).put(" MiB")
+                : b <= 0xfffccccccccccccL >> 20 ? put(Math.round(bytes / 0x1p30 * 1000.0) / 1000.0).put(" GiB")
+                : b <= 0xfffccccccccccccL >> 10 ? put(Math.round(bytes / 0x1p40 * 1000.0) / 1000.0).put(" TiB")
+                : b <= 0xfffccccccccccccL ? put(Math.round((bytes >> 10) / 0x1p40 * 1000.0) / 1000.0).put(" PiB")
+                : put(Math.round((bytes >> 20) / 0x1p40 * 1000.0) / 1000.0).put(" EiB"));
     }
 }

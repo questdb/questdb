@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -50,8 +50,10 @@ struct JitGlobalContext {
 static JitGlobalContext gGlobalContext;
 #endif
 
-using CompiledFn = int64_t (*)(int64_t *cols, int64_t cols_count, int64_t *vars, int64_t vars_count, int64_t *rows,
-                               int64_t rows_count,
+using CompiledFn = int64_t (*)(int64_t *cols, int64_t cols_count,
+                               int64_t *varsize_indexes,
+                               int64_t *vars, int64_t vars_count,
+                               int64_t *rows, int64_t rows_count,
                                int64_t rows_start_offset);
 
 struct Function {
@@ -82,7 +84,6 @@ struct Function {
     };
 
     void scalar_tail(const instruction_t *istream, size_t size, bool null_check, const x86::Gp &stop, int unroll_factor = 1) {
-
         Label l_loop = c.newLabel();
         Label l_exit = c.newLabel();
 
@@ -92,7 +93,7 @@ struct Function {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            questdb::x86::emit_code(c, istream, size, values, null_check, cols_ptr, vars_ptr, input_index);
+            questdb::x86::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index);
 
             auto mask = values.pop();
 
@@ -160,7 +161,7 @@ struct Function {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            questdb::avx2::emit_code(c, istream, size, values, null_check, cols_ptr, vars_ptr, input_index);
+            questdb::avx2::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index);
 
             auto mask = values.pop();
 
@@ -190,28 +191,32 @@ struct Function {
     }
 
     void begin_fn() {
-        c.addFunc(FuncSignatureT<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(
-                CallConv::kIdHost));
-        cols_ptr = c.newIntPtr("cols_ptr");
-        cols_size = c.newInt64("cols_size");
+        c.addFunc(FuncSignatureT<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(
+            CallConv::kIdHost));
+        data_ptr = c.newIntPtr("data_ptr");
+        data_size = c.newInt64("data_size");
 
-        c.setArg(0, cols_ptr);
-        c.setArg(1, cols_size);
+        c.setArg(0, data_ptr);
+        c.setArg(1, data_size);
+
+        varsize_aux_ptr = c.newIntPtr("varsize_aux_ptr");
+
+        c.setArg(2, varsize_aux_ptr);
 
         vars_ptr = c.newIntPtr("vars_ptr");
         vars_size = c.newInt64("vars_size");
 
-        c.setArg(2, vars_ptr);
-        c.setArg(3, vars_size);
+        c.setArg(3, vars_ptr);
+        c.setArg(4, vars_size);
 
         rows_ptr = c.newIntPtr("rows_ptr");
         rows_size = c.newInt64("rows_size");
 
-        c.setArg(4, rows_ptr);
-        c.setArg(5, rows_size);
+        c.setArg(5, rows_ptr);
+        c.setArg(6, rows_size);
 
         rows_id_start_offset = c.newInt64("rows_id_start_offset");
-        c.setArg(6, rows_id_start_offset);
+        c.setArg(7, rows_id_start_offset);
 
         input_index = c.newInt64("input_index");
         c.mov(input_index, 0);
@@ -230,8 +235,9 @@ struct Function {
     ZoneAllocator allocator;
     ZoneStack<jit_value_t> values;
 
-    x86::Gp cols_ptr;
-    x86::Gp cols_size;
+    x86::Gp data_ptr;
+    x86::Gp data_size;
+    x86::Gp varsize_aux_ptr;
     x86::Gp vars_ptr;
     x86::Gp vars_size;
     x86::Gp rows_ptr;
@@ -337,6 +343,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv 
                                                                          jlong fnAddress,
                                                                          jlong colsAddress,
                                                                          jlong colsSize,
+                                                                         jlong varSizeIndexesAddress,
                                                                          jlong varsAddress,
                                                                          jlong varsSize,
                                                                          jlong rowsAddress,
@@ -346,6 +353,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv 
     auto fn = reinterpret_cast<CompiledFn>(fnAddress);
     return fn(reinterpret_cast<int64_t *>(colsAddress),
               colsSize,
+              reinterpret_cast<int64_t *>(varSizeIndexesAddress),
               reinterpret_cast<int64_t *>(varsAddress),
               varsSize,
               reinterpret_cast<int64_t *>(rowsAddress),

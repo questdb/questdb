@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,10 +25,12 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 public class TextImportException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     private static final ThreadLocal<TextImportException> tlException = new ThreadLocal<>(TextImportException::new);
@@ -76,6 +78,11 @@ public class TextImportException extends RuntimeException implements Sinkable, F
         return this;
     }
 
+    public TextImportException put(Utf8Sequence us) {
+        message.put(us);
+        return this;
+    }
+
     public TextImportException put(char c) {
         message.put(c);
         return this;
@@ -96,7 +103,7 @@ public class TextImportException extends RuntimeException implements Sinkable, F
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         sink.put(message);
     }
 }

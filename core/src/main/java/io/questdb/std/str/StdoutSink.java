@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,24 +27,25 @@ package io.questdb.std.str;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-public final class StdoutSink extends AbstractCharSink implements Closeable {
+public final class StdoutSink implements Utf8Sink, Closeable {
 
     public static final StdoutSink INSTANCE = new StdoutSink();
     private final int bufferCapacity = 1024;
     private final long buffer = Unsafe.malloc(bufferCapacity, MemoryTag.NATIVE_DEFAULT);
     private final long limit = buffer + bufferCapacity;
     private long ptr = buffer;
-    private final int stdout = Files.getStdOutFd();
+    private final long stdout = Files.getStdOutFdInternal();
 
     @Override
     public void close() {
-        free();
+        Unsafe.free(buffer, bufferCapacity, MemoryTag.NATIVE_DEFAULT);
     }
 
-    @Override
     public void flush() {
         int len = (int) (ptr - buffer);
         if (len > 0) {
@@ -54,25 +55,39 @@ public final class StdoutSink extends AbstractCharSink implements Closeable {
     }
 
     @Override
-    public CharSink put(CharSequence cs) {
-        if (cs != null) {
-            for (int i = 0, len = cs.length(); i < len; i++) {
-                put(cs.charAt(i));
+    public Utf8Sink put(@Nullable Utf8Sequence us) {
+        if (us != null) {
+            for (int i = 0, size = us.size(); i < size; i++) {
+                put(us.byteAt(i));
             }
         }
         return this;
     }
 
     @Override
-    public CharSink put(char c) {
+    public Utf8Sink put(byte b) {
         if (ptr == limit) {
             flush();
         }
-        Unsafe.getUnsafe().putByte(ptr++, (byte) c);
+        Unsafe.getUnsafe().putByte(ptr++, b);
         return this;
     }
 
-    private void free() {
-        Unsafe.free(buffer, bufferCapacity, MemoryTag.NATIVE_DEFAULT);
+    @Override
+    public Utf8Sink putNonAscii(long lo, long hi) {
+        long remaining = hi - lo;
+        while (remaining > 0) {
+            final long avail = limit - ptr;
+            if (avail > 0) {
+                final long chunkSize = Math.min(avail, remaining);
+                Vect.memcpy(ptr, hi - remaining, chunkSize);
+                ptr += chunkSize;
+                remaining -= chunkSize;
+            }
+            if (remaining > 0) {
+                flush();
+            }
+        }
+        return this;
     }
 }

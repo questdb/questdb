@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,12 +28,15 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.*;
-import io.questdb.std.str.ByteSequence;
+import io.questdb.std.Files;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
-import java.nio.file.Paths;
 import java.util.concurrent.BrokenBarrierException;
 
 public class SendAndReceiveRequestBuilder {
@@ -61,7 +64,8 @@ public class SendAndReceiveRequestBuilder {
     private int compareLength = -1;
     private boolean expectReceiveDisconnect;
     private boolean expectSendDisconnect;
-    private int maxWaitTimeoutMs = 30_000;
+    private boolean expectTimeout;
+    private int maxWaitTimeoutMs = Runtime.getRuntime().availableProcessors() > 5 ? 5000 : 300_000;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private long pauseBetweenSendAndReceive;
     private int port = 9001;
@@ -69,8 +73,8 @@ public class SendAndReceiveRequestBuilder {
     private int requestCount = 1;
     private long statementTimeout = -1L;
 
-    public int connectAndSendRequest(String request) {
-        final int fd = nf.socketTcp(true);
+    public long connectAndSendRequest(String request) {
+        final long fd = nf.socketTcp(true);
         long sockAddrInfo = nf.getAddrInfo("127.0.0.1", port);
         try {
             TestUtils.assertConnectAddrInfo(fd, sockAddrInfo);
@@ -89,12 +93,12 @@ public class SendAndReceiveRequestBuilder {
         return fd;
     }
 
-    public int connectAndSendRequestWithHeaders(String request) {
+    public long connectAndSendRequestWithHeaders(String request) {
         return connectAndSendRequest(request + requestHeaders());
     }
 
     public void execute(String request, CharSequence expectedResponse) {
-        final int fd = nf.socketTcp(true);
+        final long fd = nf.socketTcp(true);
         try {
             long sockAddrInfo = nf.sockaddr("127.0.0.1", port);
             try {
@@ -116,7 +120,7 @@ public class SendAndReceiveRequestBuilder {
 
     public void executeExplicit(
             String request,
-            int fd,
+            long fd,
             CharSequence expectedResponse,
             final int len,
             long ptr,
@@ -125,9 +129,9 @@ public class SendAndReceiveRequestBuilder {
         long timestamp = System.currentTimeMillis();
         int sent = 0;
         int reqLen = request.length();
-        Chars.asciiStrCpy(request, reqLen, ptr);
+        Utf8s.strCpyAscii(request, reqLen, ptr);
         while (sent < reqLen) {
-            int n = nf.send(fd, ptr + sent, reqLen - sent);
+            int n = nf.sendRaw(fd, ptr + sent, reqLen - sent);
             if (n < 0 && expectSendDisconnect) {
                 return;
             }
@@ -149,14 +153,14 @@ public class SendAndReceiveRequestBuilder {
         boolean disconnected = false;
         boolean timeoutExpired = false;
         IntList receivedByteList = new IntList(expectedToReceive);
-        while (received < expectedToReceive || expectReceiveDisconnect) {
-            int n = nf.recv(fd, ptr + received, len - received);
+        while (received < expectedToReceive || expectReceiveDisconnect || expectTimeout) {
+            int n = nf.recvRaw(fd, ptr + received, len - received);
             if (n > 0) {
                 for (int i = 0; i < n; i++) {
                     receivedByteList.add(Unsafe.getUnsafe().getByte(ptr + received + i) & 0xff);
                 }
                 received += n;
-                if (null != listener) {
+                if (listener != null) {
                     listener.onReceived(received);
                 }
             } else if (n < 0) {
@@ -180,25 +184,18 @@ public class SendAndReceiveRequestBuilder {
         }
 
         if (!printOnly) {
-            if (expectedResponse instanceof ByteSequence) {
-                Assert.assertEquals(expectedResponse.length(), receivedBytes.length);
-                for (int n = 0; n < receivedBytes.length; n++) {
-                    Assert.assertEquals(receivedBytes[n], ((ByteSequence) expectedResponse).byteAt(n));
-                }
-            } else {
-                String actual = new String(receivedBytes, Files.UTF_8);
-                String expected = expectedResponse.toString();
-                if (compareLength > 0) {
-                    expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
-                    actual = actual.length() > 0 ? actual.substring(0, Math.min(compareLength, actual.length()) - 1) : actual;
-                }
-                if (!expectSendDisconnect) {
-                    // expectSendDisconnect means that test expect disconnect during send or straight after
-                    TestUtils.assertEquals(disconnected ? "Server disconnected" : null, expected, actual);
-                }
+            String actual = new String(receivedBytes, Files.UTF_8);
+            String expected = expectedResponse.toString();
+            if (compareLength > 0) {
+                expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
+                actual = !actual.isEmpty() ? actual.substring(0, Math.min(compareLength, actual.length()) - 1) : actual;
+            }
+            if (!expectSendDisconnect && !expectTimeout) {
+                // expectSendDisconnect means that test expect disconnect during send or straight after
+                TestUtils.assertEquals(disconnected ? "Server disconnected" : null, expected, actual);
             }
         } else {
-            TestUtils.unchecked(() -> java.nio.file.Files.write(Paths.get("actual.txt"), receivedBytes));
+            LOG.info().$("received: ").$(new String(receivedBytes, Files.UTF_8)).$();
         }
 
         if (disconnected && !expectReceiveDisconnect && !expectSendDisconnect) {
@@ -210,14 +207,19 @@ public class SendAndReceiveRequestBuilder {
             Assert.assertTrue("server disconnect was expected", disconnected);
         }
 
-        if (timeoutExpired) {
+        if (timeoutExpired && !expectTimeout) {
             LOG.error().$("timeout expired").$();
+            Assert.fail();
+        }
+
+        if (expectTimeout && !timeoutExpired) {
+            LOG.error().$("timeout was expected").$();
             Assert.fail();
         }
     }
 
     public void executeMany(RequestAction action) throws InterruptedException, BrokenBarrierException {
-        final int fd = nf.socketTcp(true);
+        final long fd = nf.socketTcp(true);
         try {
             long sockAddr = nf.sockaddr("127.0.0.1", port);
             Assert.assertTrue(fd > -1);
@@ -249,14 +251,14 @@ public class SendAndReceiveRequestBuilder {
         }
     }
 
-    public void executeUntilDisconnect(String request, int fd, final int len, long ptr, HttpClientStateListener listener) {
+    public void executeUntilDisconnect(String request, long fd, final int len, long ptr, HttpClientStateListener listener) {
         withExpectReceiveDisconnect(true);
         long timestamp = System.currentTimeMillis();
         int sent = 0;
         int reqLen = request.length();
-        Chars.asciiStrCpy(request, reqLen, ptr);
+        Utf8s.strCpyAscii(request, reqLen, ptr);
         while (sent < reqLen) {
-            int n = nf.send(fd, ptr + sent, reqLen - sent);
+            int n = nf.sendRaw(fd, ptr + sent, reqLen - sent);
             Assert.assertTrue(n > -1);
             sent += n;
         }
@@ -269,13 +271,13 @@ public class SendAndReceiveRequestBuilder {
         int received = 0;
         IntList receivedByteList = new IntList();
         while (true) {
-            int n = nf.recv(fd, ptr + received, len - received);
+            int n = nf.recvRaw(fd, ptr + received, len - received);
             if (n > 0) {
                 for (int i = 0; i < n; i++) {
                     receivedByteList.add(Unsafe.getUnsafe().getByte(ptr + received + i));
                 }
                 received += n;
-                if (null != listener) {
+                if (listener != null) {
                     listener.onReceived(received);
                 }
             } else if (n < 0) {
@@ -310,17 +312,17 @@ public class SendAndReceiveRequestBuilder {
         }
     }
 
-    public void executeWithStandardHeaders(
-            String request,
-            String response
-    ) throws InterruptedException {
+    public void executeUntilTimeoutExpires(String request, int maxWaitTimeoutMs) {
+        withMaxWaitTimeout(maxWaitTimeoutMs)
+                .withExpectTimeout(true)
+                .execute(request, "");
+    }
+
+    public void executeWithStandardHeaders(String request, String response) {
         execute(request + requestHeaders(), ResponseHeaders + response);
     }
 
-    public void executeWithStandardRequestHeaders(
-            String request,
-            CharSequence response
-    ) throws InterruptedException {
+    public void executeWithStandardRequestHeaders(String request, CharSequence response) {
         execute(request + requestHeaders(), response);
     }
 
@@ -344,7 +346,11 @@ public class SendAndReceiveRequestBuilder {
         return this;
     }
 
-    @SuppressWarnings("unused")
+    public SendAndReceiveRequestBuilder withExpectTimeout(boolean expectTimeout) {
+        this.expectTimeout = expectTimeout;
+        return this;
+    }
+
     public SendAndReceiveRequestBuilder withMaxWaitTimeout(int maxWaitTimeoutMs) {
         this.maxWaitTimeoutMs = maxWaitTimeoutMs;
         return this;
@@ -360,7 +366,6 @@ public class SendAndReceiveRequestBuilder {
         return this;
     }
 
-    @SuppressWarnings("unused")
     public SendAndReceiveRequestBuilder withPort(int port) {
         this.port = port;
         return this;
@@ -381,7 +386,7 @@ public class SendAndReceiveRequestBuilder {
         return this;
     }
 
-    private void executeWithSocket(String request, CharSequence expectedResponse, int fd) {
+    private void executeWithSocket(String request, CharSequence expectedResponse, long fd) {
         final int len = Math.max(expectedResponse.length(), request.length()) * 2;
         long ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         try {
@@ -415,18 +420,12 @@ public class SendAndReceiveRequestBuilder {
 
     @FunctionalInterface
     public interface RequestAction {
-        void run(RequestExecutor executor) throws InterruptedException, BrokenBarrierException;
+        void run(RequestExecutor executor);
     }
 
     public interface RequestExecutor {
-        void execute(
-                String request,
-                String response
-        ) throws InterruptedException;
+        void execute(String request, String response);
 
-        void executeWithStandardHeaders(
-                String request,
-                String response
-        ) throws InterruptedException;
+        void executeWithStandardHeaders(String request, String response);
     }
 }

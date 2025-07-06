@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -55,6 +55,71 @@ public final class WhereClauseSymbolEstimator implements Mutable {
         this.columnIndexesToListIndexes.clear();
         this.symbolCounts = null;
         this.gaveUp = false;
+    }
+
+    /**
+     * Estimates symbol counts for simple filters like the following one:
+     * <code>
+     * sym1 in ('a','b','c') and sym2 = 'd'
+     * </code>
+     * <p>
+     * For more complex filters the estimates are guaranteed to be equal
+     * or great than the actual count of filtered symbol values.
+     */
+    public IntList estimate(
+            AliasTranslator translator,
+            ExpressionNode node,
+            RecordMetadata metadata,
+            IntList columnIndexes
+    ) throws SqlException {
+        if (node == null) {
+            return null;
+        }
+
+        clear();
+
+        for (int i = 0, n = columnIndexes.size(); i < n; i++) {
+            columnIndexesToListIndexes.put(columnIndexes.getQuick(i), i);
+        }
+
+        symbolCounts = new IntList(columnIndexes.size());
+        symbolCounts.setAll(columnIndexes.size(), 0);
+
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
+        if (!analyze(translator, node, metadata)) {
+            while (!stack.isEmpty() || node != null) {
+                if (node != null) {
+                    if (isAndKeyword(node.token)) {
+                        if (!analyze(translator, node.rhs, metadata)) {
+                            stack.push(node.rhs);
+                        }
+                        if (gaveUp) {
+                            break;
+                        }
+                        node = analyze(translator, node.lhs, metadata) ? null : node.lhs;
+                        if (gaveUp) {
+                            break;
+                        }
+                    } else if (isOrKeyword(node.token)) {
+                        giveUp();
+                        break;
+                    } else {
+                        node = stack.poll();
+                    }
+                } else {
+                    node = stack.poll();
+                }
+            }
+        }
+
+        for (int i = 0, n = symbolCounts.size(); i < n; i++) {
+            if (symbolCounts.getQuick(i) == 0) {
+                symbolCounts.setQuick(i, Integer.MAX_VALUE);
+            }
+        }
+        return symbolCounts;
     }
 
     private boolean analyze(
@@ -224,71 +289,6 @@ public final class WhereClauseSymbolEstimator implements Mutable {
     private void giveUp() {
         gaveUp = true;
         symbolCounts.setAll(symbolCounts.size(), Integer.MAX_VALUE);
-    }
-
-    /**
-     * Estimates symbol counts for simple filters like the following one:
-     * <code>
-     * sym1 in ('a','b','c') and sym2 = 'd'
-     * </code>
-     * <p>
-     * For more complex filters the estimates are guaranteed to be equal
-     * or great than the actual count of filtered symbol values.
-     */
-    public IntList estimate(
-            AliasTranslator translator,
-            ExpressionNode node,
-            RecordMetadata metadata,
-            IntList columnIndexes
-    ) throws SqlException {
-        if (node == null) {
-            return null;
-        }
-
-        clear();
-
-        for (int i = 0, n = columnIndexes.size(); i < n; i++) {
-            columnIndexesToListIndexes.put(columnIndexes.getQuick(i), i);
-        }
-
-        symbolCounts = new IntList(columnIndexes.size());
-        symbolCounts.setAll(columnIndexes.size(), 0);
-
-        // pre-order iterative tree traversal
-        // see: http://en.wikipedia.org/wiki/Tree_traversal
-
-        if (!analyze(translator, node, metadata)) {
-            while (!stack.isEmpty() || node != null) {
-                if (node != null) {
-                    if (isAndKeyword(node.token)) {
-                        if (!analyze(translator, node.rhs, metadata)) {
-                            stack.push(node.rhs);
-                        }
-                        if (gaveUp) {
-                            break;
-                        }
-                        node = analyze(translator, node.lhs, metadata) ? null : node.lhs;
-                        if (gaveUp) {
-                            break;
-                        }
-                    } else if (isOrKeyword(node.token)) {
-                        giveUp();
-                        break;
-                    } else {
-                        node = stack.poll();
-                    }
-                } else {
-                    node = stack.poll();
-                }
-            }
-        }
-
-        for (int i = 0, n = symbolCounts.size(); i < n; i++) {
-            if (symbolCounts.getQuick(i) == 0) {
-                symbolCounts.setQuick(i, Integer.MAX_VALUE);
-            }
-        }
-        return symbolCounts;
     }
 
     static {

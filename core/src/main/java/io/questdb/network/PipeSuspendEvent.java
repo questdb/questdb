@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,8 +30,8 @@ package io.questdb.network;
 public class PipeSuspendEvent extends SuspendEvent {
 
     private final KqueueFacade kqf;
-    private final int readEndFd;
-    private final int writeEndFd;
+    private final long readEndFd;
+    private final long writeEndFd;
 
     public PipeSuspendEvent(KqueueFacade kqf) {
         this.kqf = kqf;
@@ -39,10 +39,8 @@ public class PipeSuspendEvent extends SuspendEvent {
         if (fds < 0) {
             throw NetworkError.instance(kqf.getNetworkFacade().errno(), "could not create PipeSuspendEvent");
         }
-        this.readEndFd = (int) (fds >>> 32);
-        this.writeEndFd = (int) fds;
-        kqf.getNetworkFacade().bumpFdCount(readEndFd);
-        kqf.getNetworkFacade().bumpFdCount(writeEndFd);
+        this.readEndFd = kqf.getNetworkFacade().bumpFdCount((int) (fds >>> 32));
+        this.writeEndFd = kqf.getNetworkFacade().bumpFdCount((int) fds);
     }
 
     @Override
@@ -57,7 +55,7 @@ public class PipeSuspendEvent extends SuspendEvent {
     }
 
     @Override
-    public int getFd() {
+    public long getFd() {
         return readEndFd;
     }
 

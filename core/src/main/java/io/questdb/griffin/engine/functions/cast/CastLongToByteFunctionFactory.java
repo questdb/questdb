@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,25 +41,18 @@ public class CastLongToByteFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+        return new CastLongToByteFunction(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToByteFunction {
-        private final Function arg;
-
-        public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+    public static class CastLongToByteFunction extends AbstractCastToByteFunction {
+        public CastLongToByteFunction(Function arg) {
+            super(arg);
         }
 
         @Override
         public byte getByte(Record rec) {
             final long value = arg.getLong(rec);
-            return value != Numbers.LONG_NaN ? (byte) value : 0;
+            return value != Numbers.LONG_NULL ? (byte) value : 0;
         }
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -45,9 +46,7 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
     // Bytes, Kilo, Mega, Giga, Tera, Peta, Exa, Zetta
     // bytes, kibibyte, mebibyte, gibibyte, tebibyte, pebibyte, exbibyte, zebibyte
     // B, KiB, MiB, GiB, TiB, PiB, EiB, ZiB (this last is out of range for a long)
-
     private static final char[] SCALE = {'B', 'K', 'M', 'G', 'T', 'P', 'E', 'Z'};
-
 
     public static void toSizePretty(StringSink sink, long size) {
         sink.clear();
@@ -61,13 +60,25 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
         }
     }
 
+    public static String toSizePretty(long size) {
+        StringSink sink = Misc.getThreadLocalSink();
+        toSizePretty(sink, size);
+        return sink.toString();
+    }
+
     @Override
     public String getSignature() {
         return SYMBOL + "(L)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPos, CairoConfiguration config, SqlExecutionContext context) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPos,
+            CairoConfiguration config,
+            SqlExecutionContext context
+    ) {
         return new SizePretty(args.getQuick(0));
     }
 
@@ -91,22 +102,27 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return getStr0(size.getLong(rec), sinkA);
-        }
-
-        @Nullable
-        private StringSink getStr0(long s, StringSink sinkA) {
-            if (s != Numbers.LONG_NaN) {
-                toSizePretty(sinkA, s);
-                return sinkA;
-            }
-            return null;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
             return getStr0(size.getLong(rec), sinkB);
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Nullable
+        private StringSink getStr0(long s, StringSink sink) {
+            if (s != Numbers.LONG_NULL) {
+                toSizePretty(sink, s);
+                return sink;
+            }
+            return null;
         }
     }
 }

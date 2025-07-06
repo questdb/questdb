@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -58,7 +58,7 @@ public class TxSerializer {
      *  Command line arguments: -s <json_path> <txn_path> | -d <txn_path>
      */
     public static void main(String[] args) throws IOException {
-        LogFactory.configureSync();
+        LogFactory.enableGuaranteedLogging();
         if (args.length < 2 || args.length > 3) {
             printUsage();
             return;
@@ -102,12 +102,13 @@ public class TxSerializer {
         }
 
         try (
-                Path path = new Path().of(targetPath).$();
-                MemoryCMARW rwTxMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)
+                Path path = new Path().of(targetPath);
+                MemoryCMARW rwTxMem = Vm.getSmallCMARWInstance(ff, path.$(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)
         ) {
             final int symbolsSize = tx.TX_OFFSET_MAP_WRITER_COUNT * Long.BYTES;
             final int partitionSegmentSize = tx.ATTACHED_PARTITIONS_COUNT * LONGS_PER_TX_ATTACHED_PARTITION * Long.BYTES;
             final long fileSize = calculateTxRecordSize(symbolsSize, partitionSegmentSize);
+            rwTxMem.jumpTo(fileSize);
             Vect.memset(rwTxMem.addressOf(0), fileSize, 0);
             rwTxMem.setTruncateSize(fileSize);
 
@@ -131,6 +132,11 @@ public class TxSerializer {
             rwTxMem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, tx.TX_OFFSET_TRUNCATE_VERSION);
             rwTxMem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, tx.TX_OFFSET_SEQ_TXN);
             rwTxMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, tx.TX_OFFSET_MAP_WRITER_COUNT);
+            rwTxMem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, tx.TX_OFFSET_LAG_ROW_COUNT);
+            rwTxMem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, tx.TX_OFFSET_LAG_TXN_COUNT);
+            rwTxMem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, tx.TX_OFFSET_LAG_MAX_TIMESTAMP);
+            rwTxMem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, tx.TX_OFFSET_LAG_MIN_TIMESTAMP);
+            rwTxMem.putInt(baseOffset + TX_OFFSET_CHECKSUM_32, tx.TX_OFFSET_CHECKSUM);
 
             if (tx.TX_OFFSET_MAP_WRITER_COUNT != 0) {
                 int isym = 0;
@@ -160,12 +166,12 @@ public class TxSerializer {
     public String toJson(String srcTxFilePath) {
         TxFileStruct tx = new TxFileStruct();
 
-        try (Path path = new Path().put(srcTxFilePath).$()) {
-            if (!ff.exists(path)) {
+        try (Path path = new Path().put(srcTxFilePath)) {
+            if (!ff.exists(path.$())) {
                 System.err.printf("file does not exist: %s%n", srcTxFilePath);
                 return null;
             }
-            try (MemoryMR roTxMem = Vm.getMRInstance(ff, path, ff.length(path), MemoryTag.MMAP_DEFAULT)) {
+            try (MemoryMR roTxMem = Vm.getCMRInstance(ff, path.$(), ff.length(path.$()), MemoryTag.MMAP_DEFAULT)) {
                 roTxMem.growToFileSize();
                 final long version = roTxMem.getLong(TX_BASE_OFFSET_VERSION_64);
                 final boolean isA = (version & 1L) == 0L;
@@ -183,7 +189,12 @@ public class TxSerializer {
                 tx.TX_OFFSET_MAP_WRITER_COUNT = roTxMem.getInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32); // symbolColumnCount
                 tx.TX_OFFSET_PARTITION_TABLE_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION_64);
                 tx.TX_OFFSET_COLUMN_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64);
+                tx.TX_OFFSET_LAG_ROW_COUNT = roTxMem.getInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32);
+                tx.TX_OFFSET_LAG_TXN_COUNT = roTxMem.getInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32);
                 tx.TX_OFFSET_TRUNCATE_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64);
+                tx.TX_OFFSET_LAG_MIN_TIMESTAMP = roTxMem.getLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64);
+                tx.TX_OFFSET_LAG_MAX_TIMESTAMP = roTxMem.getLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64);
+                tx.TX_OFFSET_CHECKSUM = roTxMem.getInt(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64);
                 tx.TX_OFFSET_SEQ_TXN = roTxMem.getLong(baseOffset + TX_OFFSET_SEQ_TXN_64);
 
                 final int symbolColumnCount = symbolsSize / Long.BYTES;

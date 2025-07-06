@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,23 +27,68 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
+import io.questdb.cairo.arr.BorrowedFlatArrayView;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.FloatingDirectCharSink;
+import io.questdb.std.Chars;
+import io.questdb.std.Long128;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Uuid;
+import io.questdb.std.Vect;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.FlyweightDirectUtf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
-import static io.questdb.std.Chars.utf8ToUtf16;
-import static io.questdb.std.Chars.utf8ToUtf16Unchecked;
 
 public class LineTcpEventBuffer {
+    private final BorrowedArray borrowedDirectArrayView = new BorrowedArray();
     private final long bufLo;
     private final long bufSize;
-    private final FloatingDirectCharSink tempSink = new FloatingDirectCharSink();
+    private final FlyweightDirectUtf16Sink tempSink = new FlyweightDirectUtf16Sink();
+    private final FlyweightDirectUtf16Sink tempSinkB = new FlyweightDirectUtf16Sink();
+    private final DirectUtf8String utf8Sequence = new DirectUtf8String();
 
     public LineTcpEventBuffer(long bufLo, long bufSize) {
         this.bufLo = bufLo;
         this.bufSize = bufLo + bufSize;
+    }
+
+    public long addArray(long address, BorrowedArray arrayView) {
+        if (arrayView == null) {
+            return addNull(address);
+        }
+
+        int dims = arrayView.getDimCount();
+        BorrowedFlatArrayView values = (BorrowedFlatArrayView) arrayView.flatView();
+
+        // record totalLength to trade space for time.
+        // +-------------+-------------+-------------+------------------------+--------------------+
+        // |  type flag  | totalLength |  arrayType  |       shapes           |    flat values     |
+        // +-------------+-------------+-------------+------------------------+--------------------+
+        // |    1 byte   |   4 bytes   |  4 bytes    |     $dims * 4 bytes    |                    |
+        // +-------------+-------------+-------------+------------------------+--------------------+
+        int totalLength = Integer.BYTES + Integer.BYTES + dims * Integer.BYTES + values.size();
+        // non-wal tables do not support large array ingestion.
+        checkCapacity(address, totalLength + Byte.BYTES);
+        Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_ARRAY);
+        address += Byte.BYTES;
+        Unsafe.getUnsafe().putInt(address, totalLength);
+        address += Integer.BYTES;
+        Unsafe.getUnsafe().putInt(address, arrayView.getType());
+        address += Integer.BYTES;
+        for (int i = 0; i < dims; i++) {
+            Unsafe.getUnsafe().putInt(address, arrayView.getDimLen(i));
+            address += Integer.BYTES;
+        }
+        Vect.memcpy(address, values.ptr(), values.size());
+        address += values.size();
+        return address;
     }
 
     public long addBoolean(long address, byte value) {
@@ -73,18 +118,27 @@ public class LineTcpEventBuffer {
         return address + Integer.BYTES;
     }
 
-    public long addColumnName(long address, CharSequence colName) {
-        int length = colName.length();
-        int capacity = Integer.BYTES + 2 * length;
-        checkCapacity(address, capacity);
+    public long addColumnName(long address, CharSequence colName, CharSequence principal) {
+        int colNameLen = colName.length();
+        int principalLen = principal != null ? principal.length() : 0;
+        int colNameCapacity = Integer.BYTES + 2 * colNameLen;
+        int fullCapacity = colNameCapacity + Integer.BYTES + 2 * principalLen;
+        checkCapacity(address, fullCapacity);
 
         // Negative length indicates to the writer thread that column is passed by
         // name rather than by index. When value is positive (on the else branch)
         // the value is treated as column index.
-        Unsafe.getUnsafe().putInt(address, -1 * length);
+        Unsafe.getUnsafe().putInt(address, -colNameLen);
+        Chars.copyStrChars(colName, 0, colNameLen, address + Integer.BYTES);
 
-        Chars.copyStrChars(colName, 0, length, address + Integer.BYTES);
-        return address + capacity;
+        // Now write principal name, so that we can call DdlListener#onColumnAdded()
+        // when adding the column.
+        Unsafe.getUnsafe().putInt(address + colNameCapacity, principalLen);
+        if (principalLen > 0) {
+            Chars.copyStrChars(principal, 0, principalLen, address + colNameCapacity + Integer.BYTES);
+        }
+
+        return address + fullCapacity;
     }
 
     public long addDate(long address, long value) {
@@ -95,7 +149,7 @@ public class LineTcpEventBuffer {
     }
 
     public void addDesignatedTimestamp(long address, long timestamp) {
-        checkCapacity(address, Long.BYTES);
+        checkCapacity(address, Long.BYTES + Byte.BYTES);
         Unsafe.getUnsafe().putLong(address, timestamp);
     }
 
@@ -113,10 +167,10 @@ public class LineTcpEventBuffer {
         return address + Float.BYTES + Byte.BYTES;
     }
 
-    public long addGeoHash(long address, DirectByteCharSequence value, int colTypeMeta) {
+    public long addGeoHash(long address, DirectUtf8Sequence value, int colTypeMeta) {
         long geohash;
         try {
-            geohash = GeoHashes.fromStringTruncatingNl(value.getLo(), value.getHi(), Numbers.decodeLowShort(colTypeMeta));
+            geohash = GeoHashes.fromAsciiTruncatingNl(value.lo(), value.hi(), Numbers.decodeLowShort(colTypeMeta));
         } catch (NumericException e) {
             geohash = GeoHashes.NULL;
         }
@@ -158,8 +212,8 @@ public class LineTcpEventBuffer {
         return address + Long.BYTES + Byte.BYTES;
     }
 
-    public long addLong256(long address, DirectByteCharSequence value, boolean hasNonAsciiChars) {
-        return addString(address, value, hasNonAsciiChars, LineTcpParser.ENTITY_TYPE_LONG256);
+    public long addLong256(long address, DirectUtf8Sequence value) {
+        return addString(address, value, LineTcpParser.ENTITY_TYPE_LONG256);
     }
 
     public long addNull(long address) {
@@ -180,8 +234,8 @@ public class LineTcpEventBuffer {
         return address + Short.BYTES + Byte.BYTES;
     }
 
-    public long addString(long address, DirectByteCharSequence value, boolean hasNonAsciiChars) {
-        return addString(address, value, hasNonAsciiChars, LineTcpParser.ENTITY_TYPE_STRING);
+    public long addString(long address, DirectUtf8Sequence value) {
+        return addString(address, value, LineTcpParser.ENTITY_TYPE_STRING);
     }
 
     public void addStructureVersion(long address, long structureVersion) {
@@ -189,8 +243,8 @@ public class LineTcpEventBuffer {
         Unsafe.getUnsafe().putLong(address, structureVersion);
     }
 
-    public long addSymbol(long address, DirectByteCharSequence value, boolean hasNonAsciiChars, DirectByteSymbolLookup symbolLookup) {
-        final int maxLen = 2 * value.length();
+    public long addSymbol(long address, DirectUtf8Sequence value, DirectUtf8SymbolLookup symbolLookup) {
+        final int maxLen = 2 * value.size();
         checkCapacity(address, Byte.BYTES + Integer.BYTES + maxLen);
         final long strPos = address + Byte.BYTES + Integer.BYTES; // skip field type and string length
 
@@ -207,10 +261,10 @@ public class LineTcpEventBuffer {
         } else {
             // Symbol value cannot be resolved at this point
             // Encode whole string value into the message
-            if (!hasNonAsciiChars) {
+            if (value.isAscii()) {
                 tempSink.put(value);
             } else {
-                utf8ToUtf16(value, tempSink, true);
+                Utf8s.utf8ToUtf16(value, tempSink);
             }
             final int length = tempSink.length();
             Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_TAG);
@@ -237,17 +291,30 @@ public class LineTcpEventBuffer {
      * @return new offset
      * @throws NumericException if the value is not a valid UUID string
      */
-    public long addUuid(long offset, DirectByteCharSequence value) throws NumericException {
+    public long addUuid(long offset, DirectUtf8Sequence value) throws NumericException {
         checkCapacity(offset, Byte.BYTES + 2 * Long.BYTES);
-        Uuid.checkDashesAndLength(value);
-        long hi = Uuid.parseHi(value);
-        long lo = Uuid.parseLo(value);
+        final CharSequence csView = value.asAsciiCharSequence();
+        Uuid.checkDashesAndLength(csView);
+        long hi = Uuid.parseHi(csView);
+        long lo = Uuid.parseLo(csView);
         Unsafe.getUnsafe().putByte(offset, LineTcpParser.ENTITY_TYPE_UUID);
         offset += Byte.BYTES;
         Unsafe.getUnsafe().putLong(offset, lo);
         offset += Long.BYTES;
         Unsafe.getUnsafe().putLong(offset, hi);
         return offset + Long.BYTES;
+    }
+
+    public long addVarchar(long address, DirectUtf8Sequence value) {
+        final int valueSize = value.size();
+        final int totalSize = Byte.BYTES + Byte.BYTES + Integer.BYTES + valueSize;
+        checkCapacity(address, totalSize);
+        Unsafe.getUnsafe().putByte(address++, LineTcpParser.ENTITY_TYPE_VARCHAR);
+        Unsafe.getUnsafe().putByte(address++, (byte) (value.isAscii() ? 0 : 1));
+        Unsafe.getUnsafe().putInt(address, valueSize);
+        address += Integer.BYTES;
+        value.writeTo(address, 0, valueSize);
+        return address + valueSize;
     }
 
     public long columnValueLength(byte entityType, long offset) {
@@ -282,6 +349,8 @@ public class LineTcpEventBuffer {
                 return Double.BYTES;
             case LineTcpParser.ENTITY_TYPE_UUID:
                 return Long128.BYTES;
+            case LineTcpParser.ENTITY_TYPE_ARRAY:
+                return readInt(offset);
             case ENTITY_TYPE_NULL:
                 return 0;
             default:
@@ -296,6 +365,21 @@ public class LineTcpEventBuffer {
     public long getAddressAfterHeader() {
         // The header contains structure version (long), timestamp (long) and number of columns (int).
         return bufLo + 2 * Long.BYTES + Integer.BYTES;
+    }
+
+    public ArrayView readArray(long address) {
+        int totalSize = readInt(address);
+        address += Integer.BYTES;
+        int type = readInt(address);
+        address += Integer.BYTES;
+        int dims = ColumnType.decodeArrayDimensionality(type);
+        borrowedDirectArrayView.of(
+                type,
+                address,
+                address + (long) dims * Integer.BYTES,
+                totalSize - (dims + 2) * Integer.BYTES
+        );
+        return borrowedDirectArrayView;
     }
 
     public byte readByte(long address) {
@@ -335,15 +419,24 @@ public class LineTcpEventBuffer {
         return tempSink.asCharSequence(address, address + length * 2L);
     }
 
-    private long addString(long address, DirectByteCharSequence value, boolean hasNonAsciiChars, byte entityTypeString) {
-        int maxLen = 2 * value.length();
+    public CharSequence readUtf16CharsB(long address, int length) {
+        return tempSinkB.asCharSequence(address, address + length * 2L);
+    }
+
+    public Utf8Sequence readVarchar(long address, boolean ascii) {
+        int size = readInt(address);
+        return utf8Sequence.of(address + Integer.BYTES, address + Integer.BYTES + size, ascii);
+    }
+
+    private long addString(long address, DirectUtf8Sequence value, byte entityTypeString) {
+        int maxLen = 2 * value.size();
         checkCapacity(address, Byte.BYTES + Integer.BYTES + maxLen);
         long strPos = address + Byte.BYTES + Integer.BYTES; // skip field type and string length
         tempSink.of(strPos, strPos + maxLen);
-        if (hasNonAsciiChars) {
-            utf8ToUtf16Unchecked(value, tempSink);
-        } else {
+        if (value.isAscii()) {
             tempSink.put(value);
+        } else {
+            Utf8s.utf8ToUtf16Unchecked(value, tempSink);
         }
         final int length = tempSink.length();
         Unsafe.getUnsafe().putByte(address, entityTypeString);

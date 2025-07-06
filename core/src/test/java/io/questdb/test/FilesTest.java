@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,12 +26,24 @@ package io.questdb.test;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
+import io.questdb.log.Log;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -53,6 +65,7 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class FilesTest {
     private static final String EOL = System.lineSeparator();
+    private static final Log LOG = LogFactory.getLog(FilesTest.class);
     @Rule
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
@@ -61,16 +74,16 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();
             TestUtils.writeStringToFile(temp, "abcde");
-            try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
-                Assert.assertTrue(Files.exists(path));
-                Assert.assertEquals(5, Files.length(path));
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+                Assert.assertEquals(5, Files.length(path.$()));
 
-                int fd = Files.openRW(path);
+                long fd = Files.openRW(path.$());
                 try {
                     Files.allocate(fd, 10);
-                    Assert.assertEquals(10, Files.length(path));
+                    Assert.assertEquals(10, Files.length(path.$()));
                     Files.allocate(fd, 120);
-                    Assert.assertEquals(120, Files.length(path));
+                    Assert.assertEquals(120, Files.length(path.$()));
                 } finally {
                     Files.close(fd);
                 }
@@ -85,7 +98,7 @@ public class FilesTest {
         // I found that on OSX (m1) with large disk allocate() call is painfully slow and
         // for that reason (until we understood the problem better) we won't run this test
         // on OSX
-        Assume.assumeTrue(Os.type != Os.OSX_ARM64 && Os.type != Os.OSX_AMD64);
+        Assume.assumeTrue(Os.type != Os.DARWIN);
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
         String tmpFolder = temporaryFolder.newFolder("allocate").getAbsolutePath();
@@ -107,18 +120,18 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();
             TestUtils.writeStringToFile(temp, "abcde");
-            try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
-                Assert.assertTrue(Files.exists(path));
-                Assert.assertEquals(5, Files.length(path));
-                int fd = Files.openRW(path);
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+                Assert.assertEquals(5, Files.length(path.$()));
+                long fd = Files.openRW(path.$());
 
-                long M50 = 100 * 1024L * 1024L;
+                long M100 = 100 * 1024L * 1024L;
                 try {
                     // If allocate tries to allocate by the given size
                     // instead of to the size this will allocate 2TB and suppose to fail
                     for (int i = 0; i < 20000; i++) {
-                        Files.allocate(fd, M50 + i);
-                        Assert.assertEquals(M50 + i, Files.length(path));
+                        Files.allocate(fd, M100 + i);
+                        Assert.assertEquals(M100 + i, Files.length(path.$()));
                     }
                 } finally {
                     Files.close(fd);
@@ -128,16 +141,57 @@ public class FilesTest {
     }
 
     @Test
+    public void testConcurrentRemove() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            TestUtils.writeStringToFile(temp, "abcde");
+            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+                Assert.assertEquals(5, Files.length(path.$()));
+
+                int threadCount = 4;
+                CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                AtomicInteger errorCounter = new AtomicInteger();
+                ObjList<Thread> threads = new ObjList<>();
+
+                for (int i = 0; i < threadCount; i++) {
+                    threads.add(new Thread(() -> {
+                        try {
+                            barrier.await();
+                            ff.remove(path.$());
+                        } catch (Throwable e) {
+                            e.printStackTrace();
+                            LOG.error().$(e).$();
+                            errorCounter.incrementAndGet();
+                        }
+                    }));
+                }
+
+                for (int i = 0; i < threadCount; i++) {
+                    threads.getQuick(i).start();
+                }
+
+                for (int i = 0; i < threadCount; i++) {
+                    threads.getQuick(i).join();
+                }
+
+                Assert.assertEquals(0, errorCounter.get());
+            }
+        });
+    }
+
+    @Test
     public void testCopy() throws Exception {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();
             TestUtils.writeStringToFile(temp, "abcde");
-            try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
-                Assert.assertTrue(Files.exists(path));
-                try (Path copyPath = new Path().of(temp.getAbsolutePath()).put("-copy").$()) {
-                    Files.copy(path, copyPath);
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+                try (Path copyPath = new Path().of(temp.getAbsolutePath()).put("-copy")) {
+                    Files.copy(path.$(), copyPath.$());
 
-                    Assert.assertEquals(5, Files.length(copyPath));
+                    Assert.assertEquals(5, Files.length(copyPath.$()));
                     TestUtils.assertFileContentsEquals(path, copyPath);
                 }
             }
@@ -162,12 +216,12 @@ public class FilesTest {
                 }
             }
 
-            try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
-                Assert.assertTrue(Files.exists(path));
-                try (Path copyPath = new Path().of(temp.getAbsolutePath()).put("-copy").$()) {
-                    Files.copy(path, copyPath);
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+                try (Path copyPath = new Path().of(temp.getAbsolutePath()).put("-copy")) {
+                    Files.copy(path.$(), copyPath.$());
 
-                    Assert.assertEquals(fileSize, Files.length(copyPath));
+                    Assert.assertEquals(fileSize, Files.length(copyPath.$()));
                     TestUtils.assertFileContentsEquals(path, copyPath);
                 }
             }
@@ -179,20 +233,20 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             int mkdirMode = 509;
             try (Path src = new Path().of(temporaryFolder.getRoot().getAbsolutePath())) {
-                File f1 = new File(Chars.toString(src.concat("file")));
+                File f1 = new File(Utf8s.toString(src.concat("file")));
                 TestUtils.writeStringToFile(f1, "abcde");
 
                 src.parent();
                 src.concat("subdir");
                 Assert.assertEquals(0, Files.mkdir(src.$(), mkdirMode));
 
-                File f2 = new File(Chars.toString(src.concat("file2")));
+                File f2 = new File(Utf8s.toString(src.concat("file2")));
                 TestUtils.writeStringToFile(f2, "efgh");
 
                 src.of(temporaryFolder.getRoot().getAbsolutePath());
                 try (
-                        Path dst = new Path().of(temporaryFolder.getRoot().getPath()).put("copy").$();
-                        Path p2 = new Path().of(dst).slash$()
+                        Path dst = new Path().of(temporaryFolder.getRoot().getPath()).put("copy");
+                        Path p2 = new Path().of(dst).slash()
                 ) {
                     try {
                         Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.copyRecursive(src, dst, mkdirMode));
@@ -206,7 +260,7 @@ public class FilesTest {
                         dst.concat("subdir").concat("file2");
                         TestUtils.assertFileContentsEquals(src, dst);
                     } finally {
-                        Files.rmdir(p2);
+                        Files.rmdir(p2, true);
                     }
                 }
             }
@@ -228,22 +282,22 @@ public class FilesTest {
             touch(new File(r, "d" + Files.SEPARATOR + "e" + Files.SEPARATOR + "f" + Files.SEPARATOR + "3.txt"));
 
             try (
-                    Path targetPath = new Path().of(r.getAbsolutePath()).concat("d").$();
-                    Path linkPath = new Path().of(r.getAbsolutePath()).concat("a").concat("link_to_d").$()
+                    Path targetPath = new Path().of(r.getAbsolutePath()).concat("d");
+                    Path linkPath = new Path().of(r.getAbsolutePath()).concat("a").concat("link_to_d")
             ) {
-                Assert.assertEquals(0, Files.softLink(targetPath, linkPath));
-                Assert.assertTrue(Files.isSoftLink(linkPath));
+                Assert.assertEquals(0, Files.softLink(targetPath.$(), linkPath.$()));
+                Assert.assertTrue(Files.isSoftLink(linkPath.$()));
 
-                targetPath.of(r.getAbsolutePath()).$();
-                linkPath.of(r.getParentFile().getAbsolutePath()).concat("start_here").$();
-                Assert.assertEquals(0, Files.softLink(targetPath, linkPath));
-                Assert.assertTrue(Files.isSoftLink(linkPath));
+                targetPath.of(r.getAbsolutePath());
+                linkPath.of(r.getParentFile().getAbsolutePath()).concat("start_here");
+                Assert.assertEquals(0, Files.softLink(targetPath.$(), linkPath.$()));
+                Assert.assertTrue(Files.isSoftLink(linkPath.$()));
 
-                Assert.assertEquals(0, Files.rmdir(linkPath));
+                Assert.assertTrue(Files.rmdir(linkPath, true));
                 Assert.assertFalse(new File(linkPath.toString()).exists());
                 Assert.assertTrue(r.exists());
                 Assert.assertEquals(0L, Files.getDirSize(targetPath));
-                Assert.assertEquals(0, Files.rmdir(targetPath.slash().$()));
+                Assert.assertTrue(Files.rmdir(targetPath.slash(), true));
                 Assert.assertFalse(r.exists());
             }
         });
@@ -254,9 +308,9 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 File f = temporaryFolder.newFile();
-                int fd = Files.openRW(path.of(f.getAbsolutePath()).$());
+                long fd = Files.openRW(path.of(f.getAbsolutePath()).$());
                 Assert.assertTrue(Files.exists(fd));
-                Assert.assertTrue(Files.remove(path));
+                Assert.assertTrue(Files.remove(path.$()));
                 Assert.assertFalse(Files.exists(fd));
                 Files.close(fd);
             }
@@ -273,24 +327,24 @@ public class FilesTest {
                 "disk that uses part of the actual disk." + System.lineSeparator();
         assertMemoryLeak(() -> {
             File noDir = temporaryFolder.newFolder("данные", "no");
-            try (Path path = new Path().of(noDir.getParentFile().getAbsolutePath()).$()) {
-                int rootLen = path.length();
+            try (Path path = new Path().of(noDir.getParentFile().getAbsolutePath())) {
+                int rootLen = path.size();
                 createTempFile(path, "prose.txt", content);
-                long baseSize = Files.getDirSize(path.parent().$());
+                long baseSize = Files.getDirSize(path.parent());
                 createTempFile(path, "dinner.txt", content);
                 createTempFile(path.parent(), "apple.txt", content);
                 createTempFile(path.parent().concat("no"), "lunch.txt", content);
                 createTempFile(path.parent(), "ребенок.txt", content);
-                Assert.assertEquals(5 * baseSize, Files.getDirSize(path.trimTo(rootLen).$()));
-                Assert.assertEquals(2 * baseSize, Files.getDirSize(path.concat("no").$()));
-                Assert.assertEquals(0L, Files.getDirSize(path.concat("ребенок.txt").$()));
+                Assert.assertEquals(5 * baseSize, Files.getDirSize(path.trimTo(rootLen)));
+                Assert.assertEquals(2 * baseSize, Files.getDirSize(path.concat("no")));
+                Assert.assertEquals(0L, Files.getDirSize(path.concat("ребенок.txt")));
             }
         });
     }
 
     @Test
     public void testDirectoryContentSizeNonExistingDirectory() {
-        try (Path path = new Path().of("banana").$()) {
+        try (Path path = new Path().of("banana")) {
             Assert.assertEquals(0L, Files.getDirSize(path));
         }
     }
@@ -299,7 +353,7 @@ public class FilesTest {
     public void testDirectoryContentSizeOfFile() throws IOException {
         String content = "nothing to report";
         File dir = temporaryFolder.newFolder("banana");
-        try (Path path = new Path().of(dir.getAbsolutePath()).$()) {
+        try (Path path = new Path().of(dir.getAbsolutePath())) {
             createTempFile(path, "small.txt", content);
             Assert.assertEquals(0L, Files.getDirSize(path));
         }
@@ -325,14 +379,14 @@ public class FilesTest {
             File backupDir = temporaryFolder.newFolder("backup", "table", "partition" + TableUtils.ATTACHABLE_DIR_MARKER);
             File tmpDir = temporaryFolder.newFolder("tmp");
             try (
-                    Path dbPath = new Path().of(dbDir.getParentFile().getParentFile().getAbsolutePath()).$();
-                    Path backupPath = new Path().of(backupDir.getParentFile().getParentFile().getAbsolutePath()).$();
+                    Path dbPath = new Path().of(dbDir.getParentFile().getParentFile().getAbsolutePath());
+                    Path backupPath = new Path().of(backupDir.getParentFile().getParentFile().getAbsolutePath());
                     Path auxPath = new Path()
             ) {
-                int dbPathLen = dbPath.length();
-                int backupPathLen = backupPath.length();
+                int dbPathLen = dbPath.size();
+                int backupPathLen = backupPath.size();
                 createTempFile(auxPath.of(tmpDir.getAbsolutePath()), "for_size.d", content);
-                long baseSize = Files.getDirSize(auxPath.parent().$());
+                long baseSize = Files.getDirSize(auxPath.parent());
 
                 // create files at table level
                 createTempFile(dbPath.concat("table"), "_meta", content);
@@ -381,17 +435,17 @@ public class FilesTest {
                 // backup/table/partition.attachable/column0.d
                 // backup/table/partition.attachable/column1.d
 
-                Assert.assertEquals(9 * baseSize, Files.getDirSize(dbPath.trimTo(dbPathLen).$()));
-                Assert.assertEquals(9 * baseSize, Files.getDirSize(dbPath.concat("table").$()));
-                Assert.assertEquals(3 * baseSize, Files.getDirSize(dbPath.concat("partition").$()));
-                Assert.assertEquals(3 * baseSize, Files.getDirSize(dbPath.parent().concat("partitionB").$()));
-                Assert.assertEquals(0L, Files.getDirSize(dbPath.concat("timestamp.d").$()));
-                Assert.assertEquals(baseSize, Files.length(dbPath));
-                Assert.assertEquals(6 * baseSize, Files.getDirSize(backupPath.trimTo(backupPathLen).$()));
-                Assert.assertEquals(6 * baseSize, Files.getDirSize(backupPath.concat("table").$()));
-                Assert.assertEquals(3 * baseSize, Files.getDirSize(backupPath.concat("partition" + TableUtils.ATTACHABLE_DIR_MARKER).$()));
+                Assert.assertEquals(9 * baseSize, Files.getDirSize(dbPath.trimTo(dbPathLen)));
+                Assert.assertEquals(9 * baseSize, Files.getDirSize(dbPath.concat("table")));
+                Assert.assertEquals(3 * baseSize, Files.getDirSize(dbPath.concat("partition")));
+                Assert.assertEquals(3 * baseSize, Files.getDirSize(dbPath.parent().concat("partitionB")));
+                Assert.assertEquals(0L, Files.getDirSize(dbPath.concat("timestamp.d")));
+                Assert.assertEquals(baseSize, Files.length(dbPath.$()));
+                Assert.assertEquals(6 * baseSize, Files.getDirSize(backupPath.trimTo(backupPathLen)));
+                Assert.assertEquals(6 * baseSize, Files.getDirSize(backupPath.concat("table")));
+                Assert.assertEquals(3 * baseSize, Files.getDirSize(backupPath.concat("partition" + TableUtils.ATTACHABLE_DIR_MARKER)));
                 Assert.assertEquals(15 * baseSize,
-                        Files.getDirSize(dbPath.trimTo(dbPathLen).$()) + Files.getDirSize(backupPath.trimTo(backupPathLen).$())
+                        Files.getDirSize(dbPath.trimTo(dbPathLen)) + Files.getDirSize(backupPath.trimTo(backupPathLen))
                 );
             }
         });
@@ -402,10 +456,10 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();
             TestUtils.writeStringToFile(temp, "abcde");
-            try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
-                Assert.assertTrue(Files.exists(path));
-                int fd = Files.openRW(path);
-                Assert.assertEquals(5, Files.length(path));
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+                long fd = Files.openRW(path.$());
+                Assert.assertEquals(5, Files.length(path.$()));
 
                 try {
                     long tb10 = 1024L * 1024L * 1024L * 1024L * 10; // 10TB
@@ -430,9 +484,9 @@ public class FilesTest {
             Path srcFilePath = null;
             Path hardLinkFilePath = null;
             try {
-                srcFilePath = new Path().of(dbRoot.getAbsolutePath()).concat("some_column.d").$();
-                hardLinkFilePath = new Path().of(srcFilePath).put(".1").$();
-                Assert.assertEquals(-1, Files.hardLink(srcFilePath, hardLinkFilePath));
+                srcFilePath = new Path().of(dbRoot.getAbsolutePath()).concat("some_column.d");
+                hardLinkFilePath = new Path().of(srcFilePath).put(".1");
+                Assert.assertEquals(-1, Files.hardLink(srcFilePath.$(), hardLinkFilePath.$()));
             } finally {
                 Misc.free(srcFilePath);
                 Misc.free(hardLinkFilePath);
@@ -450,20 +504,20 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             int mkdirMode = 509;
             try (Path src = new Path().of(temporaryFolder.getRoot().getAbsolutePath())) {
-                File f1 = new File(Chars.toString(src.concat("file")));
+                File f1 = new File(Utf8s.toString(src.concat("file")));
                 TestUtils.writeStringToFile(f1, "abcde");
 
                 src.parent();
                 src.concat("subdir");
                 Assert.assertEquals(0, Files.mkdir(src.$(), mkdirMode));
 
-                File f2 = new File(Chars.toString(src.concat("file2")));
+                File f2 = new File(Utf8s.toString(src.concat("file2")));
                 TestUtils.writeStringToFile(f2, "efgh");
 
                 src.of(temporaryFolder.getRoot().getAbsolutePath());
                 try (
-                        Path dst = new Path().of(temporaryFolder.getRoot().getPath()).put("copy").$();
-                        Path p2 = new Path().of(dst).slash$()
+                        Path dst = new Path().of(temporaryFolder.getRoot().getPath()).put("copy");
+                        Path p2 = new Path().of(dst).slash()
                 ) {
                     try {
                         Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.hardLinkDirRecursive(src, dst, mkdirMode));
@@ -478,9 +532,64 @@ public class FilesTest {
                         dst.concat("subdir").concat("file2");
                         TestUtils.assertFileContentsEquals(src, dst);
                     } finally {
-                        Files.rmdir(p2);
+                        Files.rmdir(p2, true);
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testIsDirOrSoftLinkDir() throws Exception {
+        // Technically, the code _should_ (and is) supported on Windows too.
+        // That said it requires Admin or Developer mode enabled on Windows. It runs just fine on CI, but fails to run
+        // on most desktop machines. On Windows this is thus hidden behind an environment variable.
+        final boolean testSymlinks = !Os.isWindows() || "1".equals(System.getenv("QDB_TEST_WINDOWS_SYMLINKS"));
+        final File baseDir = temporaryFolder.newFolder();
+
+        setupPath(baseDir, "empty_dir/");
+        setupPath(baseDir, "file");
+        setupPath(baseDir, "dir_with_a_file/file");
+        setupPath(baseDir, "dir_with_an_empty_dir/dir/");
+
+        if (testSymlinks) {
+            setupPath(baseDir, "link_to_file -> file");
+            setupPath(baseDir, "link_to_empty_dir -> empty_dir/");
+            setupPath(baseDir, "link_to_dir_with_a_file -> dir_with_a_file/");
+            setupPath(baseDir, "link_to_dir_with_an_empty_dir -> dir_with_an_empty_dir/");
+            setupPath(baseDir, "nonexistent"); // deleted later
+            setupPath(baseDir, "link_to_nonexistent -> nonexistent");
+            setupPath(baseDir, "link_to_link_to_file -> link_to_file");
+            setupPath(baseDir, "link_to_link_to_empty_dir -> link_to_empty_dir");
+            setupPath(baseDir, "link_to_link_to_dir_with_a_file -> link_to_dir_with_a_file");
+            setupPath(baseDir, "link_to_link_to_dir_with_an_empty_dir -> link_to_dir_with_an_empty_dir");
+            setupPath(baseDir, "link_to_link_to_nonexistent -> link_to_nonexistent");
+
+            final File nonexistent = new File(baseDir, "nonexistent");
+            Assert.assertTrue(nonexistent.delete());
+            Assert.assertFalse(nonexistent.exists());
+        }
+
+        assertMemoryLeak(() -> {
+            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "something/that/does/not/exist"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "empty_dir/"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "empty_dir/."));
+            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "file"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_a_file/"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_an_empty_dir/"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_an_empty_dir/dir/.."));
+
+            if (testSymlinks) {
+                Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_file"));
+                Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_empty_dir"));
+                Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_dir_with_a_file"));
+                Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_dir_with_an_empty_dir"));
+                Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_nonexistent"));
+                Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_link_to_file"));
+                Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_link_to_empty_dir"));
+                Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_link_to_dir_with_a_file"));
+                Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_link_to_dir_with_an_empty_dir"));
+                Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_link_to_nonexistent"));
             }
         });
     }
@@ -501,16 +610,16 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             String temp = temporaryFolder.getRoot().getAbsolutePath();
             ObjList<String> names = new ObjList<>();
-            try (Path path = new Path().of(temp).$()) {
+            try (Path path = new Path().of(temp)) {
                 try (Path cp = new Path()) {
                     Assert.assertTrue(Files.touch(cp.of(temp).concat("a.txt").$()));
                     StringSink nameSink = new StringSink();
-                    long pFind = Files.findFirst(path);
+                    long pFind = Files.findFirst(path.$());
                     Assert.assertTrue(pFind != 0);
                     try {
                         do {
                             nameSink.clear();
-                            Chars.utf8ToUtf16Z(Files.findName(pFind), nameSink);
+                            Utf8s.utf8ToUtf16Z(Files.findName(pFind), nameSink);
                             names.add(nameSink.toString());
                         } while (Files.findNext(pFind) > 0);
                     } finally {
@@ -529,11 +638,23 @@ public class FilesTest {
     public void testListNonExistingDir() throws Exception {
         assertMemoryLeak(() -> {
             String temp = temporaryFolder.getRoot().getAbsolutePath();
-            try (Path path = new Path().of(temp).concat("xyz").$()) {
-                long pFind = Files.findFirst(path);
+            try (Path path = new Path().of(temp).concat("xyz")) {
+                long pFind = Files.findFirst(path.$());
                 Assert.assertEquals("failed os=" + Os.errno(), 0, pFind);
             }
         });
+    }
+
+    @Test
+    public void testLongFd() {
+        long unuqFd = Numbers.encodeLowHighInts(1000, -1);
+        Assert.assertTrue(unuqFd < 0);
+    }
+
+    @Test
+    public void testLongFd2() {
+        long unuqFd = Numbers.encodeLowHighInts(Integer.MAX_VALUE, 1000);
+        Assert.assertTrue(unuqFd > 0);
     }
 
     @Test
@@ -554,14 +675,14 @@ public class FilesTest {
         long srcMem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         Unsafe.getUnsafe().putLong(srcMem, valueInMem);
 
-        int fd = -1;
+        long fd = -1;
         long mmapMem = 0;
-        try (Path dstPath = new Path().of(file.getAbsolutePath()).$()) {
-            Assert.assertTrue(Files.exists(dstPath));
-            fd = Files.openRW(dstPath);
+        try (Path dstPath = new Path().of(file.getAbsolutePath())) {
+            Assert.assertTrue(Files.exists(dstPath.$()));
+            fd = Files.openRW(dstPath.$());
             mmapMem = TableUtils.mapRW(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
 
-            final int finalFd = fd;
+            final long finalFd = fd;
             long finalMmapMem = mmapMem;
             Thread th1 = new Thread(() -> {
                 for (long offset = 0; offset < fileSize; offset += 2 * Long.BYTES) {
@@ -606,13 +727,13 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             File r = temporaryFolder.newFolder("to_delete");
             try (Path path = new Path().of(r.getAbsolutePath())) {
-                path.concat("a").concat("b").concat("c").concat("f.text").$();
+                path.concat("a").concat("b").concat("c").concat("f.text");
                 Assert.assertEquals(0, Files.mkdirs(path, 509));
             }
 
             try (Path path = new Path().of(r.getAbsolutePath())) {
-                path.concat("a").concat("b").concat("c").$();
-                Assert.assertTrue(Files.exists(path));
+                path.concat("a").concat("b").concat("c");
+                Assert.assertTrue(Files.exists(path.$()));
             }
         });
     }
@@ -621,13 +742,13 @@ public class FilesTest {
     public void testOpenCleanRWAllocatesToSize() throws Exception {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.getRoot();
-            try (Path path = new Path().of(temp.getAbsolutePath()).concat("openCleanRWParallel").$()) {
-                int fd = Files.openCleanRW(path, 1024);
-                Assert.assertTrue(Files.exists(path));
-                Assert.assertEquals(1024, Files.length(path));
+            try (Path path = new Path().of(temp.getAbsolutePath()).concat("openCleanRWParallel")) {
+                long fd = Files.openCleanRW(path.$(), 1024);
+                Assert.assertTrue(Files.exists(path.$()));
+                Assert.assertEquals(1024, Files.length(path.$()));
 
-                int fd2 = Files.openCleanRW(path, 2048);
-                Assert.assertEquals(2048, Files.length(path));
+                long fd2 = Files.openCleanRW(path.$(), 2048);
+                Assert.assertEquals(2048, Files.length(path.$()));
 
                 Files.close(fd);
                 Files.close(fd2);
@@ -638,12 +759,45 @@ public class FilesTest {
     @Test
     public void testOpenCleanRWFailsWhenCalledOnDir() throws Exception {
         assertMemoryLeak(() -> {
-            int fd = -1;
+            long fd = -1;
             try (Path path = new Path()) {
                 fd = Files.openCleanRW(path.of(temporaryFolder.getRoot().getAbsolutePath()).$(), 32);
                 Assert.assertTrue(fd < 0);
             } finally {
                 Files.close(fd);
+            }
+        });
+    }
+
+    @Test
+    public void testOpenCleanRWLoop() throws Exception {
+        // Emulates the syscall sequence from TxnScoreboard's initialization and close.
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+                long sizeInLongs = 64;
+                long sizeInBytes = sizeInLongs * Long.BYTES;
+
+                for (int i = 0; i < 100; i++) {
+                    long fd = Files.openCleanRW(path.$(), sizeInBytes);
+                    long mem = 0;
+                    try {
+                        Assert.assertTrue(Files.truncate(fd, sizeInBytes));
+                        mem = Files.mmap(fd, sizeInBytes, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+
+                        for (long j = 0; j < sizeInLongs; j++) {
+                            Assert.assertEquals(0, Unsafe.getUnsafe().getLong(mem + j * Long.BYTES));
+                            Unsafe.getUnsafe().putLong(mem + j * Long.BYTES, i);
+                        }
+                    } finally {
+                        if (mem != 0) {
+                            Files.munmap(mem, sizeInBytes, MemoryTag.MMAP_DEFAULT);
+                        }
+
+                        Assert.assertTrue(Files.close(fd) > -1);
+                    }
+                }
             }
         });
     }
@@ -656,8 +810,8 @@ public class FilesTest {
             int iteration = 10;
             int fileSize = 1024;
 
-            try (Path path = new Path().of(temp.getAbsolutePath()).concat("openCleanRWParallel").$()) {
-                Assert.assertFalse(Files.exists(path));
+            try (Path path = new Path().of(temp.getAbsolutePath()).concat("openCleanRWParallel")) {
+                Assert.assertFalse(Files.exists(path.$()));
 
                 final CyclicBarrier barrier = new CyclicBarrier(threadCount);
                 final CountDownLatch halt = new CountDownLatch(threadCount);
@@ -668,7 +822,7 @@ public class FilesTest {
                         try {
                             barrier.await();
                             for (int i = 0; i < iteration; i++) {
-                                int fd = Files.openCleanRW(path, fileSize);
+                                long fd = Files.openCleanRW(path.$(), fileSize);
                                 if (fd < 0) {
                                     errors.incrementAndGet();
                                 }
@@ -688,8 +842,8 @@ public class FilesTest {
 
                 halt.await();
                 Assert.assertEquals(0, errors.get());
-                Assert.assertTrue(Files.exists(path));
-                Assert.assertEquals(fileSize, Files.length(path));
+                Assert.assertTrue(Files.exists(path.$()));
+                Assert.assertEquals(fileSize, Files.length(path.$()));
             }
         });
     }
@@ -697,7 +851,7 @@ public class FilesTest {
     @Test
     public void testOpenRWFailsWhenCalledOnDir() throws Exception {
         assertMemoryLeak(() -> {
-            int fd = -1;
+            long fd = -1;
             try (Path path = new Path()) {
                 fd = Files.openRW(path.of(temporaryFolder.getRoot().getAbsolutePath()).$());
                 Assert.assertTrue(fd < 0);
@@ -713,7 +867,7 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (Path path = new Path().of(temp.getAbsolutePath())) {
-                int fd1 = Files.openRW(path.$());
+                long fd1 = Files.openRW(path.$());
                 long fileSize = 4096;
                 long mem = Unsafe.malloc(fileSize, MemoryTag.NATIVE_DEFAULT);
 
@@ -734,7 +888,7 @@ public class FilesTest {
                     Unsafe.free(mem, fileSize, MemoryTag.NATIVE_DEFAULT);
 
                     // Delete files
-                    Files.remove(path);
+                    Files.remove(path.$());
                 }
             }
         });
@@ -746,7 +900,7 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (Path path = new Path().of(temp.getAbsolutePath())) {
-                int fd1 = Files.openRW(path.$());
+                long fd1 = Files.openRW(path.$());
                 long size2Gb = (2L << 30) + 4096;
                 long mem = Unsafe.malloc(size2Gb, MemoryTag.NATIVE_DEFAULT);
 
@@ -765,19 +919,23 @@ public class FilesTest {
                     byte byte1 = Files.readNonNegativeByte(fd1, 0L);
                     short short1 = Files.readNonNegativeShort(fd1, 0L);
                     int int1 = Files.readNonNegativeInt(fd1, 0L);
+                    long intAsLong1 = Files.readIntAsUnsignedLong(fd1, 0L);
                     long long1 = Files.readNonNegativeLong(fd1, 0L);
                     Assert.assertEquals((byte) testValue, byte1);
                     Assert.assertEquals((short) testValue, short1);
                     Assert.assertEquals((int) testValue, int1);
+                    Assert.assertEquals(Integer.toUnsignedLong((int) testValue), intAsLong1);
                     Assert.assertEquals(testValue, long1);
 
                     byte byte2 = Files.readNonNegativeByte(fd1, size2Gb - 8);
                     short short2 = Files.readNonNegativeShort(fd1, size2Gb - 8);
                     int int2 = Files.readNonNegativeInt(fd1, size2Gb - 8);
+                    long intAsLong2 = Files.readIntAsUnsignedLong(fd1, size2Gb - 8);
                     long long2 = Files.readNonNegativeLong(fd1, size2Gb - 8);
                     Assert.assertEquals((byte) testValue, byte2);
                     Assert.assertEquals((short) testValue, short2);
                     Assert.assertEquals((int) testValue, int2);
+                    Assert.assertEquals(Integer.toUnsignedLong((int) testValue), intAsLong2);
                     Assert.assertEquals(testValue, long2);
 
                 } finally {
@@ -786,7 +944,7 @@ public class FilesTest {
                     Unsafe.free(mem, size2Gb, MemoryTag.NATIVE_DEFAULT);
 
                     // Delete files
-                    Files.remove(path);
+                    Files.remove(path.$());
                 }
             }
         });
@@ -795,11 +953,11 @@ public class FilesTest {
     @Test
     public void testRemove() throws Exception {
         assertMemoryLeak(() -> {
-            try (Path path = new Path().of(temporaryFolder.newFile().getAbsolutePath()).$()) {
-                Assert.assertTrue(Files.touch(path));
-                Assert.assertTrue(Files.exists(path));
-                Assert.assertTrue(Files.remove(path));
-                Assert.assertFalse(Files.exists(path));
+            try (Path path = new Path().of(temporaryFolder.newFile().getAbsolutePath())) {
+                Assert.assertTrue(Files.touch(path.$()));
+                Assert.assertTrue(Files.exists(path.$()));
+                Assert.assertTrue(Files.remove(path.$()));
+                Assert.assertFalse(Files.exists(path.$()));
             }
         });
     }
@@ -813,9 +971,9 @@ public class FilesTest {
                     Path path1 = new Path().of(temp.getAbsolutePath());
                     Path path2 = new Path().of(temp.getAbsolutePath())
             ) {
-                int fd1 = Files.openRW(path1.$());
-                path2.put(".2").$();
-                int fd2 = 0;
+                long fd1 = Files.openRW(path1.$());
+                path2.put(".2");
+                long fd2 = 0;
 
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
 
@@ -830,7 +988,7 @@ public class FilesTest {
                     Files.write(fd1, mem, 8, size2Gb - 8);
 
                     // Check copy call works
-                    int result = Files.copy(path1, path2);
+                    int result = Files.copy(path1.$(), path2.$());
 
                     // Check written data
                     // Windows return 1 but Linux and others return 0 on success
@@ -852,8 +1010,8 @@ public class FilesTest {
                     Unsafe.free(mem, 8, MemoryTag.NATIVE_DEFAULT);
 
                     // Delete files
-                    Files.remove(path1);
-                    Files.remove(path2);
+                    Files.remove(path1.$());
+                    Files.remove(path2.$());
                 }
             }
         });
@@ -868,9 +1026,9 @@ public class FilesTest {
                     Path path1 = new Path().of(temp.getAbsolutePath());
                     Path path2 = new Path().of(temp.getAbsolutePath())
             ) {
-                int fd1 = Files.openRW(path1.$());
-                path2.put(".2").$();
-                int fd2 = Files.openRW(path2);
+                long fd1 = Files.openRW(path1.$());
+                path2.put(".2");
+                long fd2 = Files.openRW(path2.$());
 
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
 
@@ -895,7 +1053,7 @@ public class FilesTest {
 
                     // Copy with set length
                     Files.close(fd2);
-                    Files.remove(path2);
+                    Files.remove(path2.$());
                     fd2 = Files.openRW(path2.$());
 
                     // Check copy call works
@@ -908,7 +1066,7 @@ public class FilesTest {
 
                     // Copy with destination offset
                     Files.close(fd2);
-                    Files.remove(path2);
+                    Files.remove(path2.$());
                     fd2 = Files.openRW(path2.$());
 
                     // Check copy with offset call works
@@ -936,8 +1094,8 @@ public class FilesTest {
                     Unsafe.free(mem, 8, MemoryTag.NATIVE_DEFAULT);
 
                     // Delete files
-                    Files.remove(path1);
-                    Files.remove(path2);
+                    Files.remove(path1.$());
+                    Files.remove(path2.$());
                 }
             }
         });
@@ -957,10 +1115,10 @@ public class FilesTest {
             File tmpFolder = temporaryFolder.newFolder("soft");
             String fileName = "いくつかの列.d";
             try (
-                    Path srcFilePath = new Path().of(tmpFolder.getAbsolutePath()).concat(fileName).$();
-                    Path softLinkFilePath = new Path().of(tmpFolder.getAbsolutePath()).concat(fileName).put(".1").$()
+                    Path srcFilePath = new Path().of(tmpFolder.getAbsolutePath()).concat(fileName);
+                    Path softLinkFilePath = new Path().of(tmpFolder.getAbsolutePath()).concat(fileName).put(".1")
             ) {
-                Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
+                Assert.assertEquals(0, Files.softLink(srcFilePath.$(), softLinkFilePath.$()));
 
                 // check that when listing it we can actually find it
                 File link = new File(softLinkFilePath.toString());
@@ -972,8 +1130,8 @@ public class FilesTest {
                 // however
                 Assert.assertFalse(link.exists());
                 Assert.assertFalse(link.canRead());
-                Assert.assertEquals(-1, Files.openRO(softLinkFilePath));
-                Assert.assertTrue(Files.remove(softLinkFilePath));
+                Assert.assertEquals(-1, Files.openRO(softLinkFilePath.$()));
+                Assert.assertTrue(Files.remove(softLinkFilePath.$()));
             } finally {
                 temporaryFolder.delete();
             }
@@ -996,46 +1154,46 @@ public class FilesTest {
                 Path path3 = new Path()
         ) {
             path.of(dir.getAbsolutePath());
-            int plen = path.length();
+            int plen = path.size();
 
-            path.concat("text.txt").$();
+            path.concat("text.txt");
 
-            Files.touch(path);
+            Files.touch(path.$());
 
-            Assert.assertTrue(Files.exists(path));
+            Assert.assertTrue(Files.exists(path.$()));
 
-            path2.of("text.txt").$();//
-            path.trimTo(plen).concat("rel_link").$();
+            path2.of("text.txt");//
+            path.trimTo(plen).concat("rel_link");
             // relative link rel_link -> text.txt
-            Assert.assertEquals(0, Files.softLink(path2, path));
-            Assert.assertTrue(Files.isSoftLink(path));
+            Assert.assertEquals(0, Files.softLink(path2.$(), path.$()));
+            Assert.assertTrue(Files.isSoftLink(path.$()));
             Assert.assertTrue(Files.readLink(path, path3));
             TestUtils.assertEquals(dir.getAbsolutePath() + Files.SEPARATOR + "text.txt", path3.toString());
             // reset link sink
             path3.of("");
 
             // absolute link
-            path2.prefix(path, plen + 1).$();
-            path.trimTo(plen).concat("abs_link").$();
-            Assert.assertEquals(0, Files.softLink(path2, path));
-            Assert.assertTrue(Files.isSoftLink(path));
+            path2.prefix(path, plen + 1);
+            path.trimTo(plen).concat("abs_link");
+            Assert.assertEquals(0, Files.softLink(path2.$(), path.$()));
+            Assert.assertTrue(Files.isSoftLink(path.$()));
             Assert.assertTrue(Files.readLink(path, path3));
             TestUtils.assertEquals(dir.getAbsolutePath() + Files.SEPARATOR + "text.txt", path3.toString());
 
             // test reading non-symbolic link, path2 is a file
             path3.of("");
             Assert.assertFalse(Files.readLink(path2, path3));
-            Assert.assertEquals(0, path3.length());
+            Assert.assertEquals(0, path3.size());
 
             // test non-existing file
-            path2.trimTo(plen).concat("hello.txt").$();
+            path2.trimTo(plen).concat("hello.txt");
             Assert.assertFalse(Files.readLink(path2, path3));
-            Assert.assertEquals(0, path3.length());
+            Assert.assertEquals(0, path3.size());
 
             // test directory
-            path2.trimTo(plen).$();
+            path2.trimTo(plen);
             Assert.assertFalse(Files.readLink(path2, path3));
-            Assert.assertEquals(0, path3.length());
+            Assert.assertEquals(0, path3.size());
         }
     }
 
@@ -1044,16 +1202,16 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();
             TestUtils.writeStringToFile(temp, "abcde");
-            try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
-                Assert.assertTrue(Files.exists(path));
-                Assert.assertEquals(5, Files.length(path));
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+                Assert.assertEquals(5, Files.length(path.$()));
 
-                int fd = Files.openRW(path);
+                long fd = Files.openRW(path.$());
                 try {
                     Files.truncate(fd, 3);
-                    Assert.assertEquals(3, Files.length(path));
+                    Assert.assertEquals(3, Files.length(path.$()));
                     Files.truncate(fd, 0);
-                    Assert.assertEquals(0, Files.length(path));
+                    Assert.assertEquals(0, Files.length(path.$()));
                 } finally {
                     Files.close(fd);
                 }
@@ -1067,16 +1225,16 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             File folder = temporaryFolder.newFolder("folder");
             try (
-                    Path path = new Path().of(folder.getAbsolutePath()).$();
-                    Path link = new Path().of(folder.getParentFile().toString()).concat("link").$()
+                    Path path = new Path().of(folder.getAbsolutePath());
+                    Path link = new Path().of(folder.getParentFile().toString()).concat("link")
             ) {
-                Assert.assertTrue(Files.exists(path));
-                int pathType = Files.findType(Files.findFirst(path));
+                Assert.assertTrue(Files.exists(path.$()));
+                int pathType = Files.findType(Files.findFirst(path.$()));
                 Assert.assertEquals(Files.DT_DIR, pathType);
 
-                Assert.assertEquals(0, Files.softLink(path, link));
-                Assert.assertTrue(Files.exists(link));
-                int linkType = Files.findType(Files.findFirst(link));
+                Assert.assertEquals(0, Files.softLink(path.$(), link.$()));
+                Assert.assertTrue(Files.exists(link.$()));
+                int linkType = Files.findType(Files.findFirst(link.$()));
                 Assert.assertEquals(Files.DT_DIR, linkType);
 
                 Assert.assertEquals(pathType, linkType);
@@ -1100,8 +1258,8 @@ public class FilesTest {
 
             try (
                     Path srcPath = new Path().of(tmpFolder.getAbsolutePath());
-                    Path coldRoot = new Path().of(srcPath).concat("S3").slash$(); // does not exist yet
-                    Path linkPath = new Path().of(coldRoot).concat(fileName).put(TableUtils.ATTACHABLE_DIR_MARKER).$()
+                    Path coldRoot = new Path().of(srcPath).concat("S3").slash(); // does not exist yet
+                    Path linkPath = new Path().of(coldRoot).concat(fileName).put(TableUtils.ATTACHABLE_DIR_MARKER)
             ) {
                 createTempFile(srcPath, fileName, fileContent); // updates srcFilePath
 
@@ -1112,7 +1270,7 @@ public class FilesTest {
                 assertEqualsFileContent(linkPath, fileContent);
 
                 // unlink soft link
-                Assert.assertEquals(0, Files.unlink(linkPath));
+                Assert.assertEquals(0, Files.unlink(linkPath.$()));
 
                 // check original file still exists and contents are the same
                 assertEqualsFileContent(srcPath, fileContent);
@@ -1121,7 +1279,7 @@ public class FilesTest {
                 File link = new File(linkPath.toString());
                 Assert.assertFalse(link.exists());
                 Assert.assertFalse(link.canRead());
-                Assert.assertEquals(-1, Files.openRO(linkPath));
+                Assert.assertEquals(-1, Files.openRO(linkPath.$()));
             }
         });
     }
@@ -1131,8 +1289,8 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();
 
-            try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
-                int fd1 = Files.openRW(path.$());
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                long fd1 = Files.openRW(path.$());
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
 
                 long testValue = 0x1234567890ABCDEFL;
@@ -1152,7 +1310,7 @@ public class FilesTest {
                     Unsafe.free(mem, 8, MemoryTag.NATIVE_DEFAULT);
 
                     // Delete files
-                    Files.remove(path);
+                    Files.remove(path.$());
                 }
             }
         });
@@ -1163,9 +1321,9 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();
 
-            try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
-                int fd1 = Files.openRW(path.$());
-                int fd2 = Files.openRW(path.put(".2").$());
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                long fd1 = Files.openRW(path.$());
+                long fd2 = Files.openRW(path.put(".2").$());
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
                 long mmap = 0;
 
@@ -1198,7 +1356,7 @@ public class FilesTest {
                     Unsafe.free(mem, 8, MemoryTag.NATIVE_DEFAULT);
 
                     // Delete files
-                    Files.remove(path);
+                    Files.remove(path.$());
                     Files.remove(path.of(temp.getAbsolutePath()).$());
                 }
             }
@@ -1208,13 +1366,13 @@ public class FilesTest {
     private static void assertEqualsFileContent(Path path, String fileContent) {
         final int buffSize = 2048;
         final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
-        int fd = -1;
+        long fd = -1;
         try {
-            fd = Files.openRO(path);
+            fd = Files.openRO(path.$());
             Assert.assertTrue(Files.exists(fd));
             long size = Files.length(fd);
             if (size > buffSize) {
-                throw new LogError("File is too big: " + path);
+                throw new LogError("File is too big: " + path.$());
             }
             if (size < 0 || size != Files.read(fd, buffPtr, size, 0)) {
                 throw new LogError(String.format(
@@ -1224,9 +1382,9 @@ public class FilesTest {
                         size
                 ));
             }
-            StringSink sink = Misc.getThreadLocalBuilder();
-            Chars.utf8toUtf16(buffPtr, buffPtr + size, sink);
-            TestUtils.assertEquals(fileContent, sink.toString());
+            StringSink sink = Misc.getThreadLocalSink();
+            Utf8s.utf8ToUtf16(buffPtr, buffPtr + size, sink);
+            TestUtils.assertEquals(fileContent, sink);
         } finally {
             Files.close(fd);
             Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
@@ -1235,8 +1393,8 @@ public class FilesTest {
 
     private static void createSoftLink(Path coldRoot, Path srcFilePath, Path softLinkFilePath) {
         Assert.assertEquals(0, Files.mkdirs(coldRoot, 509));
-        Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
-        Assert.assertTrue(Os.isWindows() || Files.isSoftLink(softLinkFilePath)); // TODO: isSoftLink is not working on Windows
+        Assert.assertEquals(0, Files.softLink(srcFilePath.$(), softLinkFilePath.$()));
+        Assert.assertTrue(Os.isWindows() || Files.isSoftLink(softLinkFilePath.$())); // TODO: isSoftLink is not working on Windows
     }
 
     private static void createTempFile(Path path, String fileName, String fileContent) {
@@ -1248,7 +1406,7 @@ public class FilesTest {
             Unsafe.getUnsafe().putByte(p++, bytes[i]);
         }
         Unsafe.getUnsafe().putByte(p, (byte) 0);
-        int fd = -1;
+        long fd = -1;
         try {
             fd = Files.openAppend(path.concat(fileName).$());
             if (fd > -1) {
@@ -1265,16 +1423,16 @@ public class FilesTest {
 
     private static void testAllocateConcurrent0(FilesFacade ff, String pathName, int index, AtomicInteger errors) {
         try (
-                Path path = new Path().of(pathName).concat("hello.").put(index).put(".txt").$();
-                Path p2 = new Path().of(pathName).$()
+                Path path = new Path().of(pathName).concat("hello.").put(index).put(".txt");
+                Path p2 = new Path().of(pathName)
         ) {
-            int fd = -1;
+            long fd = -1;
             long mem = -1;
-            long diskSize = ff.getDiskFreeSpace(p2);
+            long diskSize = ff.getDiskFreeSpace(p2.$());
             Assert.assertNotEquals(-1, diskSize);
             long fileSize = diskSize / 3 * 2;
             try {
-                fd = ff.openRW(path, CairoConfiguration.O_NONE);
+                fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
                 assert fd != -1;
                 if (ff.allocate(fd, fileSize)) {
                     mem = ff.mmap(fd, fileSize, 0, Files.MAP_RW, 0);
@@ -1289,7 +1447,7 @@ public class FilesTest {
                     ff.close(fd);
                 }
 
-                ff.remove(path);
+                ff.remove(path.$());
             }
         } catch (Throwable e) {
             e.printStackTrace();
@@ -1324,24 +1482,24 @@ public class FilesTest {
                     "power ratio, not aslogarithmic decibels)." + EOL;
             try (
                     Path srcFilePath = new Path().of(dbRoot.getAbsolutePath());
-                    Path hardLinkFilePath = new Path().of(dbRoot.getAbsolutePath()).concat(fileName).put(".1").$()
+                    Path hardLinkFilePath = new Path().of(dbRoot.getAbsolutePath()).concat(fileName).put(".1")
             ) {
                 createTempFile(srcFilePath, fileName, fileContent);
 
                 // perform the hard link
-                Assert.assertEquals(0, Files.hardLink(srcFilePath, hardLinkFilePath));
+                Assert.assertEquals(0, Files.hardLink(srcFilePath.$(), hardLinkFilePath.$()));
 
                 // check content are the same
                 assertEqualsFileContent(hardLinkFilePath, fileContent);
 
                 // delete source file
-                Assert.assertTrue(Files.remove(srcFilePath));
+                Assert.assertTrue(Files.remove(srcFilePath.$()));
 
                 // check linked file still exists and content are the same
                 assertEqualsFileContent(hardLinkFilePath, fileContent);
 
-                Files.remove(srcFilePath);
-                Assert.assertTrue(Files.remove(hardLinkFilePath));
+                Files.remove(srcFilePath.$());
+                Assert.assertTrue(Files.remove(hardLinkFilePath.$()));
             }
         });
     }
@@ -1349,8 +1507,8 @@ public class FilesTest {
     private void assertLastModified(Path path, long t) throws IOException {
         File f = temporaryFolder.newFile();
         Assert.assertTrue(Files.touch(path.of(f.getAbsolutePath()).$()));
-        Assert.assertTrue(Files.setLastModified(path, t));
-        Assert.assertEquals(t, Files.getLastModified(path));
+        Assert.assertTrue(Files.setLastModified(path.$(), t));
+        Assert.assertEquals(t, Files.getLastModified(path.$()));
     }
 
     private void assertSoftLinkDoesNotPreserveFileContent(String fileName) throws Exception {
@@ -1367,9 +1525,9 @@ public class FilesTest {
 
             try (
                     Path srcFilePath = new Path().of(tmpFolder.getAbsolutePath());
-                    Path coldRoot = new Path().of(srcFilePath).concat("S3").slash$();
-                    Path softLinkRenamedFilePath = new Path().of(coldRoot).concat(fileName).$();
-                    Path softLinkFilePath = new Path().of(softLinkRenamedFilePath).put(TableUtils.ATTACHABLE_DIR_MARKER).$()
+                    Path coldRoot = new Path().of(srcFilePath).concat("S3").slash();
+                    Path softLinkRenamedFilePath = new Path().of(coldRoot).concat(fileName);
+                    Path softLinkFilePath = new Path().of(softLinkRenamedFilePath).put(TableUtils.ATTACHABLE_DIR_MARKER)
             ) {
                 createTempFile(srcFilePath, fileName, fileContent); // updates srcFilePath
 
@@ -1380,7 +1538,7 @@ public class FilesTest {
                 assertEqualsFileContent(softLinkFilePath, fileContent);
 
                 // delete soft link
-                Assert.assertTrue(Files.remove(softLinkFilePath));
+                Assert.assertTrue(Files.remove(softLinkFilePath.$()));
 
                 // check original file still exists and contents are the same
                 assertEqualsFileContent(srcFilePath, fileContent);
@@ -1389,13 +1547,13 @@ public class FilesTest {
                 createSoftLink(coldRoot, srcFilePath, softLinkFilePath);
 
                 // rename the link
-                Assert.assertEquals(0, Files.rename(softLinkFilePath, softLinkRenamedFilePath));
+                Assert.assertEquals(0, Files.rename(softLinkFilePath.$(), softLinkRenamedFilePath.$()));
 
                 // check contents are the same
                 assertEqualsFileContent(softLinkRenamedFilePath, fileContent);
 
                 // delete original file
-                Assert.assertTrue(Files.remove(srcFilePath));
+                Assert.assertTrue(Files.remove(srcFilePath.$()));
 
                 // check that when listing the folder where the link is, we can actually find it
                 File link = new File(softLinkRenamedFilePath.toString());
@@ -1407,9 +1565,52 @@ public class FilesTest {
                 // however, OS checks do check the existence of the file pointed to
                 Assert.assertFalse(link.exists());
                 Assert.assertFalse(link.canRead());
-                Assert.assertEquals(-1, Files.openRO(softLinkFilePath));
-                Assert.assertTrue(Files.remove(softLinkRenamedFilePath));
+                Assert.assertEquals(-1, Files.openRO(softLinkFilePath.$()));
+                Assert.assertTrue(Files.remove(softLinkRenamedFilePath.$()));
             }
         });
+    }
+
+    private boolean isDirOrSoftLinkDir(File basePath, String path) {
+        try (Path p = new Path().of(new File(basePath, path).toString())) {
+            return Files.isDirOrSoftLinkDir(p.$());
+        }
+    }
+
+    private void setupPath(File baseDir, String scenario) throws IOException {
+        // Under the base dir:
+        //   - create dirs for any scenario ending in /
+        //   - create symlinks for any scenario containing arrows (i.e. "LINK -> TARGET")
+        //   - create files for any other scenario
+        if (scenario.contains(" -> ")) {
+            final String[] parts = scenario.split(" -> ");
+            final String targetPathString = parts[1].replaceAll("/$", "");
+            final File target = new File(baseDir, targetPathString);
+            final File link = new File(baseDir, parts[0]);
+            Assert.assertTrue(link.getParentFile().exists() || link.getParentFile().mkdirs());
+            try (
+                    Path targetPath = new Path().of(target.getAbsolutePath());
+                    Path linkPath = new Path().of(link.getAbsolutePath())
+            ) {
+                Files.softLink(targetPath.$(), linkPath.$());
+                Assert.assertTrue(
+                        "Could not set up scenario: " + scenario,
+                        Files.exists(linkPath.$()));
+            }
+
+        } else if (scenario.endsWith("/")) {
+            final File file = new File(baseDir, scenario.replaceAll("/$", ""));
+            Assert.assertTrue(file.mkdirs());
+            Assert.assertTrue(
+                    "Could not set up scenario: " + scenario,
+                    file.exists());
+        } else {
+            final File file = new File(baseDir, scenario);
+            Assert.assertTrue(file.getParentFile().exists() || file.getParentFile().mkdirs());
+            touch(file);
+            Assert.assertTrue(
+                    "Could not set up scenario: " + scenario,
+                    file.exists());
+        }
     }
 }

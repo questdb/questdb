@@ -2,12 +2,11 @@
 
 This is a short guide to outline steps involved making QuestDB release.
 
-## Compile release notes
+## Edit release notes
 
-Collect commit messages from git log and compile new `draft` release notes.
-Please make sure not to publish it before `git` repo is ready.
-
-When crafting new release note, please take previous release notes as style
+First step is to create a draft release with the intended release version number and release notes. Git tag should not
+be created but the correct tag (the intended release number) should be chosen in the draft with the option
+to create the tag on release publish. When crafting new release note, please take previous release notes as style
 guidelines. Releases should not look too dissimilar.
 
 ## Create a new branch from `master`
@@ -15,6 +14,7 @@ guidelines. Releases should not look too dissimilar.
 ```bash
 git fetch
 git checkout master
+git pull
 git checkout -b v_7_1_1
 ```
 
@@ -41,17 +41,15 @@ Note that `-B` flag will make assumptions about release version. Use it if your 
 a special version, for example `8.0` you will want to remove `-B` and answer questions about versions in interactive
 mode that follows.
 
-## Compile binaries on multiple platforms
-
-Compile using maven on Windows, Linux and FreeBSD and upload to GH release
-
-```bash
-git fetch --tags
-git checkout tags/7.1.1
-mvn clean package -DskipTests -P build-web-console,build-binaries
-```
-
 ## Release Docker image
+
+Azure [Build Docker Image](https://dev.azure.com/questdb/questdb/_build?definitionId=22) pipeline will automatically
+build and release the docker image to Docker Hub once the tag is pushed to the repo.
+
+### Manual way of building the docker
+
+In case of [Build Docker Image](https://dev.azure.com/questdb/questdb/_build?definitionId=22) job fails, here are the
+steps to build the images.
 
 Prune docker images to ensure clean build
 
@@ -71,6 +69,25 @@ Then build `latest`. This should be instant. Note tag name on the end of the com
 
 ```
 docker buildx build --push --platform linux/arm64,linux/amd64 --tag questdb/questdb:latest --build-arg tag_name=7.1.1 .
+```
+
+### Build QuestDB binaries
+
+[Github Binaries Release](https://dev.azure.com/questdb/questdb/_build?definitionId=33) Azure pipeline will
+automatically run on release tag. This pipeline will upload the binaries to the existing Github release draft.
+It will also mark the release draft as non-draft and latest.
+
+Check the job run status and when completed go to the latest release
+in https://github.com/questdb/questdb/releases to check that everything is in order.
+
+In case of [Github Binaries Release](https://dev.azure.com/questdb/questdb/_build?definitionId=33) job failure, the
+binaries can be compiled using maven on Windows and Linux
+and uploaded to GH release page
+
+```bash
+git fetch --tags
+git checkout tags/7.1.1
+mvn clean package -DskipTests -P build-web-console,build-binaries
 ```
 
 ## Release Java Library

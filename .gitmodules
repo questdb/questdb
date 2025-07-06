@@ -1,0 +1,12 @@
+[submodule "core/src/main/c/share/jemalloc"]
+	path = core/src/main/c/share/jemalloc
+	url = https://github.com/jemalloc/jemalloc.git
+[submodule "core/src/main/c/share/simdjson"]
+	path = core/src/main/c/share/simdjson
+	url = https://github.com/simdjson/simdjson.git
+[submodule "core/rust/qdbr/parquet2/testing/parquet-testing"]
+	path = core/rust/qdbr/parquet2/testing/parquet-testing
+	url = https://github.com/apache/parquet-testing/
+[submodule "core/src/main/c/share/zlib"]
+	path = core/src/main/c/share/zlib
+	url = https://github.com/madler/zlib/

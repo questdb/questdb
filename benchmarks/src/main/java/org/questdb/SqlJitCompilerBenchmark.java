@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -57,7 +57,7 @@ public class SqlJitCompilerBenchmark {
     public String column;
     @Param({"SIMD", "SCALAR", "DISABLED"})
     public JitMode jitMode;
-    private SqlCompiler compiler;
+    private SqlCompilerImpl compiler;
     private SqlExecutionContextImpl ctx;
     private CairoEngine engine;
     private RecordCursorFactory factory;
@@ -72,7 +72,7 @@ public class SqlJitCompilerBenchmark {
                             -1,
                             null
                     );
-            try (SqlCompiler compiler = new SqlCompiler(engine)) {
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 compiler.compile("create table if not exists x as (select" +
                         " rnd_long() i64," +
                         " rnd_int() i32," +
@@ -99,7 +99,7 @@ public class SqlJitCompilerBenchmark {
     public void setup() throws Exception {
         engine = new CairoEngine(configuration);
         ctx = new SqlExecutionContextImpl(engine, 1);
-        compiler = new SqlCompiler(engine);
+        compiler = new SqlCompilerImpl(engine);
 
         boolean jitShouldBeEnabled = false;
         switch (jitMode) {
@@ -115,7 +115,7 @@ public class SqlJitCompilerBenchmark {
                 ctx.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
                 break;
         }
-        compiler = new SqlCompiler(engine);
+        compiler = new SqlCompilerImpl(engine);
         factory = compiler.compile("select * from x where " + column + " = 0", ctx).getRecordCursorFactory();
         if (factory.usesCompiledFilter() != jitShouldBeEnabled) {
             throw new IllegalStateException("Unexpected JIT usage reported by factory: " +

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,8 +24,12 @@
 
 package org.questdb;
 
-import io.questdb.std.*;
-import io.questdb.std.str.DirectUnboundedByteSink;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.FlyweightDirectUtf16Sink;
+import io.questdb.std.str.Utf8s;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -39,9 +43,9 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class SinkDoubleBenchmark {
     private final static double d = 78899.9;
+    private final static FlyweightDirectUtf16Sink directSink = new FlyweightDirectUtf16Sink();
     private final static long l = 2298989898L;
     private final static long memSize = 1024 * 16;
-    private final static DirectUnboundedByteSink unboundedSink = new DirectUnboundedByteSink();
     private long mem;
 
     public static void main(String[] args) throws RunnerException {
@@ -69,25 +73,25 @@ public class SinkDoubleBenchmark {
 
     @Benchmark
     public long testSinkDouble() {
-        unboundedSink.of(mem);
-        Numbers.append(unboundedSink, d);
-        return unboundedSink.getAddress();
+        directSink.of(mem, mem + memSize);
+        Numbers.append(directSink, d);
+        return directSink.ptr();
     }
 
     @Benchmark
     public long testSinkLong() {
-        unboundedSink.of(mem);
-        Numbers.append(unboundedSink, l);
-        return unboundedSink.getAddress();
+        directSink.of(mem, mem + memSize);
+        Numbers.append(directSink, l);
+        return directSink.ptr();
     }
 
     @Benchmark
     public long testToStringDouble() {
-        return Chars.asciiStrCpy(Double.toString(d), mem);
+        return Utf8s.strCpyAscii(Double.toString(d), mem);
     }
 
     @Benchmark
     public long testToStringLong() {
-        return Chars.asciiStrCpy(Long.toString(l), mem);
+        return Utf8s.strCpyAscii(Long.toString(l), mem);
     }
 }

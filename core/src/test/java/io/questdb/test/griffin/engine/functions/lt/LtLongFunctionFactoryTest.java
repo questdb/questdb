@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,9 +26,9 @@ package io.questdb.test.griffin.engine.functions.lt;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.lt.LtLongFunctionFactory;
 import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class LtLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -40,9 +40,9 @@ public class LtLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
         call(-7L, 7L).andAssert(true);
         call(1L, -1L).andAssert(false);
         call(-10L, -10L).andAssert(false);
-        call(Numbers.LONG_NaN, 7L).andAssert(false);
-        call(42L, Numbers.LONG_NaN).andAssert(false);
-        call(Numbers.LONG_NaN, Numbers.LONG_NaN).andAssert(false);
+        call(Numbers.LONG_NULL, 7L).andAssert(false);
+        call(42L, Numbers.LONG_NULL).andAssert(false);
+        call(Numbers.LONG_NULL, Numbers.LONG_NULL).andAssert(false);
     }
 
     @Override

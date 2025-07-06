@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,11 +26,13 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -44,15 +46,13 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     protected final String unsupportedTableMessage = "Table does not have any indexes";
     private final MillisecondClock clock;
     private final StringSink tempStringSink = new StringSink();
-    protected FilesFacade ff;
-    protected Path path = new Path();
+    protected Path path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
     protected int rootLen;
     protected String unsupportedColumnMessage = "Wrong column type";
-    private int lockFd;
+    private long lockFd;
 
     public RebuildColumnBase(CairoConfiguration configuration) {
         this.configuration = configuration;
-        this.ff = configuration.getFilesFacade();
         this.clock = configuration.getMillisecondClock();
     }
 
@@ -67,21 +67,21 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         this.path = Misc.free(path);
     }
 
-    public RebuildColumnBase of(CharSequence tablePath) {
+    public RebuildColumnBase of(Utf8Sequence tablePath) {
         this.path.of(tablePath);
-        this.rootLen = tablePath.length();
+        this.rootLen = tablePath.size();
         return this;
     }
 
     public void rebuildAll() {
-        reindex(ff, null, null);
+        reindex(configuration.getFilesFacade(), null, null);
     }
 
     public void reindex(
             @Nullable CharSequence partitionName,
             @Nullable CharSequence columnName
     ) {
-        reindex(ff, partitionName, columnName);
+        reindex(configuration.getFilesFacade(), partitionName, columnName);
     }
 
     public void reindex(
@@ -91,8 +91,8 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     ) {
         try {
             lock(ff);
-            path.concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-            try (ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path)) {
+            path.concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+            try (ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path.$())) {
                 final long deadline = clock.getTicks() + configuration.getSpinLockTimeout();
                 columnVersionReader.readSafe(clock, deadline);
                 path.trimTo(rootLen);
@@ -173,14 +173,13 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     private void lock(FilesFacade ff) {
         try {
             path.trimTo(rootLen);
-            lockName(path);
-            this.lockFd = TableUtils.lock(ff, path);
+            this.lockFd = TableUtils.lock(ff, lockName(path));
         } finally {
             path.trimTo(rootLen);
         }
 
         if (this.lockFd == -1) {
-            throw CairoException.nonCritical().put("Cannot lock table: ").put(path.$());
+            throw CairoException.nonCritical().put("cannot lock table: ").put(path.$());
         }
     }
 
@@ -340,10 +339,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             lockFd = -1;
             try {
                 path.trimTo(rootLen);
-                lockName(path);
-                if (ff.exists(path) && !ff.remove(path)) {
-                    throw CairoException.critical(ff.errno()).put("Cannot remove ").put(path);
-                }
+                ff.remove(lockName(path));
             } finally {
                 path.trimTo(rootLen);
             }

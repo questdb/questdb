@@ -1,8 +1,17 @@
 {
   "files": [
     "README.md",
+    "i18n/README.ar-dz.md",
+    "i18n/README.es-es.md",
+    "i18n/README.it-it.md",
+    "i18n/README.ja-ja.md",
+    "i18n/README.pt.md",
+    "i18n/README.ua-ua.md",
     "i18n/README.zh-cn.md",
-    "i18n/README.ar-dz.md"
+    "i18n/README.zh-hk.md",
+    "i18n/README.tr-tr.md",
+    "i18n/README.hn-in.md",
+    "i18n/README.vi-vn.md"
   ],
   "imageSize": 100,
   "commit": false,
@@ -1036,6 +1045,51 @@
       "contributions": [
         "bug"
       ]
+    },
+    {
+      "login": "allegraharris",
+      "name": "Allegra Harris",
+      "avatar_url": "https://avatars.githubusercontent.com/u/89586969?v=4",
+      "profile": "https://github.com/allegraharris",
+      "contributions": [
+        "code"
+      ]
+    },
+    {
+      "login": "oliver-daniel",
+      "name": "Oliver Daniel",
+      "avatar_url": "https://avatars.githubusercontent.com/u/17235417?v=4",
+      "profile": "https://github.com/oliver-daniel",
+      "contributions": [
+        "code"
+      ]
+    },
+    {
+      "login": "kerimsenturk5734",
+      "name": "Kerim Şentürk",
+      "avatar_url": "https://avatars.githubusercontent.com/u/72925170?v=4",
+      "profile": "https://github.com/kerimsenturk5734",
+      "contributions": [
+        "doc"
+      ]
+    },
+    {
+      "login": "heysagnik",
+      "name": "Sagnik Sahoo",
+      "avatar_url": "https://avatars.githubusercontent.com/u/70798495?v=4",
+      "profile": "https://github.com/heysagnik",
+      "contributions": [
+        "doc"
+      ]
+    },
+    {
+      "login": "hoangsvit",
+      "name": "David Nguyen",
+      "avatar_url": "https://avatars.githubusercontent.com/u/11882322?v=4",
+      "profile": "https://github.com/hoangsvit",
+      "contributions": [
+        "doc"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
@@ -1046,5 +1100,6 @@
   "repoType": "github",
   "repoHost": "https://github.com",
   "skipCi": true,
-  "commitConvention": "angular"
+  "commitConvention": "angular",
+  "commitType": "docs"
 }

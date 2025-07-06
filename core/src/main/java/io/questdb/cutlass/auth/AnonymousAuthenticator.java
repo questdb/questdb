@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,10 @@
 
 package io.questdb.cutlass.auth;
 
-public class AnonymousAuthenticator implements Authenticator {
+import io.questdb.network.Socket;
+import org.jetbrains.annotations.NotNull;
+
+public class AnonymousAuthenticator implements SocketAuthenticator {
 
     public static final AnonymousAuthenticator INSTANCE = new AnonymousAuthenticator();
 
@@ -49,7 +52,7 @@ public class AnonymousAuthenticator implements Authenticator {
     }
 
     @Override
-    public void init(int fd, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
+    public void init(@NotNull Socket socket, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
     }
 
     @Override

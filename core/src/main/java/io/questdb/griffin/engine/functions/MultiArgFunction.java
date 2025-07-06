@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,12 +44,7 @@ public interface MultiArgFunction extends Function {
 
     @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        Function.init(getArgs(), symbolTableSource, executionContext);
-    }
-
-    @Override
-    default void initCursor() {
-        Function.initCursor(getArgs());
+        Function.init(getArgs(), symbolTableSource, executionContext, null);
     }
 
     @Override
@@ -64,15 +59,27 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
-    default boolean isReadThreadSafe() {
+    default boolean isNonDeterministic() {
         final ObjList<Function> args = getArgs();
         for (int i = 0, n = args.size(); i < n; i++) {
             final Function function = args.getQuick(i);
-            if (!function.isReadThreadSafe()) {
-                return false;
+            if (function.isNonDeterministic()) {
+                return true;
             }
         }
-        return true;
+        return false;
+    }
+
+    @Override
+    default boolean isRandom() {
+        final ObjList<Function> args = getArgs();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function function = args.getQuick(i);
+            if (function.isRandom()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -81,6 +88,55 @@ public interface MultiArgFunction extends Function {
         for (int i = 0, n = args.size(); i < n; i++) {
             final Function function = args.getQuick(i);
             if (!function.isRuntimeConstant() && !function.isConstant()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    default boolean isThreadSafe() {
+        final ObjList<Function> args = getArgs();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function function = args.getQuick(i);
+            if (!function.isThreadSafe()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof MultiArgFunction) {
+            ObjList<Function> thatArgs = ((MultiArgFunction) that).getArgs();
+            ObjList<Function> thisArgs = getArgs();
+            if (thatArgs.size() == thisArgs.size()) {
+                for (int i = 0; i < thisArgs.size(); i++) {
+                    thisArgs.getQuick(i).offerStateTo(thatArgs.getQuick(i));
+                }
+            }
+        }
+    }
+
+    @Override
+    default boolean shouldMemoize() {
+        final ObjList<Function> args = getArgs();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function function = args.getQuick(i);
+            if (function.shouldMemoize()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
+    default boolean supportsParallelism() {
+        final ObjList<Function> args = getArgs();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function function = args.getQuick(i);
+            if (!function.supportsParallelism()) {
                 return false;
             }
         }

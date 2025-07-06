@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -60,7 +60,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
             long fromFnTimestamp = fromFn.getTimestamp(null);
             long toFnTimestamp = toFn.getTimestamp(null);
 
-            if (fromFnTimestamp == Numbers.LONG_NaN || toFnTimestamp == Numbers.LONG_NaN) {
+            if (fromFnTimestamp == Numbers.LONG_NULL || toFnTimestamp == Numbers.LONG_NULL) {
                 return BooleanConstant.FALSE;
             }
             return new ConstFunc(arg, fromFnTimestamp, toFnTimestamp);
@@ -87,7 +87,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             long timestamp = left.getTimestamp(rec);
-            if (timestamp == Numbers.LONG_NaN) return false;
+            if (timestamp == Numbers.LONG_NULL) return false;
 
             return from <= timestamp && timestamp <= to;
         }
@@ -112,17 +112,17 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NaN) {
+            if (value == Numbers.LONG_NULL) {
                 return false;
             }
 
             long fromTs = from.getTimestamp(rec);
-            if (fromTs == Numbers.LONG_NaN) {
+            if (fromTs == Numbers.LONG_NULL) {
                 return false;
             }
 
             long toTs = to.getTimestamp(rec);
-            if (toTs == Numbers.LONG_NaN) {
+            if (toTs == Numbers.LONG_NULL) {
                 return false;
             }
 

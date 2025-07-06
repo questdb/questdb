@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,44 +24,85 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cutlass.http.*;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpRangeParser;
+import io.questdb.cutlass.http.HttpRawSocket;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.HttpResponseHeader;
+import io.questdb.cutlass.http.LocalValue;
+import io.questdb.cutlass.http.MimeTypesCache;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.*;
-import io.questdb.std.str.FileNameExtractorCharSequence;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Utf8SequenceObjHashMap;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.FileNameExtractorUtf8Sequence;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.PrefixedPath;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
-public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
+import static io.questdb.cutlass.http.HttpConstants.*;
+import static java.net.HttpURLConnection.HTTP_MOVED_PERM;
+import static java.net.HttpURLConnection.HTTP_NOT_FOUND;
+
+public class StaticContentProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
     private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
     private static final LocalValue<StaticContentProcessorState> LV = new LocalValue<>();
+    private final StaticContentProcessorConfiguration configuration;
     private final FilesFacade ff;
     private final String httpProtocolVersion;
-    private final CharSequence indexFileName;
     private final String keepAliveHeader;
     private final MimeTypesCache mimeTypes;
     private final PrefixedPath prefixedPath;
     private final HttpRangeParser rangeParser = new HttpRangeParser();
-    private final boolean requiresAuthentication;
+    private final byte requiredAuthType;
+    private final Utf8StringSink utf8Sink = new Utf8StringSink();
+    private final Utf8Sequence webConsoleContextPath;
 
-    public StaticContentProcessor(HttpServerConfiguration configuration) {
+    public StaticContentProcessor(HttpFullFatServerConfiguration configuration) {
+        this.configuration = configuration.getStaticContentProcessorConfiguration();
         this.mimeTypes = configuration.getStaticContentProcessorConfiguration().getMimeTypesCache();
         this.prefixedPath = new PrefixedPath(configuration.getStaticContentProcessorConfiguration().getPublicDirectory());
-        this.indexFileName = configuration.getStaticContentProcessorConfiguration().getIndexFileName();
         this.ff = configuration.getStaticContentProcessorConfiguration().getFilesFacade();
         this.keepAliveHeader = configuration.getStaticContentProcessorConfiguration().getKeepAliveHeader();
         this.httpProtocolVersion = configuration.getHttpContextConfiguration().getHttpVersion();
-        this.requiresAuthentication = configuration.getStaticContentProcessorConfiguration().isAuthenticationRequired();
+        this.requiredAuthType = configuration.getStaticContentProcessorConfiguration().getRequiredAuthType();
+        this.webConsoleContextPath = new Utf8String(configuration.getContextPathWebConsole());
     }
 
     @Override
     public void close() {
         Misc.free(prefixedPath);
+    }
+
+    @Override
+    public HttpRequestProcessor getDefaultProcessor() {
+        return this;
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
+    }
+
+    @Override
+    public byte getRequiredAuthType() {
+        return requiredAuthType;
     }
 
     public LogRecord logInfoWithFd(HttpConnectionContext context) {
@@ -71,34 +112,48 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpRequestHeader headers = context.getRequestHeader();
-        CharSequence url = headers.getUrl();
+        final Utf8Sequence url = headers.getUrl();
         logInfoWithFd(context).$("incoming [url=").$(url).$(']').$();
-        if (Chars.contains(url, "..")) {
+
+        if (Utf8s.containsAscii(url, "..")) {
             logInfoWithFd(context).$("URL abuse: ").$(url).$();
-            sendStatusWithDefaultMessage(context, 404);
-        } else {
-            PrefixedPath path = prefixedPath.rewind();
+            sendStatusTextContent(context, HTTP_NOT_FOUND);
+            return;
+        }
 
-            if (Chars.equals(url, '/')) {
-                path.concat(indexFileName);
-            } else {
-                path.concat(url);
+        // hit redirects first, they can be outside the context path for the static files
+        final Utf8SequenceObjHashMap<Utf8Sequence> redirectMap = configuration.getRedirectMap();
+        int index = redirectMap.keyIndex(url);
+        if (index < 0) {
+            utf8Sink.clear();
+            utf8Sink.putAscii("Location: ").put(redirectMap.valueAt(index));
+            if (headers.getQuery() != null) {
+                utf8Sink.putAscii('?').put(headers.getQuery());
             }
+            utf8Sink.putAscii(Misc.EOL);
+            context.simpleResponse().sendStatusNoContent(HTTP_MOVED_PERM, utf8Sink);
+            return;
+        }
 
-            path.$();
-
-            if (ff.exists(path)) {
-                send(context, path, headers.getUrlParam("attachment") != null);
+        if (Utf8s.startsWith(url, webConsoleContextPath)) {
+            utf8Sink.clear();
+            Utf8s.strCpy(url, webConsoleContextPath.size(), url.size(), utf8Sink);
+            final PrefixedPath path = prefixedPath.rewind();
+            final LPSZ lpsz = path.concat(utf8Sink).$();
+            if (ff.exists(lpsz)) {
+                send(context, lpsz, headers.getUrlParam(URL_PARAM_ATTACHMENT) != null);
+                return;
             } else {
                 logInfoWithFd(context).$("not found [path=").$(path).$(']').$();
-                sendStatusWithDefaultMessage(context, 404);
             }
         }
+
+        sendStatusTextContent(context, HTTP_NOT_FOUND);
     }
 
     @Override
     public boolean requiresAuthentication() {
-        return requiresAuthentication;
+        return requiredAuthType == SecurityContext.AUTH_TYPE_CREDENTIALS;
     }
 
     @Override
@@ -127,22 +182,22 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    private static void sendStatusWithDefaultMessage(HttpConnectionContext context, int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        context.simpleResponse().sendStatusWithDefaultMessage(code);
+    private static void sendStatusTextContent(HttpConnectionContext context, int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        context.simpleResponse().sendStatusTextContent(code);
     }
 
     private void send(HttpConnectionContext context, LPSZ path, boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        int n = Chars.lastIndexOf(path, '.');
+        int n = Utf8s.lastIndexOfAscii(path, '.');
         if (n == -1) {
             logInfoWithFd(context).$("missing extension [file=").$(path).$(']').$();
-            sendStatusWithDefaultMessage(context, 404);
+            sendStatusTextContent(context, 404);
             return;
         }
 
         HttpRequestHeader headers = context.getRequestHeader();
-        CharSequence contentType = mimeTypes.valueAt(mimeTypes.keyIndex(path, n + 1, path.length()));
-        CharSequence val;
-        if ((val = headers.getHeader("Range")) != null) {
+        CharSequence contentType = mimeTypes.valueAt(mimeTypes.keyIndex(path, n + 1, path.size()));
+        DirectUtf8Sequence val;
+        if ((val = headers.getHeader(HEADER_RANGE)) != null) {
             sendRange(context, val, path, contentType, asAttachment);
             return;
         }
@@ -150,19 +205,21 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         int l;
         // attempt not to send file when remote side already has
         // up-to-date version of the same
-        if ((val = headers.getHeader("If-None-Match")) != null
-                && (l = val.length()) > 2
-                && val.charAt(0) == '"'
-                && val.charAt(l - 1) == '"') {
+        if (
+                (val = headers.getHeader(HEADER_IF_NONE_MATCH)) != null
+                        && (l = val.size()) > 2
+                        && val.byteAt(0) == '"'
+                        && val.byteAt(l - 1) == '"'
+        ) {
             try {
                 long that = Numbers.parseLong(val, 1, l - 1);
                 if (that == ff.getLastModified(path)) {
-                    context.simpleResponse().sendStatus(304);
+                    context.simpleResponse().sendStatusNoContent(304);
                     return;
                 }
             } catch (NumericException e) {
                 LOG.info().$("bad 'If-None-Match' [value=").$(val).$(']').$();
-                sendStatusWithDefaultMessage(context, 400);
+                sendStatusTextContent(context, 400);
                 return;
             }
         }
@@ -172,7 +229,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
 
     private void sendRange(
             HttpConnectionContext context,
-            CharSequence range,
+            DirectUtf8Sequence range,
             LPSZ path,
             CharSequence contentType,
             boolean asAttachment
@@ -180,13 +237,14 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         if (rangeParser.of(range)) {
             StaticContentProcessorState state = LV.get(context);
             if (state == null) {
+                //noinspection resource
                 LV.set(context, state = new StaticContentProcessorState());
             }
 
             state.fd = ff.openRO(path);
             if (state.fd == -1) {
                 LOG.info().$("Cannot open file: ").$(path).$();
-                sendStatusWithDefaultMessage(context, 404);
+                sendStatusTextContent(context, 404);
                 return;
             }
 
@@ -196,7 +254,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             final long lo = rangeParser.getLo();
             final long hi = rangeParser.getHi();
             if (lo > length || (hi != Long.MAX_VALUE && hi > length) || lo > hi) {
-                sendStatusWithDefaultMessage(context, 416);
+                sendStatusTextContent(context, 416);
             } else {
                 state.bytesSent = lo;
                 state.sendMax = hi == Long.MAX_VALUE ? length : hi;
@@ -204,11 +262,11 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
                 final HttpResponseHeader header = context.getResponseHeader();
                 header.status(httpProtocolVersion, 206, contentType, state.sendMax - lo);
                 if (asAttachment) {
-                    header.put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorCharSequence.get(path)).put('\"').put(Misc.EOL);
+                    header.put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorUtf8Sequence.get(path)).put('\"').putEOL();
                 }
-                header.put("Accept-Ranges: bytes").put(Misc.EOL);
-                header.put("Content-Range: bytes ").put(lo).put('-').put(state.sendMax).put('/').put(length).put(Misc.EOL);
-                header.put("ETag: ").put(ff.getLastModified(path)).put(Misc.EOL);
+                header.put("Accept-Ranges: bytes").putEOL();
+                header.put("Content-Range: bytes ").put(lo).put('-').put(state.sendMax).put('/').put(length).putEOL();
+                header.put("ETag: ").put(ff.getLastModified(path)).putEOL();
                 if (keepAliveHeader != null) {
                     header.put(keepAliveHeader);
                 }
@@ -216,22 +274,24 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
                 resumeSend(context);
             }
         } else {
-            sendStatusWithDefaultMessage(context, 416);
+            sendStatusTextContent(context, 416);
         }
     }
 
     private void sendVanilla(
             HttpConnectionContext context,
-            LPSZ path, CharSequence contentType,
+            LPSZ path,
+            CharSequence contentType,
             boolean asAttachment
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        int fd = ff.openRO(path);
+        long fd = ff.openRO(path);
         if (fd == -1) {
             LOG.info().$("Cannot open file: ").$(path).$('(').$(ff.errno()).$(')').$();
-            sendStatusWithDefaultMessage(context, 404);
+            sendStatusTextContent(context, 404);
         } else {
             StaticContentProcessorState h = LV.get(context);
             if (h == null) {
+                //noinspection resource
                 LV.set(context, h = new StaticContentProcessorState());
             }
             h.fd = fd;
@@ -242,9 +302,9 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             final HttpResponseHeader header = context.getResponseHeader();
             header.status(httpProtocolVersion, 200, contentType, length);
             if (asAttachment) {
-                header.put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorCharSequence.get(path)).put("\"").put(Misc.EOL);
+                header.put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorUtf8Sequence.get(path)).put("\"").putEOL();
             }
-            header.put("ETag: ").put('"').put(ff.getLastModified(path)).put('"').put(Misc.EOL);
+            header.put("ETag: ").put('"').put(ff.getLastModified(path)).put('"').putEOL();
             header.setKeepAlive(keepAliveHeader);
             header.send();
             resumeSend(context);

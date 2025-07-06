@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,10 +32,10 @@ public class FuzzTestColumnMeta extends GenericRecordMetadata {
 
     @Override
     public GenericRecordMetadata add(TableColumnMetadata meta) {
-        columnNameIndexMap.put(meta.getName(), columnCount);
+        columnNameIndexMap.put(meta.getColumnName(), columnCount);
         columnMetadata.extendAndSet(columnCount, meta);
         columnCount++;
-        if (meta.getType() > 0) {
+        if (meta.getColumnType() > 0) {
             liveColumnCount++;
         }
         return this;
@@ -46,7 +46,7 @@ public class FuzzTestColumnMeta extends GenericRecordMetadata {
     }
 
     public void rename(int columnIndex, String name, String newName) {
-        columnMetadata.get(columnIndex).setName(newName);
+        columnMetadata.get(columnIndex).rename(newName);
         columnNameIndexMap.remove(name);
         columnNameIndexMap.put(newName, columnIndex);
     }

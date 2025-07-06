@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,38 +34,38 @@ public class O3CopyTask {
     private AtomicInteger columnCounter;
     private int columnType;
     private long dstFixAddr;
-    private int dstFixFd;
+    private long dstFixFd;
     private long dstFixFileOffset;
     private long dstFixOffset;
     private long dstFixSize;
     private long dstIndexAdjust;
     private long dstIndexOffset;
-    private int dstKFd;
-    private int dstVFd;
+    private long dstKFd;
+    private long dstVFd;
     private long dstVarAddr;
     private long dstVarAdjust;
-    private int dstVarFd;
+    private long dstVarFd;
     private long dstVarOffset;
-    private long dstVarOffsetEnd;
     private long dstVarSize;
     private int indexBlockCapacity;
     private BitmapIndexWriter indexWriter;
-    private long newPartitionSize;
-    private long oldPartitionSize;
+    private long o3SplitPartitionSize;
     private AtomicInteger partCounter;
     private boolean partitionMutates;
     private long partitionTimestamp;
     private long partitionUpdateSinkAddr;
     private long srcDataFixAddr;
-    private int srcDataFixFd;
+    private long srcDataFixFd;
     private long srcDataFixOffset;
     private long srcDataFixSize;
     private long srcDataHi;
     private long srcDataLo;
     private long srcDataMax;
+    private long srcDataNewPartitionSize;
+    private long srcDataOldPartitionSize;
     private long srcDataTop;
     private long srcDataVarAddr;
-    private int srcDataVarFd;
+    private long srcDataVarFd;
     private long srcDataVarOffset;
     private long srcDataVarSize;
     private long srcOooFixAddr;
@@ -76,7 +76,7 @@ public class O3CopyTask {
     private long srcOooPartitionLo;
     private long srcOooVarAddr;
     private long srcTimestampAddr;
-    private int srcTimestampFd;
+    private long srcTimestampFd;
     private long srcTimestampSize;
     private TableWriter tableWriter;
     private long timestampMergeIndexAddr;
@@ -99,7 +99,7 @@ public class O3CopyTask {
         return dstFixAddr;
     }
 
-    public int getDstFixFd() {
+    public long getDstFixFd() {
         return dstFixFd;
     }
 
@@ -123,11 +123,11 @@ public class O3CopyTask {
         return dstIndexOffset;
     }
 
-    public int getDstKFd() {
+    public long getDstKFd() {
         return dstKFd;
     }
 
-    public int getDstVFd() {
+    public long getDstVFd() {
         return dstVFd;
     }
 
@@ -139,16 +139,12 @@ public class O3CopyTask {
         return dstVarAdjust;
     }
 
-    public int getDstVarFd() {
+    public long getDstVarFd() {
         return dstVarFd;
     }
 
     public long getDstVarOffset() {
         return dstVarOffset;
-    }
-
-    public long getDstVarOffsetEnd() {
-        return dstVarOffsetEnd;
     }
 
     public long getDstVarSize() {
@@ -163,12 +159,8 @@ public class O3CopyTask {
         return indexWriter;
     }
 
-    public long getNewPartitionSize() {
-        return newPartitionSize;
-    }
-
-    public long getOldPartitionSize() {
-        return oldPartitionSize;
+    public long getO3SplitPartitionSize() {
+        return o3SplitPartitionSize;
     }
 
     public AtomicInteger getPartCounter() {
@@ -187,7 +179,7 @@ public class O3CopyTask {
         return srcDataFixAddr;
     }
 
-    public int getSrcDataFixFd() {
+    public long getSrcDataFixFd() {
         return srcDataFixFd;
     }
 
@@ -211,6 +203,14 @@ public class O3CopyTask {
         return srcDataMax;
     }
 
+    public long getSrcDataNewPartitionSize() {
+        return srcDataNewPartitionSize;
+    }
+
+    public long getSrcDataOldPartitionSize() {
+        return srcDataOldPartitionSize;
+    }
+
     public long getSrcDataTop() {
         return srcDataTop;
     }
@@ -219,7 +219,7 @@ public class O3CopyTask {
         return srcDataVarAddr;
     }
 
-    public int getSrcDataVarFd() {
+    public long getSrcDataVarFd() {
         return srcDataVarFd;
     }
 
@@ -263,7 +263,7 @@ public class O3CopyTask {
         return srcTimestampAddr;
     }
 
-    public int getSrcTimestampFd() {
+    public long getSrcTimestampFd() {
         return srcTimestampFd;
     }
 
@@ -298,11 +298,11 @@ public class O3CopyTask {
             int blockType,
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
-            int srcDataFixFd,
+            long srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixOffset,
             long srcDataFixSize,
-            int srcDataVarFd,
+            long srcDataVarFd,
             long srcDataVarAddr,
             long srcDataVarOffset,
             long srcDataVarSize,
@@ -319,28 +319,28 @@ public class O3CopyTask {
             long srcOooPartitionHi,
             long timestampMin,
             long oooTimestampHi,
-            int dstFixFd,
+            long dstFixFd,
             long dstFixAddr,
             long dstFixOffset,
             long dstFixFileOffset,
             long dstFixSize,
-            int dstVarFd,
+            long dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
-            long dstVarOffsetEnd,
             long dstVarAdjust,
             long dstVarSize,
-            int dstKFd,
-            int dstVFd,
+            long dstKFd,
+            long dstVFd,
             long dstIndexOffset,
             long dstIndexAdjust,
             int indexBlockCapacity,
-            int srcTimestampFd,
+            long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
-            long newPartitionSize,
-            long oldPartitionSize,
+            long srcDataNewPartitionSize,
+            long srcDataOldPartitionSize,
+            long o3NewPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long partitionUpdateSinkAddr
@@ -380,7 +380,6 @@ public class O3CopyTask {
         this.dstVarFd = dstVarFd;
         this.dstVarAddr = dstVarAddr;
         this.dstVarOffset = dstVarOffset;
-        this.dstVarOffsetEnd = dstVarOffsetEnd;
         this.dstVarAdjust = dstVarAdjust;
         this.dstVarSize = dstVarSize;
         this.dstKFd = dstKFd;
@@ -392,8 +391,9 @@ public class O3CopyTask {
         this.srcTimestampAddr = srcTimestampAddr;
         this.srcTimestampSize = srcTimestampSize;
         this.partitionMutates = partitionMutates;
-        this.newPartitionSize = newPartitionSize;
-        this.oldPartitionSize = oldPartitionSize;
+        this.srcDataNewPartitionSize = srcDataNewPartitionSize;
+        this.srcDataOldPartitionSize = srcDataOldPartitionSize;
+        this.o3SplitPartitionSize = o3NewPartitionSize;
         this.tableWriter = tableWriter;
         this.indexWriter = indexWriter;
         this.partitionUpdateSinkAddr = partitionUpdateSinkAddr;

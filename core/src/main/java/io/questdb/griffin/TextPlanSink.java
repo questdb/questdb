@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,7 +28,9 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
-import io.questdb.std.Sinkable;
+import io.questdb.std.Uuid;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8Sequence;
 
 /**
  * Gathers important query execution plan details and prints them in a readable format.
@@ -113,7 +115,7 @@ public class TextPlanSink extends BasePlanSink {
             this.childIndent = "&nbsp;&nbsp;&nbsp;&nbsp;";
             this.attrIndent = "&nbsp;&nbsp;";
             this.sink = htmlSink;
-        } else {//pg wire
+        } else { // pg wire
             this.childIndent = "    ";
             this.attrIndent = "  ";
             this.sink = textSink;
@@ -166,6 +168,11 @@ public class TextPlanSink extends BasePlanSink {
         return this;
     }
 
+    public PlanSink val(Utf8Sequence utf8) {
+        sink.put(utf8);
+        return this;
+    }
+
     public PlanSink val(Sinkable s) {
         if (s != null) {
             sink.put(s);
@@ -182,18 +189,32 @@ public class TextPlanSink extends BasePlanSink {
         return this;
     }
 
-    public PlanSink val(long long0, long long1, long long2, long long3) {
-        Numbers.appendLong256(long0, long1, long2, long3, sink);
-        return this;
-    }
-
     public PlanSink val(long hash, int geoHashBits) {
         GeoHashes.append(hash, geoHashBits, sink);
         return this;
     }
 
+    @Override
+    public PlanSink valIPv4(int ip) {
+        if (ip == Numbers.IPv4_NULL) {
+            sink.put("null");
+        } else {
+            Numbers.intToIPv4Sink(sink, ip);
+        }
+        return this;
+    }
+
+    public PlanSink valLong256(long long0, long long1, long long2, long long3) {
+        Numbers.appendLong256(long0, long1, long2, long3, sink);
+        return this;
+    }
+
     public PlanSink valUuid(long lo, long hi) {
-        Numbers.appendUuid(lo, hi, sink);
+        if (Uuid.isNull(lo, hi)) {
+            sink.put("null");
+        } else {
+            Numbers.appendUuid(lo, hi, sink);
+        }
         return this;
     }
 

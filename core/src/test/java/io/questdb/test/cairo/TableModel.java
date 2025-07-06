@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,24 +27,22 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableStructure;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.std.*;
-import io.questdb.std.str.Path;
+import io.questdb.std.Chars;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 
-import java.io.Closeable;
-
-public class TableModel implements TableStructure, Closeable {
+public class TableModel implements TableStructure {
     private static final long COLUMN_FLAG_CACHED = 1L;
-    private static final long COLUMN_FLAG_INDEXED = 2L;
+    private static final long COLUMN_FLAG_INDEXED = COLUMN_FLAG_CACHED << 1;
+    private static final long COLUMN_FLAG_DEDUP_KEY = COLUMN_FLAG_INDEXED << 1;
     private final LongList columnBits = new LongList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final CairoConfiguration configuration;
-    private final MemoryMARW mem = Vm.getMARWInstance();
     private final String name;
     private final int partitionBy;
-    private final Path path = new Path();
     private int timestampIndex = -1;
+    private int ttlHoursOrMonths;
     private int walEnabled = -1;
 
     public TableModel(CairoConfiguration configuration, String name, int partitionBy) {
@@ -64,12 +62,6 @@ public class TableModel implements TableStructure, Closeable {
             columnBits.setQuick(last, bits & ~COLUMN_FLAG_CACHED);
         }
         return this;
-    }
-
-    @Override
-    public void close() {
-        Misc.free(mem);
-        Misc.free(path);
     }
 
     public TableModel col(CharSequence name, int type) {
@@ -108,10 +100,6 @@ public class TableModel implements TableStructure, Closeable {
         return configuration.getMaxUncommittedRows();
     }
 
-    public MemoryMARW getMem() {
-        return mem;
-    }
-
     public String getName() {
         return name;
     }
@@ -124,10 +112,6 @@ public class TableModel implements TableStructure, Closeable {
     @Override
     public int getPartitionBy() {
         return partitionBy;
-    }
-
-    public Path getPath() {
-        return path;
     }
 
     @Override
@@ -150,6 +134,11 @@ public class TableModel implements TableStructure, Closeable {
         return timestampIndex;
     }
 
+    @Override
+    public int getTtlHoursOrMonths() {
+        return ttlHoursOrMonths;
+    }
+
     public TableModel indexed(boolean indexFlag, int indexBlockCapacity) {
         int pos = columnBits.size() - 1;
         assert pos > 0;
@@ -164,13 +153,13 @@ public class TableModel implements TableStructure, Closeable {
     }
 
     @Override
-    public boolean isIndexed(int index) {
-        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_INDEXED) == COLUMN_FLAG_INDEXED;
+    public boolean isDedupKey(int index) {
+        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_DEDUP_KEY) == COLUMN_FLAG_DEDUP_KEY;
     }
 
     @Override
-    public boolean isSequential(int columnIndex) {
-        return false;
+    public boolean isIndexed(int index) {
+        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_INDEXED) == COLUMN_FLAG_INDEXED;
     }
 
     @Override
@@ -203,6 +192,11 @@ public class TableModel implements TableStructure, Closeable {
         assert timestampIndex == -1;
         timestampIndex = columnNames.size();
         col(name, ColumnType.TIMESTAMP);
+        return this;
+    }
+
+    public TableModel ttlHoursOrMonths(int ttlHoursOrMonths) {
+        this.ttlHoursOrMonths = ttlHoursOrMonths;
         return this;
     }
 

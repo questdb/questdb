@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.math;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class TrigonometryTest extends AbstractGriffinTest {
+public class TrigonometryTest extends AbstractCairoTest {
 
     @Test
     public void testSimple() throws Exception {
@@ -133,9 +133,9 @@ public class TrigonometryTest extends AbstractGriffinTest {
     @Test
     public void testSimpleFromTable() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table angle (x double)", sqlExecutionContext);
+            execute("create table angle (x double)", sqlExecutionContext);
             for (int i = 0; i <= 90; i++) {
-                executeInsert("insert into angle values(" + i * Math.PI / 180.0 + ')');
+                execute("insert into angle values(" + i * Math.PI / 180.0 + ')');
             }
             printSqlResult(
                     "angleDec\tsin\tcos\ttan\n" +

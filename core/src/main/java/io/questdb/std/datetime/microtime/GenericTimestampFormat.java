@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.AbstractDateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class GenericTimestampFormat extends AbstractDateFormat {
     private final IntList compiledOps;
@@ -42,7 +44,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
     }
 
     @Override
-    public void format(long micros, DateLocale locale, CharSequence timeZoneName, CharSink sink) {
+    public void format(long micros, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
         int day = -1;
         int month = -1;
         int year = Integer.MIN_VALUE;
@@ -57,7 +59,6 @@ public class GenericTimestampFormat extends AbstractDateFormat {
         for (int i = 0, n = compiledOps.size(); i < n; i++) {
             int op = compiledOps.getQuick(i);
             switch (op) {
-
                 // AM/PM
                 case TimestampFormatCompiler.OP_AM_PM:
                     if (hour == -1) {
@@ -132,7 +133,6 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     TimestampFormatUtils.append0(sink, second);
                     break;
 
-
                 // MINUTE
                 case TimestampFormatCompiler.OP_MINUTE_ONE_DIGIT:
                 case TimestampFormatCompiler.OP_MINUTE_GREEDY:
@@ -204,14 +204,14 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     if (hour == -1) {
                         hour = Timestamps.getHourOfDay(micros);
                     }
-                    sink.put(hour + 1);
+                    TimestampFormatUtils.appendHour241(sink, hour);
                     break;
 
                 case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
                     if (hour == -1) {
                         hour = Timestamps.getHourOfDay(micros);
                     }
-                    TimestampFormatUtils.append0(sink, hour + 1);
+                    TimestampFormatUtils.appendHour241Padded(sink, hour);
                     break;
 
                 // DAY
@@ -276,8 +276,8 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                 case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
                     sink.put(Timestamps.getWeekOfYear(micros));
                     break;
-                // MONTH
 
+                // MONTH
                 case TimestampFormatCompiler.OP_MONTH_ONE_DIGIT:
                 case TimestampFormatCompiler.OP_MONTH_GREEDY:
                     if (month == -1) {
@@ -326,7 +326,6 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     break;
 
                 // YEAR
-
                 case TimestampFormatCompiler.OP_YEAR_ONE_DIGIT:
                 case TimestampFormatCompiler.OP_YEAR_GREEDY:
                     if (year == Integer.MIN_VALUE) {
@@ -362,6 +361,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     }
                     TimestampFormatUtils.appendYear000(sink, year);
                     break;
+
                 // ERA
                 case TimestampFormatCompiler.OP_ERA:
                     if (year == Integer.MIN_VALUE) {
@@ -391,7 +391,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
     }
 
     @Override
-    public long parse(CharSequence in, int lo, int hi, DateLocale locale) throws NumericException {
+    public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException {
         int day = 1;
         int month = 1;
         int year = 1970;
@@ -514,8 +514,22 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     pos += Numbers.decodeHighInt(l);
                     break;
 
-                // HOUR (0-11)
+                // HOUR - 12-hour clock convention
+                // Note: both the 0-11 system and the 1-12 system are parsed exactly the same way.
+                // In the 1-12 system, hour '12' is the same as hour '0' in the 0-11 system.
+                // All other values are the same.
+                // In fact, the 1-12 system should be called the 12-11 system, since it maps 12 to 0.
+                // Comparison table:
+                // 0-11 | 12-11
+                // 0    | 12
+                // 1    | 1
+                // 2    | 2
+                // [...]
+                //
+                // 11   | 11
+                // This means that in both the 0-11 and 1-12 systems, we can use the same parsing logic and later treat 12 as if it were 0.
                 case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
                     TimestampFormatUtils.assertRemaining(pos, hi);
                     hour = Numbers.parseInt(in, pos, ++pos);
                     if (hourType == TimestampFormatUtils.HOUR_24) {
@@ -524,6 +538,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     break;
 
                 case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
                     TimestampFormatUtils.assertRemaining(pos + 1, hi);
                     hour = Numbers.parseInt(in, pos, pos += 2);
                     if (hourType == TimestampFormatUtils.HOUR_24) {
@@ -532,6 +547,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     break;
 
                 case TimestampFormatCompiler.OP_HOUR_12_GREEDY:
+                case TimestampFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
                     l = Numbers.parseIntSafely(in, pos, hi);
                     hour = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
@@ -540,63 +556,21 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     }
                     break;
 
-                // HOUR (1-12)
-                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
-                    TimestampFormatUtils.assertRemaining(pos, hi);
-                    hour = Numbers.parseInt(in, pos, ++pos) - 1;
-                    if (hourType == TimestampFormatUtils.HOUR_24) {
-                        hourType = TimestampFormatUtils.HOUR_AM;
-                    }
-                    break;
-
-                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
-                    TimestampFormatUtils.assertRemaining(pos + 1, hi);
-                    hour = Numbers.parseInt(in, pos, pos += 2) - 1;
-                    if (hourType == TimestampFormatUtils.HOUR_24) {
-                        hourType = TimestampFormatUtils.HOUR_AM;
-                    }
-                    break;
-
-                case TimestampFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
-                    l = Numbers.parseIntSafely(in, pos, hi);
-                    hour = Numbers.decodeLowInt(l) - 1;
-                    pos += Numbers.decodeHighInt(l);
-                    if (hourType == TimestampFormatUtils.HOUR_24) {
-                        hourType = TimestampFormatUtils.HOUR_AM;
-                    }
-                    break;
-
-                // HOUR (0-23)
+                // HOUR
                 case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
                     TimestampFormatUtils.assertRemaining(pos, hi);
                     hour = Numbers.parseInt(in, pos, ++pos);
                     break;
-
                 case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
                     TimestampFormatUtils.assertRemaining(pos + 1, hi);
                     hour = Numbers.parseInt(in, pos, pos += 2);
                     break;
-
                 case TimestampFormatCompiler.OP_HOUR_24_GREEDY:
-                    l = Numbers.parseIntSafely(in, pos, hi);
-                    hour = Numbers.decodeLowInt(l);
-                    pos += Numbers.decodeHighInt(l);
-                    break;
-
-                // HOUR (1 - 24)
-                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
-                    TimestampFormatUtils.assertRemaining(pos, hi);
-                    hour = Numbers.parseInt(in, pos, ++pos) - 1;
-                    break;
-
-                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
-                    TimestampFormatUtils.assertRemaining(pos + 1, hi);
-                    hour = Numbers.parseInt(in, pos, pos += 2) - 1;
-                    break;
-
                 case TimestampFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
                     l = Numbers.parseIntSafely(in, pos, hi);
-                    hour = Numbers.decodeLowInt(l) - 1;
+                    hour = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;
 

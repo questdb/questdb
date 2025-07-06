@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,15 +33,18 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.eq.EqStrFunctionFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -51,20 +54,21 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
     public static String escapeSpecialChars(CharSequence pattern, CharSequence prev) throws SqlException {
         int len = pattern.length();
 
-        StringSink sink = Misc.getThreadLocalBuilder();
+        StringSink sink = Misc.getThreadLocalSink();
         for (int i = 0; i < len; i++) {
             char c = pattern.charAt(i);
-            if (c == '_')
+            if (c == '_') {
                 sink.put('.');
-            else if (c == '%')
+            } else if (c == '%') {
                 sink.put(".*?");
-            else if ("[](){}.*+?$^|#".indexOf(c) != -1) {
+            } else if ("[](){}.*+?$^|#".indexOf(c) != -1) {
                 sink.put("\\");
                 sink.put(c);
             } else if (c == '\\') {
-                i += 1;
-                if (i >= len)
+                i++;
+                if (i >= len) {
                     throw SqlException.parserErr(i - 1, pattern, "LIKE pattern must not end with escape character");
+                }
                 c = pattern.charAt(i);
                 if ("[](){}.*+?$^|#\\".indexOf(c) != -1) {
                     sink.put("\\");
@@ -72,8 +76,9 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                 } else {
                     sink.put(c);
                 }
-            } else
+            } else {
                 sink.put(c);
+            }
         }
 
         if (Chars.equalsNc(sink, prev)) {
@@ -94,13 +99,58 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         final Function pattern = args.getQuick(1);
 
         if (pattern.isConstant()) {
-            final CharSequence likeString = pattern.getStr(null);
-            if (likeString != null && likeString.length() > 0) {
-                String p = escapeSpecialChars(likeString, null);
+            final CharSequence likeSeq = pattern.getStrA(null);
+            int len;
+            if (likeSeq != null && (len = likeSeq.length()) > 0) {
+                if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, '\\') == 0) {
+                    final int anyCount = countChar(likeSeq, '%');
+                    if (anyCount == 1) {
+                        if (len == 1) {
+                            // LIKE '%' case
+                            final NegatableBooleanFunction notNullFunc = new EqStrFunctionFactory.NullCheckFunc(value);
+                            notNullFunc.setNegated();
+                            return notNullFunc;
+                        } else if (likeSeq.charAt(0) == '%') {
+                            // LIKE/ILIKE '%abc' case
+                            final String patternStr = likeSeq.subSequence(1, len).toString();
+                            if (isCaseInsensitive()) {
+                                return new ConstIEndsWithStrFunction(value, patternStr);
+                            } else {
+                                return new ConstEndsWithStrFunction(value, patternStr);
+                            }
+                        } else if (likeSeq.charAt(len - 1) == '%') {
+                            // LIKE/ILIKE 'abc%' case
+                            final String patternStr = likeSeq.subSequence(0, len - 1).toString();
+                            if (isCaseInsensitive()) {
+                                return new ConstIStartsWithStrFunction(value, patternStr);
+                            } else {
+                                return new ConstStartsWithStrFunction(value, patternStr);
+                            }
+                        }
+                    } else if (anyCount == 2) {
+                        if (len == 2) {
+                            // LIKE '%%' case
+                            final NegatableBooleanFunction notNullFunc = new EqStrFunctionFactory.NullCheckFunc(value);
+                            notNullFunc.setNegated();
+                            return notNullFunc;
+                        } else if (likeSeq.charAt(0) == '%' && likeSeq.charAt(len - 1) == '%') {
+                            // LIKE/ILIKE '%abc%' case
+                            final String patternStr = likeSeq.subSequence(1, len - 1).toString();
+                            if (isCaseInsensitive()) {
+                                return new ConstIContainsStrFunction(value, patternStr);
+                            } else {
+                                return new ConstContainsStrFunction(value, patternStr);
+                            }
+                        }
+                    }
+                }
+
+                String p = escapeSpecialChars(likeSeq, null);
                 assert p != null;
                 int flags = Pattern.DOTALL;
                 if (isCaseInsensitive()) {
                     flags |= Pattern.CASE_INSENSITIVE;
+                    p = p.toLowerCase();
                 }
                 return new ConstLikeStrFunction(
                         value,
@@ -110,7 +160,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             return BooleanConstant.FALSE;
         }
 
-        if (pattern instanceof IndexedParameterLinkFunction) {
+        if (pattern.isRuntimeConstant()) {
             // bind variable
             return new BindLikeStrFunction(value, pattern, isCaseInsensitive());
         }
@@ -118,9 +168,19 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         throw SqlException.$(argPositions.getQuick(1), "use constant or bind variable");
     }
 
+    static int countChar(@NotNull CharSequence seq, char c) {
+        int count = 0;
+        for (int i = 0, n = seq.length(); i < n; i++) {
+            if (seq.charAt(i) == c) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     protected abstract boolean isCaseInsensitive();
 
-    private static class BindLikeStrFunction extends BooleanFunction implements UnaryFunction {
+    static class BindLikeStrFunction extends BooleanFunction implements BinaryFunction {
         private final boolean caseInsensitive;
         private final Function pattern;
         private final Function value;
@@ -134,34 +194,39 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
 
         @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
         public boolean getBool(Record rec) {
             if (matcher != null) {
-                CharSequence cs = getArg().getStr(rec);
+                CharSequence cs = value.getStrA(rec);
                 return cs != null && matcher.reset(cs).matches();
             }
             return false;
         }
 
         @Override
+        public Function getLeft() {
+            return value;
+        }
+
+        @Override
+        public Function getRight() {
+            return pattern;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            value.init(symbolTableSource, executionContext);
-            pattern.init(symbolTableSource, executionContext);
+            BinaryFunction.super.init(symbolTableSource, executionContext);
             // this is bind variable, we can use it as constant
-            final CharSequence patternValue = pattern.getStr(null);
+            final CharSequence patternValue = pattern.getStrA(null);
             if (patternValue != null && patternValue.length() > 0) {
-                final String p = escapeSpecialChars(patternValue, lastPattern);
+                String p = escapeSpecialChars(patternValue, lastPattern);
                 if (p != null) {
                     int flags = Pattern.DOTALL;
                     if (caseInsensitive) {
                         flags |= Pattern.CASE_INSENSITIVE;
+                        p = p.toLowerCase();
                     }
-                    this.matcher = Pattern.compile(p, flags).matcher("");
-                    this.lastPattern = p;
+                    matcher = Pattern.compile(p, flags).matcher("");
+                    lastPattern = p;
                 }
             } else {
                 lastPattern = null;
@@ -170,14 +235,14 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return false;
         }
 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
-            //impl is regex 
+            // impl is regex
             sink.val(" ~ ");
             sink.val(pattern);
             if (!caseInsensitive) {
@@ -186,7 +251,160 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
     }
 
-    private static class ConstLikeStrFunction extends BooleanFunction implements UnaryFunction {
+    private static class ConstContainsStrFunction extends BooleanFunction implements UnaryFunction {
+        private final String pattern;
+        private final Function value;
+
+        public ConstContainsStrFunction(Function value, String pattern) {
+            this.value = value;
+            this.pattern = pattern;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            CharSequence cs = value.getStrA(rec);
+            if (cs == null) {
+                return false;
+            }
+            return Chars.contains(cs, pattern);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" like ");
+            sink.val('%');
+            sink.val(pattern);
+            sink.val('%');
+        }
+    }
+
+    private static class ConstEndsWithStrFunction extends BooleanFunction implements UnaryFunction {
+        private final String pattern;
+        private final Function value;
+
+        public ConstEndsWithStrFunction(Function value, String pattern) {
+            this.value = value;
+            this.pattern = pattern;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            CharSequence cs = value.getStrA(rec);
+            return Chars.endsWith(cs, pattern);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" like ");
+            sink.val('%');
+            sink.val(pattern);
+        }
+    }
+
+    static class ConstIContainsStrFunction extends BooleanFunction implements UnaryFunction {
+        private final String pattern;
+        private final Function value;
+
+        public ConstIContainsStrFunction(Function value, String pattern) {
+            this.value = value;
+            this.pattern = pattern.toLowerCase();
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            CharSequence cs = value.getStrA(rec);
+            if (cs == null) {
+                return false;
+            }
+            return Chars.containsLowerCase(cs, pattern);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" ilike ");
+            sink.val('%');
+            sink.val(pattern);
+            sink.val('%');
+        }
+    }
+
+    static class ConstIEndsWithStrFunction extends BooleanFunction implements UnaryFunction {
+        private final String pattern;
+        private final Function value;
+
+        public ConstIEndsWithStrFunction(Function value, String pattern) {
+            this.value = value;
+            this.pattern = pattern.toLowerCase();
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            CharSequence cs = value.getStrA(rec);
+            return Chars.endsWithLowerCase(cs, pattern);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" ilike ");
+            sink.val('%');
+            sink.val(pattern);
+        }
+    }
+
+    static class ConstIStartsWithStrFunction extends BooleanFunction implements UnaryFunction {
+        private final String pattern;
+        private final Function value;
+
+        public ConstIStartsWithStrFunction(Function value, String pattern) {
+            this.value = value;
+            this.pattern = pattern.toLowerCase();
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            CharSequence cs = value.getStrA(rec);
+            return Chars.startsWithLowerCase(cs, pattern);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" ilike ");
+            sink.val(pattern);
+            sink.val('%');
+        }
+    }
+
+    static class ConstLikeStrFunction extends BooleanFunction implements UnaryFunction {
         private final Matcher matcher;
         private final Function value;
 
@@ -202,24 +420,53 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
+            CharSequence cs = value.getStrA(rec);
             return cs != null && matcher.reset(cs).matches();
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return false;
         }
 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
-            //impl is regex 
+            // impl is regex
             sink.val(" ~ ");
             sink.val(matcher.pattern().toString());
             if ((matcher.pattern().flags() & Pattern.CASE_INSENSITIVE) != 0) {
                 sink.val(" [case-sensitive]");
             }
+        }
+    }
+
+    private static class ConstStartsWithStrFunction extends BooleanFunction implements UnaryFunction {
+        private final String pattern;
+        private final Function value;
+
+        public ConstStartsWithStrFunction(Function value, String pattern) {
+            this.value = value;
+            this.pattern = pattern;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            CharSequence cs = value.getStrA(rec);
+            return Chars.startsWith(cs, pattern);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" like ");
+            sink.val(pattern);
+            sink.val('%');
         }
     }
 }

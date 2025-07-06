@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,11 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
@@ -52,7 +56,7 @@ public final class TableWriterMetricsRecordCursorFactory extends AbstractRecordC
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         Metrics metrics = executionContext.getCairoEngine().getMetrics();
         if (metrics.isEnabled()) {
-            TableWriterMetrics tableWriterMetrics = metrics.tableWriter();
+            TableWriterMetrics tableWriterMetrics = metrics.tableWriterMetrics();
             values[TOTAL_COMMITS_COLUMN_INDEX] = tableWriterMetrics.getCommitCount();
             values[O3_COMMITS_COLUMN_INDEX] = tableWriterMetrics.getO3CommitCount();
             values[ROLLBACKS_COLUMN_INDEX] = tableWriterMetrics.getRollbackCount();

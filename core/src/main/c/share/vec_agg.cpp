@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,6 +36,10 @@
 #define MIN_DOUBLE F_AVX512(minDouble)
 #define MAX_DOUBLE F_AVX512(maxDouble)
 
+#define SUM_SHORT F_AVX512(sumShort)
+#define MIN_SHORT F_AVX512(minShort)
+#define MAX_SHORT F_AVX512(maxShort)
+
 #define COUNT_INT F_AVX512(countInt)
 #define SUM_INT F_AVX512(sumInt)
 #define MIN_INT F_AVX512(minInt)
@@ -46,8 +50,6 @@
 #define MIN_LONG F_AVX512(minLong)
 #define MAX_LONG F_AVX512(maxLong)
 
-#define HAS_NULL F_AVX512(hasNull)
-
 #elif INSTRSET >= 8
 
 #define COUNT_DOUBLE F_AVX2(countDouble)
@@ -56,6 +58,10 @@
 #define SUM_DOUBLE_NEUMAIER F_AVX2(sumDoubleNeumaier)
 #define MIN_DOUBLE F_AVX2(minDouble)
 #define MAX_DOUBLE F_AVX2(maxDouble)
+
+#define SUM_SHORT F_AVX2(sumShort)
+#define MIN_SHORT F_AVX2(minShort)
+#define MAX_SHORT F_AVX2(maxShort)
 
 #define COUNT_INT F_AVX2(countInt)
 #define SUM_INT F_AVX2(sumInt)
@@ -67,8 +73,6 @@
 #define MIN_LONG F_AVX2(minLong)
 #define MAX_LONG F_AVX2(maxLong)
 
-#define HAS_NULL F_AVX2(hasNull)
-
 #elif INSTRSET >= 5
 
 #define COUNT_DOUBLE F_SSE41(countDouble)
@@ -77,6 +81,10 @@
 #define SUM_DOUBLE_NEUMAIER F_SSE41(sumDoubleNeumaier)
 #define MIN_DOUBLE F_SSE41(minDouble)
 #define MAX_DOUBLE F_SSE41(maxDouble)
+
+#define SUM_SHORT F_SSE41(sumShort)
+#define MIN_SHORT F_SSE41(minShort)
+#define MAX_SHORT F_SSE41(maxShort)
 
 #define COUNT_INT F_SSE41(countInt)
 #define SUM_INT F_SSE41(sumInt)
@@ -88,8 +96,6 @@
 #define MIN_LONG F_SSE41(minLong)
 #define MAX_LONG F_SSE41(maxLong)
 
-#define HAS_NULL F_SSE41(hasNull)
-
 #elif INSTRSET >= 2
 
 #define COUNT_DOUBLE F_SSE2(countDouble)
@@ -98,6 +104,10 @@
 #define SUM_DOUBLE_NEUMAIER F_SSE2(sumDoubleNeumaier)
 #define MIN_DOUBLE F_SSE2(minDouble)
 #define MAX_DOUBLE F_SSE2(maxDouble)
+
+#define SUM_SHORT F_SSE2(sumShort)
+#define MIN_SHORT F_SSE2(minShort)
+#define MAX_SHORT F_SSE2(maxShort)
 
 #define COUNT_INT F_SSE2(countInt)
 #define SUM_INT F_SSE2(sumInt)
@@ -109,41 +119,17 @@
 #define MIN_LONG F_SSE2(minLong)
 #define MAX_LONG F_SSE2(maxLong)
 
-#define HAS_NULL F_SSE2(hasNull)
-
 #else
 
 #endif
 
-#ifdef HAS_NULL
-
-bool HAS_NULL(int32_t *pi, int64_t count) {
-    const int32_t step = 16;
-    const auto remainder = (int32_t) (count - (count / step) * step);
-    const auto *vec_lim = pi + count - remainder;
-
-    Vec16i vec;
-    for (; pi < vec_lim; pi += step) {
-        _mm_prefetch(pi + 63 * step, _MM_HINT_T1);
-        vec.load(pi);
-        if (horizontal_find_first(vec == I_MIN) > -1) {
-            return true;
-        }
-    }
-
-    if (remainder > 0) {
-        vec.load_partial(remainder, pi);
-        return horizontal_find_first(vec == I_MIN) > -1;
-    }
-    return false;
-}
-
-#endif
-
-
 #ifdef SUM_LONG
 
 int64_t COUNT_LONG(int64_t *pl, int64_t count) {
+    if (count == 0) {
+        return 0;
+    }
+
     const int step = 8;
     Vec8q vec;
     Vec8qb bVec;
@@ -169,6 +155,10 @@ int64_t COUNT_LONG(int64_t *pl, int64_t count) {
 }
 
 int64_t SUM_LONG(int64_t *pl, int64_t count) {
+    if (count == 0) {
+        return L_MIN;
+    }
+
     Vec8q vec;
     const int step = 8;
     Vec8q vecsum = 0.;
@@ -202,6 +192,10 @@ int64_t SUM_LONG(int64_t *pl, int64_t count) {
 }
 
 int64_t MIN_LONG(int64_t *pl, int64_t count) {
+    if (count == 0) {
+        return L_MIN;
+    }
+
     Vec8q vec;
     const int step = 8;
     Vec8q vecMin = L_MIN;
@@ -236,6 +230,10 @@ int64_t MIN_LONG(int64_t *pl, int64_t count) {
 }
 
 int64_t MAX_LONG(int64_t *pl, int64_t count) {
+    if (count == 0) {
+        return L_MIN;
+    }
+
     const int step = 8;
     Vec8q vec;
     Vec8q vecMax = L_MIN;
@@ -261,8 +259,12 @@ int64_t MAX_LONG(int64_t *pl, int64_t count) {
 #ifdef SUM_INT
 
 int64_t COUNT_INT(int32_t *pi, int64_t count) {
+    if (count == 0) {
+        return 0;
+    }
+
     const int32_t step = 16;
-    const auto remainder = (int32_t) (count - (count / step) * step);
+    const auto remainder = (int32_t) (count % step);
     const auto *lim = pi + count;
     const auto *vec_lim = lim - remainder;
 
@@ -276,14 +278,11 @@ int64_t COUNT_INT(int32_t *pi, int64_t count) {
         veccount = if_add(bVec, veccount, 1);
     }
 
-    int64_t result = horizontal_add(veccount);
-
-    if (pi < lim) {
-        for (; pi < lim; pi++) {
-            int32_t v = *pi;
-            if (PREDICT_TRUE(v != I_MIN)) {
-                ++result;
-            }
+    int64_t result = horizontal_add_x(veccount);
+    for (; pi < lim; pi++) {
+        int32_t v = *pi;
+        if (PREDICT_TRUE(v != I_MIN)) {
+            ++result;
         }
     }
 
@@ -291,8 +290,12 @@ int64_t COUNT_INT(int32_t *pi, int64_t count) {
 }
 
 int64_t SUM_INT(int32_t *pi, int64_t count) {
+    if (count == 0) {
+        return L_MIN;
+    }
+
     const int32_t step = 16;
-    const auto remainder = (int32_t) (count - (count / step) * step);
+    const auto remainder = (int32_t) (count % step);
     const auto *lim = pi + count;
     const auto *vec_lim = lim - remainder;
 
@@ -308,13 +311,11 @@ int64_t SUM_INT(int32_t *pi, int64_t count) {
         result += horizontal_add_x(select(bVec, vec, 0));
     }
 
-    if (pi < lim) {
-        for (; pi < lim; pi++) {
-            int32_t v = *pi;
-            if (PREDICT_TRUE(v != I_MIN)) {
-                result += v;
-                hasData = true;
-            }
+    for (; pi < lim; pi++) {
+        int32_t v = *pi;
+        if (PREDICT_TRUE(v != I_MIN)) {
+            result += v;
+            hasData = true;
         }
     }
 
@@ -322,6 +323,10 @@ int64_t SUM_INT(int32_t *pi, int64_t count) {
 }
 
 int32_t MIN_INT(int32_t *pi, int64_t count) {
+    if (count == 0) {
+        return I_MIN;
+    }
+
     Vec16i vec;
     const int step = 16;
     Vec16i vecMin = I_MIN;
@@ -356,11 +361,15 @@ int32_t MIN_INT(int32_t *pi, int64_t count) {
 }
 
 int32_t MAX_INT(int32_t *pi, int64_t count) {
+    if (count == 0) {
+        return I_MIN;
+    }
+
     const int step = 16;
     Vec16i vec;
     Vec16i vecMax = I_MIN;
     int i;
-    for (i = 0; i < count - 7; i += step) {
+    for (i = 0; i < count - 15; i += step) {
         _mm_prefetch(pi + i + 63 * step, _MM_HINT_T1);
         vec.load(pi + i);
         vecMax = max(vecMax, vec);
@@ -378,9 +387,105 @@ int32_t MAX_INT(int32_t *pi, int64_t count) {
 
 #endif
 
+#ifdef SUM_SHORT
+
+int64_t SUM_SHORT(int16_t *ps, int64_t count) {
+    if (count == 0) {
+        return L_MIN;
+    }
+
+    const int32_t step = 32;
+    const auto remainder = (int32_t) (count % step);
+    const auto *lim = ps + count;
+    const auto *vec_lim = lim - remainder;
+
+    // instrset >=10 means AVX512BW/DQ/VL support, so it's ok to use Vec32s
+    Vec32s vec;
+    Vec16i acc0 = 0;
+    Vec16i acc1 = 0;
+    for (; ps < vec_lim; ps += step) {
+        _mm_prefetch(ps + 63 * step, _MM_HINT_T1);
+        vec.load(ps);
+        acc0 += extend_low(vec);
+        acc1 += extend_high(vec);
+    }
+
+    int64_t result = horizontal_add_x(acc0) + horizontal_add_x(acc1);
+    for (; ps < lim; ps++) {
+        int16_t v = *ps;
+        result += v;
+    }
+
+    return result;
+}
+
+int32_t MIN_SHORT(int16_t *ps, int64_t count) {
+    if (count == 0) {
+        return I_MIN;
+    }
+
+    const int step = 32;
+    const auto remainder = (int32_t) (count % step);
+    const auto *lim = ps + count;
+    const auto *vec_lim = lim - remainder;
+
+    // instrset >=10 means AVX512BW/DQ/VL support, so it's ok to use Vec32s
+    Vec32s vec;
+    Vec32s vecMin = S_MAX;
+    for (; ps < vec_lim; ps += step) {
+        _mm_prefetch(ps + 63 * step, _MM_HINT_T1);
+        vec.load(ps);
+        vecMin = min(vecMin, vec);
+    }
+
+    int32_t min = horizontal_min(vecMin);
+    for (; ps < lim; ps++) {
+        int16_t x = *ps;
+        if (x < min) {
+            min = x;
+        }
+    }
+    return min;
+}
+
+int32_t MAX_SHORT(int16_t *ps, int64_t count) {
+    if (count == 0) {
+        return I_MIN;
+    }
+
+    const int step = 32;
+    const auto remainder = (int32_t) (count % step);
+    const auto *lim = ps + count;
+    const auto *vec_lim = lim - remainder;
+
+    // instrset >=10 means AVX512BW/DQ/VL support, so it's ok to use Vec32s
+    Vec32s vec;
+    Vec32s vecMax = S_MIN;
+    for (; ps < vec_lim; ps += step) {
+        _mm_prefetch(ps + 63 * step, _MM_HINT_T1);
+        vec.load(ps);
+        vecMax = max(vecMax, vec);
+    }
+
+    int32_t max = horizontal_max(vecMax);
+    for (; ps < lim; ps++) {
+        int16_t x = *ps;
+        if (x > max) {
+            max = x;
+        }
+    }
+    return max;
+}
+
+#endif
+
 #ifdef SUM_DOUBLE
 
 int64_t COUNT_DOUBLE(double *d, int64_t count) {
+    if (count == 0) {
+        return 0;
+    }
+
     Vec8d vec;
     const int step = 8;
     Vec8db bVec;
@@ -399,11 +504,14 @@ int64_t COUNT_DOUBLE(double *d, int64_t count) {
             n++;
         }
     }
-
     return count - n;
 }
 
 double SUM_DOUBLE(double *d, int64_t count) {
+    if (count == 0) {
+        return NAN;
+    }
+
     Vec8d vec;
     const int step = 8;
     Vec8d vecsum = 0.;
@@ -423,7 +531,7 @@ double SUM_DOUBLE(double *d, int64_t count) {
     int64_t n = horizontal_add(nancount);
     for (; i < count; i++) {
         double x = *(d + i);
-        if (PREDICT_TRUE(!std::isnan(x))) { 
+        if (PREDICT_TRUE(!std::isnan(x))) {
             sum += x;
         } else {
             n++;
@@ -437,10 +545,14 @@ double SUM_DOUBLE(double *d, int64_t count) {
 }
 
 double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
+    if (count == 0) {
+        return NAN;
+    }
+
     Vec8d inputVec;
     const int step = 8;
     const auto *lim = d + count;
-    const auto remainder = (int32_t) (count - (count / step) * step);
+    const auto remainder = (int32_t) (count % step);
     const auto *lim_vec = lim - remainder;
     Vec8d sumVec = 0.;
     Vec8d yVec;
@@ -468,7 +580,7 @@ double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
         if (std::isfinite(x)) {
             auto y = x - c;
             auto t = sum + y;
-            c = (t - sum) -y;
+            c = (t - sum) - y;
             sum = t;
         } else {
             nans++;
@@ -478,15 +590,18 @@ double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
     if (nans < count) {
         return sum;
     }
-
     return NAN;
 }
 
 double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
+    if (count == 0) {
+        return NAN;
+    }
+
     Vec8d inputVec;
     const int step = 8;
     const auto *lim = d + count;
-    const auto remainder = (int32_t) (count - (count / step) * step);
+    const auto remainder = (int32_t) (count % step);
     const auto *lim_vec = lim - remainder;
     Vec8d sumVec = 0.;
     Vec8d cVec = 0.;
@@ -527,11 +642,14 @@ double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
     if (nans < count) {
         return sum + c;
     }
-
     return D_NAN;
 }
 
 double MIN_DOUBLE(double *d, int64_t count) {
+    if (count == 0) {
+        return NAN;
+    }
+
     Vec8d vec;
     const int step = 8;
     const double *lim = d + count;
@@ -556,15 +674,19 @@ double MIN_DOUBLE(double *d, int64_t count) {
     if (min < D_MAX) {
         return min;
     }
-
     return NAN;
 }
 
 double MAX_DOUBLE(double *d, int64_t count) {
-    Vec8d vec;
+    if (count == 0) {
+        return NAN;
+    }
+
     const int step = 8;
     const double *lim = d + count;
     const double *lim_vec = lim - step + 1;
+
+    Vec8d vec;
     Vec8d vecMax = D_MIN;
     Vec8db bVec;
     for (; d < lim_vec; d += step) {
@@ -585,7 +707,6 @@ double MAX_DOUBLE(double *d, int64_t count) {
     if (max > D_MIN) {
         return max;
     }
-
     return NAN;
 }
 
@@ -601,9 +722,12 @@ DOUBLE_DISPATCHER(sumDoubleNeumaier)
 DOUBLE_DISPATCHER(minDouble)
 DOUBLE_DISPATCHER(maxDouble)
 
+SHORT_LONG_DISPATCHER(sumShort)
+SHORT_INT_DISPATCHER(minShort)
+SHORT_INT_DISPATCHER(maxShort)
+
 INT_LONG_DISPATCHER(countInt)
 INT_LONG_DISPATCHER(sumInt)
-INT_BOOL_DISPATCHER(hasNull)
 INT_INT_DISPATCHER(minInt)
 INT_INT_DISPATCHER(maxInt)
 
@@ -613,8 +737,10 @@ LONG_LONG_DISPATCHER(minLong)
 LONG_LONG_DISPATCHER(maxLong)
 
 extern "C" {
-JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_getSupportedInstructionSet(JNIEnv *env, jclass cl) {
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_getSupportedInstructionSet(JNIEnv *env, jclass cl) {
     return instrset_detect();
 }
+
 }
 #endif  // INSTRSET == 2

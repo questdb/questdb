@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,17 +27,23 @@ package io.questdb.griffin.model;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Interval;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.model.IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
 
 public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
-
     private static final Log LOG = LogFactory.getLog(RuntimeIntervalModel.class);
     private final ObjList<Function> dynamicRangeList;
     // These 2 are incoming model
@@ -51,7 +57,6 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
     public RuntimeIntervalModel(LongList staticIntervals, ObjList<Function> dynamicRangeList) {
         this.intervals = staticIntervals;
-
         this.dynamicRangeList = dynamicRangeList;
     }
 
@@ -61,7 +66,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     }
 
     @Override
-    public LongList calculateIntervals(SqlExecutionContext sqlContext) throws SqlException {
+    public LongList calculateIntervals(SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (isStatic()) {
             return intervals;
         }
@@ -77,7 +82,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         outIntervals.add(intervals, 0, dynamicStart);
 
         // Evaluate intervals involving functions
-        addEvaluateDynamicIntervals(outIntervals, sqlContext);
+        addEvaluateDynamicIntervals(outIntervals, sqlExecutionContext);
         return outIntervals;
     }
 
@@ -102,16 +107,15 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     valTs(sink, intervals.getQuick(i + 1));
                     sink.val("\")");
                 }
-
             } catch (SqlException e) {
-                LOG.error().$("Can't calculate intervals: ").$(e.getMessage()).$();
+                LOG.error().$("Can't calculate intervals: ").$safe(e.getFlyweightMessage()).$();
             }
             sink.val(']');
         }
     }
 
     private static void valTs(PlanSink sink, long l) {
-        if (l == Numbers.LONG_NaN) {
+        if (l == Numbers.LONG_NULL) {
             sink.val("MIN");
         } else if (l == Long.MAX_VALUE) {
             sink.val("MAX");
@@ -120,7 +124,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         }
     }
 
-    private void addEvaluateDynamicIntervals(LongList outIntervals, SqlExecutionContext sqlContext) throws SqlException {
+    private void addEvaluateDynamicIntervals(LongList outIntervals, SqlExecutionContext sqlExecutionContext) throws SqlException {
         int size = intervals.size();
         int dynamicStart = size - dynamicRangeList.size() * STATIC_LONGS_PER_DYNAMIC_INTERVAL;
         int dynamicIndex = 0;
@@ -142,17 +146,17 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 short adjustment = IntervalUtils.getEncodedAdjustment(intervals, i);
                 short dynamicHiLo = IntervalUtils.getEncodedDynamicIndicator(intervals, i);
 
-                dynamicFunction.init(null, sqlContext);
+                dynamicFunction.init(null, sqlExecutionContext);
 
                 if (operation != IntervalOperation.INTERSECT_INTERVALS && operation != IntervalOperation.SUBTRACT_INTERVALS) {
-                    long dynamicValue = getTimestamp(dynamicFunction);
+                    long dynamicValue = getTimestamp(dynamicFunction, sqlExecutionContext);
                     long dynamicValue2 = 0;
                     if (dynamicHiLo == IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC) {
                         // Both ends of BETWEEN are dynamic and different values. Take next dynamic point.
                         i += STATIC_LONGS_PER_DYNAMIC_INTERVAL;
                         dynamicFunction = dynamicRangeList.getQuick(dynamicIndex++);
-                        dynamicFunction.init(null, sqlContext);
-                        dynamicValue2 = hi = getTimestamp(dynamicFunction);
+                        dynamicFunction.init(null, sqlExecutionContext);
+                        dynamicValue2 = hi = getTimestamp(dynamicFunction, sqlExecutionContext);
                         lo = dynamicValue;
                     } else {
                         if ((dynamicHiLo & IntervalDynamicIndicator.IS_HI_DYNAMIC) != 0) {
@@ -163,8 +167,8 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                         }
                     }
 
-                    if (dynamicValue == Numbers.LONG_NaN || dynamicValue2 == Numbers.LONG_NaN) {
-                        // functions evaluated to null.
+                    if (dynamicValue == Numbers.LONG_NULL || dynamicValue2 == Numbers.LONG_NULL) {
+                        // functions evaluated to null
                         if (!negated) {
                             // return empty set if it's not negated
                             outIntervals.clear();
@@ -190,36 +194,45 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                         IntervalUtils.invert(outIntervals, divider);
                     }
                 } else {
-                    // This is subtract or intersect with a string interval (not a single timestamp)
-                    CharSequence strValue = dynamicFunction.getStr(null);
-                    if (operation == IntervalOperation.INTERSECT_INTERVALS) {
-                        // This is intersect
-                        if (parseIntervalFails(outIntervals, strValue)) {
-                            // return empty set
-                            outIntervals.clear();
-                            return;
+                    if (ColumnType.isInterval(dynamicFunction.getType())) {
+                        // This is subtraction or intersection with an Interval (not a single timestamp)
+                        final Interval interval = dynamicFunction.getInterval(null);
+                        applyInterval(outIntervals, interval);
+                        if (operation == IntervalOperation.SUBTRACT_INTERVALS) {
+                            IntervalUtils.invert(outIntervals, divider);
                         }
                     } else {
-                        // This is subtract
-                        if (parseIntervalFails(outIntervals, strValue)) {
-                            // full set
-                            negatedNothing(outIntervals, divider);
-                            continue;
+                        // This is subtraction or intersection with a string interval (not a single timestamp)
+                        final CharSequence strInterval = dynamicFunction.getStrA(null);
+                        if (operation == IntervalOperation.INTERSECT_INTERVALS) {
+                            // This is intersection
+                            if (tryParseInterval(outIntervals, strInterval)) {
+                                // return empty set
+                                outIntervals.clear();
+                                return;
+                            }
+                        } else {
+                            // This is subtraction
+                            if (tryParseInterval(outIntervals, strInterval)) {
+                                // full set
+                                negatedNothing(outIntervals, divider);
+                                continue;
+                            }
+                            IntervalUtils.invert(outIntervals, divider);
                         }
-                        IntervalUtils.invert(outIntervals, divider);
                     }
                 }
             }
 
-            // Do not apply operation (intersect, subtract)
-            // if this is first element and no pre-calculated static intervals exist
+            // Do not apply operation (intersection, subtraction).
+            // If this is first element and no pre-calculated static intervals exist.
             if (firstFuncApplied || divider > 0) {
                 switch (operation) {
                     case IntervalOperation.INTERSECT:
                     case IntervalOperation.INTERSECT_BETWEEN:
                     case IntervalOperation.INTERSECT_INTERVALS:
                     case IntervalOperation.SUBTRACT_INTERVALS:
-                        IntervalUtils.intersectInplace(outIntervals, divider);
+                        IntervalUtils.intersectInPlace(outIntervals, divider);
                         break;
                     case IntervalOperation.SUBTRACT:
                     case IntervalOperation.SUBTRACT_BETWEEN:
@@ -251,13 +264,33 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         return true;
     }
 
-    private long getTimestamp(Function dynamicFunction) {
-        if (ColumnType.isString(dynamicFunction.getType())) {
-            CharSequence value = dynamicFunction.getStr(null);
-            try {
-                return IntervalUtils.parseFloorPartialTimestamp(value);
-            } catch (NumericException e) {
-                return Numbers.LONG_NaN;
+    private void applyInterval(LongList outIntervals, Interval interval) {
+        IntervalUtils.applyInterval(interval, outIntervals, IntervalOperation.INTERSECT);
+        IntervalUtils.applyLastEncodedIntervalEx(outIntervals);
+    }
+
+    private long getTimestamp(Function dynamicFunction, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        final int functionType = dynamicFunction.getType();
+        if (ColumnType.isString(functionType)) {
+            final CharSequence value = dynamicFunction.getStrA(null);
+            if (value != null) {
+                try {
+                    return IntervalUtils.parseFloorPartialTimestamp(value);
+                } catch (NumericException e) {
+                    return Numbers.LONG_NULL;
+                }
+            }
+            return Numbers.LONG_NULL;
+        } else if (functionType == ColumnType.CURSOR) {
+            // special case for ts = (<subquery>) and similar cases
+            final RecordCursorFactory factory = dynamicFunction.getRecordCursorFactory();
+            assert factory != null;
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                if (cursor.hasNext()) {
+                    return cursor.getRecord().getTimestamp(0);
+                } else {
+                    return Numbers.LONG_NULL;
+                }
             }
         }
         return dynamicFunction.getTimestamp(null);
@@ -275,10 +308,10 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         }
     }
 
-    private boolean parseIntervalFails(LongList outIntervals, CharSequence strValue) {
-        if (strValue != null) {
+    private boolean tryParseInterval(LongList outIntervals, CharSequence strInterval) {
+        if (strInterval != null) {
             try {
-                IntervalUtils.parseIntervalEx(strValue, 0, strValue.length(), 0, outIntervals, IntervalOperation.INTERSECT);
+                IntervalUtils.parseIntervalEx(strInterval, 0, strInterval.length(), 0, outIntervals, IntervalOperation.INTERSECT);
                 IntervalUtils.applyLastEncodedIntervalEx(outIntervals);
             } catch (SqlException e) {
                 return true;

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,22 +24,55 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Chars;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.std.str.Utf8s;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Test;
 
-public class LatestByTest extends AbstractGriffinTest {
+public class LatestByTest extends AbstractCairoTest {
+
+    @Test
+    public void testLatestByAllFilteredReentrant() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table zyzy as (\n" +
+                            "  select \n" +
+                            "  timestamp_sequence(1,1000) ts,\n" +
+                            "  rnd_int(0,5,0) a,\n" +
+                            "  rnd_int(0,5,0) b,\n" +
+                            "  rnd_int(0,5,0) c,\n" +
+                            "  rnd_int(0,5,0) x,\n" +
+                            "  rnd_int(0,5,0) y,\n" +
+                            "  rnd_int(0,5,0) z,\n" +
+                            "  from long_sequence(100)\n" +
+                            ") timestamp(ts);\n"
+            );
+            assertQuery(
+                    "x\tohoh\n" +
+                            "15\t29\n" +
+                            "17\t26\n" +
+                            "9\t29\n" +
+                            "7\t25\n",
+                    "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 3 latest on ts partition by x;",
+                    true
+            );
+        });
+    }
 
     @Test
     public void testLatestByAllFilteredResolvesSymbol() throws Exception {
-        assertQuery("devid\taddress\tvalue\tvalue_decimal\tcreated_at\tts\n",
+        assertQuery(
+                "devid\taddress\tvalue\tvalue_decimal\tcreated_at\tts\n",
                 "SELECT * FROM history_P4v\n" +
                         "WHERE\n" +
                         "  devid = 'LLLAHFZHYA'\n" +
@@ -51,18 +84,22 @@ public class LatestByTest extends AbstractGriffinTest {
                         "  value_decimal BYTE,\n" +
                         "  created_at DATE,\n" +
                         "  ts TIMESTAMP\n" +
-                        ") timestamp(ts) PARTITION BY DAY;", "ts", true, false);
+                        ") timestamp(ts) PARTITION BY DAY;",
+                "ts",
+                true,
+                false
+        );
     }
 
     @Test
     public void testLatestByAllIndexedIndexReaderGetsReloaded() throws Exception {
         final int iterations = 100;
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE e ( \n" +
+            execute("CREATE TABLE e ( \n" +
                     "  ts TIMESTAMP, \n" +
                     "  sym SYMBOL CAPACITY 32768 INDEX CAPACITY 4 \n" +
                     ") TIMESTAMP(ts) PARTITION BY DAY");
-            compile("CREATE TABLE p ( \n" +
+            execute("CREATE TABLE p ( \n" +
                     "  ts TIMESTAMP, \n" +
                     "  sym SYMBOL CAPACITY 32768 CACHE INDEX CAPACITY 4, \n" +
                     "  lon FLOAT, \n" +
@@ -74,8 +111,8 @@ public class LatestByTest extends AbstractGriffinTest {
             for (int i = 0; i < iterations; i++) {
                 LOG.info().$("Iteration: ").$(i).$();
 
-                executeInsert("INSERT INTO e VALUES(CAST(" + timestamp + " as TIMESTAMP), '42')");
-                executeInsert("INSERT INTO p VALUES(CAST(" + timestamp + " as TIMESTAMP), '42', 142.31, 42.31, #xpt)");
+                execute("INSERT INTO e VALUES(CAST(" + timestamp + " as TIMESTAMP), '42')");
+                execute("INSERT INTO p VALUES(CAST(" + timestamp + " as TIMESTAMP), '42', 142.31, 42.31, #xpt)");
 
                 String query = "SELECT count() FROM \n" +
                         "( \n" +
@@ -97,12 +134,14 @@ public class LatestByTest extends AbstractGriffinTest {
                         "  LATEST ON ts PARTITION BY sym \n" +
                         ") \n" +
                         "ON (sym)";
-                assertQuery("count\n" +
+                assertQuery(
+                        "count\n" +
                                 "1\n",
                         query,
                         null,
                         false,
-                        true);
+                        true
+                );
 
                 timestamp += 10000L;
             }
@@ -111,18 +150,24 @@ public class LatestByTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestByAllIndexedWithPrefixes() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table pos_test\n" +
-                    "( \n" +
-                    "  ts timestamp,\n" +
-                    "  device_id symbol index,\n" +
-                    "  g8c geohash(8c)\n" +
-                    ") timestamp(ts) partition by day;");
+        configOverrideUseWithinLatestByOptimisation();
 
-            compile("insert into pos_test values " +
-                    "('2021-09-02T00:00:00.000000', 'device_1', #46swgj10)," +
-                    "('2021-09-02T00:00:00.000001', 'device_2', #46swgj10)," +
-                    "('2021-09-02T00:00:00.000002', 'device_1', #46swgj12)");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table pos_test\n" +
+                            "( \n" +
+                            "  ts timestamp,\n" +
+                            "  device_id symbol index,\n" +
+                            "  g8c geohash(8c)\n" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            execute(
+                    "insert into pos_test values " +
+                            "('2021-09-02T00:00:00.000000', 'device_1', #46swgj10)," +
+                            "('2021-09-02T00:00:00.000001', 'device_2', #46swgj10)," +
+                            "('2021-09-02T00:00:00.000002', 'device_1', #46swgj12)"
+            );
 
             String query = "SELECT *\n" +
                     "FROM pos_test\n" +
@@ -131,17 +176,24 @@ public class LatestByTest extends AbstractGriffinTest {
                     "LATEST ON ts \n" +
                     "PARTITION BY device_id";
 
-            assertPlan(query,
+            assertPlanNoLeakCheck(
+                    query,
                     "LatestByAllIndexed\n" +
-                            "    Index backward scan on: device_id parallel: true\n" +
+                            "    Async index backward scan on: device_id workers: 1\n" +
                             "      filter: g8c within(\"0010000110110001110001111100010000100000\")\n" +
                             "    Interval backward scan on: pos_test\n" +
-                            "      intervals: [(\"2021-09-02T00:00:00.000000Z\",\"2021-09-02T23:59:59.999999Z\")]\n");
+                            "      intervals: [(\"2021-09-02T00:00:00.000000Z\",\"2021-09-02T23:59:59.999999Z\")]\n"
+            );
 
-            //prefix filter is applied AFTER latest on 
-            assertQuery("ts\tdevice_id\tg8c\n" +
+            // prefix filter is applied AFTER latest on
+            assertQuery(
+                    "ts\tdevice_id\tg8c\n" +
                             "2021-09-02T00:00:00.000001Z\tdevice_2\t46swgj10\n",
-                    query, "ts", true, true);
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
         });
     }
 
@@ -150,20 +202,21 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select rnd_symbol('a', 'b') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
-            assertQuery("ts\ts\n" +
+            assertQuery(
+                    "ts\ts\n" +
                             "1970-01-02T23:00:00.000000Z\ta\n" +
                             "1970-01-03T00:00:00.000000Z\tb\n",
                     "select ts, s from t " +
@@ -171,7 +224,8 @@ public class LatestByTest extends AbstractGriffinTest {
                             "latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
@@ -180,21 +234,22 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
-            executeInsert("insert into t values ('e', 'f', '1970-01-01T01:01:01.000000Z')");
+            execute("insert into t values ('e', 'f', '1970-01-01T01:01:01.000000Z')");
 
-            assertQuery("ts\ts2\ts\n" +
+            assertQuery(
+                    "ts\ts2\ts\n" +
                             "1970-01-02T18:00:00.000000Z\td\ta\n" +
                             "1970-01-02T23:00:00.000000Z\tc\ta\n",
                     "select ts, s2, s from t " +
@@ -202,7 +257,8 @@ public class LatestByTest extends AbstractGriffinTest {
                             "latest on ts partition by s, s2",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
@@ -211,21 +267,22 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
-            executeInsert("insert into t values ('a', 'e', '1970-01-01T01:01:01.000000Z')");
+            execute("insert into t values ('a', 'e', '1970-01-01T01:01:01.000000Z')");
 
-            assertQuery("ts\ts2\ts\n" +
+            assertQuery(
+                    "ts\ts2\ts\n" +
                             "1970-01-02T23:00:00.000000Z\tc\ta\n" +
                             "1970-01-03T00:00:00.000000Z\tc\tb\n",
                     "select ts, s2, s from t " +
@@ -233,7 +290,8 @@ public class LatestByTest extends AbstractGriffinTest {
                             "latest on ts partition by s, s2",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
@@ -242,21 +300,22 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
-            executeInsert("insert into t values ('a', 'e', '1970-01-01T01:01:01.000000Z')");
+            execute("insert into t values ('a', 'e', '1970-01-01T01:01:01.000000Z')");
 
-            assertQuery("s\ts2\tts\n" +
+            assertQuery(
+                    "s\ts2\tts\n" +
                             "a\tc\t1970-01-02T23:00:00.000000Z\n" +
                             "b\tc\t1970-01-03T00:00:00.000000Z\n" +
                             "a\td\t1970-01-02T18:00:00.000000Z\n" +
@@ -266,7 +325,8 @@ public class LatestByTest extends AbstractGriffinTest {
                             "select * from t where s2 = 'd' latest on ts partition by s, s2",
                     null,
                     false,
-                    true);
+                    true
+            );
         });
     }
 
@@ -275,20 +335,21 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
-            assertQuery("ts\ts2\ts\n" +
+            assertQuery(
+                    "ts\ts2\ts\n" +
                             "1970-01-02T18:00:00.000000Z\td\ta\n" +
                             "1970-01-02T19:00:00.000000Z\td\tb\n" +
                             "1970-01-02T23:00:00.000000Z\tc\ta\n" +
@@ -297,7 +358,8 @@ public class LatestByTest extends AbstractGriffinTest {
                             "latest on ts partition by s, s2",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
@@ -306,21 +368,22 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select rnd_symbol('a', 'b', null) s, rnd_symbol('c', null) s2, rnd_symbol('d', null) s3, timestamp_sequence(0, 60*60*1000*1000L) ts " +
                     "from long_sequence(100)" +
                     ") timestamp(ts) partition by DAY");
 
-            assertQuery("s\ts2\ts3\tts\n" +
+            assertQuery(
+                    "s\ts2\ts3\tts\n" +
                             "\tc\t\t1970-01-03T19:00:00.000000Z\n" +
                             "b\tc\t\t1970-01-04T00:00:00.000000Z\n" +
                             "\t\td\t1970-01-04T05:00:00.000000Z\n" +
@@ -338,7 +401,8 @@ public class LatestByTest extends AbstractGriffinTest {
                             "latest on ts partition by s3, s2, s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
@@ -347,21 +411,22 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select rnd_symbol('a', 'b', null) s, rnd_symbol('c', null) s2, rnd_symbol('d', null) s3, timestamp_sequence(0, 60*60*1000*1000L) ts " +
                     "from long_sequence(100)" +
                     ") timestamp(ts) partition by DAY");
 
-            assertQuery("s\ts2\ts3\tts\n" +
+            assertQuery(
+                    "s\ts2\ts3\tts\n" +
                             "\tc\t\t1970-01-03T19:00:00.000000Z\n" +
                             "b\tc\t\t1970-01-04T00:00:00.000000Z\n" +
                             "\t\td\t1970-01-04T05:00:00.000000Z\n" +
@@ -378,7 +443,8 @@ public class LatestByTest extends AbstractGriffinTest {
                             "latest on ts partition by s3, s2, s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
@@ -394,33 +460,35 @@ public class LatestByTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestByPartitionByDesignatedTimestamp() throws Exception {
-        compile("create table forecasts (when timestamp, version timestamp, temperature double) timestamp(version) partition by day");
+        assertMemoryLeak(() -> {
+            execute("create table forecasts (when timestamp, ts timestamp, temperature double) timestamp(ts) partition by day");
 
-        // forecasts for 2020-05-05
-        compile("insert into forecasts values " +
-                "  ('2020-05-05', '2020-05-02', 40), " +
-                "  ('2020-05-05', '2020-05-03', 41), " +
-                "  ('2020-05-05', '2020-05-04', 42)"
-        );
+            // forecasts for 2020-05-05
+            execute("insert into forecasts values " +
+                    "  ('2020-05-05', '2020-05-02', 40), " +
+                    "  ('2020-05-05', '2020-05-03', 41), " +
+                    "  ('2020-05-05', '2020-05-04', 42)"
+            );
 
-        // forecasts for 2020-05-06
-        compile("insert into forecasts values " +
-                "  ('2020-05-06', '2020-05-01', 140), " +
-                "  ('2020-05-06', '2020-05-03', 141), " +
-                "  ('2020-05-06', '2020-05-05', 142), " +// this row has the same ts as following one and will be de-duped
-                "  ('2020-05-07', '2020-05-05', 143)"
-        );
+            // forecasts for 2020-05-06
+            execute("insert into forecasts values " +
+                    "  ('2020-05-06', '2020-05-01', 140), " +
+                    "  ('2020-05-06', '2020-05-03', 141), " +
+                    "  ('2020-05-06', '2020-05-05', 142), " +// this row has the same ts as following one and will be de-duped
+                    "  ('2020-05-07', '2020-05-05', 143)"
+            );
 
-        // PARTITION BY <DESIGNATED_TIMESTAMP> is perhaps a bit silly, but it is a valid query. so let's check it's working as expected
-        String query = "select when, version, temperature from forecasts latest on version partition by version";
-        String expected = "when\tversion\ttemperature\n" +
-                "2020-05-06T00:00:00.000000Z\t2020-05-01T00:00:00.000000Z\t140.0\n" +
-                "2020-05-05T00:00:00.000000Z\t2020-05-02T00:00:00.000000Z\t40.0\n" +
-                "2020-05-05T00:00:00.000000Z\t2020-05-03T00:00:00.000000Z\t41.0\n" +
-                "2020-05-05T00:00:00.000000Z\t2020-05-04T00:00:00.000000Z\t42.0\n" +
-                "2020-05-07T00:00:00.000000Z\t2020-05-05T00:00:00.000000Z\t143.0\n";
+            // PARTITION BY <DESIGNATED_TIMESTAMP> is perhaps a bit silly, but it is a valid query. so let's check it's working as expected
+            String query = "select when, ts, temperature from forecasts latest on ts partition by ts";
+            String expected = "when\tts\ttemperature\n" +
+                    "2020-05-06T00:00:00.000000Z\t2020-05-01T00:00:00.000000Z\t140.0\n" +
+                    "2020-05-05T00:00:00.000000Z\t2020-05-02T00:00:00.000000Z\t40.0\n" +
+                    "2020-05-06T00:00:00.000000Z\t2020-05-03T00:00:00.000000Z\t141.0\n" +
+                    "2020-05-05T00:00:00.000000Z\t2020-05-04T00:00:00.000000Z\t42.0\n" +
+                    "2020-05-07T00:00:00.000000Z\t2020-05-05T00:00:00.000000Z\t143.0\n";
 
-        assertQuery(expected, query, "version", true, true);
+            assertQuery(expected, query, "ts", true, true);
+        });
     }
 
     @Test
@@ -430,7 +498,7 @@ public class LatestByTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestByPartitionByFloat() throws Exception {
-        testLatestByPartitionBy("float", "0.0000", "1.0000");
+        testLatestByPartitionBy("float", "0.0", "1.0");
     }
 
     @Test
@@ -455,28 +523,139 @@ public class LatestByTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestByPartitionByTimestamp() throws Exception {
-        compile("create table forecasts (when timestamp, version timestamp, temperature double) timestamp(version) partition by day");
+        assertMemoryLeak(() -> {
+            execute("create table forecasts (when timestamp, version timestamp, temperature double) timestamp(version) partition by day");
 
-        // forecasts for 2020-05-05
-        compile("insert into forecasts values " +
-                "  ('2020-05-05', '2020-05-02', 40), " +
-                "  ('2020-05-05', '2020-05-03', 41), " +
-                "  ('2020-05-05', '2020-05-04', 42)"
-        );
+            // forecasts for 2020-05-05
+            execute("insert into forecasts values " +
+                    "  ('2020-05-05', '2020-05-02', 40), " +
+                    "  ('2020-05-05', '2020-05-03', 41), " +
+                    "  ('2020-05-05', '2020-05-04', 42)"
+            );
 
-        // forecasts for 2020-05-06
-        compile("insert into forecasts values " +
-                "  ('2020-05-06', '2020-05-01', 140), " +
-                "  ('2020-05-06', '2020-05-03', 141), " +
-                "  ('2020-05-06', '2020-05-05', 142)"
-        );
+            // forecasts for 2020-05-06
+            execute("insert into forecasts values " +
+                    "  ('2020-05-06', '2020-05-01', 140), " +
+                    "  ('2020-05-06', '2020-05-03', 141), " +
+                    "  ('2020-05-06', '2020-05-05', 142)"
+            );
 
-        String query = "select when, version, temperature from forecasts latest on version partition by when";
-        String expected = "when\tversion\ttemperature\n" +
-                "2020-05-05T00:00:00.000000Z\t2020-05-04T00:00:00.000000Z\t42.0\n" +
-                "2020-05-06T00:00:00.000000Z\t2020-05-05T00:00:00.000000Z\t142.0\n";
+            String query = "select when, version, temperature from forecasts latest on version partition by when";
+            String expected = "when\tversion\ttemperature\n" +
+                    "2020-05-05T00:00:00.000000Z\t2020-05-04T00:00:00.000000Z\t42.0\n" +
+                    "2020-05-06T00:00:00.000000Z\t2020-05-05T00:00:00.000000Z\t142.0\n";
 
-        assertQuery(expected, query, "version", true, true);
+            assertQuery(expected, query, "version", true, true);
+        });
+    }
+
+    @Test
+    public void testLatestBySubQueryInitializesSymbolTables() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'offer_exchanges' (" +
+                    "pair SYMBOL CAPACITY 100000 INDEX, " +
+                    "rate DOUBLE, " +
+                    "volume_a DOUBLE, " +
+                    "volume_b DOUBLE, " +
+                    "buyer STRING, " +
+                    "seller STRING, " +
+                    "taker STRING, " +
+                    "provider STRING, " +
+                    "autobridged STRING, " +
+                    "tx_hash STRING, " +
+                    "ledger_index INT, " +
+                    "sequence INT, " +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY MONTH;");
+            execute("insert into offer_exchanges values ('abc', 1.1, 1.1, 1.1, 'abc', 'def', 'zxy', 'a', 'some hash', 'foo', 123, 5, '2024-01-29T15:00:00.000Z')");
+            execute("insert into offer_exchanges values ('abc', 1.1, 1.1, 1.1, 'abc', 'def', 'zxy', 'a', 'some hash', 'foo', 123, 5, '2024-01-30T15:01:00.000Z')");
+
+            assertQuery(
+                    "pair\topen\tclose\tlow\thigh\tbase_volume\tcounter_volume\texchanges\tprev_rate\tprev_ts\n" +
+                            "abc\t1.1\t1.1\t1.1\t1.1\t1.1\t1.1\t1\t1.1\t2024-01-29T15:00:00.000000Z\n",
+                    "WITH first_selection as (" +
+                            "  SELECT pair, first(rate) AS open, last(rate) AS close, min(rate) AS low, max(rate) AS high, " +
+                            "         sum(volume_a) AS base_volume, sum(volume_b) AS counter_volume, count(*) AS exchanges " +
+                            "  FROM 'offer_exchanges' " +
+                            "  WHERE ts >= '2024-01-30T15:00:00.000Z'" +
+                            "), " +
+                            "second_selection as (" +
+                            "  SELECT pair, rate as prev_rate, ts as prev_ts " +
+                            "  FROM 'offer_exchanges' " +
+                            "  WHERE ts < '2024-01-30T15:00:00.000Z' and pair in (SELECT pair FROM first_selection) " +
+                            "  LATEST ON ts PARTITION BY pair " +
+                            ") " +
+                            "SELECT first_selection.pair, first_selection.open, first_selection.close, first_selection.low, first_selection.high," +
+                            "       first_selection.base_volume, first_selection.counter_volume, first_selection.exchanges, second_selection.prev_rate, " +
+                            "       second_selection.prev_ts " +
+                            "FROM first_selection " +
+                            "JOIN second_selection on (pair);",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLatestBySymbolDifferentBindingService() throws Exception {
+        // Test that a parametrized latest-by <symbol_column> is re-initialized to a different parameter value
+        // when the query is re-executed with a different binding variable service
+
+        assertMemoryLeak(() -> {
+            execute("create table t as (" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    ") timestamp(ts) partition by DAY");
+
+            // we'll use the global 'bindVariableService' to compile the query
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "c");
+
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 final RecordCursorFactory factory = CairoEngine.select(compiler, "select ts, s from t " +
+                         "where s = :sym " +
+                         "latest on ts partition by s", sqlExecutionContext)) {
+
+
+                // sanity check: verify it returns the expected result when using a new binding variable service
+                // with the same value for the parameter as was injected into the global binding variable service
+                try (SqlExecutionContextImpl localContext = new SqlExecutionContextImpl(engine, 1)) {
+                    BindVariableServiceImpl localBindings = new BindVariableServiceImpl(configuration);
+                    localContext.with(localBindings);
+                    localBindings.setStr("sym", "c");
+
+                    assertFactoryCursor(
+                            "ts\ts\n" +
+                                    "1970-01-03T00:00:00.000000Z\tc\n",
+                            "ts",
+                            factory,
+                            true,
+                            localContext,
+                            false,
+                            false
+                    );
+                }
+
+                // re-execute with a different binding variable service and a different value
+                // this must yield a different result
+                try (SqlExecutionContextImpl localContext = new SqlExecutionContextImpl(engine, 1)) {
+                    BindVariableServiceImpl localBindings = new BindVariableServiceImpl(configuration);
+                    localContext.with(localBindings);
+                    localBindings.setStr("sym", "a");
+
+                    assertFactoryCursor(
+                            "ts\ts\n" +
+                                    "1970-01-02T23:00:00.000000Z\ta\n",
+                            "ts",
+                            factory,
+                            true,
+                            localContext,
+                            false,
+                            false
+                    );
+                }
+            }
+        });
     }
 
     @Test
@@ -484,16 +663,16 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan any partition, searched symbol values don't exist in symbol table
-                    if (Chars.contains(name, "1970-01-01") || Chars.contains(name, "1970-01-02")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01") || Utf8s.containsAscii(name, "1970-01-02")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
 
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select " +
                     "x, " +
                     "rnd_symbol('g', 'd', 'f') s, " +
@@ -501,18 +680,20 @@ public class LatestByTest extends AbstractGriffinTest {
                     "from long_sequence(40)" +
                     ") timestamp(ts) partition by DAY");
 
-            assertQuery("x\ts\tts\n",
+            assertQuery(
+                    "x\ts\tts\n",
                     "t where s in ('a', 'b') latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
     @Test
     public void testLatestBySymbolManyDistinctValues() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select " +
                     "x, " +
                     "rnd_symbol(10000, 1, 15, 1000) s, " +
@@ -526,24 +707,27 @@ public class LatestByTest extends AbstractGriffinTest {
 
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in other partitions
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
 
-            assertQuery("min\tmax\n" +
+            assertQuery(
+                    "min\tmax\n" +
                             "1970-01-11T15:33:16.000000Z\t1970-01-12T13:46:39.000000Z\n",
                     "select min(ts), max(ts) from (select ts, x, s from t latest on ts partition by s)",
                     null,
                     false,
-                    true);
+                    true
+            );
 
-            assertQuery("min\tmax\n" +
+            assertQuery(
+                    "min\tmax\n" +
                             "1970-01-11T16:57:53.000000Z\t1970-01-12T13:46:05.000000Z\n",
                     "select min(ts), max(ts) from (" +
                             "select ts, x, s " +
@@ -553,7 +737,8 @@ public class LatestByTest extends AbstractGriffinTest {
                             ")",
                     null,
                     false,
-                    true);
+                    true
+            );
         });
     }
 
@@ -562,17 +747,17 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
 
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select " +
                     "x, " +
                     "rnd_symbol('a', 'b', null) s, " +
@@ -580,14 +765,16 @@ public class LatestByTest extends AbstractGriffinTest {
                     "from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
-            assertQuery("ts\tx\ts\n" +
+            assertQuery(
+                    "ts\tx\ts\n" +
                             "1970-01-02T22:00:00.000000Z\t47\tb\n" +
                             "1970-01-02T23:00:00.000000Z\t48\ta\n" +
                             "1970-01-03T00:00:00.000000Z\t49\t\n",
                     "select ts, x, s from t latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
@@ -596,25 +783,26 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
 
-            compile("create table t as (" +
-                    "select " +
-                    "x, " +
-                    "rnd_symbol('a', 'b', 'c', 'd', 'e', 'f') s, " +
-                    "timestamp_sequence(0, 60*60*1000*1000L) ts " +
-                    "from long_sequence(49)" +
+            execute("create table t as (" +
+                    "  select " +
+                    "    x, " +
+                    "    rnd_symbol('a', 'b', 'c', 'd', 'e', 'f') s, " +
+                    "    timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                    "  from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
-            assertQuery("ts\tx\ts\n" +
+            assertQuery(
+                    "ts\tx\ts\n" +
                             "1970-01-02T17:00:00.000000Z\t42\td\n" +
                             "1970-01-02T19:00:00.000000Z\t44\te\n" +
                             "1970-01-02T21:00:00.000000Z\t46\tc\n" +
@@ -624,9 +812,11 @@ public class LatestByTest extends AbstractGriffinTest {
                     "select ts, x, s from t latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
 
-            assertQuery("ts\tx\ts\n" +
+            assertQuery(
+                    "ts\tx\ts\n" +
                             "1970-01-03T00:00:00.000000Z\t49\tf\n" +
                             "1970-01-02T19:00:00.000000Z\t44\te\n" +
                             "1970-01-02T17:00:00.000000Z\t42\td\n" +
@@ -636,26 +826,56 @@ public class LatestByTest extends AbstractGriffinTest {
                     "select ts, x, s from t latest on ts partition by s order by s desc",
                     null,
                     true,
-                    true);
+                    true
+            );
         });
     }
 
     @Test
+    public void testLatestByValueEmptyTableExcludedValueFilter() throws Exception {
+        assertQuery(
+                "sym\tts\n",
+                "select sym, ts from a where sym != 'x' latest on ts partition by sym",
+                "create table a ( sym symbol, ts timestamp ) timestamp(ts) partition by day",
+                "ts",
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testLatestByValueEmptyTableNoFilter() throws Exception {
+        assertQuery(
+                "sym\tts\n",
+                "select sym, ts from a latest on ts partition by sym",
+                "create table a ( sym symbol, ts timestamp ) timestamp(ts) partition by day",
+                "ts",
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testLatestByValuesFilteredResolvesSymbol() throws Exception {
-        assertQuery("s\ti\tts\n",
+        assertQuery(
+                "s\ti\tts\n",
                 "select s, i, ts " +
                         "from a " +
                         "where s in (select distinct s from a) " +
                         "and s = 'ABC' " +
                         "latest on ts partition by s",
-                "create table a ( i int, s symbol, ts timestamp ) timestamp(ts)", "ts", true, false);
+                "create table a ( i int, s symbol, ts timestamp ) timestamp(ts)",
+                "ts",
+                true,
+                false
+        );
     }
 
     @Test
     public void testLatestByWithDeferredNonExistingSymbolOnNonEmptyTableDoesNotThrowException() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
-            compile("insert into tab\n" +
+            execute("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
+            execute("insert into tab\n" +
                     "select dateadd('h', -x::int, now()), rnd_symbol('ap', 'btc'), rnd_int(1,1000,0)\n" +
                     "from long_sequence(1000);");
 
@@ -664,14 +884,15 @@ public class LatestByTest extends AbstractGriffinTest {
                             "     rr as (select id, value v from tab where id = 'apc' || rnd_int() and ts <= dateadd('d', -7, now())  LATEST ON ts PARTITION BY id)\n" +
                             "        select r.id, r.v, cast((r.v - rr.v) as float) r_1M\n" +
                             "        from r\n" +
-                            "        join rr on id\n", null, false, false);
+                            "        join rr on id\n", null, false, false
+            );
         });
     }
 
     @Test
     public void testLatestByWithInAndNotInAllBindVariables() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
@@ -679,41 +900,45 @@ public class LatestByTest extends AbstractGriffinTest {
             bindVariableService.setStr("sym1", "a");
             bindVariableService.setStr("sym2", "b");
             bindVariableService.setStr("sym3", "b");
-            assertQuery("ts\ts\n" +
+            assertQuery(
+                    "ts\ts\n" +
                             "1970-01-02T23:00:00.000000Z\ta\n",
                     "select ts, s from t " +
                             "where s in (:sym1, :sym2) and s != :sym3 " +
                             "latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
     @Test
     public void testLatestByWithInAndNotInAllBindVariablesEmptyResultSet() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym1", "a");
             bindVariableService.setStr("sym2", "a");
-            assertQuery("ts\ts\n",
+            assertQuery(
+                    "ts\ts\n",
                     "select ts, s from t " +
                             "where s = :sym1 and s != :sym2 " +
                             "latest on ts partition by s",
                     "ts",
                     true,
-                    false);
+                    false
+            );
         });
     }
 
     @Test
     public void testLatestByWithInAndNotInAllBindVariablesIndexed() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     "), index(s) timestamp(ts) partition by DAY");
 
@@ -721,48 +946,53 @@ public class LatestByTest extends AbstractGriffinTest {
             bindVariableService.setStr("sym1", "a");
             bindVariableService.setStr("sym2", "b");
             bindVariableService.setStr("sym3", "b");
-            assertQuery("ts\ts\n" +
+            assertQuery(
+                    "ts\ts\n" +
                             "1970-01-02T23:00:00.000000Z\ta\n",
                     "select ts, s from t " +
                             "where s in (:sym1, :sym2) and s != :sym3 " +
                             "latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
     @Test
     public void testLatestByWithInAndNotInAllBindVariablesNonEmptyResultSet() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym1", "a");
             bindVariableService.setStr("sym2", "b");
-            assertQuery("ts\ts\n" +
+            assertQuery(
+                    "ts\ts\n" +
                             "1970-01-02T23:00:00.000000Z\ta\n",
                     "select ts, s from t " +
                             "where s = :sym1 and s != :sym2 " +
                             "latest on ts partition by s",
                     "ts",
                     true,
-                    false);
+                    false
+            );
         });
     }
 
     @Test
     public void testLatestByWithInAndNotInBindVariable() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym", "c");
-            assertQuery("ts\ts\n" +
+            assertQuery(
+                    "ts\ts\n" +
                             "1970-01-02T22:00:00.000000Z\tb\n" +
                             "1970-01-02T23:00:00.000000Z\ta\n",
                     "select ts, s from t " +
@@ -770,21 +1000,23 @@ public class LatestByTest extends AbstractGriffinTest {
                             "latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
     @Test
     public void testLatestByWithNotInAllBindVariablesMultipleValues() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym1", "d");
             bindVariableService.setStr("sym2", null);
-            assertQuery("ts\ts\n" +
+            assertQuery(
+                    "ts\ts\n" +
                             "1970-01-02T22:00:00.000000Z\tb\n" +
                             "1970-01-02T23:00:00.000000Z\ta\n" +
                             "1970-01-03T00:00:00.000000Z\tc\n",
@@ -793,12 +1025,14 @@ public class LatestByTest extends AbstractGriffinTest {
                             "latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
 
             bindVariableService.clear();
             bindVariableService.setStr("sym1", null);
             bindVariableService.setStr("sym2", "a");
-            assertQuery("ts\ts\n" +
+            assertQuery(
+                    "ts\ts\n" +
                             "1970-01-02T22:00:00.000000Z\tb\n" +
                             "1970-01-03T00:00:00.000000Z\tc\n",
                     "select ts, s from t " +
@@ -806,14 +1040,15 @@ public class LatestByTest extends AbstractGriffinTest {
                             "latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
     @Test
     public void testLatestByWithNotInAllBindVariablesMultipleValuesFilter() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
@@ -821,7 +1056,8 @@ public class LatestByTest extends AbstractGriffinTest {
             bindVariableService.setStr("sym1", "d");
             bindVariableService.setStr("sym2", null);
             bindVariableService.setStr("sym3", "d");
-            assertQuery("ts\ts\n" +
+            assertQuery(
+                    "ts\ts\n" +
                             "1970-01-02T14:00:00.000000Z\ta\n" +
                             "1970-01-02T16:00:00.000000Z\tb\n" +
                             "1970-01-02T19:00:00.000000Z\tc\n",
@@ -830,21 +1066,23 @@ public class LatestByTest extends AbstractGriffinTest {
                             "latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
     @Test
     public void testLatestByWithNotInAllBindVariablesMultipleValuesIndexed() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     "), index(s) timestamp(ts) partition by DAY");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym1", "d");
             bindVariableService.setStr("sym2", null);
-            assertQuery("ts\ts\n" +
+            assertQuery(
+                    "ts\ts\n" +
                             "1970-01-02T22:00:00.000000Z\tb\n" +
                             "1970-01-02T23:00:00.000000Z\ta\n" +
                             "1970-01-03T00:00:00.000000Z\tc\n",
@@ -853,12 +1091,14 @@ public class LatestByTest extends AbstractGriffinTest {
                             "latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
 
             bindVariableService.clear();
             bindVariableService.setStr("sym1", null);
             bindVariableService.setStr("sym2", "a");
-            assertQuery("ts\ts\n" +
+            assertQuery(
+                    "ts\ts\n" +
                             "1970-01-02T22:00:00.000000Z\tb\n" +
                             "1970-01-03T00:00:00.000000Z\tc\n",
                     "select ts, s from t " +
@@ -866,14 +1106,15 @@ public class LatestByTest extends AbstractGriffinTest {
                             "latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
     @Test
     public void testLatestByWithNotInAllBindVariablesMultipleValuesIndexedFilter() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     "), index(s), index(s2) timestamp(ts) partition by DAY");
 
@@ -881,7 +1122,8 @@ public class LatestByTest extends AbstractGriffinTest {
             bindVariableService.setStr("sym1", "d");
             bindVariableService.setStr("sym2", null);
             bindVariableService.setStr("sym3", "d");
-            assertQuery("ts\ts\n" +
+            assertQuery(
+                    "ts\ts\n" +
                             "1970-01-02T14:00:00.000000Z\ta\n" +
                             "1970-01-02T16:00:00.000000Z\tb\n" +
                             "1970-01-02T19:00:00.000000Z\tc\n",
@@ -890,20 +1132,22 @@ public class LatestByTest extends AbstractGriffinTest {
                             "latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
     @Test
     public void testLatestByWithNotInAllBindVariablesSingleValue() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym", "c");
-            assertQuery("ts\ts\n" +
+            assertQuery(
+                    "ts\ts\n" +
                             "1970-01-02T22:00:00.000000Z\tb\n" +
                             "1970-01-02T23:00:00.000000Z\ta\n",
                     "select ts, s from t " +
@@ -911,20 +1155,22 @@ public class LatestByTest extends AbstractGriffinTest {
                             "latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
     @Test
     public void testLatestByWithNotInAllBindVariablesSingleValueIndexed() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     "), index(s) timestamp(ts) partition by DAY");
 
             bindVariableService.clear();
             bindVariableService.setStr("sym", "c");
-            assertQuery("ts\ts\n" +
+            assertQuery(
+                    "ts\ts\n" +
                             "1970-01-02T22:00:00.000000Z\tb\n" +
                             "1970-01-02T23:00:00.000000Z\ta\n",
                     "select ts, s from t " +
@@ -932,15 +1178,16 @@ public class LatestByTest extends AbstractGriffinTest {
                             "latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
     @Test
     public void testLatestByWithStaticNonExistingSymbolOnNonEmptyTableDoesNotThrowException() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
-            compile("insert into tab\n" +
+            execute("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
+            execute("insert into tab\n" +
                     "select dateadd('h', -x::int, now()), rnd_symbol('ap', 'btc'), rnd_int(1,1000,0)\n" +
                     "from long_sequence(1000);");
 
@@ -949,22 +1196,76 @@ public class LatestByTest extends AbstractGriffinTest {
                             "     rr as (select id, value v from tab where id = 'apc' and ts <= dateadd('d', -7, now())  LATEST ON ts PARTITION BY id)\n" +
                             "        select r.id, r.v, cast((r.v - rr.v) as float) r_1M\n" +
                             "        from r\n" +
-                            "        join rr on id\n", null, false, false);
+                            "        join rr on id\n", null, false, false
+            );
         });
     }
 
     @Test
     public void testLatestByWithSymbolOnEmptyTableDoesNotThrowException() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
+            execute("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
 
             assertQuery("id\tv\tr_1M\n",
                     "with r as (select id, value v from tab where id = 'apc' LATEST ON ts PARTITION BY id),\n" +
                             "        rr as (select id, value v from tab where id = 'apc' and ts <= dateadd('d', -7, now())  LATEST ON ts PARTITION BY id)\n" +
                             "        select r.id, r.v, cast((r.v - rr.v) as float) r_1M\n" +
                             "        from r\n" +
-                            "        join rr on id\n", null, false, false);
+                            "        join rr on id\n", null, false, false
+            );
         });
+    }
+
+    @Test
+    public void testLatestOnVarchar() throws Exception {
+        assertQuery(
+                "x\tv\tts\n" +
+                        "42\tb\t1970-01-02T17:00:00.000000Z\n" +
+                        "48\ta\t1970-01-02T23:00:00.000000Z\n",
+                "t " +
+                        "where v in ('a', 'b', 'd') and x%2 = 0 " +
+                        "latest on ts partition by v",
+                "create table t as (" +
+                        "select " +
+                        "x, " +
+                        "rnd_varchar('a', 'b', 'c', null) v, " +
+                        "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                        "from long_sequence(49)" +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                "insert into t values (1000, 'd', '1970-01-02T20:00')",
+                "x\tv\tts\n" +
+                        "42\tb\t1970-01-02T17:00:00.000000Z\n" +
+                        "1000\td\t1970-01-02T20:00:00.000000Z\n" +
+                        "48\ta\t1970-01-02T23:00:00.000000Z\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testLatestOnVarcharNonAscii() throws Exception {
+        assertQuery(
+                "x\tv\tts\n" +
+                        "14\t\t1970-01-01T13:00:00.000000Z\n" +
+                        "17\tраз\t1970-01-01T16:00:00.000000Z\n" +
+                        "19\tдва\t1970-01-01T18:00:00.000000Z\n" +
+                        "20\tтри\t1970-01-01T19:00:00.000000Z\n",
+                "select * " +
+                        "from t " +
+                        "latest on ts partition by v",
+                "create table t as (" +
+                        "select " +
+                        "x, " +
+                        "rnd_varchar('раз', 'два', 'три', null) v, " +
+                        "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                        "from long_sequence(20)" +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                true,
+                true
+        );
     }
 
     @Test
@@ -972,17 +1273,17 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
 
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select " +
                     "x, " +
                     "rnd_symbol('a', 'b', null) s, " +
@@ -990,7 +1291,8 @@ public class LatestByTest extends AbstractGriffinTest {
                     "from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
-            assertQuery("x\ts\tts\n" +
+            assertQuery(
+                    "x\ts\tts\n" +
                             "44\tb\t1970-01-02T19:00:00.000000Z\n" +
                             "48\ta\t1970-01-02T23:00:00.000000Z\n",
                     "t " +
@@ -998,7 +1300,8 @@ public class LatestByTest extends AbstractGriffinTest {
                             "latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
@@ -1006,17 +1309,18 @@ public class LatestByTest extends AbstractGriffinTest {
     public void testLatestWithFilterByDoesNotNeedFullScanValueNotInSymbolTable() throws Exception {
         ff = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 // Query should not scan the first partition
                 // all the latest values are in the second, third partition
-                if (Chars.contains(name, "1970-01-01")) {
+                if (Utf8s.containsAscii(name, "1970-01-01")) {
                     return -1;
                 }
                 return TestFilesFacadeImpl.INSTANCE.openRO(name);
             }
         };
 
-        assertQuery13("x\ts\tts\n" +
+        assertQuery(
+                "x\ts\tts\n" +
                         "44\tb\t1970-01-02T19:00:00.000000Z\n" +
                         "48\ta\t1970-01-02T23:00:00.000000Z\n",
                 "t " +
@@ -1036,7 +1340,9 @@ public class LatestByTest extends AbstractGriffinTest {
                         "1000\tc\t1970-01-02T20:00:00.000000Z\n" +
                         "48\ta\t1970-01-02T23:00:00.000000Z\n",
                 true,
-                true);
+                true,
+                false
+        );
     }
 
     @Test
@@ -1054,17 +1360,17 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
 
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select " +
                     "x, " +
                     "rnd_symbol('a', 'b', null) s, " +
@@ -1072,13 +1378,15 @@ public class LatestByTest extends AbstractGriffinTest {
                     "from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
-            assertQuery("x\ts\tts\n" +
+            assertQuery(
+                    "x\ts\tts\n" +
                             "48\ta\t1970-01-02T23:00:00.000000Z\n" +
                             "49\t\t1970-01-03T00:00:00.000000Z\n",
                     "t where s in ('a', null) latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
@@ -1087,17 +1395,17 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
-                    if (Chars.contains(name, "1970-01-01")) {
+                    if (Utf8s.containsAscii(name, "1970-01-01")) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
 
-            compile("create table t as (" +
+            execute("create table t as (" +
                     "select " +
                     "x, " +
                     "rnd_symbol('a', 'b', null) s, " +
@@ -1105,14 +1413,16 @@ public class LatestByTest extends AbstractGriffinTest {
                     "from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
-            assertQuery("x\ts\tts\n" +
+            assertQuery(
+                    "x\ts\tts\n" +
                             "35\ta\t1970-01-02T10:00:00.000000Z\n" +
                             "47\tb\t1970-01-02T22:00:00.000000Z\n" +
                             "49\t\t1970-01-03T00:00:00.000000Z\n",
                     "t where x%2 = 1 latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    true
+            );
         });
     }
 
@@ -1120,20 +1430,20 @@ public class LatestByTest extends AbstractGriffinTest {
     public void testSymbolInPredicate_singleElement() throws Exception {
         assertMemoryLeak(() -> {
             String createStmt = "CREATE table trades(symbol symbol, side symbol, timestamp timestamp) timestamp(timestamp);";
-            compiler.compile(createStmt, sqlExecutionContext);
-            executeInsert("insert into trades VALUES ('BTC', 'buy', 1609459199000000);");
+            execute(createStmt);
+            execute("insert into trades VALUES ('BTC', 'buy', 1609459199000000);");
             String expected = "symbol\tside\ttimestamp\n" +
                     "BTC\tbuy\t2020-12-31T23:59:59.000000Z\n";
             String query = "SELECT * FROM trades\n" +
                     "WHERE symbol in ('BTC') and side in 'buy'\n" +
                     "LATEST ON timestamp PARTITION BY symbol;";
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 
     private String selectDistinctSym() throws SqlException {
         StringSink sink = new StringSink();
-        try (RecordCursorFactory factory = compiler.compile("select distinct s from t order by s limit " + 500, sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select distinct s from t order by s limit " + 500)) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 final Record record = cursor.getRecord();
                 int i = 0;
@@ -1141,58 +1451,58 @@ public class LatestByTest extends AbstractGriffinTest {
                     if (i++ > 0) {
                         sink.put(',');
                     }
-                    sink.put('\'').put(record.getSym(0)).put('\'');
+                    sink.put('\'').put(record.getSymA(0)).put('\'');
                 }
             }
         }
         return sink.toString();
     }
 
-    private void testLatestByPartitionBy(String partitionByType, String valueA, String valueB) throws SqlException {
-        compile("create table forecasts " +
-                "( when " + partitionByType + ", " +
-                "version timestamp, " +
-                "temperature double) timestamp(version) partition by day");
-        compile("insert into forecasts values " +
-                "  (" + valueA + ", '2020-05-02', 40), " +
-                "  (" + valueA + ", '2020-05-03', 41), " +
-                "  (" + valueA + ", '2020-05-04', 42), " +
-                "  (" + valueB + ", '2020-05-01', 140), " +
-                "  (" + valueB + ", '2020-05-03', 141), " +
-                "  (" + valueB + ", '2020-05-05', 142)"
-        );
+    private void testLatestByPartitionBy(String partitionByType, String valueA, String valueB) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table forecasts " +
+                    "( when " + partitionByType + ", " +
+                    "version timestamp, " +
+                    "temperature double) timestamp(version) partition by day");
+            execute("insert into forecasts values " +
+                    "  (" + valueA + ", '2020-05-02', 40), " +
+                    "  (" + valueA + ", '2020-05-03', 41), " +
+                    "  (" + valueA + ", '2020-05-04', 42), " +
+                    "  (" + valueB + ", '2020-05-01', 140), " +
+                    "  (" + valueB + ", '2020-05-03', 141), " +
+                    "  (" + valueB + ", '2020-05-05', 142)"
+            );
 
-        String query = "select when, version, temperature from forecasts latest on version partition by when";
-        String expected = "when\tversion\ttemperature\n" +
-                valueA.replaceAll("'|#", "") + "\t2020-05-04T00:00:00.000000Z\t42.0\n" +
-                valueB.replaceAll("'|#", "") + "\t2020-05-05T00:00:00.000000Z\t142.0\n";
+            String query = "select when, version, temperature from forecasts latest on version partition by when";
+            String expected = "when\tversion\ttemperature\n" +
+                    valueA.replaceAll("['#]", "") + "\t2020-05-04T00:00:00.000000Z\t42.0\n" +
+                    valueB.replaceAll("['#]", "") + "\t2020-05-05T00:00:00.000000Z\t142.0\n";
 
-        assertQuery(expected, query, "version", true, true);
+            assertQueryNoLeakCheck(expected, query, "version", true, true);
+        });
     }
 
     private void testLatestByWithJoin(boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table r (symbol symbol, value long, ts timestamp)" +
-                    (indexed ? ", index(symbol) " : " ") + "timestamp(ts) partition by day", sqlExecutionContext);
-            executeInsert("insert into r values ('xyz', 1, '2022-11-02T01:01:01')");
-            compiler.compile("create table t (symbol symbol, value long, ts timestamp)" +
-                    (indexed ? ", index(symbol) " : " ") + "timestamp(ts) partition by day", sqlExecutionContext);
-            executeInsert("insert into t values ('xyz', 42, '2022-11-02T01:01:01')");
+            execute("create table r (symbol symbol, value long, ts timestamp)" +
+                    (indexed ? ", index(symbol) " : " ") + "timestamp(ts) partition by day");
+            execute("insert into r values ('xyz', 1, '2022-11-02T01:01:01')");
+            execute("create table t (symbol symbol, value long, ts timestamp)" +
+                    (indexed ? ", index(symbol) " : " ") + "timestamp(ts) partition by day");
+            execute("insert into t values ('xyz', 42, '2022-11-02T01:01:01')");
 
             String query = "with r as (select symbol, value v from r where symbol = 'xyz' latest on ts partition by symbol),\n" +
                     " t as (select symbol, value v from t where symbol = 'xyz' latest on ts partition by symbol)\n" +
                     "select r.symbol, r.v subscribers, t.v followers\n" +
                     "from r\n" +
                     "join t on symbol";
-            try (
-                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
-            ) {
+            try (RecordCursorFactory factory = select(query)) {
                 assertCursor(
                         "symbol\tsubscribers\tfollowers\n" +
                                 "xyz\t1\t42\n",
                         factory,
                         false,
-                        false
+                        true
                 );
             }
         });

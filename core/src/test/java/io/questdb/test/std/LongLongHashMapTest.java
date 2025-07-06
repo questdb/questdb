@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,14 +29,17 @@ import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class LongLongHashMapTest {
-    @Test
-    public void testAll() {
+import java.util.HashSet;
 
+public class LongLongHashMapTest {
+
+    @Test
+    public void testSmoke() {
         Rnd rnd = new Rnd();
         // populate map
         LongLongHashMap map = new LongLongHashMap();
         final int N = 1000;
+        final int initialCapacity = map.capacity();
         for (int i = 0; i < N; i++) {
             long value = i + 1;
             map.put(i, value);
@@ -95,6 +98,8 @@ public class LongLongHashMapTest {
         rnd2.reset();
         rnd.reset();
 
+        HashSet<Long> recordedKeys = new HashSet<>();
+
         // assert that keys we didn't remove are still there and
         // keys we removed are not
         for (int i = 0; i < N; i++) {
@@ -102,8 +107,24 @@ public class LongLongHashMapTest {
                 Assert.assertTrue(map.excludes(i));
             } else {
                 Assert.assertFalse(map.excludes(i));
-                Assert.assertEquals(rnd3.nextLong(), map.get(i));
+                long key = rnd3.nextLong();
+                Assert.assertEquals(key, map.get(i));
+                recordedKeys.add(key);
             }
         }
+
+        Assert.assertEquals(recordedKeys.size(), map.size());
+
+        for (int i = 0; i < map.capacity(); i++) {
+            long key = map.keyAtRaw(i);
+            if (key != -1) {
+                Assert.assertFalse(map.excludes(key));
+                Assert.assertTrue(recordedKeys.contains(map.valueAtRaw(i)));
+            }
+        }
+
+        map.restoreInitialCapacity();
+        Assert.assertEquals(0, map.size());
+        Assert.assertEquals(initialCapacity, map.capacity());
     }
 }

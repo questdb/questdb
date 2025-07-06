@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,6 +39,8 @@ import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
+import io.questdb.std.str.Utf8Sequence;
 
 public class InCharFunctionFactory implements FunctionFactory {
     @Override
@@ -49,12 +51,11 @@ public class InCharFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-
         IntHashSet set = new IntHashSet();
         int n = args.size();
 
@@ -72,6 +73,12 @@ public class InCharFunctionFactory implements FunctionFactory {
                     throw SqlException.$(argPositions.getQuick(i), "CHAR constant expected");
                 }
                 set.add(CharConstant.ZERO.getChar(null));
+            } else if (ColumnType.isVarchar(func.getType())) {
+                Utf8Sequence seq = func.getVarcharA(null);
+                if (seq != null && seq.size() != 0) {
+                    throw SqlException.$(argPositions.getQuick(i), "CHAR constant expected");
+                }
+                set.add(CharConstant.ZERO.getChar(null));
             } else if (ColumnType.isNull(func.getType())) {
                 set.add(CharConstant.ZERO.getChar(null));
             } else {
@@ -82,14 +89,14 @@ public class InCharFunctionFactory implements FunctionFactory {
         if (var.isConstant()) {
             return BooleanConstant.of(set.contains(var.getChar(null)));
         }
-        return new Func(var, set);
+        return new InCharConstFunction(var, set);
     }
 
-    private static class Func extends BooleanFunction implements UnaryFunction {
+    private static class InCharConstFunction extends BooleanFunction implements UnaryFunction {
         private final Function arg;
         private final IntHashSet set;
 
-        public Func(Function arg, IntHashSet set) {
+        public InCharConstFunction(Function arg, IntHashSet set) {
             this.arg = arg;
             this.set = set;
         }

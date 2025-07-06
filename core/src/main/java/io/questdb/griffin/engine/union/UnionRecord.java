@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,11 +24,22 @@
 
 package io.questdb.griffin.engine.union;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
 
 public class UnionRecord extends AbstractUnionRecord {
+
+    @Override
+    public ArrayView getArray(int col, int columnType) {
+        if (useA) {
+            return recordA.getArray(col, columnType);
+        }
+        return recordB.getArray(col, columnType);
+    }
 
     @Override
     public BinarySequence getBin(int col) {
@@ -129,11 +140,27 @@ public class UnionRecord extends AbstractUnionRecord {
     // symbol is not supported by set functions
 
     @Override
+    public int getIPv4(int col) {
+        if (useA) {
+            return recordA.getIPv4(col);
+        }
+        return recordB.getIPv4(col);
+    }
+
+    @Override
     public int getInt(int col) {
         if (useA) {
             return recordA.getInt(col);
         }
         return recordB.getInt(col);
+    }
+
+    @Override
+    public Interval getInterval(int col) {
+        if (useA) {
+            return recordA.getInterval(col);
+        }
+        return recordB.getInterval(col);
     }
 
     @Override
@@ -161,7 +188,7 @@ public class UnionRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public void getLong256(int col, CharSink sink) {
+    public void getLong256(int col, CharSink<?> sink) {
         if (useA) {
             recordA.getLong256(col, sink);
         } else {
@@ -194,20 +221,11 @@ public class UnionRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public CharSequence getStr(int col) {
+    public CharSequence getStrA(int col) {
         if (useA) {
-            return recordA.getStr(col);
+            return recordA.getStrA(col);
         }
-        return recordB.getStr(col);
-    }
-
-    @Override
-    public void getStr(int col, CharSink sink) {
-        if (useA) {
-            recordA.getStr(col, sink);
-        } else {
-            recordB.getStr(col, sink);
-        }
+        return recordB.getStrA(col);
     }
 
     @Override
@@ -232,5 +250,29 @@ public class UnionRecord extends AbstractUnionRecord {
             return recordA.getTimestamp(col);
         }
         return recordB.getTimestamp(col);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(int col) {
+        if (useA) {
+            return recordA.getVarcharA(col);
+        }
+        return recordB.getVarcharA(col);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(int col) {
+        if (useA) {
+            return recordA.getVarcharB(col);
+        }
+        return recordB.getVarcharB(col);
+    }
+
+    @Override
+    public int getVarcharSize(int col) {
+        if (useA) {
+            return recordA.getVarcharSize(col);
+        }
+        return recordB.getVarcharSize(col);
     }
 }

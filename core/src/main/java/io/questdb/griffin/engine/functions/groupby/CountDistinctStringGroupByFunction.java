@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,19 +32,24 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Chars;
 import io.questdb.std.CompactCharSequenceHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CountDistinctStringGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
+    private final boolean earlyExit;
+    private final int setInitialCapacity;
+    private final double setLoadFactor;
     private final ObjList<CompactCharSequenceHashSet> sets = new ObjList<>();
     private int setIndex = 0;
     private int valueIndex;
 
-    public CountDistinctStringGroupByFunction(Function arg) {
+    public CountDistinctStringGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
+        this.setInitialCapacity = setInitialCapacity;
+        this.setLoadFactor = setLoadFactor;
+        this.earlyExit = arg.isConstant();
     }
 
     @Override
@@ -54,18 +59,18 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final CompactCharSequenceHashSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new CompactCharSequenceHashSet());
+            sets.extendAndSet(setIndex, set = new CompactCharSequenceHashSet(setInitialCapacity, setLoadFactor));
         } else {
             set = sets.getQuick(setIndex);
+            set.clear();
         }
-        set.clear();
 
-        final CharSequence val = arg.getStr(record);
+        final CharSequence val = arg.getStrA(record);
         if (val != null) {
-            set.add(Chars.toString(val));
+            set.add(val);
             mapValue.putLong(valueIndex, 1L);
         } else {
             mapValue.putLong(valueIndex, 0L);
@@ -74,17 +79,22 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final CompactCharSequenceHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
-        final CharSequence val = arg.getStr(record);
+        final CharSequence val = arg.getStrA(record);
         if (val != null) {
             final int index = set.keyIndex(val);
             if (index < 0) {
                 return;
             }
-            set.addAt(index, Chars.toString(val));
+            set.addAt(index, val);
             mapValue.addLong(valueIndex, 1);
         }
+    }
+
+    @Override
+    public boolean earlyExit(MapValue mapValue) {
+        return earlyExit;
     }
 
     @Override
@@ -103,20 +113,40 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     }
 
     @Override
+    public int getSampleByFlags() {
+        return GroupByFunction.SAMPLE_BY_FILL_ALL;
+    }
+
+    @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG);
+        columnTypes.add(ColumnType.INT);
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return false;
+    public boolean isEarlyExitSupported() {
+        return earlyExit;
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
-        columnTypes.add(ColumnType.INT);
+    public boolean isThreadSafe() {
+        return false;
     }
 
     @Override
@@ -131,7 +161,12 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return false;
     }
 
     @Override

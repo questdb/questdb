@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,11 +30,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class CastCharToStrFunctionFactory implements FunctionFactory {
@@ -46,18 +43,12 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function func = args.getQuick(0);
-        return newInstance(func);
-    }
-
-    public Function newInstance(Function func) {
         if (func.isConstant()) {
             final char value = func.getChar(null);
             if (value == 0) {
-                return new StrConstant(null);
+                return StrConstant.NULL;
             }
-            final StringSink sink = Misc.getThreadLocalBuilder();
-            sink.put(value);
-            return new StrConstant(Chars.toString(sink));
+            return new StrConstant(String.valueOf(value));
         }
         return new Func(func);
     }
@@ -71,7 +62,7 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             final char value = arg.getChar(rec);
             if (value == 0) {
                 return null;
@@ -79,14 +70,6 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
             sinkA.clear();
             sinkA.put(value);
             return sinkA;
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            final char value = arg.getChar(rec);
-            if (value != 0) {
-                sink.put(value);
-            }
         }
 
         @Override

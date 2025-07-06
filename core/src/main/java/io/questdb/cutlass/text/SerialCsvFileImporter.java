@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,9 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8String;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -46,18 +49,23 @@ public final class SerialCsvFileImporter implements Closeable {
     private long importId;
     private Path inputFilePath;
     private ParallelCsvFileImporter.PhaseStatusReporter statusReporter;
-    private CharSequence tableName;
+    private String tableName;
     private TextLoader textLoader;
     private CharSequence timestampColumn;
     private CharSequence timestampFormat;
 
     public SerialCsvFileImporter(CairoEngine cairoEngine) {
-        this.configuration = cairoEngine.getConfiguration();
-        this.inputRoot = configuration.getSqlCopyInputRoot();
-        this.inputFilePath = new Path();
-        this.ff = configuration.getFilesFacade();
-        this.textLoader = new TextLoader(cairoEngine);
-        this.cairoEngine = cairoEngine;
+        try {
+            this.configuration = cairoEngine.getConfiguration();
+            this.inputRoot = configuration.getSqlCopyInputRoot();
+            this.inputFilePath = new Path();
+            this.ff = configuration.getFilesFacade();
+            this.textLoader = new TextLoader(cairoEngine);
+            this.cairoEngine = cairoEngine;
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -67,14 +75,14 @@ public final class SerialCsvFileImporter implements Closeable {
     }
 
     public void of(
-            String tableName,
-            String inputFileName,
+            @NotNull String tableName,
+            @NotNull String inputFileName,
             long importId,
             byte columnDelimiter,
-            CharSequence timestampColumn,
-            CharSequence timestampFormat,
+            @Nullable String timestampColumn,
+            @Nullable String timestampFormat,
             boolean forceHeader,
-            ExecutionCircuitBreaker circuitBreaker,
+            @NotNull ExecutionCircuitBreaker circuitBreaker,
             int atomicity
     ) {
         this.tableName = tableName;
@@ -85,7 +93,7 @@ public final class SerialCsvFileImporter implements Closeable {
         this.circuitBreaker = circuitBreaker;
         this.atomicity = atomicity;
         this.importId = importId;
-        inputFilePath.of(inputRoot).concat(inputFileName).$();
+        inputFilePath.of(inputRoot).concat(inputFileName);
     }
 
     public void process(SecurityContext securityContext) throws TextImportException {
@@ -95,14 +103,14 @@ public final class SerialCsvFileImporter implements Closeable {
 
         final long startMs = getCurrentTimeMs();
 
-        updateImportStatus(CopyTask.STATUS_STARTED, Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
+        updateImportStatus(CopyTask.STATUS_STARTED, Numbers.LONG_NULL, Numbers.LONG_NULL, 0);
         setupTextLoaderFromModel();
 
         final int sqlCopyBufferSize = cairoEngine.getConfiguration().getSqlCopyBufferSize();
         final long buf = Unsafe.malloc(sqlCopyBufferSize, MemoryTag.NATIVE_IMPORT);
-        int fd = -1;
+        long fd = -1;
         try {
-            fd = TableUtils.openRO(ff, inputFilePath, LOG);
+            fd = TableUtils.openRO(ff, inputFilePath.$(), LOG);
             long fileLen = ff.length(fd);
             long n = ff.read(fd, buf, sqlCopyBufferSize, 0);
             if (n > 0) {
@@ -172,12 +180,12 @@ public final class SerialCsvFileImporter implements Closeable {
         textLoader.clear();
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
         textLoader.configureDestination(
-                tableName,
+                new Utf8String(tableName),
                 false,
                 atomicity != -1 ? atomicity : Atomicity.SKIP_ROW,
                 PartitionBy.NONE,
-                timestampColumn,
-                timestampFormat
+                timestampColumn != null ? new Utf8String(timestampColumn) : null,
+                timestampFormat != null ? new Utf8String(timestampFormat) : null
         );
     }
 }

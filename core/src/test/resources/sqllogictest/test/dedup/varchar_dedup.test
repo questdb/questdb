@@ -1,0 +1,59 @@
+# description: Test dedup cases with varchar column type
+# group: [dedup]
+
+control iso_timestamp on
+
+# A؆solute path
+statement ok
+create table x (s varchar, x int, ts timestamp)
+timestamp(ts) partition by DAY WAL DEDUP UPSERT KEYS(ts, s);
+
+# Insert some data with dups in the single commit
+statement ok
+insert into x(s, x, ts)
+values
+('1234¢6789©', 01, '2020-01-01T00:00:00.000Z'),
+(NULL,         -1, '2020-01-01T00:00:00.000Z'),
+('؆c',         10, '2020-01-03T00:00:00.000Z'),
+('؆',          02, '2020-01-01T00:00:00.000Z'),
+('1234¢6789©', 03, '2020-01-01T00:00:00.000Z'),
+('؆c',         20, '2020-01-03T00:00:00.000Z');
+
+# wait data inserted
+statement ok
+select wait_wal_table('x');
+
+# check dedup data
+query TIT
+select s, x, ts from x order by ts, s;
+----
+NULL        -1  2020-01-01T00:00:00.000000Z
+1234¢6789©  3   2020-01-01T00:00:00.000000Z
+؆           2   2020-01-01T00:00:00.000000Z
+؆c          20  2020-01-03T00:00:00.000000Z
+
+
+# Insert partially matched data
+statement ok
+insert into x(s, x, ts)
+values ('1234¢6789©', 31, '2020-01-01T00:00:00.000Z'),
+       ('؆c', 32, '2020-01-04T00:00:00.000Z'),
+       ('؆', 33, '2020-01-01T00:00:00.000Z'),
+       ('1234¢6789©', 34, '2020-01-01T00:00:00.000Z'),
+       ('؆c', 35, '2020-01-03T00:00:00.000Z');
+
+# wait data inserted
+statement ok
+select wait_wal_table('x');
+
+# check dedup data
+query TIT
+select s, x, ts from x order by ts, s;
+----
+NULL        -1  2020-01-01T00:00:00.000000Z
+1234¢6789©  34  2020-01-01T00:00:00.000000Z
+؆           33  2020-01-01T00:00:00.000000Z
+؆c          35  2020-01-03T00:00:00.000000Z
+؆c          32  2020-01-04T00:00:00.000000Z
+
+

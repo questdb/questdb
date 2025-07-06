@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -110,9 +110,6 @@ public final class Rosti {
     }
 
     //returns true if rosti is set to trigger OOM on  allocation
-    @TestOnly
-    public static native boolean isOOMOnMalloc();
-
     public static native boolean keyedHourCount(long pRosti, long pKeys, long count, int valueOffset);
 
     public static native boolean keyedHourCountDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
@@ -131,11 +128,15 @@ public final class Rosti {
 
     public static native boolean keyedHourMaxLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
+    public static native boolean keyedHourMaxShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
+
     public static native boolean keyedHourMinDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
     public static native boolean keyedHourMinInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
     public static native boolean keyedHourMinLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedHourMinShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
 
     public static native boolean keyedHourNSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
@@ -149,6 +150,10 @@ public final class Rosti {
     public static native boolean keyedHourSumLong256(long pRosti, long pKeys, long pLong256, long count, int valueOffset);
 
     public static native boolean keyedHourSumLongLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
+
+    public static native boolean keyedHourSumShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
+
+    public static native boolean keyedHourSumShortLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
 
     public static native boolean keyedIntAvgDoubleWrapUp(long pRosti, int valueOffset, double valueAtNull, long valueAtNullCount);
 
@@ -199,6 +204,11 @@ public final class Rosti {
 
     public static native boolean keyedIntMaxLongWrapUp(long pRosti, int valueOffset, long valueAtNull);
 
+    // max short
+    public static native boolean keyedIntMaxShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
+
+    public static native boolean keyedIntMaxShortWrapUp(long pRosti, int valueOffset, int accumulatedValue);
+
     // min double
     public static native boolean keyedIntMinDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
@@ -214,11 +224,16 @@ public final class Rosti {
     public static native boolean keyedIntMinIntWrapUp(long pRosti, int valueOffset, int valueAtNull);
 
     // min long
-    public static native boolean keyedIntMinLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+    public static native boolean keyedIntMinLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
 
     public static native boolean keyedIntMinLongMerge(long pRostiA, long pRostiB, int valueOffset);
 
     public static native boolean keyedIntMinLongWrapUp(long pRosti, int valueOffset, long valueAtNull);
+
+    // min short
+    public static native boolean keyedIntMinShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
+
+    public static native boolean keyedIntMinShortWrapUp(long pRosti, int valueOffset, long accumulatedValue);
 
     // nsum double
     public static native boolean keyedIntNSumDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
@@ -235,7 +250,7 @@ public final class Rosti {
     public static native boolean keyedIntSumDoubleWrapUp(long pRosti, int valueOffset, double valueAtNull, long valueAtNullCount);
 
     // sum int
-    public static native boolean keyedIntSumInt(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+    public static native boolean keyedIntSumInt(long pRosti, long pKeys, long pInt, long count, int valueOffset);
 
     public static native boolean keyedIntSumIntMerge(long pRostiA, long pRostiB, int valueOffset);
 
@@ -252,11 +267,14 @@ public final class Rosti {
 
     public static native boolean keyedIntSumLongLongMerge(long pRostiA, long pRostiB, int valueOffset);
 
-    public static native boolean keyedIntSumLongLongWrapUp(long pRosti, int valueOffset, long valueAtNull, long valueAtNullCount);
-
     public static native boolean keyedIntSumLongMerge(long pRostiA, long pRostiB, int valueOffset);
 
     public static native boolean keyedIntSumLongWrapUp(long pRosti, int valueOffset, long valueAtNull, long valueAtNullCount);
+
+    // sum short
+    public static native boolean keyedIntSumShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
+
+    public static native boolean keyedIntSumShortLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
 
     public static void printRosti(long pRosti) {
         final long slots = getSlots(pRosti);

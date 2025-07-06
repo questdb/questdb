@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -56,14 +56,14 @@ public class CoalesceBenchmark {
             }
 
             @Override
-            public boolean isReadThreadSafe() {
+            public boolean isThreadSafe() {
                 return true;
             }
         });
         constFunctions.add(new LongConstant(10L));
         records = new Record[N];
         for (int i = 0; i < N; i++) {
-            final long value = i % 2 == 0 ? Numbers.LONG_NaN : i;
+            final long value = i % 2 == 0 ? Numbers.LONG_NULL : i;
             records[i] = new Record() {
                 @Override
                 public long getLong(int col) {

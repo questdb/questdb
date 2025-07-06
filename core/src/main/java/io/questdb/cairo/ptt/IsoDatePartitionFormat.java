@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,8 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.datetime.microtime.TimestampFormatUtils.DAY_FORMAT;
 
@@ -44,7 +46,7 @@ public class IsoDatePartitionFormat implements DateFormat {
     }
 
     @Override
-    public void format(long timestamp, DateLocale locale, CharSequence timeZoneName, CharSink sink) {
+    public void format(long timestamp, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
         long overspill = timestamp - floorMethod.floor(timestamp);
 
         if (overspill > 0) {
@@ -57,7 +59,7 @@ public class IsoDatePartitionFormat implements DateFormat {
                 int second = (int) ((time % Timestamps.MINUTE_MICROS) / Timestamps.SECOND_MICROS);
                 int milliMicros = (int) (time % Timestamps.SECOND_MICROS);
 
-                sink.put('T');
+                sink.putAscii('T');
                 TimestampFormatUtils.append0(sink, hour);
 
                 if (minute > 0 || second > 0 || milliMicros > 0) {
@@ -65,7 +67,7 @@ public class IsoDatePartitionFormat implements DateFormat {
                     TimestampFormatUtils.append0(sink, second);
 
                     if (milliMicros > 0) {
-                        sink.put('-');
+                        sink.putAscii('-');
                         TimestampFormatUtils.append00000(sink, milliMicros);
                     }
                 }
@@ -76,12 +78,12 @@ public class IsoDatePartitionFormat implements DateFormat {
     }
 
     @Override
-    public long parse(CharSequence in, DateLocale locale) throws NumericException {
+    public long parse(@NotNull CharSequence in, @NotNull DateLocale locale) throws NumericException {
         return PartitionDateParseUtil.parseFloorPartialTimestamp(in, 0, in.length());
     }
 
     @Override
-    public long parse(CharSequence in, int lo, int hi, DateLocale locale) throws NumericException {
+    public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException {
         return PartitionDateParseUtil.parseFloorPartialTimestamp(in, lo, hi);
     }
 }

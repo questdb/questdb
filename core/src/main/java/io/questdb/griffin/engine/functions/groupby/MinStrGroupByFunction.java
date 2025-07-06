@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,16 +33,15 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByCharSink;
 import io.questdb.std.Chars;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 public class MinStrGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
-    private final ObjList<StringSink> sinks = new ObjList<>();
-    private int sinkIndex;
+    private final GroupByCharSink sinkA = new GroupByCharSink();
+    private final GroupByCharSink sinkB = new GroupByCharSink();
     private int valueIndex;
 
     public MinStrGroupByFunction(@NotNull Function arg) {
@@ -51,38 +50,37 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
 
     @Override
     public void clear() {
-        sinks.clear();
-        sinkIndex = 0;
+        sinkA.of(0);
+        sinkB.of(0);
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        final CharSequence val = arg.getStr(record);
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        final CharSequence val = arg.getStrA(record);
         if (val == null) {
-            mapValue.putInt(valueIndex, Numbers.INT_NaN);
+            mapValue.putLong(valueIndex, 0);
         } else {
-            final StringSink sink = nextSink();
-            sink.put(val);
-            mapValue.putInt(valueIndex, sinkIndex++);
+            sinkA.of(0).put(val);
+            mapValue.putLong(valueIndex, sinkA.ptr());
         }
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        final CharSequence val = arg.getStr(record);
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
+        final CharSequence val = arg.getStrA(record);
         if (val != null) {
-            final int index = mapValue.getInt(valueIndex);
-            if (index == Numbers.INT_NaN) {
-                final StringSink sink = nextSink();
-                sink.put(val);
-                mapValue.putInt(valueIndex, sinkIndex++);
+            final long ptr = mapValue.getLong(valueIndex);
+            if (ptr == 0) {
+                sinkA.of(0).put(val);
+                mapValue.putLong(valueIndex, sinkA.ptr());
                 return;
             }
 
-            final StringSink minSink = sinks.getQuick(index);
-            if (Chars.compare(minSink, val) > 0) {
-                minSink.clear();
-                minSink.put(val);
+            sinkA.of(ptr);
+            if (Chars.compare(sinkA, val) > 0) {
+                sinkA.clear();
+                sinkA.put(val);
+                mapValue.putLong(valueIndex, sinkA.ptr());
             }
         }
     }
@@ -93,23 +91,34 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        final int index = rec.getInt(valueIndex);
-        return (index == Numbers.INT_NaN) ? null : sinks.getQuick(index);
+    public CharSequence getStrA(Record rec) {
+        final long ptr = rec.getLong(valueIndex);
+        return ptr == 0 ? null : sinkA.of(ptr);
     }
 
     @Override
     public CharSequence getStrB(Record rec) {
-        return getStr(rec);
+        return getStrA(rec);
+    }
+
+    @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
     public boolean isConstant() {
-        return false;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
         return false;
     }
 
@@ -119,14 +128,36 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
+    public boolean isThreadSafe() {
+        return false;
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcPtr = srcValue.getLong(valueIndex);
+        if (srcPtr == 0) {
+            return;
+        }
+        long destPtr = destValue.getLong(valueIndex);
+        if (destPtr == 0 || Chars.compare(sinkA.of(destPtr), sinkB.of(srcPtr)) > 0) {
+            destValue.putLong(valueIndex, srcPtr);
+        }
+    }
+
+    @Override
+    public void setAllocator(GroupByAllocator allocator) {
+        sinkA.setAllocator(allocator);
+        sinkB.setAllocator(allocator);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putInt(valueIndex, Numbers.INT_NaN);
+        mapValue.putLong(valueIndex, 0);
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 
     @Override
@@ -137,17 +168,5 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
     @Override
     public void toTop() {
         UnaryFunction.super.toTop();
-        sinkIndex = 0;
-    }
-
-    private StringSink nextSink() {
-        final StringSink sink;
-        if (sinks.size() <= sinkIndex) {
-            sinks.extendAndSet(sinkIndex, sink = new StringSink());
-        } else {
-            sink = sinks.getQuick(sinkIndex);
-        }
-        sink.clear();
-        return sink;
     }
 }

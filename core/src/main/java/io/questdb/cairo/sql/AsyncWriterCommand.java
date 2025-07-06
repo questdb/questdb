@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,7 +27,6 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.tasks.TableWriterTask;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -45,7 +44,7 @@ public interface AsyncWriterCommand extends TableMetadataChange, Closeable {
 
     int getTableNamePosition();
 
-    @Nullable TableToken getTableToken();
+    TableToken getTableToken();
 
     long getTableVersion();
 

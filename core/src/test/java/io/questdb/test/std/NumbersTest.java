@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,18 +24,27 @@
 
 package io.questdb.test.std;
 
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256FromCharSequenceDecoder;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.Random;
 
 public class NumbersTest {
-
     private final StringSink sink = new StringSink();
     private Rnd rnd;
 
@@ -118,15 +127,15 @@ public class NumbersTest {
         Assert.assertEquals(1, Numbers.compare(1d, 0d));
         Assert.assertEquals(0, Numbers.compare(1d, 1d));
         Assert.assertEquals(0, Numbers.compare(0.0d, 0.0d));
-        Assert.assertEquals(-1, Numbers.compare(-0.0d, 0.0d));
+        Assert.assertEquals(0, Numbers.compare(-0.0d, 0.0d));
         Assert.assertEquals(1, Numbers.compare(Double.MAX_VALUE, Double.MIN_VALUE));
         Assert.assertEquals(0, Numbers.compare(Double.MAX_VALUE, Double.MAX_VALUE));
         Assert.assertEquals(0, Numbers.compare(Double.MIN_VALUE, Double.MIN_VALUE));
         Assert.assertEquals(-1, Numbers.compare(Double.MIN_VALUE, Double.MAX_VALUE));
         Assert.assertEquals(0, Numbers.compare(Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY));
-        Assert.assertEquals(1, Numbers.compare(Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY));
+        Assert.assertEquals(0, Numbers.compare(Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY));
         Assert.assertEquals(0, Numbers.compare(Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY));
-        Assert.assertEquals(-1, Numbers.compare(Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY));
+        Assert.assertEquals(0, Numbers.compare(Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY));
         Assert.assertEquals(0, Numbers.compare(Double.NaN, Double.NaN));
         Assert.assertEquals(-1, Numbers.compare(1d, Double.NaN));
         Assert.assertEquals(-1, Numbers.compare(Double.MIN_VALUE, Double.NaN));
@@ -179,9 +188,9 @@ public class NumbersTest {
         String validInputZero = "0x00";
         String validInputMax = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
         Long256Impl sink = new Long256Impl();
-        Assert.assertFalse(Numbers.extractLong256(invalidInput, invalidInput.length(), sink));
-        Assert.assertTrue(Numbers.extractLong256(validInputZero, validInputZero.length(), sink));
-        Assert.assertTrue(Numbers.extractLong256(validInputMax, validInputMax.length(), sink));
+        Assert.assertFalse(Numbers.extractLong256(invalidInput, sink));
+        Assert.assertTrue(Numbers.extractLong256(validInputZero, sink));
+        Assert.assertTrue(Numbers.extractLong256(validInputMax, sink));
     }
 
     @Test
@@ -190,15 +199,15 @@ public class NumbersTest {
         Assert.assertEquals(1, Numbers.compare(1f, 0f));
         Assert.assertEquals(0, Numbers.compare(1f, 1f));
         Assert.assertEquals(0, Numbers.compare(0.0f, 0.0f));
-        Assert.assertEquals(-1, Numbers.compare(-0.0f, 0.0f));
+        Assert.assertEquals(0, Numbers.compare(-0.0f, 0.0f));
         Assert.assertEquals(1, Numbers.compare(Float.MAX_VALUE, Float.MIN_VALUE));
         Assert.assertEquals(0, Numbers.compare(Float.MAX_VALUE, Float.MAX_VALUE));
         Assert.assertEquals(0, Numbers.compare(Float.MIN_VALUE, Float.MIN_VALUE));
         Assert.assertEquals(-1, Numbers.compare(Float.MIN_VALUE, Float.MAX_VALUE));
         Assert.assertEquals(0, Numbers.compare(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY));
-        Assert.assertEquals(1, Numbers.compare(Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY));
+        Assert.assertEquals(0, Numbers.compare(Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY));
         Assert.assertEquals(0, Numbers.compare(Float.NEGATIVE_INFINITY, Float.NEGATIVE_INFINITY));
-        Assert.assertEquals(-1, Numbers.compare(Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY));
+        Assert.assertEquals(0, Numbers.compare(Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY));
         Assert.assertEquals(0, Numbers.compare(Float.NaN, Float.NaN));
     }
 
@@ -239,15 +248,15 @@ public class NumbersTest {
             float d2 = (float) random.nextGaussian();
             float d3 = random.nextFloat() * Float.MAX_VALUE;
             sink.clear();
-            Numbers.append(sink, d1);
+            Numbers.append(sink, (double) d1);
             TestUtils.assertEquals(Double.toString(d1), sink);
 
             sink.clear();
-            Numbers.append(sink, d2);
+            Numbers.append(sink, (double) d2);
             TestUtils.assertEquals(Double.toString(d2), sink);
 
             sink.clear();
-            Numbers.append(sink, d3);
+            Numbers.append(sink, (double) d3);
             TestUtils.assertEquals(Double.toString(d3), sink);
         }
     }
@@ -454,6 +463,150 @@ public class NumbersTest {
     }
 
     @Test
+    public void testGetBroadcastAddress() throws NumericException {
+        Assert.assertEquals("12.2.0.0/12.2.255.255", TestUtils.ipv4ToString2(Numbers.getBroadcastAddress("12.2/16")));
+    }
+
+    @Test
+    public void testGetBroadcastAddress2() throws NumericException {
+        Assert.assertEquals("12.2.0.0/12.2.255.255", TestUtils.ipv4ToString2(Numbers.getBroadcastAddress("12.2.10/16")));
+    }
+
+    @Test
+    public void testGetBroadcastAddress3() throws NumericException {
+        Assert.assertEquals("12.2.10.5/12.2.10.5", TestUtils.ipv4ToString2(Numbers.getBroadcastAddress("12.2.10.5")));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testGetBroadcastAddress4() throws NumericException {
+        Numbers.getBroadcastAddress("12.2.10/a");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testGetBroadcastAddress5() throws NumericException {
+        Numbers.getBroadcastAddress("12.2.10/33");
+    }
+
+    @Test
+    public void testGetIPv4Netmask() {
+        Assert.assertEquals("11111111111111111111111100000000", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/24")));
+        Assert.assertEquals("10000000000000000000000000000000", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/1")));
+        Assert.assertEquals("11111111111111111111111111111111", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/32")));
+        Assert.assertEquals("0", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/0")));
+        Assert.assertEquals("11111111111111111111111111111111", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8")));
+
+        Assert.assertEquals("1", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/")));
+        Assert.assertEquals("1", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/-1")));
+        Assert.assertEquals("1", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/33")));
+        Assert.assertEquals("1", Integer.toBinaryString(Numbers.getIPv4Netmask("12.2.6.8/1ABC")));
+    }
+
+    @Test
+    public void testGetIPv4Subnet() throws NumericException {
+        Assert.assertEquals("1100000000100000011000001000/11111111111111111111111100000000", toBinaryString(Numbers.getIPv4Subnet("12.2.6.8/24")));
+        Assert.assertEquals("1100000000100000011000001000/11111111111111111111111111111110", toBinaryString(Numbers.getIPv4Subnet("12.2.6.8/31")));
+
+        Assert.assertEquals("11111111111111111111111111111111/0", toBinaryString(Numbers.getIPv4Subnet("255.255.255.255/0")));
+        Assert.assertEquals("11111111111111111111111111111111/11111111111111111111111111111110", toBinaryString(Numbers.getIPv4Subnet("255.255.255.255/31")));
+        Assert.assertEquals("11111111111111111111111111111111/11111111111111111111111111111111", toBinaryString(Numbers.getIPv4Subnet("255.255.255.255/32")));
+
+        assertFails(() -> Numbers.getIPv4Subnet("1"));
+        assertFails(() -> Numbers.getIPv4Subnet("0.1"));
+        assertFails(() -> toBinaryString(Numbers.getIPv4Subnet("0.1.2")));
+        Assert.assertEquals("1000000100000001100000100/11111111111111111111111111111111", toBinaryString(Numbers.getIPv4Subnet("1.2.3.4")));
+
+        Assert.assertEquals("0/0", toBinaryString(Numbers.getIPv4Subnet("0.0/0")));
+        Assert.assertEquals("1/0", toBinaryString(Numbers.getIPv4Subnet("0.0.0.1/0")));
+        Assert.assertEquals("1/11111111111111111111111111111111", toBinaryString(Numbers.getIPv4Subnet("0.0.0.1/32")));
+
+        Assert.assertEquals("12.2.6.8/255.255.0.0", TestUtils.ipv4ToString2(Numbers.getIPv4Subnet("12.2.6.8/16")));
+    }
+
+    @Test
+    public void testHexDigitsLong256() {
+        Long256Impl long256 = new Long256Impl();
+
+        // null
+        long256.setAll(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(0, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(0, 0, Long.MIN_VALUE, Long.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(0, 0, 0, Long.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(Long.MIN_VALUE, 0, Long.MIN_VALUE, Long.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(Long.MIN_VALUE, Long.MIN_VALUE, 0, Long.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, 0);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        for (int i = -1; i < 1024; i++) {
+            long256.setAll(i, i, i, i);
+            sink.clear();
+            long256.toSink(sink);
+            Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+        }
+
+        long256.setAll(Short.MAX_VALUE, Short.MAX_VALUE, Short.MAX_VALUE, Short.MAX_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        // We used to print all NaNs here
+        long256.setAll(Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+    }
+
+    @Test
+    public void testHexDigitsLong256Fuzz() {
+        final int N = 1000;
+        Rnd rnd = TestUtils.generateRandom(null);
+
+        Long256Impl long256 = new Long256Impl();
+
+        for (int i = 0; i < N; i++) {
+            long256.setAll(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+            sink.clear();
+            long256.toSink(sink);
+            Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+        }
+    }
+
+    @Test
     public void testHexInt() throws Exception {
         Assert.assertEquals('w', (char) Numbers.parseHexInt("77"));
         Assert.assertEquals(0xf0, Numbers.parseHexInt("F0"));
@@ -489,7 +642,7 @@ public class NumbersTest {
     }
 
     @Test
-    public void testLong256() throws NumericException {
+    public void testLong256() {
         CharSequence tok = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
         Long256Impl long256 = new Long256Impl();
         Long256FromCharSequenceDecoder.decode(tok, 2, tok.length(), long256);
@@ -498,7 +651,7 @@ public class NumbersTest {
         Assert.assertEquals(tok, tokLong256);
 
         Long256Impl long256a = new Long256Impl();
-        Numbers.parseLong256(tok, tok.length(), long256a);
+        Numbers.parseLong256(tok, long256a);
         sink.clear();
         long256a.toSink(sink);
         CharSequence tokLong256a = sink.toString();
@@ -546,6 +699,24 @@ public class NumbersTest {
     public void testLongToString() {
         Numbers.append(sink, 6103390276L);
         TestUtils.assertEquals("6103390276", sink);
+    }
+
+    @Test
+    public void testLongUtf8Sequence() throws Exception {
+        Rnd rnd = new Rnd();
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
+            for (int i = 0; i < 100; i++) {
+                long l1 = rnd.nextLong();
+                long l2 = rnd.nextLong();
+                sink.clear();
+
+                Numbers.append(sink, l1);
+                int p = sink.size();
+                Numbers.append(sink, l2);
+                Assert.assertEquals(l1, Numbers.parseLong(sink, 0, p));
+                Assert.assertEquals(l2, Numbers.parseLong(sink, p, sink.size()));
+            }
+        }
     }
 
     @Test(expected = NumericException.class)
@@ -808,9 +979,156 @@ public class NumbersTest {
     }
 
     @Test
+    public void testParseIPv4() throws Exception {
+        Assert.assertEquals(84413540, Numbers.parseIPv4("5.8.12.100"));
+        Assert.assertEquals(204327201, Numbers.parseIPv4("12.45.201.33"));
+    }
+
+    @Test
+    public void testParseIPv42() throws Exception {
+        Assert.assertEquals(0, Numbers.parseIPv4((CharSequence) null));
+        Assert.assertEquals(0, Numbers.parseIPv4("null"));
+        Assert.assertEquals(0, Numbers.parseIPv4((Utf8Sequence) null));
+        Assert.assertEquals(0, Numbers.parseIPv4(new Utf8String("null")));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4Empty() throws Exception {
+        Numbers.parseIPv4("");
+    }
+
+    @Test
+    public void testParseIPv4LeadingAndTrailingDots() throws Exception {
+        Assert.assertEquals("1.2.3.4", TestUtils.ipv4ToString(Numbers.parseIPv4(".....1.2.3.4......")));
+    }
+
+    @Test
+    public void testParseIPv4LeadingAndTrailingDots2() throws Exception {
+        Assert.assertEquals("1.2.3.4", TestUtils.ipv4ToString(Numbers.parseIPv4(".1.2.3.4.")));
+    }
+
+    @Test
+    public void testParseIPv4LeadingDots() throws Exception {
+        Assert.assertEquals("1.2.3.4", TestUtils.ipv4ToString(Numbers.parseIPv4(".....1.2.3.4")));
+    }
+
+    @Test
+    public void testParseIPv4LeadingDots2() throws Exception {
+        Assert.assertEquals("1.2.3.4", TestUtils.ipv4ToString(Numbers.parseIPv4(".1.2.3.4")));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4LeadingDots3() throws Exception {
+        Numbers.parseIPv4("...a.1.2.3.4");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4MiddleDots() throws Exception {
+        Numbers.parseIPv4("1..2..3..4");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4Overflow1() throws Exception {
+        String i1 = "256.256.256.256";
+        Numbers.parseIPv4(i1);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4Overflow2() throws Exception {
+        String i1 = "255.255.255.256";
+        Numbers.parseIPv4(i1);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4Overflow3() throws Exception {
+        Numbers.parseIPv4("12.1.3500.2");
+    }
+
+    @Test
+    public void testParseIPv4Quiet() {
+        Assert.assertEquals(0, Numbers.parseIPv4Quiet(null));
+        Assert.assertEquals(0, Numbers.parseIPv4Quiet("NaN"));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4SignOnly() throws Exception {
+        Numbers.parseIPv4("-");
+    }
+
+    @Test
+    public void testParseIPv4TrailingDots() throws Exception {
+        Assert.assertEquals("1.2.3.4", TestUtils.ipv4ToString(Numbers.parseIPv4("1.2.3.4......")));
+    }
+
+    @Test
+    public void testParseIPv4TrailingDots2() throws Exception {
+        Assert.assertEquals("1.2.3.4", TestUtils.ipv4ToString(Numbers.parseIPv4("1.2.3.4.")));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4TrailingDots3() throws Exception {
+        Numbers.parseIPv4("1.2.3.4...a.");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4WrongChars() throws Exception {
+        Numbers.parseIPv4("1.2.3.ab");
+    }
+
+    @Test
+    public void testParseIPv4_0() throws Exception {
+        Assert.assertEquals(84413540, Numbers.parseIPv4_0("5.8.12.100", 0, 10));
+        Assert.assertEquals(204327201, Numbers.parseIPv4_0("12.45.201.33", 0, 12));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4_0Empty() throws Exception {
+        Numbers.parseIPv4_0("", 0, 0);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4_0Null() throws Exception {
+        Numbers.parseIPv4_0(null, 0, 0);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4_0Overflow1() throws Exception {
+        String i1 = "256.256.256.256";
+        Numbers.parseIPv4_0(i1, 0, 15);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4_0Overflow2() throws Exception {
+        String i1 = "255.255.255.256";
+        Numbers.parseIPv4_0(i1, 0, 15);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4_0Overflow3() throws Exception {
+        Numbers.parseIPv4_0("12.1.3500.2", 0, 11);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4_0SignOnly() throws Exception {
+        Numbers.parseIPv4_0("-", 0, 1);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4_0WrongChars() throws Exception {
+        Numbers.parseIPv4_0("1.2.3.ab", 0, 8);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIPv4_0WrongCount() throws Exception {
+        Numbers.parseIPv4_0("5.6", 0, 3);
+    }
+
+    @Test
     public void testParseInt() throws Exception {
         Assert.assertEquals(567963, Numbers.parseInt("567963"));
         Assert.assertEquals(-23346346, Numbers.parseInt("-23346346"));
+        Assert.assertEquals(567963, Numbers.parseInt(new Utf8String("567963")));
+        Assert.assertEquals(-23346346, Numbers.parseInt(new Utf8String("-23346346")));
     }
 
     @Test(expected = NumericException.class)
@@ -820,7 +1138,7 @@ public class NumbersTest {
 
     @Test(expected = NumericException.class)
     public void testParseIntNull() throws Exception {
-        Numbers.parseInt(null);
+        Numbers.parseInt((CharSequence) null);
     }
 
     @Test(expected = NumericException.class)
@@ -989,13 +1307,23 @@ public class NumbersTest {
     }
 
     @Test(expected = NumericException.class)
-    public void testParseLongNull() throws Exception {
-        Numbers.parseLong(null);
+    public void testParseLongNullCharSequence() throws Exception {
+        Numbers.parseLong((CharSequence) null);
     }
 
     @Test(expected = NumericException.class)
-    public void testParseLongNull2() throws Exception {
-        Numbers.parseLong(null, 0, 10);
+    public void testParseLongNullCharSequence2() throws Exception {
+        Numbers.parseLong((CharSequence) null, 0, 10);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseLongNullUtf8Sequence() throws Exception {
+        Numbers.parseLong((Utf8Sequence) null);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseLongNullUtf8Sequence2() throws Exception {
+        Numbers.parseLong((Utf8Sequence) null, 0, 10);
     }
 
     @Test(expected = NumericException.class)
@@ -1057,9 +1385,353 @@ public class NumbersTest {
         Numbers.parseLongSize("45035996273704960000000");
     }
 
+    @Test
+    public void testParseLongUnderscore() throws NumericException {
+        Assert.assertEquals(123_000, Numbers.parseLong("123_000"));
+        Assert.assertEquals(123_343_123, Numbers.parseLong("123_343_123"));
+        assertParseLongException("_889");
+        assertParseLongException("__8289");
+        assertParseLongException("8289_");
+        assertParseLongException("8289__");
+        assertParseLongException("82__89");
+    }
+
     @Test(expected = NumericException.class)
     public void testParseLongWrongChars() throws Exception {
         Numbers.parseLong("123ab");
+    }
+
+    @Test
+    public void testParseMicros() throws NumericException {
+        Assert.assertEquals(25_000, Numbers.parseMicros("25ms"));
+        Assert.assertEquals(25_000, Numbers.parseMicros("25MS"));
+        Assert.assertEquals(1_500_000_000L, Numbers.parseMicros("25m"));
+        Assert.assertEquals(1_500_000_000L, Numbers.parseMicros("25M"));
+        Assert.assertEquals(14_400_000_000L, Numbers.parseMicros("4h"));
+        Assert.assertEquals(10_800_000_000L, Numbers.parseMicros("3H"));
+        Assert.assertEquals(90_000_000L, Numbers.parseMicros("90s"));
+        Assert.assertEquals(560L, Numbers.parseMicros("560us"));
+        Assert.assertEquals(5_600L, Numbers.parseMicros("5_600us"));
+        Assert.assertEquals(5L, Numbers.parseMicros("5_600ns"));
+
+        assertParseMicrosException(null);
+        assertParseMicrosException("");
+        // overflow
+        assertParseMicrosException("80980982938408234823048028340284820");
+
+
+        // check similar keywords are not picked up
+
+        // n
+        assertParseMicrosException("60nk");
+        assertParseMicrosException("3msa");
+
+        // u
+        assertParseMicrosException("60uk");
+        assertParseMicrosException("3usa");
+
+        // m
+        assertParseMicrosException("60mk");
+        assertParseMicrosException("3umsa");
+
+        // s
+        assertParseMicrosException("3sk");
+
+        // h
+        assertParseMicrosException("3hu");
+
+        // arbitrary
+        assertParseMicrosException("3k");
+
+        // assert unit without value
+
+        // n
+        assertParseMicrosException("ns");
+        assertParseMicrosException("-ns");
+        assertParseMicrosException("_ns");
+
+        // u
+        assertParseMicrosException("us");
+        assertParseMicrosException("-us");
+        assertParseMicrosException("_us");
+
+        // m
+        assertParseMicrosException("ms");
+        assertParseMicrosException("-ms");
+        assertParseMicrosException("_ms");
+
+        assertParseMicrosException("m");
+        assertParseMicrosException("-m");
+        assertParseMicrosException("_m");
+
+        // s
+        assertParseMicrosException("s");
+        assertParseMicrosException("-s");
+        assertParseMicrosException("_s");
+
+        // h
+        assertParseMicrosException("h");
+        assertParseMicrosException("-h");
+        assertParseMicrosException("_h");
+
+        // no unit
+        assertParseMicrosException("_");
+
+        // underscore misuse
+        assertParseMicrosException("_");
+        assertParseMicrosException("_22");
+        assertParseMicrosException("_444_");
+        assertParseMicrosException("_28989__");
+        assertParseMicrosException("90902__");
+        assertParseMicrosException("123_");
+    }
+
+    @Test
+    public void testParseMillis() throws NumericException {
+        Assert.assertEquals(25, Numbers.parseMillis("25ms"));
+        Assert.assertEquals(25, Numbers.parseMillis("25MS"));
+        Assert.assertEquals(1_500_000L, Numbers.parseMillis("25m"));
+        Assert.assertEquals(1_500_000L, Numbers.parseMillis("25M"));
+        Assert.assertEquals(14_400_000L, Numbers.parseMillis("4h"));
+        Assert.assertEquals(10_800_000L, Numbers.parseMillis("3H"));
+        Assert.assertEquals(90_000L, Numbers.parseMillis("90s"));
+        Assert.assertEquals(0L, Numbers.parseMillis("234us"));
+        Assert.assertEquals(3_600L, Numbers.parseMillis("3_600_000us"));
+        Assert.assertEquals(50L, Numbers.parseMillis("50_600_000ns"));
+
+        assertParseMillisException(null);
+        assertParseMillisException("");
+        // overflow
+        assertParseMillisException("80980982938408234823048028340284820");
+
+
+        // check similar keywords are not picked up
+
+        // n
+        assertParseMillisException("60nk");
+        assertParseMillisException("3msa");
+
+        // u
+        assertParseMillisException("60uk");
+        assertParseMillisException("3usa");
+
+        // m
+        assertParseMillisException("60mk");
+        assertParseMillisException("3umsa");
+
+        // s
+        assertParseMillisException("3sk");
+
+        // h
+        assertParseMillisException("3hu");
+
+        // arbitrary
+        assertParseMillisException("3k");
+
+        // assert unit without value
+
+        // n
+        assertParseMillisException("ns");
+        assertParseMillisException("-ns");
+        assertParseMillisException("_ns");
+
+        // u
+        assertParseMillisException("us");
+        assertParseMillisException("-us");
+        assertParseMillisException("_us");
+
+        // m
+        assertParseMillisException("ms");
+        assertParseMillisException("-ms");
+        assertParseMillisException("_ms");
+
+        assertParseMillisException("m");
+        assertParseMillisException("-m");
+        assertParseMillisException("_m");
+
+        // s
+        assertParseMillisException("s");
+        assertParseMillisException("-s");
+        assertParseMillisException("_s");
+
+        // h
+        assertParseMillisException("h");
+        assertParseMillisException("-h");
+        assertParseMillisException("_h");
+
+        // no unit
+        assertParseMillisException("_");
+
+        // underscore misuse
+        assertParseMillisException("_");
+        assertParseMillisException("_22");
+        assertParseMillisException("_444_");
+        assertParseMillisException("_28989__");
+        assertParseMillisException("90902__");
+        assertParseMillisException("123_");
+    }
+
+    @Test
+    public void testParseNanos() throws NumericException {
+        Assert.assertEquals(25_000_000, Numbers.parseNanos("25ms"));
+        Assert.assertEquals(25_000_000, Numbers.parseNanos("25MS"));
+        Assert.assertEquals(1_500_000_000_000L, Numbers.parseNanos("25m"));
+        Assert.assertEquals(1_500_000_000_000L, Numbers.parseNanos("25M"));
+        Assert.assertEquals(14_400_000_000_000L, Numbers.parseNanos("4h"));
+        Assert.assertEquals(10_800_000_000_000L, Numbers.parseNanos("3H"));
+        Assert.assertEquals(90_000_000_000L, Numbers.parseNanos("90s"));
+        Assert.assertEquals(560_000L, Numbers.parseNanos("560us"));
+        Assert.assertEquals(5_600_000L, Numbers.parseNanos("5_600us"));
+        Assert.assertEquals(5600L, Numbers.parseNanos("5_600ns"));
+
+        assertParseNanosException(null);
+        assertParseNanosException("");
+        // overflow
+        assertParseNanosException("80980982938408234823048028340284820");
+
+        // check similar keywords are not picked up
+        // n
+        assertParseNanosException("60nk");
+        assertParseNanosException("3msa");
+
+        // u
+        assertParseNanosException("60uk");
+        assertParseNanosException("3usa");
+
+        // m
+        assertParseNanosException("60mk");
+        assertParseNanosException("3umsa");
+
+        // s
+        assertParseNanosException("3sk");
+
+        // h
+        assertParseNanosException("3hu");
+
+        // arbitrary
+        assertParseNanosException("3k");
+
+        // assert unit without value
+
+        // n
+        assertParseNanosException("ns");
+        assertParseNanosException("-ns");
+        assertParseNanosException("_ns");
+
+        // u
+        assertParseNanosException("us");
+        assertParseNanosException("-us");
+        assertParseNanosException("_us");
+
+        // m
+        assertParseNanosException("ms");
+        assertParseNanosException("-ms");
+        assertParseNanosException("_ms");
+
+        assertParseNanosException("m");
+        assertParseNanosException("-m");
+        assertParseNanosException("_m");
+
+        // s
+        assertParseNanosException("s");
+        assertParseNanosException("-s");
+        assertParseNanosException("_s");
+
+        // h
+        assertParseNanosException("h");
+        assertParseNanosException("-h");
+        assertParseNanosException("_h");
+
+        // no unit
+        assertParseNanosException("_");
+
+        // underscore misuse
+        assertParseNanosException("_");
+        assertParseNanosException("_22");
+        assertParseNanosException("_444_");
+        assertParseNanosException("_28989__");
+        assertParseNanosException("90902__");
+        assertParseNanosException("123_");
+    }
+
+    @Test
+    public void testParseSubnet() throws NumericException {
+        Assert.assertEquals("12.2.10.0/255.255.255.0", TestUtils.ipv4ToString2(Numbers.parseSubnet("12.2.10/24")));
+        Assert.assertEquals("2.4.8.0/255.255.255.0", TestUtils.ipv4ToString2(Numbers.parseSubnet("2.4.8/24")));
+
+        assertFails(() -> Numbers.parseSubnet("2.4.6"));
+        assertFails(() -> Numbers.parseSubnet("apple"));
+        assertFails(() -> Numbers.parseSubnet("apple/24"));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet0() throws Exception {
+        Numbers.parseSubnet0("apple", 0, 0, 6);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet01() throws Exception {
+        Numbers.parseSubnet0("apple", 0, 5, 6);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet010() throws Exception {
+        Numbers.parseSubnet0("2.2.2.256", 0, 9, 32);
+    }
+
+    @Test
+    public void testParseSubnet011() throws Exception {
+        Assert.assertEquals("2.0.0.0", TestUtils.ipv4ToString(Numbers.parseSubnet0("2", 0, 1, 8)));
+    }
+
+    @Test
+    public void testParseSubnet012() throws Exception {
+        Assert.assertEquals(-2, Numbers.parseSubnet0("255.255.255.254", 0, 15, 31));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet02() throws Exception {
+        Numbers.parseSubnet0("650.650.650.650", 0, 15, 24);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet03() throws Exception {
+        Numbers.parseSubnet0("650.650.650.650.", 0, 15, 24);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet04() throws Exception {
+        Numbers.parseSubnet0("1.2.3.650.", 0, 15, 24);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet05() throws Exception {
+        Numbers.parseSubnet0("2", 0, 1, 16);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet06() throws Exception {
+        Numbers.parseSubnet0("2.2", 0, 3, 24);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet07() throws Exception {
+        Numbers.parseSubnet0("2.2.2", 0, 5, 32);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet08() throws Exception {
+        Numbers.parseSubnet0("2.2.2.2", 0, 7, 33);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseSubnet09() throws Exception {
+        Numbers.parseSubnet0("2.2.2.2.", 0, 8, 32);
+    }
+
+    @Test
+    public void testParseSubnet1() throws Exception {
+        Assert.assertEquals("12.2.0.0/255.255.0.0", TestUtils.ipv4ToString2(Numbers.parseSubnet("12.2.10/16")));
     }
 
     @Test(expected = NumericException.class)
@@ -1070,6 +1742,31 @@ public class NumbersTest {
     @Test(expected = NumericException.class)
     public void testParseWrongNan() throws Exception {
         Numbers.parseDouble("NaN1");
+    }
+
+    @Test
+    public void testReverseBits() {
+        // this is a simple method to convert BigEndian to readable LittleEndian and vice versa.
+        // The test will check if it does the same as the Java library
+
+        int bufSize = 4096;
+        int count = bufSize / Integer.BYTES;
+        ByteBuffer buf = ByteBuffer.allocate(bufSize);
+        buf.order(ByteOrder.LITTLE_ENDIAN);
+        Rnd rnd = TestUtils.generateRandom(null);
+        IntList values = new IntList(count);
+        for (int i = 0; i < count; i++) {
+            int val = rnd.nextInt();
+            buf.putInt(val);
+            values.add(val);
+        }
+        buf.rewind();
+        buf.order(ByteOrder.BIG_ENDIAN);
+
+        for (int i = 0; i < count; i++) {
+            int val = values.get(i);
+            Assert.assertEquals(buf.getInt(), Numbers.reverseBits(val));
+        }
     }
 
     @Test
@@ -1132,5 +1829,93 @@ public class NumbersTest {
     public void testShortBswap() {
         short v = Numbers.bswap((short) -7976);
         Assert.assertEquals(-7976, Numbers.bswap(v));
+    }
+
+    @Test
+    public void testSinkSizeInt() throws NumericException {
+        int ipv4 = Numbers.IPv4_NULL;
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+
+        ipv4 = Numbers.parseIPv4("0.0.0.1");
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+
+        ipv4 = Numbers.parseIPv4("0.0.1.1");
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+
+        ipv4 = Numbers.parseIPv4("0.1.1.1");
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+
+        ipv4 = Numbers.parseIPv4("1.1.1.1");
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+
+        ipv4 = Numbers.parseIPv4("255.255.255.255");
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+
+        ipv4 = Numbers.parseIPv4("128.0.0.1");
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+    }
+
+    private static void assertFails(ExceptionalRunnable r) {
+        try {
+            r.run();
+            Assert.fail("Exception of class " + NumericException.class + " expected!");
+        } catch (Exception t) {
+            Assert.assertEquals(NumericException.class, t.getClass());
+        }
+    }
+
+    private static void assertParseLongException(String input) {
+        try {
+            Numbers.parseLong(input);
+            Assert.fail();
+        } catch (NumericException ignore) {
+        }
+    }
+
+    private static void assertParseMicrosException(String sequence) {
+        try {
+            Numbers.parseMicros(sequence);
+            Assert.fail();
+        } catch (NumericException ignore) {
+        }
+    }
+
+    private static void assertParseMillisException(String sequence) {
+        try {
+            Numbers.parseMillis(sequence);
+            Assert.fail();
+        } catch (NumericException ignore) {
+        }
+    }
+
+    private static void assertParseNanosException(String sequence) {
+        try {
+            Numbers.parseNanos(sequence);
+            Assert.fail();
+        } catch (NumericException ignore) {
+        }
+    }
+
+    private static String toBinaryString(long l) {
+        return Integer.toBinaryString((int) (l >> 32)) + "/" + Integer.toBinaryString((int) (l));
+    }
+
+    @FunctionalInterface
+    interface ExceptionalRunnable {
+        void run() throws Exception;
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,12 +24,12 @@
 
 package io.questdb.cliutil;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
@@ -37,14 +37,14 @@ import org.junit.Assert;
 
 public class TestUtils {
     public static void assertEquals(
-            SqlCompiler compiler,
+            CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
             String expectedSql,
             String actualSql
     ) throws SqlException {
         try (
-                RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory();
-                RecordCursorFactory f2 = compiler.compile(actualSql, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursorFactory f1 = engine.select(expectedSql, sqlExecutionContext);
+                RecordCursorFactory f2 = engine.select(actualSql, sqlExecutionContext);
                 RecordCursor c1 = f1.getCursor(sqlExecutionContext);
                 RecordCursor c2 = f2.getCursor(sqlExecutionContext)
         ) {
@@ -57,9 +57,9 @@ public class TestUtils {
             RecordMetadata metadataExpected,
             RecordCursor cursorActual,
             RecordMetadata metadataActual,
-            boolean symbolsAsStrings
+            boolean genericStringMatch
     ) {
-        assertEquals(metadataExpected, metadataActual, symbolsAsStrings);
+        assertEquals(metadataExpected, metadataActual, genericStringMatch);
         Record r = cursorExpected.getRecord();
         Record l = cursorActual.getRecord();
 
@@ -69,7 +69,7 @@ public class TestUtils {
                 Assert.fail("Actual cursor does not have record at " + rowIndex);
             }
             rowIndex++;
-            assertColumnValues(metadataExpected, metadataActual, l, r, rowIndex, symbolsAsStrings);
+            assertColumnValues(metadataExpected, metadataActual, l, r, rowIndex, genericStringMatch);
         }
 
         Assert.assertFalse("Expected cursor misses record " + rowIndex, cursorActual.hasNext());
@@ -81,7 +81,7 @@ public class TestUtils {
             Record lr,
             Record rr,
             long rowIndex,
-            boolean symbolsAsStrings
+            boolean genericStringMatch
     ) {
         int columnType = 0;
         for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
@@ -103,20 +103,21 @@ public class TestUtils {
                         Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 1E-3);
                         break;
                     case ColumnType.INT:
+                    case ColumnType.IPv4:
                         Assert.assertEquals(rr.getInt(i), lr.getInt(i));
                         break;
                     case ColumnType.GEOINT:
                         Assert.assertEquals(rr.getGeoInt(i), lr.getGeoInt(i));
                         break;
                     case ColumnType.STRING:
-                        CharSequence actual = symbolsAsStrings && ColumnType.isSymbol(metadataActual.getColumnType(i)) ? lr.getSym(i) : lr.getStr(i);
-                        CharSequence expected = rr.getStr(i);
+                        CharSequence actual = genericStringMatch && ColumnType.isSymbol(metadataActual.getColumnType(i)) ? lr.getSymA(i) : lr.getStrA(i);
+                        CharSequence expected = rr.getStrA(i);
                         if (expected != actual && !Chars.equalsNc(actual, expected)) {
                             Assert.assertEquals(expected, actual);
                         }
                         break;
                     case ColumnType.SYMBOL:
-                        Assert.assertEquals(rr.getSym(i), lr.getSym(i));
+                        Assert.assertEquals(rr.getSymA(i), lr.getSymA(i));
                         break;
                     case ColumnType.SHORT:
                         Assert.assertEquals(rr.getShort(i), lr.getShort(i));
@@ -162,14 +163,14 @@ public class TestUtils {
         }
     }
 
-    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean symbolsAsStrings) {
+    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean genericStringMatch) {
         Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
         for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
             Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
             int columnType1 = metadataExpected.getColumnType(i);
-            columnType1 = symbolsAsStrings && ColumnType.isSymbol(columnType1) ? ColumnType.STRING : columnType1;
+            columnType1 = genericStringMatch && ColumnType.isSymbol(columnType1) ? ColumnType.STRING : columnType1;
             int columnType2 = metadataActual.getColumnType(i);
-            columnType2 = symbolsAsStrings && ColumnType.isSymbol(columnType2) ? ColumnType.STRING : columnType2;
+            columnType2 = genericStringMatch && ColumnType.isSymbol(columnType2) ? ColumnType.STRING : columnType2;
             Assert.assertEquals("Column type " + i, columnType1, columnType2);
         }
     }

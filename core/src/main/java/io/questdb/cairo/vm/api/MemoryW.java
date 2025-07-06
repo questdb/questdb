@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,9 @@
 package io.questdb.cairo.vm.api;
 
 import io.questdb.std.Long256;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -61,6 +64,20 @@ public interface MemoryW extends Closeable {
     void putStr(long offset, CharSequence value);
 
     void putStr(long offset, CharSequence value, int pos, int len);
+
+    /**
+     * Appends UTF8 sequence bytes to the memory. The binary format is bytes
+     * only. Length to be encoded elsewhere.
+     *
+     * @param value any utf8 sequence
+     */
+    default void putVarchar(long offset, @Nullable Utf8Sequence value) {
+        if (value != null) {
+            putVarchar(offset, value, 0, value.size());
+        }
+    }
+
+    void putVarchar(long offset, @NotNull Utf8Sequence value, int lo, int hi);
 
     void truncate();
 

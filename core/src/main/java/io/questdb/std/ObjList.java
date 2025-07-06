@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,8 @@
 package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 import java.util.Comparator;
@@ -46,6 +48,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         System.arraycopy(other.buffer, 0, this.buffer, 0, pos);
     }
 
+    @SafeVarargs
     @SuppressWarnings("unchecked")
     public ObjList(T... other) {
         this.buffer = (T[]) new Object[Math.max(other.length, DEFAULT_ARRAY_SIZE)];
@@ -58,25 +61,39 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         this.buffer = (T[]) new Object[Math.max(capacity, DEFAULT_ARRAY_SIZE)];
     }
 
-    /**
-     * {@inheritDoc}
-     */
     public void add(T value) {
-        ensureCapacity(pos + 1);
+        checkCapacity(pos + 1);
         buffer[pos++] = value;
     }
 
     public void addAll(ReadOnlyObjList<? extends T> that) {
         int n = that.size();
-        ensureCapacity(pos + n);
+        checkCapacity(pos + n);
         for (int i = 0; i < n; i++) {
             buffer[pos++] = that.getQuick(i);
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    public void addAll(ReadOnlyObjList<? extends T> that, int lo, int hi) {
+        int n = hi - lo;
+        checkCapacity(pos + n);
+        for (int i = lo; i < hi; i++) {
+            buffer[pos++] = that.getQuick(i);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    public void checkCapacity(int capacity) {
+        int l = buffer.length;
+        if (capacity > l) {
+            int newCap = Math.max(l << 1, capacity);
+            T[] buf = (T[]) new Object[newCap];
+            System.arraycopy(buffer, 0, buf, 0, l);
+            this.buffer = buf;
+        }
+    }
+
+    @Override
     public void clear() {
         if (pos > 0) {
             Arrays.fill(buffer, null);
@@ -96,17 +113,6 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         return false;
     }
 
-    @SuppressWarnings("unchecked")
-    public void ensureCapacity(int capacity) {
-        int l = buffer.length;
-        if (capacity > l) {
-            int newCap = Math.max(l << 1, capacity);
-            T[] buf = (T[]) new Object[newCap];
-            System.arraycopy(buffer, 0, buf, 0, l);
-            this.buffer = buf;
-        }
-    }
-
     /**
      * {@inheritDoc}
      */
@@ -116,7 +122,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     }
 
     public void extendAndSet(int index, T value) {
-        ensureCapacity(index + 1);
+        checkCapacity(index + 1);
         if (index >= pos) {
             pos = index + 1;
         }
@@ -124,13 +130,10 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     }
 
     public void extendPos(int capacity) {
-        ensureCapacity(capacity);
+        checkCapacity(capacity);
         pos = Math.max(pos, capacity);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public T get(int index) {
         if (index < pos) {
@@ -162,7 +165,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     /**
      * Returns element at the specified position. This method does not do
      * bounds check and may cause memory corruption if index is out of bounds.
-     * Instead the responsibility to check bounds is placed on application code,
+     * Instead, the responsibility to check bounds is placed on application code,
      * which is often the case anyway, for example in indexed for() loop.
      *
      * @param index of the element
@@ -217,8 +220,30 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         }
     }
 
+    public int indexOfNull() {
+        for (int i = 0, n = pos; i < n; i++) {
+            if (getQuick(i) == null) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    public int indexOfRef(Object o) {
+        if (o == null) {
+            return indexOfNull();
+        } else {
+            for (int i = 0, n = pos; i < n; i++) {
+                if (o == getQuick(i)) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+    }
+
     public void insert(int index, int length, T defaultValue) {
-        ensureCapacity(pos + length);
+        checkCapacity(pos + length);
         if (pos > index) {
             System.arraycopy(buffer, index, buffer, index + length, pos - index);
         }
@@ -267,15 +292,15 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         buffer[index] = value;
     }
 
-    public void setAll(int capacity, T value) {
-        ensureCapacity(capacity);
-        pos = capacity;
+    public void setAll(int count, T value) {
+        checkCapacity(count);
+        pos = count;
         Arrays.fill(buffer, value);
     }
 
-    public void setPos(int capacity) {
-        ensureCapacity(capacity);
-        pos = capacity;
+    public void setPos(int newPos) {
+        checkCapacity(newPos);
+        pos = newPos;
     }
 
     public void setQuick(int index, T value) {
@@ -300,30 +325,30 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         toSink(sink, 0, size());
     }
 
-    public void toSink(CharSink sink, int from) {
+    public void toSink(CharSink<?> sink, int from) {
         toSink(sink, from, size());
     }
 
-    public void toSink(CharSink sink, int from, int to) {
-        sink.put('[');
+    public void toSink(CharSink<?> sink, int from, int to) {
+        sink.putAscii('[');
         for (int i = from; i < to; i++) {
             if (i > from) {
-                sink.put(',');
+                sink.putAscii(',');
             }
             T obj = getQuick(i);
             if (obj instanceof Sinkable) {
                 sink.put((Sinkable) obj);
             } else if (obj == null) {
-                sink.put("null");
+                sink.putAscii("null");
             } else {
                 sink.put(obj.toString());
             }
         }
-        sink.put(']');
+        sink.putAscii(']');
     }
 
     /**
@@ -361,14 +386,5 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
             return true;
         }
         return false;
-    }
-
-    private int indexOfNull() {
-        for (int i = 0, n = pos; i < n; i++) {
-            if (null == getQuick(i)) {
-                return i;
-            }
-        }
-        return -1;
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -51,12 +51,18 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
         LongTreeChain chain = new LongTreeChain(
                 configuration.getSqlSortKeyPageSize(),
                 configuration.getSqlSortKeyMaxPages(),
-                configuration
-                        .getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxPages());
+                configuration.getSqlSortLightValuePageSize(),
+                configuration.getSqlSortLightValueMaxPages()
+        );
         this.base = base;
         this.cursor = new SortedLightRecordCursor(chain, comparator);
         this.sortColumnFilter = sortColumnFilter;
+    }
+
+    public static void addSortKeys(PlanSink sink, ListColumnFilter filter) {
+        sink.attr("keys").val('[');
+        filter.toPlan(sink);
+        sink.val(']');
     }
 
     @Override
@@ -66,14 +72,13 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        RecordCursor baseCursor = base.getCursor(executionContext);
+        final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             cursor.of(baseCursor, executionContext);
             return cursor;
-        } catch (Throwable ex) {
-            baseCursor.close();
+        } catch (Throwable th) {
             cursor.close();
-            throw ex;
+            throw th;
         }
     }
 
@@ -99,20 +104,9 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
         return base.usesCompiledFilter();
     }
 
-    static void addSortKeys(PlanSink sink, ListColumnFilter filter) {
-        sink.attr("keys").val('[');
-        for (int i = 0, n = filter.size(); i < n; i++) {
-            int colIdx = filter.get(i);
-            int col = (colIdx > 0 ? colIdx : -colIdx) - 1;
-            if (i > 0) {
-                sink.val(", ");
-            }
-            sink.putBaseColumnName(col);
-            if (colIdx < 0) {
-                sink.val(" ").val("desc");
-            }
-        }
-        sink.val(']');
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
     }
 
     @Override

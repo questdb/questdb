@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import java.util.Arrays;
 public abstract class AbstractLongHashSet implements Mutable {
     protected static final int MIN_INITIAL_CAPACITY = 16;
     protected static final long noEntryKey = -1;
+    protected final int initialCapacity;
     protected final double loadFactor;
     protected final long noEntryKeyValue;
     protected int capacity;
@@ -45,7 +46,8 @@ public abstract class AbstractLongHashSet implements Mutable {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
         this.noEntryKeyValue = noKeyValue;
-        free = this.capacity = Math.max(initialCapacity, MIN_INITIAL_CAPACITY);
+        free = capacity = Math.max(initialCapacity, MIN_INITIAL_CAPACITY);
+        this.initialCapacity = capacity;
         this.loadFactor = loadFactor;
         keys = new long[Numbers.ceilPow2((int) (this.capacity / loadFactor))];
         mask = keys.length - 1;
@@ -62,16 +64,14 @@ public abstract class AbstractLongHashSet implements Mutable {
     }
 
     public int keyIndex(long key) {
-        int index = (int) (key & mask);
-
+        int hashCode = Hash.hashLong32(key);
+        int index = hashCode & mask;
         if (keys[index] == noEntryKeyValue) {
             return index;
         }
-
         if (key == keys[index]) {
             return -index - 1;
         }
-
         return probe(key, index);
     }
 
@@ -103,7 +103,8 @@ public abstract class AbstractLongHashSet implements Mutable {
                     key != noEntryKeyValue;
                     from = (from + 1) & mask, key = keys[from]
             ) {
-                int idealHit = (int) (key & mask);
+                int hashCode = Hash.hashLong32(key);
+                int idealHit = hashCode & mask;
                 if (idealHit != from) {
                     int to;
                     if (keys[idealHit] != noEntryKeyValue) {
@@ -118,6 +119,13 @@ public abstract class AbstractLongHashSet implements Mutable {
                 }
             }
         }
+    }
+
+    public void restoreInitialCapacity() {
+        capacity = initialCapacity;
+        keys = new long[Numbers.ceilPow2((int) (capacity / loadFactor))];
+        mask = keys.length - 1;
+        clear();
     }
 
     public int size() {

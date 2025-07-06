@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,24 +34,27 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupByFunction, UnaryFunction {
-    private final SymbolFunction arg;
-    private int valueIndex;
+    protected final SymbolFunction arg;
+    protected int valueIndex;
 
     public FirstSymbolGroupByFunction(@NotNull SymbolFunction arg) {
         this.arg = arg;
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putInt(this.valueIndex, this.arg.getInt(record));
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        mapValue.putLong(valueIndex, rowId);
+        mapValue.putInt(valueIndex + 1, arg.getInt(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
+        // empty
     }
 
     @Override
@@ -61,7 +64,7 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
 
     @Override
     public int getInt(Record rec) {
-        return rec.getInt(this.valueIndex);
+        return rec.getInt(valueIndex + 1);
     }
 
     @Override
@@ -85,8 +88,40 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG); // row id
+        columnTypes.add(ColumnType.INT);  // value
+    }
+
+    @Override
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
+    }
+
+    @Override
     public boolean isSymbolTableStatic() {
         return arg.isSymbolTableStatic();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putInt(valueIndex + 1, srcValue.getInt(valueIndex + 1));
+        }
     }
 
     @Override
@@ -97,14 +132,14 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
+    public void setNull(MapValue mapValue) {
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        mapValue.putInt(valueIndex + 1, SymbolTable.VALUE_IS_NULL);
     }
 
     @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putInt(this.valueIndex, SymbolTable.VALUE_IS_NULL);
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 
     @Override

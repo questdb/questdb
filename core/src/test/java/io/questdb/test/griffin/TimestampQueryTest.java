@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,12 +27,11 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.cairo.TableModel;
 import io.questdb.std.Chars;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
-import io.questdb.test.tools.TestUtils;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TableModel;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -46,41 +45,34 @@ import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
-public class TimestampQueryTest extends AbstractGriffinTest {
+public class TimestampQueryTest extends AbstractCairoTest {
 
     @Test
     public void testCast2AsValidColumnNameTouchFunction() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table xyz(time timestamp, cast2 geohash(8c)) timestamp(time) partition by DAY;";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO xyz VALUES(1609459199000000, #u33d8b12)");
+            execute("create table xyz(time timestamp, cast2 geohash(8c)) timestamp(time) partition by DAY;");
+            execute("INSERT INTO xyz VALUES(1609459199000000, #u33d8b12)");
             String expected = "touch\n{\"data_pages\": 2, \"index_key_pages\":0, \"index_values_pages\": 0}\n";
             String query = "select touch(select time, cast2 from xyz);";
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
-
 
     @Test
     public void testCastAsValidColumnNameSelectTest() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table xyz(time timestamp, cast geohash(8c)) timestamp(time) partition by DAY;";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO xyz VALUES(1609459199000000, #u33d8b12)");
+            execute("create table xyz(time timestamp, \"cast\" geohash(8c)) timestamp(time) partition by DAY;");
+            execute("INSERT INTO xyz VALUES(1609459199000000, #u33d8b12)");
             String expected = "time\tcast\n" +
                     "2020-12-31T23:59:59.000000Z\tu33d8b12\n";
-            String query = "select time, cast from xyz;";
-            assertSql(query, expected);
+            String query = "select time, \"cast\" from xyz;";
+            assertSql(expected, query);
         });
     }
 
     @Test
     public void testDesignatedTimestampOpSymbolColumns() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "a\tdk\tk\n" +
                         "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\t1970-01-01T00:00:00.030000Z\n" +
                         "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.040000Z\n",
@@ -90,6 +82,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
+                false,
                 false
         );
     }
@@ -97,73 +90,61 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testEqualityTimestampFormatYearAndMonthNegativeTest() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
-            assertSql(query, expected);
+            assertSql(expected, query);
             // test where ts ='2021-01'
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp ='2021-01'";
-            assertSql(query, expected);
+            assertSql(expected, query);
             // test where ts ='2020-11'
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp ='2020-11'";
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 
     @Test
     public void testEqualityTimestampFormatYearAndMonthPositiveTest() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
-            assertSql(query, expected);
+            assertSql(expected, query);
             // test where ts ='2020-12'
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12'";
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 
     @Test
     public void testEqualityTimestampFormatYearOnlyNegativeTest() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
-            assertSql(query, expected);
+            assertSql(expected, query);
             // test where ts ='2021'
             expected = "symbol\tme_seq_num\ttimestamp\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp ='2021'";
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 
     @Test
     public void testEqualityTimestampFormatYearOnlyPositiveTest() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -179,11 +160,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testEqualsToTimestampFormatYearMonthDay() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -199,11 +177,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testEqualsToTimestampFormatYearMonthDayHour() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -219,11 +194,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testEqualsToTimestampFormatYearMonthDayHourMinute() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -239,11 +211,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testEqualsToTimestampFormatYearMonthDayHourMinuteSecond() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -259,11 +228,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testEqualsToTimestampWithMicrosecond() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000001)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000001)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000001Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -277,13 +243,19 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertAsSelectTimestampVarcharCast() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (l long, t timestamp) timestamp(t) partition by DAY");
+            execute("insert into x select 1, '2024-02-27T00:00:00'::varchar");
+            assertSql("l\tt\n1\t2024-02-27T00:00:00.000000Z\n", "select * from x");
+        });
+    }
+
+    @Test
     public void testLMoreThanOrEqualsToTimestampFormatYearOnlyPositiveTest1() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -299,11 +271,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testLMoreThanTimestampFormatYearOnlyPositiveTest1() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -319,11 +288,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testLessThanOrEqualsToTimestampFormatYearOnlyNegativeTest1() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -338,11 +304,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testLessThanOrEqualsToTimestampFormatYearOnlyNegativeTest2() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -357,11 +320,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testLessThanOrEqualsToTimestampFormatYearOnlyPositiveTest1() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -377,11 +337,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testLessThanOrEqualsToTimestampFormatYearOnlyPositiveTest2() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -397,11 +354,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testLessThanTimestampFormatYearOnlyNegativeTest1() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -416,11 +370,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testLessThanTimestampFormatYearOnlyNegativeTest2() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -435,11 +386,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testLessThanTimestampFormatYearOnlyPositiveTest1() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -455,11 +403,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testLessThanTimestampFormatYearOnlyPositiveTest2() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -475,14 +420,11 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testMinOnTimestampEmptyResutlSetIsNull() throws Exception {
         assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
-
+            execute("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
+            execute("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
+                    "from long_sequence(48L)");
 
             String expected = "min\tmax\tcount\n\t\t0\n";
             assertTimestampTtQuery(expected, "select min(nts), max(nts), count() from tt where nts < '2020-01-01'");
@@ -493,11 +435,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testMoreThanOrEqualsToTimestampFormatYearOnlyNegativeTest1() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -512,11 +451,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testMoreThanOrEqualsToTimestampFormatYearOnlyNegativeTest2() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -531,11 +467,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testMoreThanOrEqualsToTimestampFormatYearOnlyPositiveTest2() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -551,11 +484,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testMoreThanTimestampFormatYearOnlyNegativeTest1() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -570,11 +500,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testMoreThanTimestampFormatYearOnlyNegativeTest2() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -589,11 +516,9 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testMoreThanTimestampFormatYearOnlyPositiveTest2() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -608,17 +533,17 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
     @Test
     public void testNonContinuousPartitions() throws Exception {
-        currentMicros = 0;
+        setCurrentMicros(0);
         assertMemoryLeak(() -> {
             // Create table
-            // One hour step timestamps from epoch for 32 then skip 48 etc for 10 iterations
+            // One-hour step timestamps from epoch for 32 then skip 48 etc for 10 iterations
             final int count = 32;
             final int skip = 48;
             final int iterations = 10;
             final long hour = Timestamps.HOUR_MICROS;
 
             String createStmt = "create table xts (ts Timestamp) timestamp(ts) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
+            execute(createStmt);
             long start = 0;
             List<Object[]> datesArr = new ArrayList<>();
             SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'.000000Z'");
@@ -627,7 +552,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             for (int i = 0; i < iterations; i++) {
                 String insert = "insert into xts " +
                         "select timestamp_sequence(" + start + "L, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")";
-                compiler.compile(insert, sqlExecutionContext);
+                execute(insert);
                 for (long ts = 0; ts < count; ts++) {
                     long nextTs = start + ts * hour;
                     datesArr.add(new Object[]{nextTs, formatter.format(nextTs / 1000L)});
@@ -636,13 +561,16 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             }
             final long end = start;
 
-            // Search with 3 hour window every 22 hours
+            // Search with 3-hour window every 22 hours
             int min = Integer.MAX_VALUE;
             int max = Integer.MIN_VALUE;
-            for (currentMicros = 0; currentMicros < end; currentMicros += 22 * hour) {
-                int results = compareNowRange("select ts FROM xts WHERE ts <= dateadd('h', 2, now()) and ts >= dateadd('h', -1, now())",
+            for (long micros = 0; micros < end; micros += 22 * hour) {
+                setCurrentMicros(micros);
+                int results = compareNowRange(
+                        "select ts FROM xts WHERE ts <= dateadd('h', 2, now()) and ts >= dateadd('h', -1, now())",
                         datesArr,
-                        ts -> ts >= (currentMicros - hour) && (ts <= currentMicros + 2 * hour));
+                        ts -> ts >= (currentMicros - hour) && (ts <= currentMicros + 2 * hour)
+                );
                 min = Math.min(min, results);
                 max = Math.max(max, results);
             }
@@ -654,13 +582,10 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
     @Test
     public void testNowIsSameForAllQueryParts() throws Exception {
-        currentMicros = 0;
+        setCurrentMicros(0);
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "now1\tnow2\tsymbol\ttimestamp\n" +
                     "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1\t2020-12-31T23:59:59.000000Z\n";
 
@@ -676,14 +601,13 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
     @Test
     public void testNowPerformsBinarySearchOnTimestamp() throws Exception {
-        currentMicros = 0;
+        setCurrentMicros(0);
         assertMemoryLeak(() -> {
-            //create table
-            // One hour step timestamps from epoch for 2000 steps
+            // One-hour step timestamps from epoch for 2000 steps
             final int count = 200;
             String createStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
             SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'.000000Z'");
-            compiler.compile(createStmt, sqlExecutionContext);
+            execute(createStmt);
 
             formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
             Stream<Object[]> dates = LongStream.rangeClosed(0, count - 1)
@@ -697,25 +621,30 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             compareNowRange("select * FROM xts WHERE ts >= '1970' and ts <= '2021'", datesArr, ts -> true);
 
             // Scroll now to the end
-            currentMicros = 200L * hour;
+            setCurrentMicros(200L * hour);
             compareNowRange("select ts FROM xts WHERE ts >= now() - 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros - hour);
             compareNowRange("select ts FROM xts WHERE ts >= now() + 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros + hour);
 
-            for (currentMicros = hour; currentMicros < count * hour; currentMicros += day) {
+            for (long micros = hour; micros < count * hour; micros += day) {
+                setCurrentMicros(micros);
                 compareNowRange("select ts FROM xts WHERE ts < now()", datesArr, ts -> ts < currentMicros);
             }
 
-            for (currentMicros = hour; currentMicros < count * hour; currentMicros += 12 * hour) {
+            for (long micros = hour; micros < count * hour; micros += 12 * hour) {
+                setCurrentMicros(micros);
                 compareNowRange("select ts FROM xts WHERE ts >= now()", datesArr, ts -> ts >= currentMicros);
             }
 
-            for (currentMicros = 0; currentMicros < count * hour + 4 * day; currentMicros += 5 * hour) {
-                compareNowRange("select ts FROM xts WHERE ts <= dateadd('d', -1, now()) and ts >= dateadd('d', -2, now())",
+            for (long micros = 0; micros < count * hour + 4 * day; micros += 5 * hour) {
+                setCurrentMicros(micros);
+                compareNowRange(
+                        "select ts FROM xts WHERE ts <= dateadd('d', -1, now()) and ts >= dateadd('d', -2, now())",
                         datesArr,
-                        ts -> ts >= (currentMicros - 2 * day) && (ts <= currentMicros - day));
+                        ts -> ts >= (currentMicros - 2 * day) && (ts <= currentMicros - day)
+                );
             }
 
-            currentMicros = 100L * hour;
+            setCurrentMicros(100L * hour);
             compareNowRange("WITH temp AS (SELECT ts FROM xts WHERE ts > dateadd('y', -1, now())) " +
                     "SELECT ts FROM temp WHERE ts < now()", datesArr, ts -> ts < currentMicros);
         });
@@ -724,33 +653,34 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testTimestampConversion() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY)) {
-                m.timestamp("dts")
-                        .col("ts", ColumnType.TIMESTAMP);
-                createPopulateTable(m, 31, "2021-03-14", 31);
-                String expected = "dts\tts\n" +
-                        "2021-04-02T23:59:59.354820Z\t2021-04-02T23:59:59.354820Z\n";
+            TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY);
+            m.timestamp("dts")
+                    .col("ts", ColumnType.TIMESTAMP);
+            createPopulateTable(m, 31, "2021-03-14", 31);
+            String expected = "dts\tts\n" +
+                    "2021-04-02T23:59:59.354820Z\t2021-04-02T23:59:59.354820Z\n";
 
-                assertQuery(
-                        expected,
-                        "tt where dts > '2021-04-02T13:45:49.207Z' and dts < '2021-04-03 13:45:49.207'",
-                        "dts",
-                        true,
-                        true);
+            assertQuery(
+                    expected,
+                    "tt where dts > '2021-04-02T13:45:49.207Z' and dts < '2021-04-03 13:45:49.207'",
+                    "dts",
+                    true,
+                    true
+            );
 
-                assertQuery(
-                        expected,
-                        "tt where ts > '2021-04-02T13:45:49.207Z' and ts < '2021-04-03 13:45:49.207'",
-                        "dts",
-                        true,
-                        false);
-            }
+            assertQuery(
+                    expected,
+                    "tt where ts > '2021-04-02T13:45:49.207Z' and ts < '2021-04-03 13:45:49.207'",
+                    "dts",
+                    true,
+                    false
+            );
         });
     }
 
     @Test
     public void testTimestampDifferentThanFixedValue() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "t\n" +
                         "1970-01-01T00:00:01.000000Z\n" +
                         "1970-01-01T00:00:02.000000Z\n",
@@ -760,13 +690,14 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testTimestampDifferentThanNonFixedValue() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "t\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:01.000000Z\n",
@@ -776,13 +707,14 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
+                false,
                 false
         );
     }
 
     @Test
     public void testTimestampInDay1orDay2() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "min\tmax\n\t\n",
                 "select min(nts), max(nts) from tt where nts IN '2020-01-01' or nts IN '2020-01-02'",
                 "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
@@ -793,20 +725,18 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 "min\tmax\n" +
                         "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n",
                 false,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testTimestampIntervalPartitionDay() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert as select
-            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
+            execute("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.DAY_MICROS + ") FROM long_sequence(5)", sqlExecutionContext);
+                    Timestamps.DAY_MICROS + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2022-11-20T00:00:00.000000Z\n" +
@@ -814,25 +744,22 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     "4\t2022-11-22T00:00:00.000000Z\n" +
                     "5\t2022-11-23T00:00:00.000000Z\n";
             String query = "select * from interval_test";
-            assertSql(query, expected);
+            assertSql(expected, query);
             // test mid-case
             expected = "seq_num\ttimestamp\n" +
                     "3\t2022-11-21T00:00:00.000000Z\n";
             query = "SELECT * FROM interval_test where timestamp IN '2022-11-21'";
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 
     @Test
     public void testTimestampIntervalPartitionMonth() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by MONTH";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert as select
-            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
+            execute("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by MONTH");
+            execute("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.DAY_MICROS * 30 + ") FROM long_sequence(5)", sqlExecutionContext);
+                    Timestamps.DAY_MICROS * 30 + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2022-12-19T00:00:00.000000Z\n" +
@@ -840,25 +767,22 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     "4\t2023-02-17T00:00:00.000000Z\n" +
                     "5\t2023-03-19T00:00:00.000000Z\n";
             String query = "select * from interval_test";
-            assertSql(query, expected);
+            assertSql(expected, query);
             // test mid-case
             expected = "seq_num\ttimestamp\n" +
                     "3\t2023-01-18T00:00:00.000000Z\n";
             query = "SELECT * FROM interval_test where timestamp IN '2023-01'";
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 
     @Test
     public void testTimestampIntervalPartitionWeek() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by WEEK";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert as select
-            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
+            execute("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by WEEK");
+            execute("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.WEEK_MICROS + ") FROM long_sequence(5)", sqlExecutionContext);
+                    Timestamps.WEEK_MICROS + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2022-11-26T00:00:00.000000Z\n" +
@@ -866,25 +790,22 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     "4\t2022-12-10T00:00:00.000000Z\n" +
                     "5\t2022-12-17T00:00:00.000000Z\n";
             String query = "select * from interval_test";
-            assertSql(query, expected);
+            assertSql(expected, query);
             // test mid-case
             expected = "seq_num\ttimestamp\n" +
                     "3\t2022-12-03T00:00:00.000000Z\n";
             query = "SELECT * FROM interval_test where timestamp IN '2022-12-03'";
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 
     @Test
     public void testTimestampIntervalPartitionYear() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by YEAR";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert as select
-            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
+            execute("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by YEAR");
+            execute("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.DAY_MICROS * 365 + ") FROM long_sequence(5)", sqlExecutionContext);
+                    Timestamps.DAY_MICROS * 365 + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2023-11-19T00:00:00.000000Z\n" +
@@ -892,18 +813,18 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     "4\t2025-11-18T00:00:00.000000Z\n" +
                     "5\t2026-11-18T00:00:00.000000Z\n";
             String query = "select * from interval_test";
-            assertSql(query, expected);
+            assertSql(expected, query);
             // test mid-case
             expected = "seq_num\ttimestamp\n" +
                     "3\t2024-11-18T00:00:00.000000Z\n";
             query = "SELECT * FROM interval_test where timestamp IN '2024'";
-            assertSql(query, expected);
+            assertSql(expected, query);
         });
     }
 
     @Test
     public void testTimestampMin() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "nts\tmin\n" +
                         "nts\t\n",
                 "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
@@ -915,13 +836,14 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 "nts\tmin\n" +
                         "nts\t2020-01-01T00:00:00.000010Z\n",
                 false,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testTimestampOpSymbolColumns() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "a\tk\n" +
                         "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\n" +
                         "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\n",
@@ -931,6 +853,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
+                false,
                 false
         );
     }
@@ -938,21 +861,18 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testTimestampParseWithYearMonthDayTHourMinuteSecondAndIncompleteMillisTimeZone() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
             printSqlResult(expected, query, "timestamp", true, true);
-            //2 millisec characters
+            // 2 ms characters
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12-31T23:59:59.00Z'";
             printSqlResult(expected, query, "timestamp", true, true);
-            //1 millisec character
+            // 1 ms character
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12-31T23:59:59.0Z'";
@@ -964,11 +884,8 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testTimestampParseWithYearMonthDayTHourMinuteSecondTimeZone() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            execute("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
+            execute("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -982,7 +899,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampStringComparison() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "min\tmax\n\t\n",
                 "select min(nts), max(nts) from tt where nts = '2020-01-01'",
                 "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
@@ -993,21 +910,19 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 "min\tmax\n" +
                         "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n",
                 false,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testTimestampStringComparisonBetween() throws Exception {
         assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
-
+            execute("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
+            execute("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
+                    "from long_sequence(48L)");
 
             String expected;
             // between constants
@@ -1171,35 +1086,29 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testTimestampStringComparisonBetweenInvalidValue() throws Exception {
         assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
-
+            execute("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
+            execute("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
+                    "from long_sequence(48L)");
 
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between 'invalid' and '2020-01-01'");
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between '2020-01-01' and 'invalid'");
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between '2020-01-01' and 'invalid' || 'dd'");
-            assertTimestampTtFailedQuery("Invalid column: invalidCol", "select min(nts), max(nts) from tt where invalidCol not between '2020-01-01' and '2020-01-02'");
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts in ('2020-01-01', 'invalid')");
-            assertTimestampTtFailedQuery("cannot compare TIMESTAMP with type CURSOR", "select min(nts), max(nts) from tt where nts in (select nts from tt)");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts between 'invalid' and '2020-01-01'", 52, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts between '2020-01-01' and 'invalid'", 69, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts between '2020-01-01' and 'invalid' || 'dd'", 79, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where invalidCol not between '2020-01-01' and '2020-01-02'", 40, "Invalid column: invalidCol");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts in ('2020-01-01', 'invalid')", 62, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts in (select nts from tt)", 48, "cannot compare TIMESTAMP with type CURSOR");
         });
     }
 
     @Test
     public void testTimestampStringComparisonInString() throws Exception {
         assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
-
+            execute("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
+            execute("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
+                    "from long_sequence(48L)");
 
             String expected;
             // not in period
@@ -1251,44 +1160,90 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
             expected = "dts\tnts\n";
             assertTimestampTtQuery(expected, "select * from tt where nts in now()");
+        });
+    }
 
-            expected = "dts\tnts\n";
-            assertTimestampTtQuery(expected, "select * from tt where nts in (now() || 'invalid')");
+    @Test
+    public void testTimestampStringComparisonInVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
+            // insert same values to dts (designated) as nts (non-designated) timestamp
+            execute("insert into tt " +
+                    "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                    "from long_sequence(48L)");
+
+            String expected;
+            // not in period
+            expected = "min\tmax\n" +
+                    "2020-01-02T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not in '2020-01-01'::varchar");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in '2020-01-01'::varchar");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not in cast(('2020-01' || '-02') as varchar)");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in cast(('2020-01-' || rnd_str('01', '01')) as varchar)");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T12:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in ('2020-01-01T12:00'::varchar, '2020-01-01'::varchar)");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where dts in ('2020-01-01'::varchar, '2020-01-03'::varchar) ");
+
+            expected = "min\tmax\n" +
+                    "2020-01-02T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in cast('2020-01' || '-02' as varchar)");
+
+            expected = "dts\tnts\n" +
+                    "2020-01-02T00:00:00.000000Z\t2020-01-02T00:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select * from tt where nts in (NULL, cast('2020-01-05' as TIMESTAMP), '2020-01-02'::varchar, NULL)");
 
             expected = "min\tmax\n" +
                     "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where  nts not in (now() || 'invalid')");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in (now(),'2020-01-01'::varchar,1234567,1234567L,CAST('2020-01-01' as TIMESTAMP),NULL::varchar,nts)");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in (now(),'2020-01-01'::varchar)");
+
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where CAST(NULL as TIMESTAMP) in ('2020-01-02'::varchar, now())");
+
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where CAST(NULL as TIMESTAMP) in ('2020-01-02'::varchar, '2020-01-01'::varchar)");
         });
     }
 
     @Test
     public void testTimestampStringComparisonInvalidValue() throws Exception {
         assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
-
+            execute("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
+            execute("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
+                    "from long_sequence(48L)");
 
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts > 'invalid'");
-            assertTimestampTtFailedQuery("STRING constant expected", "select min(nts), max(nts) from tt where '2020-01-01' in ( NaN)");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts > 'invalid'", 46, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where '2020-01-01' in (0.34)", 57, "cannot compare STRING with type DOUBLE");
         });
     }
 
     @Test
     public void testTimestampStringComparisonNonConst() throws Exception {
         assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
-
+            execute("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
+            execute("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
+                    "from long_sequence(48L)");
 
             String expected;
             // between constants
@@ -1301,14 +1256,11 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     @Test
     public void testTimestampStringComparisonWithString() throws Exception {
         assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
-
+            execute("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
+            execute("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
+                    "from long_sequence(48L)");
 
             String expected;
             // >
@@ -1347,7 +1299,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampStringDateAdd() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "dateadd\n" +
                         "2020-01-02T00:00:00.000000Z\n",
                 "select dateadd('d', 1, '2020-01-01')",
@@ -1356,13 +1308,14 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testTimestampSymbolComparison() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "min\tmax\n\t\n",
                 "select min(nts), max(nts) from tt where nts = cast('2020-01-01' as symbol)",
                 "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
@@ -1373,78 +1326,75 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 "min\tmax\n" +
                         "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n",
                 false,
-                true
+                true,
+                false
         );
     }
 
     @Test
     public void testTimestampSymbolComparisonBetweenInvalidValue() throws Exception {
         assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
-
+            execute("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
+            execute("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
+                    "from long_sequence(48L)");
 
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between cast('invalid' as symbol) and cast('2020-01-01' as symbol)");
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between cast('2020-01-01' as symbol) and cast('invalid' as symbol)");
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between cast('2020-01-01' as symbol) and cast('invalid' as symbol) || cast('dd' as symbol)");
-            assertTimestampTtFailedQuery("Invalid column: invalidCol", "select min(nts), max(nts) from tt where invalidCol not between cast('2020-01-01' as symbol) and cast('2020-01-02' as symbol)");
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts in (cast('2020-01-01' as symbol), cast('invalid' as symbol))");
-            assertTimestampTtFailedQuery("cannot compare TIMESTAMP with type CURSOR", "select min(nts), max(nts) from tt where nts in (select nts from tt)");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts between cast('invalid' as symbol) and cast('2020-01-01' as symbol)", 52, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts between cast('2020-01-01' as symbol) and cast('invalid' as symbol)", 85, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts between cast('2020-01-01' as symbol) and cast('invalid' as symbol) || cast('dd' as symbol)", 111, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where invalidCol not between cast('2020-01-01' as symbol) and cast('2020-01-02' as symbol)", 40, "Invalid column: invalidCol");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts in (cast('2020-01-01' as symbol), cast('invalid' as symbol))", 78, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts in (select nts from tt)", 48, "cannot compare TIMESTAMP with type CURSOR");
         });
     }
 
     @Test
     public void testTimestampSymbolComparisonInvalidValue() throws Exception {
         assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
-
+            execute("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
             // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
+            execute("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
+                    "from long_sequence(48L)");
 
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts > cast('invalid' as symbol)");
-            assertTimestampTtFailedQuery("STRING constant expected", "select min(nts), max(nts) from tt where cast('2020-01-01' as symbol) in (NaN)");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts > cast('invalid' as symbol)", 46, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where cast('2020-01-01' as symbol) in (3.14)", 73, "STRING constant expected");
         });
     }
 
     @Test
     public void testTimestampSymbolConversion() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY)) {
-                m.timestamp("dts")
-                        .col("ts", ColumnType.TIMESTAMP);
-                createPopulateTable(m, 31, "2021-03-14", 31);
-                String expected = "dts\tts\n" +
-                        "2021-04-02T23:59:59.354820Z\t2021-04-02T23:59:59.354820Z\n";
+            TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY)
+                    .timestamp("dts")
+                    .col("ts", ColumnType.TIMESTAMP);
 
-                assertQuery(
-                        expected,
-                        "tt where dts > cast('2021-04-02T13:45:49.207Z' as symbol) and dts < cast('2021-04-03 13:45:49.207' as symbol)",
-                        "dts",
-                        true,
-                        true);
+            createPopulateTable(m, 31, "2021-03-14", 31);
+            String expected = "dts\tts\n" +
+                    "2021-04-02T23:59:59.354820Z\t2021-04-02T23:59:59.354820Z\n";
 
-                assertQuery(
-                        expected,
-                        "tt where ts > cast('2021-04-02T13:45:49.207Z' as symbol) and ts < cast('2021-04-03 13:45:49.207' as symbol)",
-                        "dts",
-                        true,
-                        false);
-            }
+            assertQueryNoLeakCheck(
+                    expected,
+                    "tt where dts > cast('2021-04-02T13:45:49.207Z' as symbol) and dts < cast('2021-04-03 13:45:49.207' as symbol)",
+                    "dts",
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    expected,
+                    "tt where ts > cast('2021-04-02T13:45:49.207Z' as symbol) and ts < cast('2021-04-03 13:45:49.207' as symbol)",
+                    "dts",
+                    true,
+                    false
+            );
         });
     }
 
     @Test
     public void testTimestampSymbolDateAdd() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "dateadd\n" +
                         "2020-01-02T00:00:00.000000Z\n",
                 "select dateadd('d', 1, cast('2020-01-01' as symbol))",
@@ -1453,36 +1403,55 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 null,
                 null,
                 true,
-                true
+                true,
+                false
         );
     }
 
+    @Test
+    public void testTimestampWithTimezone() throws Exception {
+        // with constant
+        assertSql("ts\n" +
+                        "2020-01-01T00:00:00.000000Z\n",
+                "select '2020-01-01T00:00:00.000000Z'::timestamp with time zone ts");
+
+        // with function
+        assertSql("ts\n" +
+                        "2020-01-01T01:02:03.123456Z\n",
+                "select concat('2020-01-01T','01:02:03.123456Z')::timestamp with time zone ts");
+
+        // with column
+        assertMemoryLeak(() -> {
+            execute("create table tt (vch varchar, ts timestamp)");
+            execute("insert into tt values ('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000000Z'::timestamp with time zone)");
+
+            assertSql("ts\n" +
+                            "2020-01-01T00:00:00.000000Z\n",
+                    "select vch::timestamp with time zone ts from tt");
+        });
+    }
+
     private void assertQueryWithConditions(String query, String expected, String columnName) throws SqlException {
-        assertSql(query, expected);
+        assertSql(expected, query);
 
         String joining = query.indexOf("where") > 0 ? " and " : " where ";
 
         // Non-impacting additions to WHERE
-        assertSql(query + joining + columnName + " not between now() and CAST(NULL as TIMESTAMP)", expected);
-        assertSql(query + joining + columnName + " between '2200-01-01' and dateadd('y', -10000, now())", expected);
-        assertSql(query + joining + columnName + " > dateadd('y', -1000, now())", expected);
-        assertSql(query + joining + columnName + " <= dateadd('y', 1000, now())", expected);
-        assertSql(query + joining + columnName + " not in '1970-01-01'", expected);
+        assertSql(expected, query + joining + columnName + " not between now() and CAST(NULL as TIMESTAMP)");
+        assertSql(expected, query + joining + columnName + " between '2200-01-01' and dateadd('y', -10000, now())");
+        assertSql(expected, query + joining + columnName + " > dateadd('y', -1000, now())");
+        assertSql(expected, query + joining + columnName + " <= dateadd('y', 1000, now())");
+        assertSql(expected, query + joining + columnName + " not in '1970-01-01'");
     }
 
-    private void assertTimestampTtFailedQuery(String expectedError, String query) {
-        assertTimestampTtFailedQuery0(expectedError, query);
-        String dtsQuery = query.replace("nts", "dts");
-        assertTimestampTtFailedQuery0(expectedError, dtsQuery);
+    private void assertTimestampTtFailedQuery(String sql, int errorPos, String expectedError) throws Exception {
+        assertTimestampTtFailedQuery0(sql, errorPos, expectedError);
+        String dtsQuery = sql.replace("nts", "dts");
+        assertTimestampTtFailedQuery0(dtsQuery, errorPos, expectedError);
     }
 
-    private void assertTimestampTtFailedQuery0(String expectedError, String query) {
-        try {
-            compiler.compile(query, sqlExecutionContext);
-            Assert.fail();
-        } catch (SqlException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), expectedError);
-        }
+    private void assertTimestampTtFailedQuery0(String sql, int errorPos, String contains) throws Exception {
+        assertExceptionNoLeakCheck(sql, errorPos, contains);
     }
 
     private void assertTimestampTtQuery(String expected, String query) throws SqlException {
@@ -1501,7 +1470,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 + dates.stream().filter(arr -> filter.test((long) arr[0]))
                 .map(arr -> arr[1] + "\n")
                 .collect(Collectors.joining());
-        printSqlResult3(expected, query, "ts", null, null, true, true, false, null);
+        printSqlResult(expected, query, "ts", true, true);
         return (int) expectedCount;
     }
 }

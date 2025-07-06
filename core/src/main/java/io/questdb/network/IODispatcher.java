@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ import io.questdb.mp.Job;
 
 import java.io.Closeable;
 
-public interface IODispatcher<C extends IOContext> extends Closeable, Job {
+public interface IODispatcher<C extends IOContext<C>> extends Closeable, Job {
     int DISCONNECT_REASON_KEEPALIVE_OFF = 1;
     int DISCONNECT_REASON_KEEPALIVE_OFF_RECV = 4;
     int DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES = 13;
@@ -52,6 +52,11 @@ public interface IODispatcher<C extends IOContext> extends Closeable, Job {
     int DISCONNECT_REASON_UNKNOWN_OPERATION = 0;
 
     void disconnect(C context, int reason);
+
+    default void drainIOQueue(IORequestProcessor<C> processor) {
+        //noinspection StatementWithEmptyBody
+        while (processIOQueue(processor)) ;
+    }
 
     int getConnectionCount();
 

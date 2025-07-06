@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,11 @@
 
 package io.questdb.cairo.frm.file;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -41,11 +45,16 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     protected final FilesFacade ff;
     private final long fileOpts;
     private final boolean mixedIOFlag;
+    // Introduce a flag to avoid double close, which will lead to very serious consequences.
+    protected boolean closed;
     private int columnIndex;
     private long columnTop;
     private int columnType;
-    private int fd = -1;
-    private RecycleBin<ContiguousFileFixFrameColumn> recycleBin;
+    private long fd = -1;
+    private boolean isReadOnly;
+    private long mapAddr;
+    private long mapSize;
+    private RecycleBin<FrameColumn> recycleBin;
     private int shl;
 
     public ContiguousFileFixFrameColumn(CairoConfiguration configuration) {
@@ -61,25 +70,25 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     }
 
     @Override
-    public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
+    public void append(long appendOffsetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
         if (sourceColumn.getStorageType() == COLUMN_CONTIGUOUS_FILE) {
             sourceLo -= sourceColumn.getColumnTop();
             sourceHi -= sourceColumn.getColumnTop();
-            offset -= columnTop;
+            appendOffsetRowCount -= columnTop;
 
             assert sourceLo >= 0;
             assert sourceHi >= 0;
-            assert offset >= 0;
+            assert appendOffsetRowCount >= 0;
 
             if (sourceHi > 0) {
-                int sourceFd = sourceColumn.getPrimaryFd();
-                long length = sourceHi << shl;
-                TableUtils.allocateDiskSpaceToPage(ff, fd, (offset + sourceHi) << shl);
+                long sourceFd = sourceColumn.getPrimaryFd();
+                long size = (sourceHi - sourceLo) << shl;
+                TableUtils.allocateDiskSpaceToPage(ff, fd, (appendOffsetRowCount << shl) + size);
                 if (mixedIOFlag) {
-                    if (ff.copyData(sourceFd, fd, sourceLo << shl, offset << shl, length) != length) {
+                    if (ff.copyData(sourceFd, fd, sourceLo << shl, appendOffsetRowCount << shl, size) != size) {
                         throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(fd)
-                                .put(", destOffset=").put(offset << shl)
-                                .put(", size=").put(length)
+                                .put(", destOffset=").put(appendOffsetRowCount << shl)
+                                .put(", size=").put(size)
                                 .put(", fileSize=").put(ff.length(fd))
                                 .put(", srcFd=").put(sourceFd)
                                 .put(", srcOffset=").put(sourceLo << shl)
@@ -93,20 +102,20 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                     long srcAddress = 0;
                     long dstAddress = 0;
                     try {
-                        srcAddress = TableUtils.mapAppendColumnBuffer(ff, sourceFd, sourceLo << shl, length, false, MEMORY_TAG);
-                        dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, offset << shl, length, true, MEMORY_TAG);
+                        srcAddress = TableUtils.mapAppendColumnBuffer(ff, sourceFd, sourceLo << shl, size, false, MEMORY_TAG);
+                        dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, appendOffsetRowCount << shl, size, true, MEMORY_TAG);
 
-                        Vect.memcpy(dstAddress, srcAddress, length);
+                        Vect.memcpy(dstAddress, srcAddress, size);
 
                         if (commitMode != CommitMode.NOSYNC) {
-                            ff.msync(dstAddress, length, commitMode == CommitMode.ASYNC);
+                            TableUtils.msync(ff, dstAddress, size, commitMode == CommitMode.ASYNC);
                         }
                     } finally {
                         if (srcAddress != 0) {
-                            TableUtils.mapAppendColumnBufferRelease(ff, srcAddress, sourceLo << shl, length, MEMORY_TAG);
+                            TableUtils.mapAppendColumnBufferRelease(ff, srcAddress, sourceLo << shl, size, MEMORY_TAG);
                         }
                         if (dstAddress != 0) {
-                            TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, offset << shl, length, MEMORY_TAG);
+                            TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, appendOffsetRowCount << shl, size, MEMORY_TAG);
                         }
                     }
                 }
@@ -117,33 +126,42 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     }
 
     @Override
-    public void appendNulls(long offset, long count, int commitMode) {
-        offset -= columnTop;
-        assert offset >= 0;
-        assert count >= 0;
+    public void appendNulls(long rowCount, long sourceColumnTop, int commitMode) {
+        rowCount -= columnTop;
+        assert rowCount >= 0;
+        assert sourceColumnTop >= 0;
 
-        if (count > 0) {
-            TableUtils.allocateDiskSpaceToPage(ff, fd, (offset + count) << shl);
-            long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, offset << shl, count << shl, true, MEMORY_TAG);
+        if (sourceColumnTop > 0) {
+            TableUtils.allocateDiskSpaceToPage(ff, fd, (rowCount + sourceColumnTop) << shl);
+            long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, rowCount << shl, sourceColumnTop << shl, true, MEMORY_TAG);
             try {
-                TableUtils.setNull(columnType, mappedAddress, count);
+                TableUtils.setNull(columnType, mappedAddress, sourceColumnTop);
                 if (commitMode != CommitMode.NOSYNC) {
-                    ff.msync(mappedAddress, count << shl, commitMode == CommitMode.ASYNC);
+                    TableUtils.msync(ff, mappedAddress, sourceColumnTop << shl, commitMode == CommitMode.ASYNC);
                 }
             } finally {
-                TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, offset << shl, count << shl, MEMORY_TAG);
+                TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, rowCount << shl, sourceColumnTop << shl, MEMORY_TAG);
             }
         }
     }
 
     @Override
     public void close() {
-        if (fd > -1) {
-            ff.close(fd);
-            fd = -1;
-        }
-        if (!recycleBin.isClosed()) {
-            recycleBin.put(this);
+        if (!closed) {
+            if (mapAddr != 0) {
+                ff.munmap(mapAddr, mapSize, MEMORY_TAG);
+                mapAddr = 0;
+                mapSize = 0;
+            }
+            if (fd > -1) {
+                ff.close(fd);
+                fd = -1;
+            }
+            closed = true;
+
+            if (recycleBin != null && !recycleBin.isClosed()) {
+                recycleBin.put(this);
+            }
         }
     }
 
@@ -163,12 +181,28 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     }
 
     @Override
-    public int getPrimaryFd() {
+    public long getContiguousAuxAddr(long rowHi) {
+        return 0;
+    }
+
+    @Override
+    public long getContiguousDataAddr(long rowHi) {
+        if (rowHi <= columnTop) {
+            // No data
+            return 0;
+        }
+
+        mapAllRows(rowHi);
+        return mapAddr;
+    }
+
+    @Override
+    public long getPrimaryFd() {
         return fd;
     }
 
     @Override
-    public int getSecondaryFd() {
+    public long getSecondaryFd() {
         throw new UnsupportedOperationException();
     }
 
@@ -179,14 +213,22 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
 
     public void ofRO(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex, boolean isEmpty) {
         assert fd == -1;
-        of(columnType, columnTop, columnIndex);
+        int plen = 0;
 
-        if (!isEmpty) {
-            int plen = partitionPath.length();
-            try {
+        try {
+            of(columnType, columnTop, columnIndex);
+
+            if (!isEmpty) {
+                plen = partitionPath.size();
                 dFile(partitionPath, columnName, columnTxn);
                 this.fd = TableUtils.openRO(ff, partitionPath.$(), LOG);
-            } finally {
+                this.isReadOnly = true;
+            }
+        } catch (Throwable e) {
+            close();
+            throw e;
+        } finally {
+            if (!isEmpty) {
                 partitionPath.trimTo(plen);
             }
         }
@@ -194,22 +236,51 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
 
     public void ofRW(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex) {
         assert fd == -1;
-        // Negative col top means column does not exist in the partition.
-        // Create it.
-        of(columnType, columnTop, columnIndex);
+        int plen = partitionPath.size();
 
-        int plen = partitionPath.length();
         try {
+            // Negative col top means column does not exist in the partition.
+            // Create it.
+            of(columnType, columnTop, columnIndex);
             dFile(partitionPath, columnName, columnTxn);
             this.fd = TableUtils.openRW(ff, partitionPath.$(), LOG, fileOpts);
+            this.isReadOnly = false;
+        } catch (Throwable e) {
+            close();
+            throw e;
         } finally {
-            partitionPath.trimTo(plen);
+            if (plen != 0) {
+                partitionPath.trimTo(plen);
+            }
         }
     }
 
-    public void setPool(RecycleBin<ContiguousFileFixFrameColumn> recycleBin) {
+    public void setRecycleBin(RecycleBin<FrameColumn> recycleBin) {
         assert this.recycleBin == null;
         this.recycleBin = recycleBin;
+    }
+
+    private void mapAllRows(long rowHi) {
+        if (!isReadOnly) {
+            // Writable columns are not used yet, can be easily implemented if needed
+            throw new UnsupportedOperationException("Cannot map writable column");
+        }
+
+        long newMemSize = (rowHi - columnTop) << shl;
+        if (mapSize > 0) {
+            if (mapSize <= newMemSize) {
+                // Already mapped to same or bigger size
+                return;
+            }
+
+            // We can handle remaps, but so far there was no case for it.
+            throw new UnsupportedOperationException("Remap not supported for frame columns yet");
+        }
+
+        mapSize = newMemSize;
+        if (newMemSize > 0) {
+            mapAddr = TableUtils.mapRO(ff, fd, mapSize, MEMORY_TAG);
+        }
     }
 
     private void of(int columnType, long columnTop, int columnIndex) {
@@ -217,5 +288,6 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         this.columnType = columnType;
         this.columnTop = columnTop;
         this.columnIndex = columnIndex;
+        this.closed = false;
     }
 }

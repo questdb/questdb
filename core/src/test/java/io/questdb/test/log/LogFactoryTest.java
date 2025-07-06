@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,16 +24,45 @@
 
 package io.questdb.test.log;
 
+import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.log.*;
-import io.questdb.mp.*;
-import io.questdb.std.*;
+import io.questdb.log.GuaranteedLogger;
+import io.questdb.log.Log;
+import io.questdb.log.LogConsoleWriter;
+import io.questdb.log.LogError;
+import io.questdb.log.LogFactory;
+import io.questdb.log.LogFileWriter;
+import io.questdb.log.LogLevel;
+import io.questdb.log.LogRecord;
+import io.questdb.log.LogRecordUtf8Sink;
+import io.questdb.log.LogRollingFileWriter;
+import io.questdb.log.LogWriter;
+import io.questdb.log.LogWriterConfig;
+import io.questdb.log.Logger;
+import io.questdb.mp.QueueConsumer;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.SPSequence;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.GcUtf8String;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -45,6 +74,7 @@ import org.junit.rules.TemporaryFolder;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.file.Paths;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -82,6 +112,34 @@ public class LogFactoryTest {
             assertEnabled(logger.critical());
             assertEnabled(logger.debug());
             assertEnabled(logger.advisory());
+        }
+    }
+
+    @Test
+    public void testDirectUtf8Sequence() throws Exception {
+        final File x = temp.newFile();
+        final String orig = "Здравей свят";
+        final GcUtf8String src = new GcUtf8String(orig);
+
+        try (LogFactory factory = new LogFactory()) {
+            factory.add(new LogWriterConfig(LogLevel.ERROR, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(x.getAbsolutePath());
+                return w;
+            }));
+
+            factory.bind();
+            factory.startThread();
+
+            final Log logger = factory.create("x");
+            logger.xerror().$(src).$();
+
+            System.err.println(x.getAbsolutePath());
+
+            Os.sleep(100);
+            final String expected = orig + "\r\n";
+            final String actual = java.nio.file.Files.readString(x.toPath());
+            Assert.assertEquals(expected, actual);
         }
     }
 
@@ -129,12 +187,63 @@ public class LogFactoryTest {
 
             Log logger1 = factory.create("com.questdb.x.y");
             for (int i = 0; i < messageCount; i++) {
-                logger1.criticalW().$("test ").$(i).$();
+                logger1.critical().$("test ").$(i).$();
             }
         } finally {
             factory.close(true);
         }
         Assert.assertEquals(messageCount, counter.get());
+    }
+
+    @Test
+    public void testGuaranteedLogging() throws Exception {
+        final File x = temp.newFile();
+        try (LogFactory factory = new LogFactory()) {
+            factory.add(new LogWriterConfig(LogLevel.ERROR, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(x.getAbsolutePath());
+                return w;
+            }));
+
+            factory.bind();
+            factory.startThread();
+
+            final Log logger = factory.create("x");
+            Assert.assertEquals(Logger.class, logger.getClass());
+
+            LogFactory.enableGuaranteedLogging();
+
+            final Log guaranteedLogger = factory.create("x");
+            Assert.assertEquals(GuaranteedLogger.class, guaranteedLogger.getClass());
+
+            LogFactory.disableGuaranteedLogging();
+
+            final Log logger2 = factory.create("x");
+            Assert.assertEquals(Logger.class, logger2.getClass());
+        }
+    }
+
+    @Test
+    public void testGuaranteedLoggingForClasses() throws Exception {
+        final File x = temp.newFile();
+        try (LogFactory factory = new LogFactory()) {
+            factory.add(new LogWriterConfig(LogLevel.ERROR, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(x.getAbsolutePath());
+                return w;
+            }));
+
+            factory.bind();
+            factory.startThread();
+
+            Assert.assertEquals(Logger.class, getLogger().getClass());
+
+            LogFactory.enableGuaranteedLogging(QueryProgress.class);
+            Assert.assertEquals(GuaranteedLogger.class, getLogger().getClass());
+
+            LogFactory.disableGuaranteedLogging(QueryProgress.class);
+            Assert.assertEquals(Logger.class, getLogger().getClass());
+        }
     }
 
     @Test
@@ -173,32 +282,41 @@ public class LogFactoryTest {
 
     @Test
     public void testLogAutoDeleteByDirectorySize40k() throws Exception {
-        testAutoDelete("40k", null);
+        testAutoDelete("40k", null, "30k");
     }
 
     @Test
     public void testLogAutoDeleteByDirectorySize500k() throws Exception {
-        testAutoDelete("500k", null);
+        testAutoDelete("500k", null, "30k");
+    }
+
+    @Test
+    public void testLogAutoDeleteByDirectorySizeRandom() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(null);
+        int fullSize = 2 + rnd.nextInt(498);
+        int rollSize = Math.max(1, (1 + rnd.nextInt(fullSize - 1)) / 2);
+        System.out.println("fullSize=" + fullSize + "k, rollSize=" + rollSize + "k");
+        testAutoDelete(fullSize + "k", null, rollSize + "k");
     }
 
     @Test
     public void testLogAutoDeleteByFileAge1Year() throws Exception {
-        testAutoDelete(null, "1y");
+        testAutoDelete(null, "1y", "30k");
     }
 
     @Test
     public void testLogAutoDeleteByFileAge25days() throws Exception {
-        testAutoDelete(null, "25d");
+        testAutoDelete(null, "25d", "30k");
     }
 
     @Test
     public void testLogAutoDeleteByFileAge3weeks() throws Exception {
-        testAutoDelete(null, "3w");
+        testAutoDelete(null, "3w", "30k");
     }
 
     @Test
     public void testLogAutoDeleteByFileAge6months() throws Exception {
-        testAutoDelete(null, "6m");
+        testAutoDelete(null, "6m", "30k");
     }
 
     @Test
@@ -217,9 +335,9 @@ public class LogFactoryTest {
                     return seq.consumeAll(ring, this::log);
                 }
 
-                private void log(LogRecordSink record) {
+                private void log(LogRecordUtf8Sink record) {
                     sink.clear();
-                    sink.put(record);
+                    sink.put((Sinkable) record);
                     latch.countDown();
                 }
             }));
@@ -229,11 +347,8 @@ public class LogFactoryTest {
             Log logger = factory.create("x");
 
             try {
-                logger.info().$("message 1").$(new Sinkable() {
-                    @Override
-                    public void toSink(CharSink sink) {
-                        throw new NullPointerException();
-                    }
+                logger.info().$("message 1").$(sink1 -> {
+                    throw new NullPointerException();
                 }).$(" message 2").$();
                 Assert.fail();
             } catch (NullPointerException npe) {
@@ -343,7 +458,7 @@ public class LogFactoryTest {
             factory.add(new LogWriterConfig(LogLevel.INFO | LogLevel.DEBUG, (ring, seq, level) -> {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);
                 w.setLocation(x.getAbsolutePath());
-                final QueueConsumer<LogRecordSink> consumer = w.getMyConsumer();
+                final QueueConsumer<LogRecordUtf8Sink> consumer = w.getMyConsumer();
                 w.setMyConsumer(slot -> {
                     xLatch.countDown();
                     consumer.consume(slot);
@@ -354,7 +469,7 @@ public class LogFactoryTest {
             factory.add(new LogWriterConfig(LogLevel.DEBUG | LogLevel.ERROR, (ring, seq, level) -> {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);
                 w.setLocation(y.getAbsolutePath());
-                final QueueConsumer<LogRecordSink> consumer = w.getMyConsumer();
+                final QueueConsumer<LogRecordUtf8Sink> consumer = w.getMyConsumer();
                 w.setMyConsumer(slot -> {
                     yLatch.countDown();
                     consumer.consume(slot);
@@ -466,8 +581,8 @@ public class LogFactoryTest {
             Assert.assertTrue(Files.touch(path.concat("mylog-2015-05-03.log.2").$()));
         }
 
-        RingQueue<LogRecordSink> queue = new RingQueue<>(
-                LogRecordSink::new,
+        RingQueue<LogRecordUtf8Sink> queue = new RingQueue<>(
+                LogRecordUtf8Sink::new,
                 1024,
                 1024,
                 MemoryTag.NATIVE_DEFAULT
@@ -519,7 +634,7 @@ public class LogFactoryTest {
                 final long available = pubSeq.available();
 
                 while (cursor < available && published < toPublish) {
-                    LogRecordSink sink = queue.get(cursor++);
+                    LogRecordUtf8Sink sink = queue.get(cursor++);
                     sink.setLevel(LogLevel.INFO);
                     sink.put("test");
                     published++;
@@ -852,6 +967,58 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testSpaceInRollEvery() throws Exception {
+        final String logFile = temp.getRoot().getAbsolutePath() + Files.SEPARATOR + "mylog-${date:yyyy-MM-dd}.log";
+
+        final MicrosecondClock clock = new TestMicrosecondClock(
+                TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"),
+                1,
+                IntervalUtils.parseFloorPartialTimestamp("2019-12-31")
+        );
+
+        final RingQueue<LogRecordUtf8Sink> queue = new RingQueue<>(
+                LogRecordUtf8Sink::new,
+                1024,
+                1024,
+                MemoryTag.NATIVE_DEFAULT
+        );
+
+        final SPSequence pubSeq = new SPSequence(queue.getCycle());
+        final SCSequence subSeq = new SCSequence();
+        pubSeq.then(subSeq).then(pubSeq);
+
+        try (final LogRollingFileWriter writer = new LogRollingFileWriter(
+                TestFilesFacadeImpl.INSTANCE,
+                clock,
+                queue,
+                subSeq,
+                LogLevel.INFO
+        )) {
+            writer.setLocation(logFile);
+            writer.setRollEvery("day  ");
+            writer.bindProperties(LogFactory.getInstance());
+
+            Assert.assertNotEquals(Long.MAX_VALUE, writer.getRollDeadlineFunction().getDeadline());
+            Assert.assertEquals(1430697600000000L, writer.getRollDeadlineFunction().getDeadline());
+        }
+
+        try (final LogRollingFileWriter writer = new LogRollingFileWriter(
+                TestFilesFacadeImpl.INSTANCE,
+                clock,
+                queue,
+                subSeq,
+                LogLevel.INFO
+        )) {
+            writer.setLocation(logFile);
+            writer.setRollEvery(" minute ");
+            writer.bindProperties(LogFactory.getInstance());
+
+            Assert.assertNotEquals(Long.MAX_VALUE, writer.getRollDeadlineFunction().getDeadline());
+            Assert.assertEquals(1430649360000000L, writer.getRollDeadlineFunction().getDeadline());
+        }
+    }
+
+    @Test
     public void testUninitializedFactory() {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, Files.getResourcePath(getClass().getResource("/test-log.conf")));
 
@@ -871,7 +1038,6 @@ public class LogFactoryTest {
             assertDisabled(logger.debugW());
             assertDisabled(logger.infoW());
             assertDisabled(logger.errorW());
-            assertDisabled(logger.criticalW());
             assertDisabled(logger.advisoryW());
 
             factory.init(null);
@@ -890,7 +1056,6 @@ public class LogFactoryTest {
             assertEnabled(logger.debugW());
             assertDisabled(logger.infoW());
             assertEnabled(logger.errorW());
-            assertEnabled(logger.criticalW());
             assertEnabled(logger.advisoryW());
         }
     }
@@ -919,12 +1084,22 @@ public class LogFactoryTest {
         r.$();
     }
 
+    private static Log getLogger() {
+        try {
+            final Field field = QueryProgress.class.getDeclaredField("LOG");
+            field.setAccessible(true);
+            return (Log) field.get(null);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new RuntimeException("Could not set logger", e);
+        }
+    }
+
     private void assertFileLength(String file) {
         long len = new File(file).length();
         Assert.assertTrue("oops: " + len, len > 0L && len < 1073741824L);
     }
 
-    private void testAutoDelete(String sizeLimit, String lifeDuration) throws NumericException {
+    private void testAutoDelete(String sizeLimit, String lifeDuration, String rollSize) throws Exception {
         final int extraFiles = 2;
         String fileTemplate = "mylog-${date:yyyy-MM-dd}.log";
         String extraFilePrefix = "mylog-test";
@@ -936,6 +1111,7 @@ public class LogFactoryTest {
                 IntervalUtils.parseFloorPartialTimestamp("2019-12-31")
         );
 
+        long nSizeLimit = sizeLimit != null ? Numbers.parseLongSize(sizeLimit) : 0;
         String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
         String logFile = base + fileTemplate;
         AtomicReference<LogRollingFileWriter> writerRef = new AtomicReference<>();
@@ -945,7 +1121,7 @@ public class LogFactoryTest {
                 w.setLocation(logFile);
                 w.setSpinBeforeFlush("10");
                 w.setRollEvery("day");
-                w.setRollSize("30k");
+                w.setRollSize(rollSize);
                 if (sizeLimit != null) {
                     w.setSizeLimit(sizeLimit);
                 }
@@ -962,17 +1138,16 @@ public class LogFactoryTest {
 
             if (sizeLimit != null) {
                 // Create files to be deleted based on size.
-                long nSizeLimit = Numbers.parseLongSize(sizeLimit);
                 try (Path path = new Path()) {
                     for (int i = 0; i < extraFiles; i++) {
                         path.of(base + extraFilePrefix).put(i).put(".log").$();
-                        int fd = Files.openRW(path);
+                        long fd = Files.openRW(path.$());
                         try {
                             Files.allocate(fd, nSizeLimit + 1);
                         } finally {
                             Files.close(fd);
                         }
-                        Files.setLastModified(path, clock.getTicks() / 1000 - (i + 1) * 24 * Timestamps.HOUR_MICROS / 1000);
+                        Files.setLastModified(path.$(), clock.getTicks() / 1000 - (i + 1) * 24 * Timestamps.HOUR_MICROS / 1000);
                     }
                 }
             }
@@ -982,40 +1157,54 @@ public class LogFactoryTest {
                 try (Path path = new Path()) {
                     for (int i = 0; i < extraFiles; i++) {
                         path.of(base + extraFilePrefix).put(i).put(".log").$();
-                        Files.touch(path);
-                        Files.setLastModified(path, clock.getTicks() / 1000 - (i + 1) * Numbers.parseLongDuration(lifeDuration) / 1000);
+                        Files.touch(path.$());
+                        Files.setLastModified(path.$(), clock.getTicks() / 1000 - (i + 1) * Numbers.parseLongDuration(lifeDuration) / 1000);
                     }
                 }
             }
 
             Log logger = factory.create("x");
-            for (int i = 0; i < 100000; i++) {
+            int lines = (int) Math.max(100000, (double) nSizeLimit / (5 + 1 + 3) * 2);
+            for (int i = 0; i < lines; i++) {
                 logger.xinfo().$("test ").$(' ').$(i).$();
             }
+            logger.infoW().$("!").$();
 
             // Wait until we roll log files at least once.
             TestUtils.assertEventually(() -> {
-                logger.xinfo().$("test foobar").$();
+                logger.infoW().$("!").$();
                 Assert.assertTrue(writerRef.get().getRolledCount() > 0);
             }, 10);
+
+            factory.close(true);
         }
 
         int fileCount = 0;
+        boolean endFound = false;
         try (Path path = new Path()) {
             StringSink fileNameSink = new StringSink();
             path.of(base).$();
-            long pFind = Files.findFirst(path);
+            int len = path.size();
+            long pFind = Files.findFirst(path.$());
             try {
                 Assert.assertNotEquals(0, pFind);
                 do {
                     fileNameSink.clear();
-                    Chars.utf8ToUtf16Z(Files.findName(pFind), fileNameSink);
+                    Utf8s.utf8ToUtf16Z(Files.findName(pFind), fileNameSink);
                     if (Files.isDots(fileNameSink)) {
                         continue;
                     }
                     // All extra files should be deleted.
                     Assert.assertFalse(Chars.contains(fileNameSink, extraFilePrefix));
                     fileCount++;
+
+                    path.trimTo(len).concat(fileNameSink);
+                    long fileSize = Files.length(path.$());
+
+                    long fd = Files.openRO(path.$());
+                    char b = (char) Files.readNonNegativeByte(fd, fileSize - 3);
+                    Files.close(fd);
+                    endFound |= b == '!';
                 } while (Files.findNext(pFind) > 0);
             } finally {
                 Files.findClose(pFind);
@@ -1023,6 +1212,7 @@ public class LogFactoryTest {
         }
 
         Assert.assertTrue(fileCount > 0);
+        Assert.assertTrue(endFound);
     }
 
     private void testCustomLogIsCreated(boolean isCreated) throws IOException {
@@ -1088,12 +1278,12 @@ public class LogFactoryTest {
         try (Path path = new Path()) {
             StringSink fileNameSink = new StringSink();
             path.of(base).$();
-            long pFind = Files.findFirst(path);
+            long pFind = Files.findFirst(path.$());
             try {
                 Assert.assertNotEquals(0, pFind);
                 do {
                     fileNameSink.clear();
-                    Chars.utf8ToUtf16Z(Files.findName(pFind), fileNameSink);
+                    Utf8s.utf8ToUtf16Z(Files.findName(pFind), fileNameSink);
                     if (Files.isDots(fileNameSink)) {
                         continue;
                     }

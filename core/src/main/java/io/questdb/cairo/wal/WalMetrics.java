@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,22 +27,27 @@ package io.questdb.cairo.wal;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
+import io.questdb.std.Mutable;
 
 import java.util.concurrent.atomic.AtomicLong;
 
-public class WalMetrics {
+public class WalMetrics implements Mutable {
     private final Counter applyPhysicallyWrittenRowsCounter;
     private final LongGauge applyRowsWriteRateGauge;
     private final Counter applyRowsWrittenCounter;
     private final Counter rowsWrittenCounter;
+    private final Counter seqTxnCounter;
     private final AtomicLong totalRowsWritten = new AtomicLong();
     private final AtomicLong totalRowsWrittenTotalTime = new AtomicLong();
+    private final Counter writerTxnCounter;
 
     public WalMetrics(MetricsRegistry metricsRegistry) {
         this.applyPhysicallyWrittenRowsCounter = metricsRegistry.newCounter("wal_apply_physically_written_rows");
-        this.applyRowsWrittenCounter = metricsRegistry.newCounter("wal_apply_written_rows");
         this.applyRowsWriteRateGauge = metricsRegistry.newLongGauge("wal_apply_rows_per_second");
+        this.applyRowsWrittenCounter = metricsRegistry.newCounter("wal_apply_written_rows");
         this.rowsWrittenCounter = metricsRegistry.newCounter("wal_written_rows");
+        this.seqTxnCounter = metricsRegistry.newCounter("wal_apply_seq_txn");
+        this.writerTxnCounter = metricsRegistry.newCounter("wal_apply_writer_txn");
     }
 
     public void addApplyRowsWritten(long rows, long physicallyWrittenRows, long timeMicros) {
@@ -56,5 +61,25 @@ public class WalMetrics {
 
     public void addRowsWritten(long rows) {
         rowsWrittenCounter.add(rows);
+    }
+
+    public void addSeqTxn(long txnDelta) {
+        seqTxnCounter.add(txnDelta);
+    }
+
+    public void addWriterTxn(long txnDelta) {
+        writerTxnCounter.add(txnDelta);
+    }
+
+    @Override
+    public void clear() {
+        applyPhysicallyWrittenRowsCounter.reset();
+        applyRowsWriteRateGauge.setValue(0);
+        applyRowsWrittenCounter.reset();
+        rowsWrittenCounter.reset();
+        seqTxnCounter.reset();
+        totalRowsWritten.set(0);
+        totalRowsWrittenTotalTime.set(0);
+        writerTxnCounter.reset();
     }
 }

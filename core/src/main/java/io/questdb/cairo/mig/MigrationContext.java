@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 class MigrationContext {
@@ -38,7 +39,7 @@ class MigrationContext {
     private final long tempMemory;
     private final int tempMemoryLen;
     private final MemoryARW tempVirtualMem;
-    private int metadataFd;
+    private long metadataFd;
     private Path tablePath;
     private Path tablePath2;
 
@@ -56,7 +57,7 @@ class MigrationContext {
         this.rwMemory = rwMemory;
     }
 
-    public MemoryMARW createRwMemoryOf(FilesFacade ff, Path path) {
+    public MemoryMARW createRwMemoryOf(FilesFacade ff, LPSZ path) {
         // re-use same rwMemory
         // assumption that it is re-usable after the close() and then of()  methods called.
         rwMemory.smallFile(ff, path, MemoryTag.NATIVE_MIG_MMAP);
@@ -71,12 +72,12 @@ class MigrationContext {
         return getConfiguration().getFilesFacade();
     }
 
-    public int getMetadataFd() {
+    public long getMetadataFd() {
         return metadataFd;
     }
 
     public int getNextTableId() {
-        return (int) engine.getTableIdGenerator().getNextId();
+        return engine.getNextTableId();
     }
 
     public MemoryMARW getRwMemory() {
@@ -110,7 +111,7 @@ class MigrationContext {
         return tempVirtualMem;
     }
 
-    public void of(Path path, Path pathCopy, int metadataFd) {
+    public void of(Path path, Path pathCopy, long metadataFd) {
         this.tablePath = path;
         this.tablePath2 = pathCopy;
         this.metadataFd = metadataFd;

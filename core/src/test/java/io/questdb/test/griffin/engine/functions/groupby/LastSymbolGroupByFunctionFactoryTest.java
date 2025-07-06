@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,19 +24,19 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class LastSymbolGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class LastSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testKeyed() throws Exception {
         assertMemoryLeak(() -> assertQuery(
                 "a\tsym\n" +
+                        "-1\tbb\n" +
                         "0\tbb\n" +
-                        "1\taa\n" +
-                        "-1\tbb\n",
-                "select a, last(sym) sym from tab",
+                        "1\taa\n",
+                "select a, last(sym) sym from tab order by a",
                 "create table tab as (select rnd_int() % 2 a, rnd_symbol('aa', 'bb', 'cc') sym from long_sequence(10))",
                 null,
                 true,
@@ -82,7 +82,7 @@ public class LastSymbolGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "\tkl2\t1970-01-03T09:00:00.000000Z\n" +
                         "PEHN\tl1\t1970-01-03T09:00:00.000000Z\n" +
                         "VTJW\tss4\t1970-01-03T09:00:00.000000Z\n",
-                "select b, last(a) a, k from x sample by 3h",
+                "select b, last(a) a, k from x sample by 3h align to first observation",
                 "create table x as " +
                         "(" +
                         "select" +

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.groupby;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -37,6 +38,18 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class TimestampSamplerFactoryTest {
+    private static final char[] units = {'U', 's', 'm', 'h', 'd'};
+
+    @Test
+    public void testFindIntervalEndIndex() throws SqlException {
+        assertFindIntervalEndIndexFailure(1, "missing interval", null, 1);
+        assertFindIntervalEndIndexFailure(1_002, "expected interval qualifier", "45", 1000);
+        assertFindIntervalEndIndexFailure(42, "expected interval qualifier", "", 42);
+        assertFindIntervalEndIndexFailure(50, "expected single letter qualifier", "1bar", 49);
+        assertFindIntervalEndIndexFailure(100, "negative interval is not allowed", "-", 100);
+
+        Assert.assertEquals(0, TimestampSamplerFactory.findIntervalEndIndex("m", 11, "sample"));
+    }
 
     @Test
     public void testLongQualifier() {
@@ -63,8 +76,9 @@ public class TimestampSamplerFactoryTest {
                 long actualTs = sampler.round(expectedTs + i);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
-                            "Failed at: %s, i: %d. Expected: %s, actual: %s",
-                            sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs))
+                                    "Failed at: %s, i: %d. Expected: %s, actual: %s",
+                                    sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs)
+                            )
                     );
                 }
             }
@@ -83,8 +97,9 @@ public class TimestampSamplerFactoryTest {
                 long actualTs = sampler.round(expectedTs + i);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
-                            "Failed at: %s, i: %d. Expected: %s, actual: %s",
-                            sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs))
+                                    "Failed at: %s, i: %d. Expected: %s, actual: %s",
+                                    sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs)
+                            )
                     );
                 }
             }
@@ -103,8 +118,9 @@ public class TimestampSamplerFactoryTest {
                 long actualTs = sampler.round(expectedTs + i * Timestamps.SECOND_MICROS);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
-                            "Failed at: %s, i: %d. Expected: %s, actual: %s",
-                            sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs))
+                                    "Failed at: %s, i: %d. Expected: %s, actual: %s",
+                                    sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs)
+                            )
                     );
                 }
             }
@@ -117,8 +133,32 @@ public class TimestampSamplerFactoryTest {
     }
 
     @Test
+    public void testNegativeInterval() {
+        assertFailure(110, "negative interval is not allowed", "-1m", 110);
+    }
+
+    @Test
     public void testNoQualifier() {
         assertFailure(100, "expected interval qualifier", "45", 98);
+    }
+
+    @Test
+    public void testParseInterval() throws SqlException {
+        Assert.assertEquals(1, TimestampSamplerFactory.parseInterval("1m", 1, 0, "sample", Numbers.INT_NULL, ' '));
+
+        try {
+            TimestampSamplerFactory.parseInterval("0m", 1, 0, "sample", Numbers.INT_NULL, ' ');
+        } catch (SqlException e) {
+            Assert.assertEquals(0, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "zero is not a valid sample value");
+        }
+
+        try {
+            TimestampSamplerFactory.parseInterval("fm", 1, 0, "sample", Numbers.INT_NULL, ' ');
+        } catch (SqlException e) {
+            Assert.assertEquals(0, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid sample value");
+        }
     }
 
     @Test
@@ -133,8 +173,9 @@ public class TimestampSamplerFactoryTest {
                 long actualTs = sampler.round(expectedTs + i * Timestamps.SECOND_MICROS);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
-                            "Failed at: %s, i: %d. Expected: %s, actual: %s",
-                            sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs))
+                                    "Failed at: %s, i: %d. Expected: %s, actual: %s",
+                                    sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs)
+                            )
                     );
                 }
             }
@@ -154,6 +195,16 @@ public class TimestampSamplerFactoryTest {
     @Test
     public void testUnsupportedQualifier2() {
         assertFailure(132, "unsupported interval qualifier", "21K", 130);
+    }
+
+    private static void assertFindIntervalEndIndexFailure(int expectedPosition, CharSequence expectedMessage, CharSequence sampleBy, int position) {
+        try {
+            TimestampSamplerFactory.findIntervalEndIndex(sampleBy, position, "sample");
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(expectedPosition, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+        }
     }
 
     private static TimestampSampler createTimestampSampler(int bucketSize, char units, StringSink sink) throws SqlException {

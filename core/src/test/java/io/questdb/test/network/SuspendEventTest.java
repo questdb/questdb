@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ public class SuspendEventTest {
     @Test
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
-            SuspendEvent event = SuspendEventFactory.newInstance(new DefaultIODispatcherConfiguration());
+            SuspendEvent event = SuspendEventFactory.newInstance(DefaultIODispatcherConfiguration.INSTANCE);
             Assert.assertFalse(event.checkTriggered());
             event.trigger();
             Assert.assertTrue(event.checkTriggered());

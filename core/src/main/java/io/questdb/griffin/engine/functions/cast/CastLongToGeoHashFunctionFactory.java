@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -83,7 +83,7 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public byte getGeoByte(Record rec) {
             final long value = this.value.getLong(rec);
-            return value != Numbers.LONG_NaN ? (byte) value : GeoHashes.BYTE_NULL;
+            return value != Numbers.LONG_NULL ? (byte) value : GeoHashes.BYTE_NULL;
         }
 
         @Override
@@ -108,7 +108,7 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public int getGeoInt(Record rec) {
             final long value = this.value.getLong(rec);
-            return value != Numbers.LONG_NaN ? (int) value : GeoHashes.INT_NULL;
+            return value != Numbers.LONG_NULL ? (int) value : GeoHashes.INT_NULL;
         }
 
         @Override
@@ -133,7 +133,7 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public long getGeoLong(Record rec) {
             final long value = this.value.getLong(rec);
-            return value != Numbers.LONG_NaN ? value : GeoHashes.NULL;
+            return value != Numbers.LONG_NULL ? value : GeoHashes.NULL;
         }
 
         @Override
@@ -158,7 +158,7 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public short getGeoShort(Record rec) {
             final long value = this.value.getLong(rec);
-            return value != Numbers.LONG_NaN ? (short) value : GeoHashes.SHORT_NULL;
+            return value != Numbers.LONG_NULL ? (short) value : GeoHashes.SHORT_NULL;
         }
 
         @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,20 +30,25 @@ import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.std.Numbers;
 
 public class DateConstant extends DateFunction implements ConstantFunction {
-    public static final DateConstant NULL = new DateConstant(Numbers.LONG_NaN);
+    public static final DateConstant NULL = new DateConstant(Numbers.LONG_NULL);
     private final long value;
 
     public DateConstant(long value) {
         this.value = value;
     }
 
-    public static DateConstant getInstance(long value) {
-        return value != Numbers.LONG_NaN ? new DateConstant(value) : NULL;
+    public static DateConstant newInstance(long value) {
+        return value != Numbers.LONG_NULL ? new DateConstant(value) : NULL;
     }
 
     @Override
     public long getDate(Record rec) {
         return value;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return value == Numbers.LONG_NULL;
     }
 
     @Override

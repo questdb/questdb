@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <mstcpip.h>
 #include "../share/net.h"
 #include "errno.h"
 
@@ -46,9 +47,21 @@ int set_int_sockopt(SOCKET fd, int level, int opt, DWORD value) {
     return result;
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setKeepAlive0
+        (JNIEnv *e, jclass cl, jint fd, jint idle_sec) {
+    struct tcp_keepalive keepaliveParams;
+    DWORD ret = 0;
+    keepaliveParams.onoff = 1;
+    keepaliveParams.keepaliveinterval = keepaliveParams.keepalivetime = idle_sec * 1000;
+    if (WSAIoctl(fd, SIO_KEEPALIVE_VALS, &keepaliveParams, sizeof(keepaliveParams), NULL, 0, &ret, NULL, NULL) < 0) {
+        SaveLastError();
+        return -1;
+    }
+    return fd;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_socketTcp0
         (JNIEnv *e, jclass cl, jboolean blocking) {
-
     SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s && !blocking) {
         u_long mode = 1;

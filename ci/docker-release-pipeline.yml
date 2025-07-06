@@ -1,13 +1,22 @@
 trigger:
   branches:
+    exclude:
+      - "*"
+  tags:
     include:
-      - 'patch/*'
+      - '*.*.*'
+
+pr: none
+
+schedules:
+  - cron: "0 0 * * *"
+    displayName: Midnight Trigger
+    branches:
+      include:
+        - master
 
 pool:
   vmImage: 'ubuntu-20.04'
-variables:
-  tag: '$(Build.SourceBranch)'
-  tag_name: '$(Build.SourceBranchName)'
 
 jobs:
   - job: RunOn
@@ -20,37 +29,60 @@ jobs:
     timeoutInMinutes: 60
 
     steps:
-      - bash: |
-          export hub_tag_name=$(git describe --tags)-$(tag_name)  
-          echo hub_tag_name=$hub_tag_name
-          echo "##vso[task.setvariable variable=hub_tag_name]$hub_tag_name"
-        name: check_changes
-        displayName: "Check changed files"
-
       - task: Docker@2
         inputs:
           command: 'login'
           containerRegistry: quest_docker_hub
 
       - task: CmdLine@2
-        displayName: Release Nightly MASTER
+        displayName: Setup docker buildx
         inputs:
           script: |
             docker run --privileged --rm tonistiigi/binfmt --install arm64
             docker run --privileged --rm tonistiigi/binfmt
             docker buildx create --use
+
+      - task: CmdLine@2
+        displayName: Release Nightly MASTER
+        inputs:
+          script: |
             docker buildx build --platform linux/amd64,linux/arm64 --push -t questdb/questdb:nightly .
+            docker buildx build --platform linux/amd64,linux/arm64 --push -t questdb/questdb:nightly-rhel --target rhel  .
           workingDirectory: core
         condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
 
       - task: CmdLine@2
-        displayName: Release Patch
+        displayName: Release Tag
         inputs:
           script: |
-            docker run --privileged --rm tonistiigi/binfmt --install arm64
-            docker run --privileged --rm tonistiigi/binfmt
-            docker buildx create --use
-            export branch_name=$(echo $(tag) | sed -e 's/^refs\/heads\///')
-            docker buildx build --build-arg tag_name=$branch_name --platform linux/amd64 --push -t questdb/questdb:$(hub_tag_name) .
+            # Cannot use Build.SourceBranchName if a tag name contains a "/", since the var only returns the final path component
+            # We use cut instead to trim the first 2 components off the Build.SourceBranch ("refs/tags")
+            tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
+            echo $tag_name
+            pattern='^[0-9]+\.[0-9]+\.[0-9]+$'
+            if [[ "$tag_name" =~ $pattern ]]; then
+              echo "labeling latest"
+              docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$tag_name -t questdb/questdb:latest .
+            else
+              echo "NOT labeling latest"
+              docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$tag_name .
+            fi
+            docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$tag_name-rhel --target rhel  .
           workingDirectory: core
-        condition: and(succeeded(), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
+
+      - task: CmdLine@2
+        displayName: Release Commit from Branch
+        inputs:
+          script: |
+            # Cannot use Build.SourceBranchName if a branch name contains a "/", since the var only returns the final path component
+            # We use cut instead to trim the first 2 components off the Build.SourceBranch ("refs/heads")
+            tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
+            echo $tag_name
+            # Docker tags are prefixed with "patch-" and use the short commit hash
+            docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7) 
+            echo $docker_tag_name
+            docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:${docker_tag_name} .
+            docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:${docker_tag_name}-rhel --target rhel .
+          workingDirectory: core
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))

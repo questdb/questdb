@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,10 +44,9 @@ public class JsonPlanSinkTest {
                 "        \"geohash\": \"\"00000000000000011000101010010010\"\",\n" +
                 "        \"long256\": \"0x04000000000000000300000000000000020000000000000001\",\n" +
                 "        \"plan\": \"null\",\n" +
-                "        \"double\": \"0.0\",\n" +
-                "        \"float\": \"1.0\",\n" +
                 "        \"uuid\": \"00000000-0000-0002-0000-000000000001\",\n" +
-                "        \"uuid_null\": \"null\",\n" +
+                "        \"ipv4\": \"0.0.0.1\",\n" +
+                "        \"uuid_null\": \"null\"\n" +
                 "    }\n" +
                 "  }\n" +
                 "]";
@@ -55,6 +54,54 @@ public class JsonPlanSinkTest {
         JsonPlanSink sink = new JsonPlanSink();
         sink.of(new TestFactory(), null);
         Assert.assertEquals(expected, sink.getSink().toString());
+    }
+
+    @Test
+    public void testSinkWithNumericalValues() {
+        String expected = "[\n" +
+                "  {\n" +
+                "    \"Plan\": {\n" +
+                "        \"Node Type\": \"test\",\n" +
+                "        \"testString\": \"data\",\n" +
+                "        \"double\":  0.0,\n" +
+                "        \"float\":  1.0,\n" +
+                "        \"int\":  2,\n" +
+                "        \"long\":  100\n" +
+                "    }\n" +
+                "  }\n" +
+                "]";
+
+        JsonPlanSink sink = new JsonPlanSink();
+        sink.of(new NumericalTestFactory(), null);
+        Assert.assertEquals(expected, sink.getSink().toString());
+    }
+
+    static class NumericalTestFactory implements RecordCursorFactory {
+
+        @Override
+        public RecordMetadata getMetadata() {
+            return null;
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type("test");
+            sink.attr("testString");
+            sink.val("data");
+            sink.attr("double");
+            sink.val(0.0d);
+            sink.attr("float");
+            sink.val(1.0f);
+            sink.attr("int");
+            sink.val(2);
+            sink.attr("long");
+            sink.val(100L);
+        }
     }
 
     static class TestFactory implements RecordCursorFactory {
@@ -75,17 +122,15 @@ public class JsonPlanSinkTest {
             sink.attr("geohash");
             sink.val(101010L, 32);
             sink.attr("long256");
-            sink.val(1L, 2L, 3L, 4L);
+            sink.valLong256(1L, 2L, 3L, 4L);
             sink.attr("plan");
             sink.val((Plannable) null);
-            sink.attr("double");
-            sink.val(0.0f);
-            sink.attr("float");
-            sink.val(1.0d);
             sink.attr("uuid");
             sink.valUuid(1L, 2L);
+            sink.attr("ipv4");
+            sink.valIPv4(1);
             sink.attr("uuid_null");
-            sink.valUuid(Numbers.LONG_NaN, Numbers.LONG_NaN);
+            sink.valUuid(Numbers.LONG_NULL, Numbers.LONG_NULL);
         }
     }
 }

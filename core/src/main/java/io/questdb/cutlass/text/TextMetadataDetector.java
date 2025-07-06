@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,10 +29,18 @@ import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
@@ -42,11 +50,12 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
     private final IntList _histogram = new IntList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final ObjList<TypeAdapter> columnTypes = new ObjList<>();
+    private final int defaultColumnType;
     private final CharSequenceObjHashMap<TypeAdapter> schemaColumns = new CharSequenceObjHashMap<>();
     private final StringSink tempSink = new StringSink();
     private final TypeManager typeManager;
     private final LowerCaseCharSequenceHashSet uniqueColumnNames = new LowerCaseCharSequenceHashSet();
-    private final DirectCharSink utf8Sink;
+    private final DirectUtf16Sink utf8Sink;
     private int fieldCount;
     private boolean forceHeader = false;
     private boolean header = false;
@@ -57,7 +66,8 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
             TextConfiguration textConfiguration
     ) {
         this.typeManager = typeManager;
-        this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
+        this.utf8Sink = new DirectUtf16Sink(textConfiguration.getUtf8SinkSize());
+        this.defaultColumnType = textConfiguration.isUseLegacyStringDefault() ? ColumnType.STRING : ColumnType.VARCHAR;
     }
 
     @Override
@@ -88,7 +98,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
             header = true;
         } else {
             LOG.info()
-                    .$("no header [table=").$(tableName)
+                    .$("no header [table=").$safe(tableName)
                     .$(", lineCount=").$(lineCount)
                     .$(", errorCount=").$(errorCount)
                     .$(", forceHeader=").$(forceHeader)
@@ -151,7 +161,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
     }
 
     @Override
-    public void onFields(long line, ObjList<DirectByteCharSequence> values, int fieldCount) {
+    public void onFields(long line, ObjList<DirectUtf8String> values, int fieldCount) {
         // keep first line in case it's a header
         if (line == 0) {
             seedFields(fieldCount);
@@ -160,8 +170,8 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
 
         int count = typeManager.getProbeCount();
         for (int i = 0; i < fieldCount; i++) {
-            DirectByteCharSequence cs = values.getQuick(i);
-            if (cs.length() == 0) {
+            DirectUtf8Sequence cs = values.getQuick(i);
+            if (cs.size() == 0) {
                 _blanks.increment(i);
             }
             int offset = i * count;
@@ -204,7 +214,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
             }
 
             if (setDefault && unprobed) {
-                columnTypes.setQuick(i, typeManager.getTypeAdapter(ColumnType.STRING));
+                columnTypes.setQuick(i, typeManager.getTypeAdapter(defaultColumnType));
             }
         }
 
@@ -281,14 +291,15 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
         this.columnNames.setAll(count, "");
     }
 
-    private void stashPossibleHeader(ObjList<DirectByteCharSequence> values, int hi) {
+    private void stashPossibleHeader(ObjList<DirectUtf8String> values, int hi) {
         for (int i = 0; i < hi; i++) {
-            DirectByteCharSequence value = values.getQuick(i);
+            DirectUtf8Sequence value = values.getQuick(i);
             utf8Sink.clear();
-            if (Chars.utf8toUtf16(value.getLo(), value.getHi(), utf8Sink)) {
+            if (Utf8s.utf8ToUtf16(value.lo(), value.hi(), utf8Sink)) {
                 columnNames.setQuick(i, normalise(utf8Sink));
             } else {
-                LOG.info().$("utf8 error [table=").$(tableName).$(", line=0, col=").$(i).$(']').$();
+                LOG.info().$("utf8 error [table=").$safe(tableName).$(", line=0, col=").$(i).$(']').$();
+                columnNames.setQuick(i, "");
             }
         }
     }

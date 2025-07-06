@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,9 +32,14 @@ class TxFileStruct {
     public ArrayList<AttachedPartition> ATTACHED_PARTITIONS;
     public int ATTACHED_PARTITIONS_COUNT;
     public ArrayList<SymbolInfo> SYMBOLS;
+    public int TX_OFFSET_CHECKSUM;
     public long TX_OFFSET_COLUMN_VERSION;
     public long TX_OFFSET_DATA_VERSION;
     public long TX_OFFSET_FIXED_ROW_COUNT;
+    public long TX_OFFSET_LAG_MAX_TIMESTAMP;
+    public long TX_OFFSET_LAG_MIN_TIMESTAMP;
+    public int TX_OFFSET_LAG_ROW_COUNT;
+    public int TX_OFFSET_LAG_TXN_COUNT;
     public int TX_OFFSET_MAP_WRITER_COUNT;
     public long TX_OFFSET_MAX_TIMESTAMP;
     public long TX_OFFSET_MIN_TIMESTAMP;
@@ -63,6 +68,8 @@ class TxFileStruct {
                 ", ATTACHED_PARTITIONS=" + ATTACHED_PARTITIONS +
                 ", ATTACHED_PARTITIONS_COUNT=" + ATTACHED_PARTITIONS_COUNT +
                 ", TX_OFFSET_SEQ_TXN=" + TX_OFFSET_SEQ_TXN +
+                ", TX_OFFSET_LAG_ROW_COUNT=" + TX_OFFSET_LAG_ROW_COUNT +
+                ", TX_OFFSET_LAG_TXN_COUNT=" + TX_OFFSET_LAG_TXN_COUNT +
                 '}';
     }
 

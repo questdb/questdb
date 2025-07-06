@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,9 +31,8 @@ import io.questdb.std.str.Path;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3OpenColumnTask {
-    private int activeFixFd;
-    private int activeVarFd;
-    private long partitionUpdateSinkAddr;
+    private long activeFixFd;
+    private long activeVarFd;
     private AtomicInteger columnCounter;
     private int columnIndex;
     private CharSequence columnName;
@@ -46,26 +45,28 @@ public class O3OpenColumnTask {
     private long mergeOOOHi;
     private long mergeOOOLo;
     private int mergeType;
-    private long newPartitionSize;
-    private long oldPartitionSize;
+    private long o3SplitPartitionSize;
     private long oldPartitionTimestamp;
     private int openColumnMode;
     private AtomicInteger partCounter;
     private long partitionTimestamp;
+    private long partitionUpdateSinkAddr;
     private Path pathToTable;
     private long prefixHi;
     private long prefixLo;
     private int prefixType;
     private long srcDataMax;
+    private long srcDataNewPartitionSize;
+    private long srcDataOldPartitionSize;
     private long srcDataTop;
-    private long srcDataTxn;
+    private long srcNameTxn;
     private long srcOooFixAddr;
     private long srcOooHi;
     private long srcOooLo;
     private long srcOooMax;
     private long srcOooVarAddr;
     private long srcTimestampAddr;
-    private int srcTimestampFd;
+    private long srcTimestampFd;
     private long srcTimestampSize;
     private long suffixHi;
     private long suffixLo;
@@ -76,16 +77,12 @@ public class O3OpenColumnTask {
     private long timestampMin;
     private long txn;
 
-    public int getActiveFixFd() {
+    public long getActiveFixFd() {
         return activeFixFd;
     }
 
-    public int getActiveVarFd() {
+    public long getActiveVarFd() {
         return activeVarFd;
-    }
-
-    public long getPartitionUpdateSinkAddr() {
-        return partitionUpdateSinkAddr;
     }
 
     public AtomicInteger getColumnCounter() {
@@ -136,12 +133,8 @@ public class O3OpenColumnTask {
         return mergeType;
     }
 
-    public long getNewPartitionSize() {
-        return newPartitionSize;
-    }
-
-    public long getOldPartitionSize() {
-        return oldPartitionSize;
+    public long getO3SplitPartitionSize() {
+        return o3SplitPartitionSize;
     }
 
     public long getOldPartitionTimestamp() {
@@ -158,6 +151,10 @@ public class O3OpenColumnTask {
 
     public long getPartitionTimestamp() {
         return partitionTimestamp;
+    }
+
+    public long getPartitionUpdateSinkAddr() {
+        return partitionUpdateSinkAddr;
     }
 
     public Path getPathToTable() {
@@ -180,12 +177,20 @@ public class O3OpenColumnTask {
         return srcDataMax;
     }
 
+    public long getSrcDataNewPartitionSize() {
+        return srcDataNewPartitionSize;
+    }
+
+    public long getSrcDataOldPartitionSize() {
+        return srcDataOldPartitionSize;
+    }
+
     public long getSrcDataTop() {
         return srcDataTop;
     }
 
-    public long getSrcDataTxn() {
-        return srcDataTxn;
+    public long getSrcNameTxn() {
+        return srcNameTxn;
     }
 
     public long getSrcOooFixAddr() {
@@ -212,7 +217,7 @@ public class O3OpenColumnTask {
         return srcTimestampAddr;
     }
 
-    public int getSrcTimestampFd() {
+    public long getSrcTimestampFd() {
         return srcTimestampFd;
     }
 
@@ -271,7 +276,7 @@ public class O3OpenColumnTask {
             long oldPartitionTimestamp,
             long srcDataTop,
             long srcDataMax,
-            long srcDataTxn,
+            long srcNameTxn,
             long txn,
             int prefixType,
             long prefixLo,
@@ -284,14 +289,15 @@ public class O3OpenColumnTask {
             int suffixType,
             long suffixLo,
             long suffixHi,
-            int srcTimestampFd,
+            long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             int indexBlockCapacity,
-            int activeFixFd,
-            int activeVarFd,
-            long newPartitionSize,
-            long oldPartitionSize,
+            long activeFixFd,
+            long activeVarFd,
+            long srcDataNewPartitionSize,
+            long srcDataOldPartitionSize,
+            long o3NewPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long partitionUpdateSinkAddr,
@@ -316,7 +322,7 @@ public class O3OpenColumnTask {
         this.oldPartitionTimestamp = oldPartitionTimestamp;
         this.srcDataTop = srcDataTop;
         this.srcDataMax = srcDataMax;
-        this.srcDataTxn = srcDataTxn;
+        this.srcNameTxn = srcNameTxn;
         this.txn = txn;
         this.prefixType = prefixType;
         this.prefixLo = prefixLo;
@@ -340,7 +346,8 @@ public class O3OpenColumnTask {
         this.partitionUpdateSinkAddr = partitionUpdateSinkAddr;
         this.columnIndex = columnIndex;
         this.columnNameTxn = columnNameTxn;
-        this.newPartitionSize = newPartitionSize;
-        this.oldPartitionSize = oldPartitionSize;
+        this.srcDataNewPartitionSize = srcDataNewPartitionSize;
+        this.srcDataOldPartitionSize = srcDataOldPartitionSize;
+        this.o3SplitPartitionSize = o3NewPartitionSize;
     }
 }

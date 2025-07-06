@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,16 +24,17 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.PropertyKey;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class SumIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class SumIntVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
-        pageFrameMaxRows = 10_000;
-        assertQuery13(
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
+        assertQuery(
                 "avg\n" +
                         "5261.376146789\n",
                 "select round(avg(f),9) avg from tab",
@@ -43,7 +44,8 @@ public class SumIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "avg\n" +
                         "5261.376146789\n",
                 false,
-                true
+                true,
+                false
         );
 
         assertQuery(
@@ -59,9 +61,9 @@ public class SumIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "sum\n" +
-                        "NaN\n",
+                        "null\n",
                 "select sum(f) from tab",
                 "create table tab as (select cast(null as int) f from long_sequence(33))",
                 null,
@@ -69,7 +71,8 @@ public class SumIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "sum\n" +
                         "4567866\n",
                 false,
-                true
+                true,
+                false
         );
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,20 +24,31 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
-
+class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
     private final int columnIndex;
     private final Function filter;
     private final boolean restrictedByExcludedValues;
     private final boolean restrictedByIncludedValues;
+    private final DirectLongList rowIds;
     private final int shrinkToCapacity;
     private boolean areRecordsFound;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -46,17 +57,17 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
     private IntHashSet foundKeys;
     private int foundSize;
     private IntHashSet includedSymbolKeys;
-    private DirectLongList rowIds;
 
     public LatestByValueListRecordCursor(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
             int columnIndex,
             @Nullable Function filter,
-            @NotNull IntList columnIndexes,
             int shrinkToCapacity,
             boolean restrictedByIncludedValues,
             boolean restrictedByExcludedValues
     ) {
-        super(columnIndexes);
+        super(configuration, metadata);
         this.shrinkToCapacity = shrinkToCapacity;
         this.columnIndex = columnIndex;
         this.filter = filter;
@@ -74,19 +85,12 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
     public void close() {
         super.close();
         if (rowIds.getCapacity() > shrinkToCapacity) {
-            rowIds = Misc.free(rowIds);
-            rowIds = new DirectLongList(shrinkToCapacity, MemoryTag.NATIVE_LONG_LIST);
             foundKeys = new IntHashSet(shrinkToCapacity);
             // symbolKeys is unlikely to take too much memory
             // because every value is associated with a value from `in (...)` WHERE filter and
             // the list of parsed functions is of bigger size than symbolKeys hash set.
         }
-    }
-
-    public void destroy() {
-        // After close() the instance is designed to be re-usable.
-        // Destroy makes it non-reusable
-        rowIds = Misc.free(rowIds);
+        Misc.free(rowIds);
     }
 
     @Override
@@ -98,24 +102,26 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
         }
         if (currentRow-- > 0) {
             long rowId = rowIds.get(currentRow);
-            recordAt(recordA, rowId);
+            frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), recordA);
+            recordA.setRowIndex(Rows.toLocalRowID(rowId));
             return true;
         }
         return false;
     }
 
     @Override
-    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.dataFrameCursor = dataFrameCursor;
-        recordA.of(dataFrameCursor.getTableReader());
-        recordB.of(dataFrameCursor.getTableReader());
+    public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.frameCursor = pageFrameCursor;
+        rowIds.reopen();
+        recordA.of(pageFrameCursor);
+        recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
-        dataFrameCursor.toTop();
+        pageFrameCursor.toTop();
         foundSize = 0;
         foundKeys.clear();
         rowIds.clear();
         if (filter != null) {
-            filter.init(this, executionContext);
+            filter.init(pageFrameCursor, executionContext);
             filter.toTop();
         }
         if (restrictedByIncludedValues) {
@@ -125,7 +131,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
             }
         } else if (restrictedByExcludedValues) {
             // Find all, but excluded set of symbol keys
-            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
+            final StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
             int distinctSymbols = symbolTable.getSymbolCount();
             if (symbolTable.containsNullValue()) {
                 distinctSymbols++;
@@ -134,23 +140,34 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
                 // Increment the counter to avoid miscalculation.
                 distinctSymbols++;
             }
-            distinctSymbols = Math.max(0, distinctSymbols - excludedSymbolKeys.size());
-            rowIds.setCapacity(distinctSymbols);
+            distinctSymbols -= excludedSymbolKeys.size();
+            if (distinctSymbols > 0) {
+                rowIds.setCapacity(distinctSymbols);
+            }
         } else {
             // Find latest by all distinct symbol values
-            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
+            StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
             int distinctSymbols = symbolTable.getSymbolCount();
             if (symbolTable.containsNullValue()) {
                 distinctSymbols++;
             }
-            rowIds.setCapacity(distinctSymbols);
+            if (distinctSymbols > 0) {
+                rowIds.setCapacity(distinctSymbols);
+            }
         }
         areRecordsFound = false;
+        // prepare for page frame iteration
+        super.init();
     }
 
     @Override
     public long size() {
         return areRecordsFound ? rowIds.size() : -1;
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return rowIds.size();
     }
 
     @Override
@@ -165,18 +182,21 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
 
     private void findAllNoFilter(int distinctCount) {
         assert filter == null;
-        DataFrame frame;
-        while ((frame = dataFrameCursor.next()) != null) {
-            long rowLo = frame.getRowLo();
-            long row = frame.getRowHi();
-            recordA.jumpTo(frame.getPartitionIndex(), 0);
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            final int frameIndex = frameCount;
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
-            while (row-- > rowLo) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRecordIndex(row);
+            frameAddressCache.add(frameCount, frame);
+            frameMemoryPool.navigateTo(frameCount++, recordA);
+
+            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+                recordA.setRowIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (foundKeys.add(key)) {
-                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
+                    rowIds.add(Rows.toRowID(frameIndex, row));
                     if (++foundSize == distinctCount) {
                         return;
                     }
@@ -187,18 +207,21 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
 
     private void findAllWithFilter(int distinctCount) {
         assert filter != null;
-        DataFrame frame;
-        while ((frame = dataFrameCursor.next()) != null) {
-            long rowLo = frame.getRowLo();
-            long row = frame.getRowHi();
-            recordA.jumpTo(frame.getPartitionIndex(), 0);
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            final int frameIndex = frameCount;
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
-            while (row-- > rowLo) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRecordIndex(row);
+            frameAddressCache.add(frameCount, frame);
+            frameMemoryPool.navigateTo(frameCount++, recordA);
+
+            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+                recordA.setRowIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (filter.getBool(recordA) && foundKeys.add(key)) {
-                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
+                    rowIds.add(Rows.toRowID(frameIndex, row));
                     if (++foundSize == distinctCount) {
                         return;
                     }
@@ -244,18 +267,21 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
 
     private void findRestrictedExcludedOnlyNoFilter(int distinctCount) {
         assert filter == null;
-        DataFrame frame;
-        while ((frame = dataFrameCursor.next()) != null) {
-            long rowLo = frame.getRowLo();
-            long row = frame.getRowHi();
-            recordA.jumpTo(frame.getPartitionIndex(), 0);
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            final int frameIndex = frameCount;
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
-            while (row-- > rowLo) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRecordIndex(row);
+            frameAddressCache.add(frameCount, frame);
+            frameMemoryPool.navigateTo(frameCount++, recordA);
+
+            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+                recordA.setRowIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
-                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
+                    rowIds.add(Rows.toRowID(frameIndex, row));
                     if (++foundSize == distinctCount) {
                         return;
                     }
@@ -266,18 +292,21 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
 
     private void findRestrictedExcludedOnlyWithFilter(int distinctCount) {
         assert filter != null;
-        DataFrame frame;
-        while ((frame = dataFrameCursor.next()) != null) {
-            long rowLo = frame.getRowLo();
-            long row = frame.getRowHi();
-            recordA.jumpTo(frame.getPartitionIndex(), 0);
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            final int frameIndex = frameCount;
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
-            while (row-- > rowLo) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRecordIndex(row);
+            frameAddressCache.add(frameCount, frame);
+            frameMemoryPool.navigateTo(frameCount++, recordA);
+
+            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+                recordA.setRowIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (filter.getBool(recordA) && excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
-                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
+                    rowIds.add(Rows.toRowID(frameIndex, row));
                     if (++foundSize == distinctCount) {
                         return;
                     }
@@ -288,19 +317,22 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
 
     private void findRestrictedNoFilter() {
         assert filter == null;
-        int searchSize = includedSymbolKeys.size();
-        DataFrame frame;
-        while ((frame = dataFrameCursor.next()) != null) {
-            long rowLo = frame.getRowLo();
-            long row = frame.getRowHi();
-            recordA.jumpTo(frame.getPartitionIndex(), 0);
+        final int searchSize = includedSymbolKeys.size();
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            final int frameIndex = frameCount;
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
-            while (row-- > rowLo) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRecordIndex(row);
+            frameAddressCache.add(frameCount, frame);
+            frameMemoryPool.navigateTo(frameCount++, recordA);
+
+            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+                recordA.setRowIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (includedSymbolKeys.contains(key) && excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
-                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
+                    rowIds.add(Rows.toRowID(frameIndex, row));
                     if (++foundSize == searchSize) {
                         return;
                     }
@@ -312,18 +344,21 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
     private void findRestrictedWithFilter() {
         assert filter != null;
         int searchSize = includedSymbolKeys.size();
-        DataFrame frame;
-        while ((frame = dataFrameCursor.next()) != null) {
-            long rowLo = frame.getRowLo();
-            long row = frame.getRowHi();
-            recordA.jumpTo(frame.getPartitionIndex(), 0);
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            final int frameIndex = frameCount;
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
-            while (row-- > rowLo) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRecordIndex(row);
+            frameAddressCache.add(frameCount, frame);
+            frameMemoryPool.navigateTo(frameCount++, recordA);
+
+            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+                recordA.setRowIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (filter.getBool(recordA) && includedSymbolKeys.contains(key) && excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
-                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
+                    rowIds.add(Rows.toRowID(frameIndex, row));
                     if (++foundSize == searchSize) {
                         return;
                     }

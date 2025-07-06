@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ public class CountGeoHashGroupByFunctionShort extends AbstractCountGroupByFuncti
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final short value = arg.getGeoShort(record);
         if (value != GeoHashes.SHORT_NULL) {
             mapValue.putLong(valueIndex, 1);
@@ -47,7 +47,7 @@ public class CountGeoHashGroupByFunctionShort extends AbstractCountGroupByFuncti
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final short value = arg.getGeoShort(record);
         if (value != GeoHashes.SHORT_NULL) {
             mapValue.addLong(valueIndex, 1);

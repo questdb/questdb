@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,9 @@
 
 package io.questdb.cutlass.text.types;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
 
 public final class BadDateAdapter extends DateAdapter {
 
@@ -37,17 +36,12 @@ public final class BadDateAdapter extends DateAdapter {
     }
 
     @Override
-    public int getType() {
-        return ColumnType.DATE;
-    }
-
-    @Override
-    public boolean probe(DirectByteCharSequence text) {
+    public boolean probe(DirectUtf8Sequence text) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
-        row.putDate(column, Numbers.LONG_NaN);
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
+        row.putDate(column, Numbers.LONG_NULL);
     }
 }

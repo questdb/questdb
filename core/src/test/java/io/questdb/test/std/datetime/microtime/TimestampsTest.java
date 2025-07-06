@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,14 +33,18 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.time.temporal.ChronoUnit;
+
 import static io.questdb.cairo.PartitionBy.getPartitionDirFormatMethod;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
+import static io.questdb.std.datetime.microtime.TimestampFormatUtils.parseHTTP;
 
 public class TimestampsTest {
 
@@ -75,28 +79,28 @@ public class TimestampsTest {
     @Test
     public void testAddYears() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("1988-05-12T23:45:51.045Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYear(micros, 10));
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYears(micros, 10));
         TestUtils.assertEquals("1998-05-12T23:45:51.045Z", sink);
     }
 
     @Test
     public void testAddYears3() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("2014-01-01T00:00:00.000Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYear(micros, 1));
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYears(micros, 1));
         TestUtils.assertEquals("2015-01-01T00:00:00.000Z", sink);
     }
 
     @Test
     public void testAddYearsNonLeapToLeap() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("2015-01-01T00:00:00.000Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYear(micros, 1));
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYears(micros, 1));
         TestUtils.assertEquals("2016-01-01T00:00:00.000Z", sink);
     }
 
     @Test
     public void testAddYearsPrevEpoch() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("1888-05-12T23:45:51.045Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYear(micros, 10));
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYears(micros, 10));
         TestUtils.assertEquals("1898-05-12T23:45:51.045Z", sink);
     }
 
@@ -191,13 +195,15 @@ public class TimestampsTest {
 
     @Test
     public void testDaysBetween() throws Exception {
-        Assert.assertEquals(41168,
+        Assert.assertEquals(
+                41168,
                 Timestamps.getDaysBetween(
                         TimestampFormatUtils.parseTimestamp("1904-11-05T23:45:41.045Z"),
                         TimestampFormatUtils.parseTimestamp("2017-07-24T23:45:31.045Z")
                 )
         );
-        Assert.assertEquals(41169,
+        Assert.assertEquals(
+                41169,
                 Timestamps.getDaysBetween(
                         TimestampFormatUtils.parseTimestamp("1904-11-05T23:45:41.045Z"),
                         TimestampFormatUtils.parseTimestamp("2017-07-24T23:45:51.045Z")
@@ -370,18 +376,6 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testFormatHTTP() throws Exception {
-        TimestampFormatUtils.formatHTTP(sink, TimestampFormatUtils.parseTimestamp("2015-12-05T12:34:55.332Z"));
-        TestUtils.assertEquals("Sat, 5 Dec 2015 12:34:55 GMT", sink);
-    }
-
-    @Test
-    public void testFormatHTTP2() throws Exception {
-        TimestampFormatUtils.formatHTTP(sink, TimestampFormatUtils.parseTimestamp("2015-12-05T12:04:55.332Z"));
-        TestUtils.assertEquals("Sat, 5 Dec 2015 12:04:55 GMT", sink);
-    }
-
-    @Test
     public void testFormatNanosTz() throws Exception {
         final long micros = TimestampFormatUtils.parseDateTime("2008-05-10T12:31:02.008998991+01:00");
         TimestampFormatUtils.USEC_UTC_FORMAT.format(micros, DateLocaleFactory.INSTANCE.getLocale("en"), null, sink);
@@ -448,7 +442,8 @@ public class TimestampsTest {
     @Test
     public void testMonthsBetween() throws Exception {
         // a < b, same year
-        Assert.assertEquals(2,
+        Assert.assertEquals(
+                2,
                 Timestamps.getMonthsBetween(
                         TimestampFormatUtils.parseTimestamp("2014-05-12T23:45:51.045Z"),
                         TimestampFormatUtils.parseTimestamp("2014-07-15T23:45:51.045Z")
@@ -456,7 +451,8 @@ public class TimestampsTest {
         );
 
         // a > b, same year
-        Assert.assertEquals(2,
+        Assert.assertEquals(
+                2,
                 Timestamps.getMonthsBetween(
                         TimestampFormatUtils.parseTimestamp("2014-07-15T23:45:51.045Z"),
                         TimestampFormatUtils.parseTimestamp("2014-05-12T23:45:51.045Z")
@@ -464,7 +460,8 @@ public class TimestampsTest {
         );
 
         // a < b, different year
-        Assert.assertEquals(26,
+        Assert.assertEquals(
+                26,
                 Timestamps.getMonthsBetween(
                         TimestampFormatUtils.parseTimestamp("2014-05-12T23:45:51.045Z"),
                         TimestampFormatUtils.parseTimestamp("2016-07-15T23:45:51.045Z")
@@ -472,15 +469,21 @@ public class TimestampsTest {
         );
 
         // a < b, same year, a has higher residuals
-        Assert.assertEquals(1,
-                Timestamps.getMonthsBetween(TimestampFormatUtils.parseTimestamp("2014-05-12T23:45:51.045Z"),
-                        TimestampFormatUtils.parseTimestamp("2014-07-03T23:45:51.045Z"))
+        Assert.assertEquals(
+                1,
+                Timestamps.getMonthsBetween(
+                        TimestampFormatUtils.parseTimestamp("2014-05-12T23:45:51.045Z"),
+                        TimestampFormatUtils.parseTimestamp("2014-07-03T23:45:51.045Z")
+                )
         );
 
         // a < b, a before epoch, a has higher residuals
-        Assert.assertEquals(109 * 12 + 1,
-                Timestamps.getMonthsBetween(TimestampFormatUtils.parseTimestamp("1905-05-12T23:45:51.045Z"),
-                        TimestampFormatUtils.parseTimestamp("2014-07-03T23:45:51.045Z"))
+        Assert.assertEquals(
+                109 * 12 + 1,
+                Timestamps.getMonthsBetween(
+                        TimestampFormatUtils.parseTimestamp("1905-05-12T23:45:51.045Z"),
+                        TimestampFormatUtils.parseTimestamp("2014-07-03T23:45:51.045Z")
+                )
         );
     }
 
@@ -495,8 +498,8 @@ public class TimestampsTest {
     @Test
     public void testNextDSTFixed() throws NumericException {
         String tz = "GMT";
-        TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
-                Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
+        TimeZoneRules rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
+                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
                 RESOLUTION_MICROS
         );
 
@@ -507,8 +510,8 @@ public class TimestampsTest {
     @Test
     public void testNextDSTHistory() throws NumericException {
         String tz = "Europe/Berlin";
-        TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
-                Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
+        TimeZoneRules rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
+                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
                 RESOLUTION_MICROS
         );
 
@@ -519,8 +522,8 @@ public class TimestampsTest {
     @Test
     public void testNextDSTHistoryLast() throws NumericException {
         String tz = "Europe/Berlin";
-        TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
-                Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
+        TimeZoneRules rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
+                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
                 RESOLUTION_MICROS
         );
 
@@ -531,8 +534,8 @@ public class TimestampsTest {
     @Test
     public void testNextDSTRulesAfterFirst() throws NumericException {
         String tz = "Europe/Berlin";
-        TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
-                Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
+        TimeZoneRules rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
+                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
                 RESOLUTION_MICROS
         );
 
@@ -543,8 +546,8 @@ public class TimestampsTest {
     @Test
     public void testNextDSTRulesAfterLast() throws NumericException {
         String tz = "Europe/Berlin";
-        TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
-                Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
+        TimeZoneRules rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
+                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
                 RESOLUTION_MICROS
         );
 
@@ -555,8 +558,8 @@ public class TimestampsTest {
     @Test
     public void testNextDSTRulesBeforeFirst() throws NumericException {
         String tz = "Europe/Berlin";
-        TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
-                Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
+        TimeZoneRules rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
+                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
                 RESOLUTION_MICROS
         );
 
@@ -617,6 +620,16 @@ public class TimestampsTest {
     }
 
     @Test
+    public void testParseHttp() throws NumericException {
+        Assert.assertEquals(1744545248000000L, parseHTTP("Sun, 13 Apr 2025 11:54:08 GMT"));
+        Assert.assertEquals(1744545248000000L, parseHTTP("Sun, 13-Apr-2025 11:54:08 GMT"));
+        Assert.assertEquals(1741375399000000L, parseHTTP("Fri, 07 Mar 2025 19:23:19 GMT"));
+        Assert.assertEquals(1741375399000000L, parseHTTP("Fri, 07-Mar-2025 19:23:19 GMT"));
+        Assert.assertEquals(1741375399000000L, parseHTTP("Fri, 7 Mar 2025 19:23:19 GMT"));
+        Assert.assertEquals(1741375399000000L, parseHTTP("Fri, 7-Mar-2025 19:23:19 GMT"));
+    }
+
+    @Test
     public void testParseTimestampNotNullLocale() {
         try {
             // we deliberately mangle timezone so that function begins to rely on locale to resolve text
@@ -630,30 +643,30 @@ public class TimestampsTest {
     public void testParseWW() throws NumericException {
         DateFormat byWeek = getPartitionDirFormatMethod(PartitionBy.WEEK);
         try {
-            byWeek.parse("2020-W00", null);
+            byWeek.parse("2020-W00", DateFormatUtils.EN_LOCALE);
             Assert.fail("ISO Week 00 is invalid");
         } catch (NumericException ignore) {
         }
 
         try {
-            byWeek.parse("2020-W54", null);
+            byWeek.parse("2020-W54", DateFormatUtils.EN_LOCALE);
             Assert.fail();
         } catch (NumericException ignore) {
         }
 
-        Assert.assertEquals("2019-12-30T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W01", null)));
-        Assert.assertEquals("2020-12-28T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W53", null)));
-        Assert.assertEquals("2021-01-04T00:00:00.000Z", Timestamps.toString(byWeek.parse("2021-W01", null)));
+        Assert.assertEquals("2019-12-30T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W01", DateFormatUtils.EN_LOCALE)));
+        Assert.assertEquals("2020-12-28T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W53", DateFormatUtils.EN_LOCALE)));
+        Assert.assertEquals("2021-01-04T00:00:00.000Z", Timestamps.toString(byWeek.parse("2021-W01", DateFormatUtils.EN_LOCALE)));
 
         try {
-            byWeek.parse("2019-W53", null);
+            byWeek.parse("2019-W53", DateFormatUtils.EN_LOCALE);
             Assert.fail("2019 has 52 ISO weeks");
         } catch (NumericException ignore) {
         }
 
-        Assert.assertEquals("2019-12-30T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W01", null)));
-        Assert.assertEquals("2014-12-22T00:00:00.000Z", Timestamps.toString(byWeek.parse("2014-W52", null)));
-        Assert.assertEquals("2015-12-28T00:00:00.000Z", Timestamps.toString(byWeek.parse("2015-W53", null)));
+        Assert.assertEquals("2019-12-30T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W01", DateFormatUtils.EN_LOCALE)));
+        Assert.assertEquals("2014-12-22T00:00:00.000Z", Timestamps.toString(byWeek.parse("2014-W52", DateFormatUtils.EN_LOCALE)));
+        Assert.assertEquals("2015-12-28T00:00:00.000Z", Timestamps.toString(byWeek.parse("2015-W53", DateFormatUtils.EN_LOCALE)));
     }
 
     @Test(expected = NumericException.class)
@@ -663,7 +676,7 @@ public class TimestampsTest {
 
     @Test(expected = NumericException.class)
     public void testParseWrongHour() throws Exception {
-        TimestampFormatUtils.parseTimestamp("2013-09-30T24:00:00.000Z");
+        TimestampFormatUtils.parseTimestamp("2013-09-30T25:00:00.000Z");
     }
 
     @Test(expected = NumericException.class)
@@ -708,6 +721,28 @@ public class TimestampsTest {
         long micros = TimestampFormatUtils.parseTimestamp("2017-04-06T00:00:00.000Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.previousOrSameDayOfWeek(micros, 4));
         TestUtils.assertEquals("2017-04-06T00:00:00.000Z", sink);
+    }
+
+    @Test
+    public void testToMicros() {
+        Assert.assertEquals(1, Timestamps.toMicros(1000, ChronoUnit.NANOS));
+        Assert.assertEquals(1, Timestamps.toMicros(1, ChronoUnit.MICROS));
+        Assert.assertEquals(1000, Timestamps.toMicros(1, ChronoUnit.MILLIS));
+        Assert.assertEquals(1_000_000, Timestamps.toMicros(1, ChronoUnit.SECONDS));
+
+        Assert.assertEquals(60 * 1000 * 1000, Timestamps.toMicros(1, ChronoUnit.MINUTES));
+        Assert.assertEquals(Long.MAX_VALUE, Timestamps.toMicros(Long.MAX_VALUE, ChronoUnit.MICROS));
+
+        Assert.assertEquals(Timestamps.toMicros(1, ChronoUnit.HOURS), Timestamps.toMicros(60, ChronoUnit.MINUTES));
+        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.NANOS));
+        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.MICROS));
+        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.MILLIS));
+        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.SECONDS));
+        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.MINUTES));
+
+        // micros values remain unchanged
+        Assert.assertEquals(123456789L, Timestamps.toMicros(123456789L, ChronoUnit.MICROS));
+        Assert.assertEquals(123456789L, Timestamps.toMicros(123456789000L, ChronoUnit.NANOS));
     }
 
     @Test(expected = NumericException.class)
@@ -802,14 +837,16 @@ public class TimestampsTest {
 
     @Test
     public void testYearsBetween() throws Exception {
-        Assert.assertEquals(112,
+        Assert.assertEquals(
+                112,
                 Timestamps.getYearsBetween(
                         TimestampFormatUtils.parseTimestamp("1904-11-05T23:45:41.045Z"),
                         TimestampFormatUtils.parseTimestamp("2017-07-24T23:45:31.045Z")
                 )
         );
 
-        Assert.assertEquals(113,
+        Assert.assertEquals(
+                113,
                 Timestamps.getYearsBetween(
                         TimestampFormatUtils.parseTimestamp("1904-11-05T23:45:41.045Z"),
                         TimestampFormatUtils.parseTimestamp("2017-12-24T23:45:51.045Z")

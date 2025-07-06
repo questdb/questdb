@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,21 +26,23 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cutlass.text.TextUtil;
+import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.Utf8s;
 
 public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
-    private final DirectCharSink utf8Sink;
+    private final DirectUtf16Sink utf16Sink;
     private DateFormat format;
     private DateLocale locale;
 
-    public DateUtf8Adapter(DirectCharSink utf8Sink) {
-        this.utf8Sink = utf8Sink;
+    public DateUtf8Adapter(DirectUtf16Sink utf16Sink) {
+        this.utf16Sink = utf16Sink;
     }
 
     @Override
@@ -61,9 +63,9 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
     }
 
     @Override
-    public boolean probe(DirectByteCharSequence text) {
+    public boolean probe(DirectUtf8Sequence text) {
         try {
-            format.parse(text, locale);
+            format.parse(text.asAsciiCharSequence(), locale);
             return true;
         } catch (NumericException e) {
             return false;
@@ -71,14 +73,16 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, DirectCharSink utf8Sink) throws Exception {
-        utf8Sink.clear();
-        TextUtil.utf8ToUtf16EscConsecutiveQuotes(value.getLo(), value.getHi(), utf8Sink);
-        row.putDate(column, format.parse(utf8Sink, locale));
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink) throws Exception {
+        utf16Sink.clear();
+        if (!Utf8s.utf8ToUtf16EscConsecutiveQuotes(value.lo(), value.hi(), utf16Sink)) {
+            throw Utf8Exception.INSTANCE;
+        }
+        row.putDate(column, format.parse(utf16Sink, locale));
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        write(row, column, value, utf8Sink);
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
+        write(row, column, value, utf16Sink, null);
     }
 }

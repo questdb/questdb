@@ -6,7 +6,7 @@
   ~    \__\_\\__,_|\___||___/\__|____/|____/
   ~
   ~  Copyright (c) 2014-2019 Appsicle
-  ~  Copyright (c) 2019-2023 QuestDB
+  ~  Copyright (c) 2019-2024 QuestDB
   ~
   ~  Licensed under the Apache License, Version 2.0 (the "License");
   ~  you may not use this file except in compliance with the License.
@@ -27,14 +27,9 @@
 
     <groupId>io.questdb</groupId>
     <artifactId>benchmarks</artifactId>
-    <version>7.2.1-SNAPSHOT</version>
+    <version>8.3.4-SNAPSHOT</version>
     <packaging>jar</packaging>
     <name>JMH benchmarks for QuestDB</name>
-
-    <!--
-       This is the demo/sample template build script for building Java benchmarks with JMH.
-       Edit as needed.
-    -->
 
     <dependencies>
         <dependency>
@@ -64,6 +59,11 @@
             <version>2.18.0</version>
         </dependency>
         <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.7.4</version>
+        </dependency>
+        <dependency>
             <groupId>com.lmax</groupId>
             <artifactId>disruptor</artifactId>
             <version>3.4.4</version>
@@ -78,6 +78,12 @@
             <artifactId>simpleclient_common</artifactId>
             <version>0.10.0</version>
         </dependency>
+        <dependency>
+            <groupId>org.jetbrains</groupId>
+            <artifactId>annotations</artifactId>
+            <version>17.0.0</version>
+            <scope>compile</scope>
+        </dependency>
     </dependencies>
 
     <properties>
@@ -89,7 +95,7 @@
         <!--
             JMH version to use with this project.
           -->
-        <jmh.version>1.35</jmh.version>
+        <jmh.version>1.37</jmh.version>
 
         <!--
             Java source/target to use for compilation.
@@ -216,45 +222,6 @@
                     </plugin>
                 </plugins>
             </build>
-        </profile>
-        <profile>
-            <id>java8</id>
-            <properties>
-                <jdk.version>8</jdk.version>
-                <java.enforce.version>1.8.0_242</java.enforce.version>
-                <questdb.artifactid>questdb-jdk8</questdb.artifactid>
-            </properties>
-            <activation>
-                <jdk>(,1.8]</jdk>
-            </activation>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-compiler-plugin</artifactId>
-                        <version>3.8.1</version>
-                        <configuration>
-                            <fork>true</fork>
-                            <source>1.8</source>
-                            <target>1.8</target>
-                            <testExcludes>
-                                <exclude>**/module-info.java</exclude>
-                            </testExcludes>
-                            <excludes>
-                                <exclude>**/module-info.java</exclude>
-                            </excludes>
-                        </configuration>
-                    </plugin>
-                </plugins>
-            </build>
-            <dependencies>
-                <dependency>
-                    <groupId>org.jetbrains</groupId>
-                    <artifactId>annotations</artifactId>
-                    <version>16.0.2</version>
-                    <scope>provided</scope>
-                </dependency>
-            </dependencies>
         </profile>
         <profile>
             <id>java11+</id>

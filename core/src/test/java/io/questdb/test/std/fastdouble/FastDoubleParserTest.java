@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,11 +24,11 @@
 
 package io.questdb.test.std.fastdouble;
 
-import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
 import io.questdb.std.fastdouble.FastDoubleParser;
+import io.questdb.std.str.Utf8s;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -53,7 +53,7 @@ public class FastDoubleParserTest extends AbstractFastXParserTest {
                                         if (s.length() < u.charOffset() + u.charLength()) {
                                             throw NumericException.INSTANCE;
                                         }
-                                        Chars.asciiStrCpy(s, len, mem);
+                                        Utf8s.strCpyAscii(s, len, mem);
                                         return FastDoubleParser.parseDouble(mem, u.charOffset(), u.charLength(), false);
                                     } finally {
                                         Unsafe.free(mem, len, MemoryTag.NATIVE_DEFAULT);

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -36,7 +37,8 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
-import io.questdb.std.Sinkable;
+import io.questdb.std.Transient;
+import io.questdb.std.str.Sinkable;
 
 public class RndSymbolListFunctionFactory implements FunctionFactory {
     @Override
@@ -47,17 +49,16 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         if (args == null || args.size() == 0) {
-            throw SqlException.$(position, "function rnd_symbol expects arguments but has none");
+            throw SqlException.$(position, "no arguments provided");
         }
         final ObjList<String> symbols = new ObjList<>(args.size());
         RndStringListFunctionFactory.copyConstants(args, argPositions, symbols);
-
         return new Func(symbols);
     }
 
@@ -92,8 +93,25 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isRandom() {
+            return true;
+        }
+
+        @Override
         public boolean isSymbolTableStatic() {
             return false;
+        }
+
+        @Override
+        public SymbolTable newSymbolTable() {
+            Func func = new Func(symbols);
+            func.rnd = new Rnd(this.rnd.getSeed0(), this.rnd.getSeed1());
+            return func;
         }
 
         @Override
@@ -108,7 +126,7 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(symbolKey);
+            return symbolKey != -1 ? symbols.getQuick(symbolKey) : null;
         }
 
         private int next() {

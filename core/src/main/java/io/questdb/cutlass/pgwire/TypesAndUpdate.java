@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@ import io.questdb.std.WeakSelfReturningObjectPool;
 
 public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
     private final CompiledQueryImpl compiledQuery;
+    private boolean hasBindVariables;
 
     public TypesAndUpdate(WeakSelfReturningObjectPool<TypesAndUpdate> parentPool, CairoEngine engine) {
         super(parentPool);
@@ -43,21 +44,26 @@ public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
     @Override
     public void close() {
         super.close();
-        this.compiledQuery.ofUpdate(Misc.free(compiledQuery.getUpdateOperation()));
+        compiledQuery.ofUpdate(Misc.free(compiledQuery.getUpdateOperation()));
     }
 
     public CompiledQuery getCompiledQuery() {
         return compiledQuery;
     }
 
+    public boolean hasBindVariables() {
+        return hasBindVariables;
+    }
+
     public void of(CompiledQuery updateQuery, BindVariableService bindVariableService) {
         // Compiled query from SqlCompiler cannot be used
         // to store compiled statements because the instance re-used for every new compilation
         UpdateOperation updateOperation = updateQuery.getUpdateOperation();
-        String sqlStatement = updateQuery.getSqlStatement();
+        String sqlStatement = updateQuery.getSqlText();
         compiledQuery.ofUpdate(updateOperation);
-        compiledQuery.withSqlStatement(sqlStatement);
+        compiledQuery.withSqlText(sqlStatement);
         updateOperation.withSqlStatement(sqlStatement);
         copyTypesFrom(bindVariableService);
+        this.hasBindVariables = bindVariableService.getIndexedVariableCount() > 0;
     }
 }

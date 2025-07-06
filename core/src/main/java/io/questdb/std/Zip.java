@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import org.jetbrains.annotations.TestOnly;
+
 public final class Zip {
     public static final int Z_BUF_ERROR = -5;
     // return codes from zlib version 1.2.8
@@ -31,7 +33,7 @@ public final class Zip {
     public static final int Z_STREAM_END = 1;
     public static final long gzipHeader;
     public static final int gzipHeaderLen = 10;
-    private final static int GZIP_MAGIC = 0x8b1f;
+    private static final int GZIP_MAGIC = 0x8b1f;
 
     private Zip() {
     }
@@ -62,8 +64,9 @@ public final class Zip {
 
     public static native int inflateReset(long z_streamp);
 
+    @TestOnly
     public static void init() {
-        // Method used for testing to force invocation of static class methods and hence memory initialisation
+        // Method used to force memory initialisation in tests before the memory leak check starts
     }
 
     public static native void setInput(long z_streamp, long address, int available);

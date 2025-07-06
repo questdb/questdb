@@ -13,14 +13,14 @@ User=questdb
 Group=questdb
 Environment=QDB_PACKAGE=ami-market
 ExecStart=/usr/bin/java \
-    --add-exports java.base/jdk.internal.math=io.questdb \
-    -p /usr/local/bin/questdb.jar \
-    -m io.questdb/io.questdb.ServerMain \
-    -DQuestDB-Runtime-66535 \
-    -ea -Dnoebug \
     -XX:+UnlockExperimentalVMOptions \
     -XX:+AlwaysPreTouch \
     -XX:+UseParallelGC \
+    -DQuestDB-Runtime-66535 \
+    -ea -Dnoebug \
+    --add-exports java.base/jdk.internal.math=io.questdb \
+    -p /usr/local/bin/questdb.jar \
+    -m io.questdb/io.questdb.ServerMain \
     -d /var/lib/questdb
 ExecReload=/bin/kill -s HUP $MAINPID
 # Prevent writes to /usr, /boot, and /etc

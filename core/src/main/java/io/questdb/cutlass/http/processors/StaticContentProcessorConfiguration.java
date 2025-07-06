@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,11 +26,16 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cutlass.http.MimeTypesCache;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Utf8SequenceObjHashMap;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 
 public interface StaticContentProcessorConfiguration {
-    FilesFacade getFilesFacade();
+    Utf8SequenceObjHashMap<Utf8Sequence> DEFAULT_REDIRECT_MAP = new Utf8SequenceObjHashMap<>() {{
+        put(new Utf8String("/"), new Utf8String("/index.html"));
+    }};
 
-    CharSequence getIndexFileName();
+    FilesFacade getFilesFacade();
 
     String getKeepAliveHeader();
 
@@ -38,5 +43,9 @@ public interface StaticContentProcessorConfiguration {
 
     CharSequence getPublicDirectory();
 
-    boolean isAuthenticationRequired();
+    default Utf8SequenceObjHashMap<Utf8Sequence> getRedirectMap() {
+        return DEFAULT_REDIRECT_MAP;
+    }
+
+    byte getRequiredAuthType();
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,11 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions.math;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class LnFunctionFactoryTest extends AbstractGriffinTest {
+public class LnFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLnDouble() throws Exception {
@@ -37,7 +37,7 @@ public class LnFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testLnDoubleNull() throws Exception {
-        assertLog("select ln(NaN)", "NaN\n");
+        assertLog("select ln(NaN)", "null\n");
     }
 
     @Test
@@ -47,7 +47,7 @@ public class LnFunctionFactoryTest extends AbstractGriffinTest {
 
     private void assertLog(String sql, String expected) throws Exception {
         assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
+                engine,
                 sqlExecutionContext,
                 sql,
                 sink,

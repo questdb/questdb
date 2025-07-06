@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,63 +26,65 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class PartitionDeleteTest extends AbstractGriffinTest {
+public class PartitionDeleteTest extends AbstractCairoTest {
+
     @Test
     public void testBCSequence() throws SqlException, NumericException {
-        compiler.compile("create table events (sequence long, event binary, timestamp timestamp) timestamp(timestamp) partition by DAY", sqlExecutionContext);
+        execute("create table events (sequence long, event binary, timestamp timestamp) timestamp(timestamp) partition by DAY");
         engine.releaseAllWriters();
 
-        try (TableWriter w = newTableWriter(configuration, "events", metrics)) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "events")) {
             long ts = TimestampFormatUtils.parseTimestamp("2020-06-30T00:00:00.000000Z");
             for (int i = 0; i < 10; i++) {
-                TableWriter.Row r = w.newRow(ts);
+                TableWriter.Row r = writer.newRow(ts);
                 r.putLong(0, i);
                 r.append();
             }
             ts = TimestampFormatUtils.parseTimestamp("2020-07-01T00:00:00.000000Z");
             for (int i = 0; i < 10; i++) {
-                TableWriter.Row r = w.newRow(ts);
+                TableWriter.Row r = writer.newRow(ts);
                 r.putLong(0, 100 + i);
                 r.append();
             }
 
             ts = TimestampFormatUtils.parseTimestamp("2020-07-02T00:00:00.000000Z");
             for (int i = 0; i < 10; i++) {
-                TableWriter.Row r = w.newRow(ts);
+                TableWriter.Row r = writer.newRow(ts);
                 r.putLong(0, 200 + i);
                 r.append();
             }
-            w.commit();
+            writer.commit();
         }
 
-        try (TableReader r = newTableReader(configuration, "events")) {
-            RecordCursor cursor = r.getCursor();
+        try (
+                TableReader reader = newOffPoolReader(configuration, "events");
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
             //noinspection StatementWithEmptyBody
             while (cursor.hasNext()) {
-
             }
 
-            try (TableWriter w = newTableWriter(configuration, "events", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "events")) {
                 long ts = TimestampFormatUtils.parseTimestamp("2020-07-02T00:00:00.000000Z");
                 for (int i = 0; i < 10; i++) {
-                    TableWriter.Row row = w.newRow(ts);
+                    TableWriter.Row row = writer.newRow(ts);
                     row.putLong(0, 250 + i);
                     row.append();
                 }
-                w.commit();
+                writer.commit();
 
-                Assert.assertTrue(w.removePartition(TimestampFormatUtils.parseTimestamp("2020-06-30T00:00:00.000000Z")));
+                Assert.assertTrue(writer.removePartition(TimestampFormatUtils.parseTimestamp("2020-06-30T00:00:00.000000Z")));
 
-                r.reload();
+                reader.reload();
 
                 cursor.toTop();
                 //noinspection StatementWithEmptyBody
@@ -92,37 +94,36 @@ public class PartitionDeleteTest extends AbstractGriffinTest {
 
                 ts = TimestampFormatUtils.parseTimestamp("2020-07-03T00:00:00.000000Z");
                 for (int i = 0; i < 10; i++) {
-                    TableWriter.Row row = w.newRow(ts);
+                    TableWriter.Row row = writer.newRow(ts);
                     row.putLong(0, 300 + i);
                     row.append();
                 }
-                w.commit();
+                writer.commit();
 
                 ts = TimestampFormatUtils.parseTimestamp("2020-07-04T00:00:00.000000Z");
                 for (int i = 0; i < 10; i++) {
-                    TableWriter.Row row = w.newRow(ts);
+                    TableWriter.Row row = writer.newRow(ts);
                     row.putLong(0, 400 + i);
                     row.append();
                 }
-                w.commit();
+                writer.commit();
 
                 ts = TimestampFormatUtils.parseTimestamp("2020-07-05T00:00:00.000000Z");
                 for (int i = 0; i < 10; i++) {
-                    TableWriter.Row row = w.newRow(ts);
+                    TableWriter.Row row = writer.newRow(ts);
                     row.putLong(0, 500 + i);
                     row.append();
                 }
-                w.commit();
+                writer.commit();
 
-                Assert.assertTrue(w.removePartition(TimestampFormatUtils.parseTimestamp("2020-07-01T00:00:00.000000Z")));
-                Assert.assertTrue(w.removePartition(TimestampFormatUtils.parseTimestamp("2020-07-02T00:00:00.000000Z")));
-                Assert.assertTrue(w.removePartition(TimestampFormatUtils.parseTimestamp("2020-07-03T00:00:00.000000Z")));
+                Assert.assertTrue(writer.removePartition(TimestampFormatUtils.parseTimestamp("2020-07-01T00:00:00.000000Z")));
+                Assert.assertTrue(writer.removePartition(TimestampFormatUtils.parseTimestamp("2020-07-02T00:00:00.000000Z")));
+                Assert.assertTrue(writer.removePartition(TimestampFormatUtils.parseTimestamp("2020-07-03T00:00:00.000000Z")));
 
-                Assert.assertTrue(r.reload());
+                Assert.assertTrue(reader.reload());
 
-                sink.clear();
                 cursor.toTop();
-                printer.print(cursor, r.getMetadata(), true, sink);
+                println(reader.getMetadata(), cursor);
 
                 String expected = "sequence\tevent\ttimestamp\n" +
                         "400\t\t2020-07-04T00:00:00.000000Z\n" +

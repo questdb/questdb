@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,20 +24,30 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
-import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.FactoryProvider;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.std.ObjList;
 
-public interface HttpServerConfiguration extends WorkerPoolConfiguration, HttpMinServerConfiguration {
-    String DEFAULT_PROCESSOR_URL = "*";
+public interface HttpServerConfiguration extends IODispatcherConfiguration, WorkerPoolConfiguration {
 
-    JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
+    default ObjList<String> getContextPathMetrics() {
+        return new ObjList<>("/metrics");
+    }
 
-    int getQueryCacheBlockCount();
+    default ObjList<String> getContextPathStatus() {
+        return new ObjList<>(getHttpContextConfiguration().getMetrics().isEnabled() ? "/status" : "*");
+    }
 
-    int getQueryCacheRowCount();
+    FactoryProvider getFactoryProvider();
 
-    StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
+    HttpContextConfiguration getHttpContextConfiguration();
 
-    boolean isQueryCacheEnabled();
+    byte getRequiredAuthType();
+
+    WaitProcessorConfiguration getWaitProcessorConfiguration();
+
+    boolean isPessimisticHealthCheckEnabled();
+
+    boolean preAllocateBuffers();
 }

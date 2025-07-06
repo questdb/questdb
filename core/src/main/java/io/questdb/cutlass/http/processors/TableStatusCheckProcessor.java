@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,28 +25,45 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cutlass.http.HttpChunkedResponseSocket;
+import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpKeywords;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
-public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeable {
+import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_STATUS_FORMAT;
+import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_STATUS_TABLE_NAME;
+
+public class TableStatusCheckProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
+    private static final Utf8Sequence DOES_NOT_EXIST = new Utf8String("Does not exist");
+    private static final Utf8Sequence EXISTS = new Utf8String("Exists");
+    private static final Utf8Sequence RESERVED_NAME = new Utf8String("Reserved name");
+    private static final Utf8Sequence TABLE_NAME_MISSING = new Utf8String("table name missing");
 
     private final CairoEngine cairoEngine;
     private final String keepAliveHeader;
     private final Path path = new Path();
+    private final byte requiredAuthType;
+    private final StringSink utf16Sink = new StringSink();
 
     public TableStatusCheckProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
         this.cairoEngine = cairoEngine;
         this.keepAliveHeader = Chars.toString(configuration.getKeepAliveHeader());
+        this.requiredAuthType = configuration.getRequiredAuthType();
     }
 
     @Override
@@ -55,36 +72,49 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeabl
     }
 
     @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
+    }
+
+    @Override
+    public byte getRequiredAuthType() {
+        return requiredAuthType;
+    }
+
+    @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        CharSequence tableName = context.getRequestHeader().getUrlParam("j");
+        DirectUtf8Sequence tableName = context.getRequestHeader().getUrlParam(URL_PARAM_STATUS_TABLE_NAME);
         if (tableName == null) {
-            context.simpleResponse().sendStatus(200, "table name missing");
+            context.simpleResponse().sendStatusTextContent(200, TABLE_NAME_MISSING, null);
         } else {
-            TableToken tableToken = cairoEngine.getTableTokenIfExists(tableName);
-            int check = cairoEngine.getTableStatus(path, tableToken);
-            if (Chars.equalsNc("json", context.getRequestHeader().getUrlParam("f"))) {
-                HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
-                r.status(200, "application/json");
+            int check = TableUtils.TABLE_DOES_NOT_EXIST;
+            utf16Sink.clear();
+            if (Utf8s.utf8ToUtf16(tableName, utf16Sink)) {
+                check = cairoEngine.getTableStatus(path, utf16Sink);
+            }
+            if (HttpKeywords.isJson(context.getRequestHeader().getUrlParam(URL_PARAM_STATUS_FORMAT))) {
+                HttpChunkedResponse response = context.getChunkedResponse();
+                response.status(200, "application/json");
 
-                r.headers().put(keepAliveHeader);
-                r.sendHeader();
+                response.headers().put(keepAliveHeader);
+                response.sendHeader();
 
-                r.put('{').putQuoted("status").put(':').putQuoted(toResponse(check)).put('}');
-                r.sendChunk(true);
+                response.put('{').putAsciiQuoted("status").putAscii(':').putQuoted(toResponse(check)).putAscii('}');
+                response.sendChunk(true);
             } else {
-                context.simpleResponse().sendStatus(200, toResponse(check));
+                context.simpleResponse().sendStatusTextContent(200, toResponse(check), null);
             }
         }
     }
 
-    private static String toResponse(int existenceCheckResult) {
+    private static Utf8Sequence toResponse(int existenceCheckResult) {
         switch (existenceCheckResult) {
             case TableUtils.TABLE_EXISTS:
-                return "Exists";
+                return EXISTS;
             case TableUtils.TABLE_DOES_NOT_EXIST:
-                return "Does not exist";
+                return DOES_NOT_EXIST;
             default:
-                return "Reserved name";
+                return RESERVED_NAME;
         }
     }
 }

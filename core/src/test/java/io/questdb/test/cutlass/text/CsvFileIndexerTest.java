@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,20 +25,20 @@
 package io.questdb.test.cutlass.text;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.str.DirectCharSink;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
+import io.questdb.std.str.*;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -48,7 +48,7 @@ import java.io.IOException;
 
 import static io.questdb.test.cutlass.text.ParallelCsvFileImporterTest.*;
 
-public class CsvFileIndexerTest extends AbstractGriffinTest {
+public class CsvFileIndexerTest extends AbstractCairoTest {
 
     public void assertFailureFor(FilesFacade ff, String fileName, int timestampIndex, String errorMessage) {
         try {
@@ -69,41 +69,47 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
     public void testIndexChunksInCsvWithTimestampFieldAtLineEndSplitBetweenTinyReadBuffers() throws Exception {
         assertChunksFor("test-quotes-tslast.csv", 1, 3,
                 chunk("2022-05-10/0_1", 1652183520000000L, 15L),
-                chunk("2022-05-11/0_1", 1652269920000000L, 90L));
+                chunk("2022-05-11/0_1", 1652269920000000L, 90L)
+        );
     }
 
     @Test//timestamp should be reassembled properly via rolling buffer
     public void testIndexChunksInCsvWithTimestampFieldAtLineEndSplitBetweenTinyReadBuffers2() throws Exception {
         assertChunksFor("test-quotes-tslast2.csv", 1, 3,
-                chunk("2022-05-10/0_1", 1652183520000000L, 14L));
+                chunk("2022-05-10/0_1", 1652183520000000L, 14L)
+        );
     }
 
     @Test//timestamp should be reassembled properly via rolling buffer
     public void testIndexChunksInCsvWithTimestampFieldSplitBetweenMinLengthReadBuffers() throws Exception {
         assertChunksFor("test-quotes-small.csv", 1, 1,
                 chunk("2022-05-10/0_1", 1652183520000000L, 15L),
-                chunk("2022-05-11/0_1", 1652269920000000L, 90L, 1652269920001000L, 185));
+                chunk("2022-05-11/0_1", 1652269920000000L, 90L, 1652269920001000L, 185)
+        );
     }
 
     @Test//timestamp should be reassembled properly via rolling buffer
     public void testIndexChunksInCsvWithTimestampFieldSplitBetweenTinyReadBuffers() throws Exception {
         assertChunksFor("test-quotes-small.csv", 10, 1,
                 chunk("2022-05-10/0_1", 1652183520000000L, 15L),
-                chunk("2022-05-11/0_1", 1652269920000000L, 90L, 1652269920001000L, 185));
+                chunk("2022-05-11/0_1", 1652269920000000L, 90L, 1652269920001000L, 185)
+        );
     }
 
     @Test//timestamp is ignored if it doesn't fit in ts rolling buffer
     public void testIndexChunksInCsvWithTooLongTimestampFieldSplitBetweenMinLengthReadBuffers() throws Exception {
         assertChunksFor("test-quotes-tstoolong.csv", 1, 1,
                 chunk("2022-05-10/0_1", 1652183520000000L, 14L),
-                chunk("2022-05-11/0_1", 1652269920001000L, 263L));
+                chunk("2022-05-11/0_1", 1652269920001000L, 263L)
+        );
     }
 
     @Test//timestamp is ignored if it doesn't fit in ts rolling buffer
     public void testIndexChunksInCsvWithTooLongTimestampFieldSplitBetweenTinyReadBuffers() throws Exception {
         assertChunksFor("test-quotes-tstoolong.csv", 10, 1,
                 chunk("2022-05-10/0_1", 1652183520000000L, 14L),
-                chunk("2022-05-11/0_1", 1652269920001000L, 263L));
+                chunk("2022-05-11/0_1", 1652269920001000L, 263L)
+        );
     }
 
     @Test
@@ -113,7 +119,7 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
 
             @Override
             public boolean exists(LPSZ path) {
-                if (Chars.endsWith(path, partition)) {
+                if (Utf8s.endsWithAscii(path, partition)) {
                     return true;
                 }
                 return super.exists(path);
@@ -130,15 +136,15 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
 
             @Override
             public boolean exists(LPSZ path) {
-                if (Chars.endsWith(path, partition)) {
+                if (Utf8s.endsWithAscii(path, partition)) {
                     return false;
                 }
                 return super.exists(path);
             }
 
             @Override
-            public int mkdir(Path path, int mode) {
-                if (Chars.endsWith(path, partition)) {
+            public int mkdir(LPSZ path, int mode) {
+                if (Utf8s.endsWithAscii(path, partition)) {
                     return -1;
                 }
                 return super.mkdir(path, mode);
@@ -152,7 +158,8 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
     public void testIndexFileWithLowChunkSizeLimitProducesMoreFiles() throws Exception {
         assertChunksFor("test-quotes-small.csv", 10, 1, 16, chunk("2022-05-10/0_1", 1652183520000000L, 15L),
                 chunk("2022-05-11/0_1", 1652269920000000L, 90L),
-                chunk("2022-05-11/0_2", 1652269920001000L, 185));
+                chunk("2022-05-11/0_2", 1652269920001000L, 185)
+        );
     }
 
     private void assertChunksFor(String fileName, long bufSize, int timestampIndex, IndexChunk... chunks) throws Exception {
@@ -170,7 +177,7 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
 
             CairoConfiguration conf = new CairoConfigurationWrapper(engine.getConfiguration()) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff2 != null ? ff2 : ff;
                 }
 
@@ -184,7 +191,9 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
             };
 
             try (CsvFileIndexer indexer = new CsvFileIndexer(conf);
-                 DirectCharSink sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize())) {
+                 DirectUtf16Sink utf16sink = new DirectUtf16Sink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
+                 DirectUtf8Sink utf8sink = new DirectUtf8Sink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize())
+            ) {
 
                 long length = ff.length(Path.getThreadLocal(inputRoot).concat(fileName).$());
 
@@ -195,7 +204,7 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
                         PartitionBy.DAY,
                         (byte) ',',
                         timestampIndex,
-                        getAdapter(sink),
+                        getAdapter(utf16sink, utf8sink),
                         true, Atomicity.SKIP_COL,
                         null
                 );
@@ -219,11 +228,12 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
         });
     }
 
-    private TimestampAdapter getAdapter(DirectCharSink sink) {
+    private TimestampAdapter getAdapter(DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink) {
         TextConfiguration textConfiguration = engine.getConfiguration().getTextConfiguration();
-        TypeManager typeManager = new TypeManager(textConfiguration, sink);
+        TypeManager typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink);
         DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get("yyyy-MM-ddTHH:mm:ss.SSSZ");
         return (TimestampAdapter) typeManager.nextTimestampAdapter(false, dateFormat,
-                configuration.getTextConfiguration().getDefaultDateLocale());
+                configuration.getTextConfiguration().getDefaultDateLocale()
+        );
     }
 }

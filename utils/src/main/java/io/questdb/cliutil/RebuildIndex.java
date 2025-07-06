@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ import static io.questdb.cliutil.RebuildColumnCommandArgs.parseCommandArgs;
 
 public class RebuildIndex {
     public static void main(String[] args) {
-        LogFactory.configureSync();
+        LogFactory.enableGuaranteedLogging();
         RebuildColumnCommandArgs params = parseCommandArgs(args, RebuildIndex.class.getName());
         if (params == null) {
             // Invalid params, usage already printed

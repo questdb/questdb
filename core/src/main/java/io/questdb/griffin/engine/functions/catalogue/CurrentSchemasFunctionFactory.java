@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -33,7 +34,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrArrayFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
 
 public class CurrentSchemasFunctionFactory implements FunctionFactory {
 
@@ -47,7 +47,11 @@ public class CurrentSchemasFunctionFactory implements FunctionFactory {
         return new CurrentSchemaFunction();
     }
 
-    private static class CurrentSchemaFunction extends StrArrayFunction {
+    private static class CurrentSchemaFunction extends StrArrayFunction implements FunctionExtension {
+        @Override
+        public FunctionExtension extendedOps() {
+            return this;
+        }
 
         @Override
         public int getArrayLength() {
@@ -55,43 +59,38 @@ public class CurrentSchemasFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public Record getRecord(Record rec) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
             return "{public}";
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
-            sink.put(getStr(rec));
-        }
-
-        @Override
-        public CharSequence getStr(Record rec, int arrayIndex) {
-            return "public";
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink, int arrayIndex) {
-            sink.put(getStr(rec, arrayIndex));
+        public CharSequence getStrA(Record rec, int arrayIndex) {
+            return Constants.PUBLIC_SCHEMA;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return getStr(rec);
+            return getStrA(rec);
         }
 
         @Override
         public CharSequence getStrB(Record rec, int arrayIndex) {
-            return getStr(rec, arrayIndex);
+            return getStrA(rec, arrayIndex);
         }
 
         @Override
         public int getStrLen(Record rec) {
-            return getStr(rec).length();
+            return getStrA(rec).length();
         }
 
         @Override
         public int getStrLen(Record rec, int arrayIndex) {
-            return getStr(rec, arrayIndex).length();
+            return getStrA(rec, arrayIndex).length();
         }
 
         @Override
@@ -100,7 +99,7 @@ public class CurrentSchemasFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return true;
         }
 

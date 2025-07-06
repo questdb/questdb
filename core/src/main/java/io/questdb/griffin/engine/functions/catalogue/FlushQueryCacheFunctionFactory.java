@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,8 +28,10 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.log.Log;
@@ -39,9 +41,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 
 public class FlushQueryCacheFunctionFactory implements FunctionFactory {
-
     private static final Log LOG = LogFactory.getLog("flush-query-cache");
-
     private static final String SIGNATURE = "flush_query_cache()";
 
     @Override
@@ -50,17 +50,17 @@ public class FlushQueryCacheFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position,
-                                ObjList<Function> args,
-                                IntList argPositions,
-                                CairoConfiguration configuration,
-                                SqlExecutionContext sqlExecutionContext
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
     ) {
         return new FlushQueryCacheFunction(sqlExecutionContext.getMessageBus());
     }
 
     private static class FlushQueryCacheFunction extends BooleanFunction {
-
         private final MessageBus messageBus;
 
         public FlushQueryCacheFunction(MessageBus messageBus) {
@@ -69,8 +69,6 @@ public class FlushQueryCacheFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            LOG.info().$("flushing query caches").$();
-
             while (true) {
                 final long pubCursor = messageBus.getQueryCacheEventPubSeq().next();
                 if (pubCursor > -1) {
@@ -78,7 +76,7 @@ public class FlushQueryCacheFunctionFactory implements FunctionFactory {
                     return true;
                 } else if (pubCursor == -1) {
                     // Queue is full
-                    LOG.error().$("cannot publish flush query cache event to a full queue").$();
+                    LOG.error().$("cannot publish flush query cache event due to a full queue").$();
                     return false;
                 }
                 Os.pause();
@@ -86,7 +84,13 @@ public class FlushQueryCacheFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            executionContext.getSecurityContext().authorizeSystemAdmin();
+            super.init(symbolTableSource, executionContext);
+        }
+
+        @Override
+        public boolean isThreadSafe() {
             return true;
         }
 

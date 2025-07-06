@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,19 +24,36 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.SqlWalMode;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
-public class AlterTableWalEnabledTest extends AbstractGriffinTest {
+public class AlterTableWalEnabledTest extends AbstractCairoTest {
+
 
     @Test
-    public void tesInvalidWalWord() throws Exception {
+    public void testDefaultWalEnabledMode() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            createTableWrite("my_table_wal", null, "HOUR");
+            assertWalEnabled("my_table_wal", true);
+
+            createTableWrite("my_table_wal_none", null, "NONE");
+            assertWalEnabled("my_table_wal_none", false);
+
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, false);
+            createTableWrite("my_table_dir", null, "HOUR");
+            assertWalEnabled("my_table_dir", false);
+        });
+    }
+
+    @Test
+    public void testInvalidWalWord() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 createTableWrite("my_table_wal", "BYPASS WALL", "DAY");
@@ -51,23 +68,6 @@ public class AlterTableWalEnabledTest extends AbstractGriffinTest {
                         ex.getPosition()
                 );
             }
-        });
-    }
-
-    @Test
-    public void testDefaultWalEnabledMode() throws Exception {
-        assertMemoryLeak(() -> {
-            configOverrideDefaultTableWriteMode(SqlWalMode.WAL_ENABLED);
-            createTableWrite("my_table_wal", null, "HOUR");
-            assertWalEnabled("my_table_wal", true);
-
-
-            createTableWrite("my_table_wal_none", null, "NONE");
-            assertWalEnabled("my_table_wal_none", false);
-
-            configOverrideDefaultTableWriteMode(SqlWalMode.WAL_DISABLED);
-            createTableWrite("my_table_dir", null, "HOUR");
-            assertWalEnabled("my_table_dir", false);
         });
     }
 
@@ -119,7 +119,7 @@ public class AlterTableWalEnabledTest extends AbstractGriffinTest {
     @Test
     public void testWalEnabledNameInCreateAsSelect() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table wm as (" +
+            execute("create table wm as (" +
                     "select x, cast(x as timestamp) as ts " +
                     "from long_sequence(2) " +
                     ") timestamp(ts) partition by DAY WAL");
@@ -131,7 +131,7 @@ public class AlterTableWalEnabledTest extends AbstractGriffinTest {
     @Test
     public void testWalEnabledNameInCreateAsSelect2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table wm as (" +
+            execute("create table wm as (" +
                     "select x, cast(x as timestamp) as ts " +
                     "from long_sequence(2) " +
                     ") timestamp(ts) partition by DAY Bypass WaL");
@@ -149,7 +149,7 @@ public class AlterTableWalEnabledTest extends AbstractGriffinTest {
             } catch (SqlException ex) {
                 TestUtils.assertContains(
                         ex.getFlyweightMessage(),
-                        "unexpected token: NONE"
+                        "unexpected token [NONE]"
                 );
                 Assert.assertEquals(
                         "create table my_table_wal (ts TIMESTAMP, x long, s symbol) timestamp(ts) PARTITION BY DAY ".length(),
@@ -187,23 +187,22 @@ public class AlterTableWalEnabledTest extends AbstractGriffinTest {
     private void checkWalEnabledBeforeAfterAlter(String alterSuffix) throws SqlException {
         createTableWrite("my_table_wal", "WAL", "DAY");
         assertWalEnabled("my_table_wal", true);
-        compile("alter table my_table_wal " + alterSuffix, sqlExecutionContext);
+        execute("alter table my_table_wal " + alterSuffix, sqlExecutionContext);
         assertWalEnabled("my_table_wal", true);
 
         createTableWrite("my_table_dir", "BYPASS WAL", "DAY");
         assertWalEnabled("my_table_dir", false);
-        compile("alter table my_table_dir " + alterSuffix, sqlExecutionContext);
+        execute("alter table my_table_dir " + alterSuffix, sqlExecutionContext);
         assertWalEnabled("my_table_dir", false);
 
-        assertSql("select name, walEnabled from tables() order by name",
-                "name\twalEnabled\n" +
-                        "my_table_dir\tfalse\n" +
-                        "my_table_wal\ttrue\n"
+        assertSql("table_name\twalEnabled\n" +
+                "my_table_dir\tfalse\n" +
+                "my_table_wal\ttrue\n", "select table_name, walEnabled from tables() order by table_name"
         );
     }
 
     private void createTableWrite(String tableName, String walMode, String partitionBY) throws SqlException {
-        compile(
+        execute(
                 "create table " + tableName +
                         " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
                         " PARTITION BY " + partitionBY +

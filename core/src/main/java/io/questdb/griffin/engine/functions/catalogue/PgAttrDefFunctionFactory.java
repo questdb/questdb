@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,16 +24,29 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 public class PgAttrDefFunctionFactory implements FunctionFactory {
@@ -81,8 +94,8 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
         public AttrDefCatalogueCursor(CairoConfiguration configuration, Path path, long tempMem) {
             this.ff = configuration.getFilesFacade();
             this.path = path;
-            this.path.of(configuration.getRoot()).$();
-            this.plimit = this.path.length();
+            this.path.of(configuration.getDbRoot()).$();
+            this.plimit = path.size();
             this.tempMem = tempMem;
         }
 
@@ -112,6 +125,11 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public long size() {
             return -1;
         }
@@ -129,7 +147,7 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
                     if (hasNextFile) {
                         if (ff.isDirOrSoftLinkDirNoDots(path, plimit, pUtf8NameZ, ff.findType(findFileStruct))) {
                             if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
-                                int fd = ff.openRO(path);
+                                long fd = ff.openRO(path.$());
                                 if (fd > -1) {
                                     if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
                                         tableId = Unsafe.getUnsafe().getInt(tempMem);
@@ -144,7 +162,7 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
                                     }
                                     ff.close(fd);
                                 } else {
-                                    LOG.error().$("could not read metadata [file=").utf8(path).I$();
+                                    LOG.error().$("could not read metadata [file=").$(path).I$();
                                 }
                             }
                         }
@@ -191,32 +209,37 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 return "";
             }
 
             @Override
             public CharSequence getStrB(int col) {
-                return getStr(col);
+                return getStrA(col);
             }
 
             @Override
             public int getStrLen(int col) {
-                return getStr(col).length();
+                return getStrA(col).length();
             }
         }
     }
 
     private static class AttrDefCatalogueCursorFactory extends AbstractRecordCursorFactory {
-
         private final AttrDefCatalogueCursor cursor;
-        private final Path path = new Path();
-        private final long tempMem;
+        private final Path path;
+        private long tempMem;
 
         public AttrDefCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
             super(metadata);
-            this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
-            this.cursor = new AttrDefCatalogueCursor(configuration, path, tempMem);
+            try {
+                this.path = new Path();
+                this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
+                this.cursor = new AttrDefCatalogueCursor(configuration, path, tempMem);
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
         }
 
         @Override
@@ -238,7 +261,7 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
         @Override
         protected void _close() {
             Misc.free(path);
-            Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
+            tempMem = Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
         }
     }
 

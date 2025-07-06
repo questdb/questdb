@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,9 +24,10 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.BorrowableUtf8Sink;
+import org.jetbrains.annotations.NotNull;
 
-public class NullLongGauge implements LongGauge {
+public class NullLongGauge implements AtomicLongGauge {
     public static final NullLongGauge INSTANCE = new NullLongGauge();
 
     private NullLongGauge() {
@@ -41,6 +42,11 @@ public class NullLongGauge implements LongGauge {
     }
 
     @Override
+    public CharSequence getName() {
+        return null;
+    }
+
+    @Override
     public long getValue() {
         return 0;
     }
@@ -50,7 +56,12 @@ public class NullLongGauge implements LongGauge {
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
+    public long incrementAndGet() {
+        return 0;
+    }
+
+    @Override
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
     }
 
     @Override

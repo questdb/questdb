@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.bool;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class InSymbolCursorFunctionFactoryTest extends AbstractGriffinTest {
+public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNullInCursorInFilter() throws Exception {
@@ -343,7 +343,7 @@ public class InSymbolCursorFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testUnsupportedColumnType() throws Exception {
-        assertFailure(
+        assertException(
                 "select * from x where b in (select 12, rnd_str('RXGZ', 'HYRX', null) a from long_sequence(10))",
                 "create table x as (" +
                         "select" +
@@ -353,7 +353,7 @@ public class InSymbolCursorFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
                 24,
-                "supported column types are STRING and SYMBOL, found: INT"
+                "supported column types are VARCHAR, SYMBOL and STRING, found: INT"
         );
     }
 }

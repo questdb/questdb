@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ public class GeoHashTypeConstantTest {
 
     @Test
     public void testConstant() {
-        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
             GeoHashTypeConstant constant = GeoHashTypeConstant.getInstanceByPrecision(b);
             int type = ColumnType.getGeoHashTypeWithBits(b);
             Assert.assertEquals(type, constant.getType());

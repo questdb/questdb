@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,15 +24,15 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QuestDBTestNode;
-import io.questdb.test.AbstractGriffinTest;
 import org.junit.BeforeClass;
 
-public abstract class AbstractMultiNodeTest extends AbstractGriffinTest {
+public abstract class AbstractMultiNodeTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
         final QuestDBTestNode node2 = newNode(2);
         node2.initGriffin();
         final QuestDBTestNode node3 = newNode(3);

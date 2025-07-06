@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Os;
@@ -37,7 +38,6 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
  * Used to synchronize access to list-like collections used by worker threads.
  */
 public class PerWorkerLocks {
-
     private final AtomicIntegerArray locks;
     // Used to randomize acquire attempts for work stealing threads. Accessed in a racy way, intentionally.
     private final Rnd rnd;
@@ -77,13 +77,12 @@ public class PerWorkerLocks {
             }
             Os.pause();
         }
-        return -1;
+        throw CairoException.nonCritical().put("query aborted").setInterruption(true);
     }
 
     public void releaseSlot(int slot) {
-        if (slot == -1) {
-            return;
+        if (slot > -1) {
+            locks.set(slot, 0);
         }
-        locks.set(slot, 0);
     }
 }

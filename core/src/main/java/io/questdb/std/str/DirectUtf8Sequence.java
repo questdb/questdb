@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,38 +25,33 @@
 package io.questdb.std.str;
 
 import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.DirectByteSequence;
 
 /**
- * Read-only interface for a UTF-8 string with native ptr access.
+ * A sequence of UTF-8 bytes stored in native memory.
  */
-public interface DirectUtf8Sequence extends Utf8Sequence {
-    /**
-     * Returns byte at index.
-     * Note: Unchecked bounds.
-     *
-     * @param index byte index
-     * @return byte at index
-     */
+public interface DirectUtf8Sequence extends Utf8Sequence, DirectByteSequence {
+
+    @Override
     default byte byteAt(int index) {
         return Unsafe.getUnsafe().getByte(ptr() + index);
     }
 
-    /**
-     * Address one past the last character.
-     */
-    default long hi() {
-        return ptr() + size();
+    @Override
+    default int intAt(int offset) {
+        return Unsafe.getUnsafe().getInt(ptr() + offset);
     }
 
-    /**
-     * Address of the first character (alias of `.ptr()`).
-     */
-    default long lo() {
-        return ptr();
+    @Override
+    default long longAt(int offset) {
+        return Unsafe.getUnsafe().getLong(ptr() + offset);
     }
 
-    /**
-     * Address of the first character.
-     */
+    @Override
     long ptr();
+
+    @Override
+    default short shortAt(int offset) {
+        return Unsafe.getUnsafe().getShort(ptr() + offset);
+    }
 }

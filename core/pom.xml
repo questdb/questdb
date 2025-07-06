@@ -6,7 +6,7 @@
   ~    \__\_\\__,_|\___||___/\__|____/|____/
   ~
   ~  Copyright (c) 2014-2019 Appsicle
-  ~  Copyright (c) 2019-2023 QuestDB
+  ~  Copyright (c) 2019-2024 QuestDB
   ~
   ~  Licensed under the Apache License, Version 2.0 (the "License");
   ~  you may not use this file except in compliance with the License.
@@ -37,10 +37,17 @@
         <argLine>-ea -Dfile.encoding=UTF-8</argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
-        <web.console.version>0.2.4</web.console.version>
+        <web.console.version>1.0.0</web.console.version>
+        <qdbr.path>rust/qdbr</qdbr.path>
+        <qdbr.release>false</qdbr.release>
+
+        <!--
+        For production builds, use -P qdbr-release
+        -->
+        <qdbr.rustflags>-D warnings</qdbr.rustflags>
     </properties>
 
-    <version>7.2.1-SNAPSHOT</version>
+    <version>8.3.4-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -192,8 +199,11 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>2.17</version>
+                <version>3.5.3</version>
                 <configuration>
+                    <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory"/>
+                    <useModulePath>true</useModulePath>
+                    <moduleResolution>true</moduleResolution>
                     <includes>
                         <include>${test.include}</include>
                     </includes>
@@ -206,6 +216,14 @@
                             <value>io.questdb.test.TestListener</value>
                         </property>
                     </properties>
+                    <environmentVariables>
+                        <!-- needed for testing Sender.fromEnv() -->
+                        <QDB_CLIENT_CONF>
+                            tcp::addr=localhost:9002;user=testUser1;token=UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=;
+                        </QDB_CLIENT_CONF>
+                        <!-- Used by cargo when running a test with code coverage -->
+                        <LLVM_PROFILE_FILE>questdbr-junit.profraw</LLVM_PROFILE_FILE>
+                    </environmentVariables>
                 </configuration>
             </plugin>
         </plugins>
@@ -300,7 +318,7 @@
                     <plugin>
                         <groupId>org.sonatype.plugins</groupId>
                         <artifactId>nexus-staging-maven-plugin</artifactId>
-                        <version>1.6.3</version>
+                        <version>1.6.14</version>
                         <executions>
                             <execution>
                                 <id>default-deploy</id>
@@ -341,6 +359,7 @@
                                     <outputFileName>web-console.tgz</outputFileName>
                                     <outputDirectory>${project.build.directory}/site/</outputDirectory>
                                     <unpack>true</unpack>
+                                    <skipCache>true</skipCache>
                                 </configuration>
                             </execution>
                         </executions>
@@ -434,7 +453,7 @@
                                 </goals>
                                 <configuration>
                                     <descriptors>
-                                        <descriptor>src/main/assembly/binaries.xml</descriptor>
+                                        <descriptor>src/main/assembly/no-jre.xml</descriptor>
                                     </descriptors>
                                     <finalName>questdb</finalName>
                                 </configuration>
@@ -458,20 +477,55 @@
             </build>
         </profile>
         <profile>
-            <id>platform-windows-amd64</id>
+            <id>build-rust-library</id>
+            <build>
+                <plugins>
+                    <!--
+                    The plugin is used in the development environments, that require Rust
+                    code changes. The binary need not be placed in the platform-specific directory
+                    as it is expected to be NOT PRESENT in all other environments. E.g. those
+                    that do not target Rust library changes.
+
+                    The runtime libquestdbr library will be picked up from the source control. It will
+                    be deposited to the source control via CI job.
+                    -->
+                    <plugin>
+                        <groupId>org.questdb</groupId>
+                        <artifactId>rust-maven-plugin</artifactId>
+                        <version>1.2.0</version>
+                        <executions>
+                            <execution>
+                                <id>qdbr-build</id>
+                                <goals>
+                                    <goal>build</goal>
+                                </goals>
+                                <configuration>
+                                    <path>${qdbr.path}</path>
+                                    <release>${qdbr.release}</release>
+                                    <copyTo>${project.build.directory}/classes/io/questdb/rust</copyTo>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>platform-windows-x86-64</id>
             <activation>
                 <os>
                     <family>windows</family>
                 </os>
             </activation>
             <properties>
-                <archive.name>${project.version}-rt-windows-amd64</archive.name>
-                <runtime.name>questdb-${project.version}-rt-windows-amd64</runtime.name>
-                <runtime.assembly>src/main/assembly/windows-runtime.xml</runtime.assembly>
+                <archive.name>${project.version}-rt-windows-x86-64</archive.name>
+                <runtime.name>questdb-${project.version}-rt-windows-x86-64</runtime.name>
+                <runtime.assembly>src/main/assembly/rt-win.xml</runtime.assembly>
             </properties>
         </profile>
         <profile>
-            <id>platform-linux-amd64</id>
+            <id>platform-linux-x86-64</id>
             <activation>
                 <os>
                     <family>unix</family>
@@ -479,13 +533,14 @@
                 </os>
             </activation>
             <properties>
-                <archive.name>${project.version}-rt-linux-amd64</archive.name>
-                <runtime.name>questdb-${project.version}-rt-linux-amd64</runtime.name>
-                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <archive.name>${project.version}-rt-linux-x86-64</archive.name>
+                <runtime.name>questdb-${project.version}-rt-linux-x86-64</runtime.name>
+                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
+                <jemalloc.so>linux-x86-64/libjemalloc.so</jemalloc.so>
             </properties>
         </profile>
         <profile>
-            <id>platform-freebsd-amd64</id>
+            <id>platform-freebsd-x86-64</id>
             <activation>
                 <os>
                     <family>FreeBSD</family>
@@ -493,9 +548,9 @@
                 </os>
             </activation>
             <properties>
-                <archive.name>${project.version}-rt-freebsd-amd64</archive.name>
-                <runtime.name>questdb-${project.version}-rt-freebsd-amd64</runtime.name>
-                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <archive.name>${project.version}-rt-freebsd-x86-64</archive.name>
+                <runtime.name>questdb-${project.version}-rt-freebsd-x86-64</runtime.name>
+                <runtime.assembly>src/main/assembly/rt-freebsd.xml</runtime.assembly>
             </properties>
         </profile>
         <profile>
@@ -509,20 +564,38 @@
             <properties>
                 <archive.name>${project.version}-rt-linux-aarch64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-linux-aarch64</runtime.name>
-                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
+                <jemalloc.so>linux-aarch64/libjemalloc.so</jemalloc.so>
             </properties>
         </profile>
         <profile>
-            <id>platform-osx-amd64</id>
+            <id>platform-osx-x86-64</id>
             <activation>
                 <os>
                     <family>Mac</family>
+                    <arch>amd64</arch>
                 </os>
             </activation>
             <properties>
-                <archive.name>${project.version}-rt-osx-amd64</archive.name>
-                <runtime.name>questdb-${project.version}-rt-osx-amd64</runtime.name>
-                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <archive.name>${project.version}-rt-osx-x86-64</archive.name>
+                <runtime.name>questdb-${project.version}-rt-osx-x86-64</runtime.name>
+                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
+                <jemalloc.so>darwin-x86-64/libjemalloc.dylib</jemalloc.so>
+            </properties>
+        </profile>
+        <profile>
+            <id>platform-osx-aarch64</id>
+            <activation>
+                <os>
+                    <family>Mac</family>
+                    <arch>aarch64</arch>
+                </os>
+            </activation>
+            <properties>
+                <archive.name>${project.version}-rt-osx-aarch64</archive.name>
+                <runtime.name>questdb-${project.version}-rt-osx-aarch64</runtime.name>
+                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
+                <jemalloc.so>darwin-aarch64/libjemalloc.dylib</jemalloc.so>
             </properties>
         </profile>
         <profile>
@@ -553,58 +626,6 @@
             </build>
         </profile>
         <profile>
-            <id>java8</id>
-            <properties>
-                <jdk.version>8</jdk.version>
-                <java.enforce.version>1.8.0_242</java.enforce.version>
-                <questdb.artifactid>questdb-jdk8</questdb.artifactid>
-                <compilerArg0>-XDignore.symbol.file</compilerArg0>
-                <excludePattern1>module-info.java</excludePattern1>
-                <excludeTestPattern1>module-info.java</excludeTestPattern1>
-                <javac.compile.source>1.8</javac.compile.source>
-                <javac.compile.target>1.8</javac.compile.target>
-            </properties>
-            <activation>
-                <jdk>(,1.8]</jdk>
-            </activation>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>com.igormaznitsa</groupId>
-                        <artifactId>jcp</artifactId>
-                        <version>7.0.4</version>
-                        <executions>
-                            <!-- make preprocessing of sources -->
-                            <execution>
-                                <id>preprocess-sources</id>
-                                <goals>
-                                    <goal>preprocess</goal>
-                                </goals>
-                            </execution>
-                        </executions>
-                        <configuration>
-                            <vars>
-                                <jdk.version>${jdk.version}</jdk.version>
-                            </vars>
-                            <excludeExtensions>
-                                <ext>MD</ext>
-                                <ext>md</ext>
-                                <ext>xml</ext>
-                            </excludeExtensions>
-                        </configuration>
-                    </plugin>
-                </plugins>
-            </build>
-            <dependencies>
-                <dependency>
-                    <groupId>org.jetbrains</groupId>
-                    <artifactId>annotations</artifactId>
-                    <version>16.0.2</version>
-                    <scope>provided</scope>
-                </dependency>
-            </dependencies>
-        </profile>
-        <profile>
             <id>java11+</id>
             <properties>
                 <jdk.version>11</jdk.version>
@@ -629,6 +650,60 @@
                 </dependency>
             </dependencies>
         </profile>
+        <profile>
+            <id>qdbr-release</id>
+            <properties>
+                <qdbr.release>true</qdbr.release>
+            </properties>
+        </profile>
+        <profile>
+            <id>qdbr-coverage</id>
+            <properties>
+                <qdr.release>false</qdr.release>
+                <qdbr.rustflags>-D warnings -C instrument-coverage</qdbr.rustflags>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.questdb</groupId>
+                        <artifactId>rust-maven-plugin</artifactId>
+                        <version>1.2.0</version>
+                        <executions>
+                            <execution>
+                                <id>qdbr-build</id>
+                                <goals>
+                                    <goal>build</goal>
+                                </goals>
+                                <configuration>
+                                    <path>rust/qdbr</path>
+                                    <release>${qdbr.release}</release>
+                                    <copyTo>${project.build.directory}/classes/io/questdb/bin</copyTo>
+                                    <copyWithPlatformDir>true</copyWithPlatformDir>
+                                    <environmentVariables>
+                                        <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
+                                    </environmentVariables>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>qdbr-test</id>
+                                <goals>
+                                    <goal>test</goal>
+                                </goals>
+                                <phase>test</phase>
+                                <configuration>
+                                    <path>rust/qdbr</path>
+                                    <release>${qdbr.release}</release>
+                                    <environmentVariables>
+                                        <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
+                                        <LLVM_PROFILE_FILE>questdbr-cargo-test.profraw</LLVM_PROFILE_FILE>
+                                    </environmentVariables>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
     </profiles>
 
     <dependencies>
@@ -642,7 +717,7 @@
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
-            <version>42.5.1</version>
+            <version>42.7.4</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

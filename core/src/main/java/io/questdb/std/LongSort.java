@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,11 @@ package io.questdb.std;
 
 public class LongSort {
     /**
+     * If the length of an array to be sorted is less than this
+     * constant, insertion sort is used in preference to Quicksort.
+     */
+    public static final int INSERTION_SORT_THRESHOLD = 47;
+    /**
      * The maximum number of runs in merge sort.
      */
     public static final int MAX_RUN_COUNT = 67;
@@ -34,11 +39,6 @@ public class LongSort {
      * constant, Quicksort is used in preference to merge sort.
      */
     public static final int QUICKSORT_THRESHOLD = 286;
-    /**
-     * If the length of an array to be sorted is less than this
-     * constant, insertion sort is used in preference to Quicksort.
-     */
-    private static final int INSERTION_SORT_THRESHOLD = 47;
     /**
      * The maximum length of run in merge sort.
      */
@@ -451,7 +451,6 @@ public class LongSort {
 
             // Sort center part recursively
             sort(vec, less, great, false);
-
         } else { // Partitioning with one pivot
             /*
              * Use the third of the five sorted elements as pivot.

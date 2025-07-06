@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,8 +24,13 @@
 
 package io.questdb.test;
 
-import io.questdb.cairo.BinarySearch;
-import io.questdb.std.*;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.LongList;
+import io.questdb.std.ObjIntHashMap;
+import io.questdb.std.Rnd;
+import io.questdb.std.Vect;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -115,9 +120,9 @@ public class CollectionsTest {
             }
 
             // Assert.assertEquals("Block hint " + blockSizeHint, 18 << blockSizeHint, list.binarySearchBlock(0, list.size(), blockSizeHint, 188));
-            Assert.assertEquals("Block hint " + blockSizeHint, -1, list.binarySearchBlock(blockSizeHint, 6, BinarySearch.SCAN_UP));
-            Assert.assertEquals("Block hint " + blockSizeHint, -((24 << blockSizeHint) + 1), list.binarySearchBlock(blockSizeHint, 240, BinarySearch.SCAN_UP));
-            Assert.assertEquals("Block hint " + blockSizeHint, -((200 << blockSizeHint) + 1), list.binarySearchBlock(blockSizeHint, 2010, BinarySearch.SCAN_UP));
+            Assert.assertEquals("Block hint " + blockSizeHint, -1, list.binarySearchBlock(blockSizeHint, 6, Vect.BIN_SEARCH_SCAN_UP));
+            Assert.assertEquals("Block hint " + blockSizeHint, -((24 << blockSizeHint) + 1), list.binarySearchBlock(blockSizeHint, 240, Vect.BIN_SEARCH_SCAN_UP));
+            Assert.assertEquals("Block hint " + blockSizeHint, -((200 << blockSizeHint) + 1), list.binarySearchBlock(blockSizeHint, 2010, Vect.BIN_SEARCH_SCAN_UP));
         }
     }
 
@@ -132,7 +137,7 @@ public class CollectionsTest {
         list.add(0);
         list.add(0);
         list.add(0);
-        Assert.assertEquals(-5, list.binarySearchBlock(2, 20, BinarySearch.SCAN_DOWN));
+        Assert.assertEquals(-5, list.binarySearchBlock(2, 20, Vect.BIN_SEARCH_SCAN_DOWN));
     }
 
     @Test
@@ -143,10 +148,10 @@ public class CollectionsTest {
         for (int i = 7; i < 2000; i += 10) {
             list.add(i + (rnd.nextPositiveInt() & 9));
         }
-        Assert.assertEquals(18, list.binarySearch(188, BinarySearch.SCAN_UP));
-        Assert.assertEquals(-1, list.binarySearch(6, BinarySearch.SCAN_UP));
-        Assert.assertEquals(-25, list.binarySearch(240, BinarySearch.SCAN_UP));
-        Assert.assertEquals(-201, list.binarySearch(2010, BinarySearch.SCAN_UP));
+        Assert.assertEquals(18, list.binarySearch(188, Vect.BIN_SEARCH_SCAN_UP));
+        Assert.assertEquals(-1, list.binarySearch(6, Vect.BIN_SEARCH_SCAN_UP));
+        Assert.assertEquals(-25, list.binarySearch(240, Vect.BIN_SEARCH_SCAN_UP));
+        Assert.assertEquals(-201, list.binarySearch(2010, Vect.BIN_SEARCH_SCAN_UP));
     }
 
     @Test

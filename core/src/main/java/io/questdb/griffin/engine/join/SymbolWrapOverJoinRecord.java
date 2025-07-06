@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -65,17 +65,17 @@ public final class SymbolWrapOverJoinRecord extends OuterJoinRecord {
     }
 
     @Override
-    public CharSequence getSym(int col) {
+    public CharSequence getSymA(int col) {
         if (col < split) {
-            return master.getSym(col);
+            return master.getSymA(col);
         }
         int slaveCol = col - split;
         if (isSlaveKeyColumn(slaveCol)) {
             // key symbols are converted to strings before inserting into map.
             // so we can read them as strings directly from the map.
-            return slave.getStr(slaveCol);
+            return slave.getStrA(slaveCol);
         }
-        return slave.getSym(slaveCol);
+        return slave.getSymA(slaveCol);
     }
 
     @Override

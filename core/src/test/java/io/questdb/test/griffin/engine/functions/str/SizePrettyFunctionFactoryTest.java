@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ public class SizePrettyFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testSizes() throws SqlException {
         call(0L).andAssert("0.0 B");
-        call(Numbers.LONG_NaN).andAssert(null);
+        call(Numbers.LONG_NULL).andAssert(null);
         call(1L).andAssert("1.0 B");
         call(1024L).andAssert("1.0 KiB");
         call(1024L * 1024).andAssert("1.0 MiB");

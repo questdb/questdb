@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,7 +36,6 @@ public final class FastDoubleParser {
      * Don't let anyone instantiate this class.
      */
     private FastDoubleParser() {
-
     }
 
     /**
@@ -102,8 +101,8 @@ public final class FastDoubleParser {
      *
      * @param str            the string to be parsed, a memory pointer to array with characters
      *                       in ISO-8859-1, ASCII or UTF-8 encoding
-     * @param rejectOverflow reject parsed values that overflow double type
      * @param len            length of the string
+     * @param rejectOverflow reject parsed values that overflow double type
      * @return the parsed double value
      * @throws NumericException if the string can not be parsed
      */

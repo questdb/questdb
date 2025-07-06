@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,17 +26,17 @@ package io.questdb.test.griffin.engine.functions.str;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class ToCharTimestampVCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testNaN() throws SqlException {
-        call(Numbers.LONG_NaN, "dd/MM/yyyy hh:mm:ss").andAssert(null);
+        call(Numbers.LONG_NULL, "dd/MM/yyyy hh:mm:ss").andAssert(null);
     }
 
     @Test
@@ -47,7 +47,7 @@ public class ToCharTimestampVCFunctionFactoryTest extends AbstractFunctionFactor
     @Test
     public void testSimple() throws SqlException, NumericException {
         call(TimestampFormatUtils.parseTimestamp("2018-03-10T11:03:33.123Z"),
-                "dd/MM/yyyy hh:mm:ss").andAssert("10/03/2018 12:03:33");
+                "dd/MM/yyyy hh:mm:ss").andAssert("10/03/2018 11:03:33");
     }
 
     @Override

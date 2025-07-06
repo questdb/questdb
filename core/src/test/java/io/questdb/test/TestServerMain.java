@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,11 +27,19 @@ package io.questdb.test;
 import io.questdb.Bootstrap;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 
 public class TestServerMain extends ServerMain {
+    private final StringSink sink = new StringSink();
+    private SqlExecutionContext sqlExecutionContext;
+
     public TestServerMain(String... args) {
         super(args);
     }
@@ -40,13 +48,74 @@ public class TestServerMain extends ServerMain {
         super(bootstrap);
     }
 
-    @Override
-    protected void setupWalApplyJob(
-            WorkerPool workerPool,
-            CairoEngine engine,
-            int sharedWorkerCount,
-            @Nullable FunctionFactoryCache ffCache
-    ) {
-        // do nothing
+    public static TestServerMain createWithManualWalRun(String... args) {
+        return new TestServerMain(args) {
+            @Override
+            protected void setupWalApplyJob(
+                    WorkerPool workerPool,
+                    CairoEngine engine,
+                    int sharedWorkerCount
+            ) {
+            }
+        };
+    }
+
+    public void assertSql(String sql, String expected) {
+        try {
+            ensureContext();
+            TestUtils.assertSql(getEngine(), sqlExecutionContext, sql, sink, expected);
+        } catch (SqlException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    public void ddl(String sql) {
+        try {
+            ensureContext();
+            getEngine().execute(sql, sqlExecutionContext);
+        } catch (SqlException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    public void compile(String sql) {
+        try {
+            if (sqlExecutionContext == null) {
+                getEngine().execute(sql);
+            } else {
+                getEngine().execute(sql, sqlExecutionContext);
+            }
+        } catch (SqlException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    public void reset() {
+        // Drop all tables
+        CairoEngine engine = this.getEngine();
+        engine.releaseInactive();
+        engine.clear();
+        engine.closeNameRegistry();
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot());
+            ff.mkdir(p.$(), engine.getConfiguration().getMkDirMode());
+        }
+        engine.getTableIdGenerator().open();
+        engine.resetNameRegistryMemory();
+        resetQueryCache();
+        engine.setUp();
+    }
+
+    private void ensureContext() {
+        if (sqlExecutionContext == null) {
+            sqlExecutionContext = new SqlExecutionContextImpl(getEngine(), 1).with(
+                    getEngine().getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                    null,
+                    null,
+                    -1,
+                    null
+            );
+        }
     }
 }

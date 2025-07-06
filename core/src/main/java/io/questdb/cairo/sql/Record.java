@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,9 +24,17 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.MutableUtf16Sink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Access the value of columns of a table record by column index.
@@ -37,9 +45,26 @@ import io.questdb.std.str.CharSink;
  */
 public interface Record {
 
-    CharSequenceFunction GET_STR = Record::getStr;
+    CharSequenceFunction GET_STR = (record, col, sink) -> record.getStrA(col);
 
-    CharSequenceFunction GET_SYM = Record::getSym;
+    CharSequenceFunction GET_SYM = (record, col, sink) -> record.getSymA(col);
+
+    CharSequenceFunction GET_VARCHAR = (record, col, sink) -> {
+        Utf8Sequence vch = record.getVarcharA(col);
+        if (vch == null) {
+            return null;
+        }
+        if (vch.isAscii()) {
+            return vch.asAsciiCharSequence();
+        }
+        sink.clear();
+        sink.put(vch);
+        return sink;
+    };
+
+    default ArrayView getArray(int col, int columnType) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Gets the value of a binary column by index
@@ -162,12 +187,27 @@ public interface Record {
     }
 
     /**
+     * Gets the value of an IPv4 column by index
+     * Distinct from getInt(int col) because INT and IPv4 have different null values
+     *
+     * @param col numeric index of the column
+     * @return 32-bit integer
+     */
+    default int getIPv4(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Gets the value of an integer column by index
      *
      * @param col numeric index of the column
      * @return 32-bit integer
      */
     default int getInt(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    default Interval getInterval(int col) {
         throw new UnsupportedOperationException();
     }
 
@@ -193,15 +233,18 @@ public interface Record {
      * Gets the value of a long256 column by index
      *
      * @param col  numeric index of the column
-     * @param sink a character sink
+     * @param sink an ASCII sink
      */
-    default void getLong256(int col, CharSink sink) {
+    default void getLong256(int col, CharSink<?> sink) {
         throw new UnsupportedOperationException();
     }
 
     /**
-     * Gets the value of a long256 column by index
-     * getLong256A used for A/B comparison with getLong256B to compare references
+     * Gets the value of a long256 column by index.
+     * getLong256A used for A/B comparison with getLong256B to compare references.
+     * <p>
+     * Important: record implementations must not reuse a single flyweight
+     * across all columns.
      *
      * @param col numeric index of the column
      * @return unsigned 256-bit integer
@@ -211,14 +254,29 @@ public interface Record {
     }
 
     /**
-     * Gets the value of a long256 column by index
-     * getLong256B used for A/B comparison with getLong256A to compare references
+     * Gets the value of a long256 column by index.
+     * getLong256B used for A/B comparison with getLong256A to compare references.
+     * <p>
+     * Important: record implementations must not reuse a single flyweight
+     * across all columns.
      *
      * @param col numeric index of the column
      * @return unsigned 256-bit integer
      */
     default Long256 getLong256B(int col) {
         throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the value of an IPv4 column by index as a long (only needed for sorting)
+     * Distinct from getInt(int col) because INT and IPv4 have different null values
+     *
+     * @param col numeric index of the column
+     * @return 64-bit integer
+     */
+    @SuppressWarnings("unused")
+    default long getLongIPv4(int col) {
+        return Numbers.ipv4ToLong(getIPv4(col));
     }
 
     /**
@@ -251,31 +309,39 @@ public interface Record {
     }
 
     /**
-     * Gets the value of a string column by index
+     * Reads string-specific storage and presents the value as
+     * UTF16-encoded sequence of bytes. It is a part of value comparison
+     * system, which utilizes A and B objects to represent values of
+     * multiple fields of the same record. Functions, such as "=" must
+     * always compare getStrA(col) = getStrB(col) to make sure CharSequence
+     * containers are not being spuriously reused.
+     * <p>
+     * Important: record implementations must not reuse a single flyweight
+     * across all columns.
      *
-     * @param col numeric index of the column
-     * @return string, null if string is empty
+     * @param col numeric index of the column, 0-based
+     * @return lightweight container that avoids creating copies of strings in
+     * memory. Null if sting value is null.
      */
-    default CharSequence getStr(int col) {
+    @Nullable
+    default CharSequence getStrA(int col) {
         throw new UnsupportedOperationException();
     }
 
     /**
-     * Gets the value of a string column by index
+     * Reads string-specific storage and presents the value as
+     * UTF16-encoded sequence of bytes. It is a part of value comparison
+     * system, which utilizes A and B objects to represent values of
+     * multiple fields of the same record. Functions, such as "=" must
+     * always compare getStrA(col) = getStrB(col) to make sure CharSequence
+     * containers are not being spuriously reused.
+     * <p>
+     * Important: record implementations must not reuse a single flyweight
+     * across all columns.
      *
-     * @param col  numeric index of the column
-     * @param sink a character sink
-     */
-    default void getStr(int col, CharSink sink) {
-        sink.put(getStr(col));
-    }
-
-    /**
-     * Gets the value of a string column by index
-     * getStrB used for A/B comparison with getStr to compare references
-     *
-     * @param col numeric index of the column
-     * @return string, null if string is empty
+     * @param col numeric index of the column, 0-based
+     * @return lightweight container that avoids creating copies of strings in
+     * memory. Null if sting value is null.
      */
     default CharSequence getStrB(int col) {
         throw new UnsupportedOperationException();
@@ -292,18 +358,24 @@ public interface Record {
     }
 
     /**
-     * Gets the value of a symbol column by index
+     * Gets the value of a symbol column by index.
+     * <p>
+     * Important: record implementations must not reuse a single flyweight
+     * across all columns.
      *
      * @param col numeric index of the column
      * @return symbol value as string
      */
-    default CharSequence getSym(int col) {
+    default CharSequence getSymA(int col) {
         throw new UnsupportedOperationException();
     }
 
     /**
-     * Gets the string-based value of a symbol column by index
-     * getSymB used for A/B comparison with getSym to compare references
+     * Gets the string-based value of a symbol column by index.
+     * getSymB used for A/B comparison with getSym to compare references.
+     * <p>
+     * Important: record implementations must not reuse a single flyweight
+     * across all columns.
      *
      * @param col numeric index of the column
      * @return symbol value as string
@@ -331,13 +403,75 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Reads bytes from varchar-specific storage and prints them into UTF16 encoded
+     * sink.
+     *
+     * @param col       numeric index of the column, 0-based
+     * @param utf16Sink the destination sink
+     */
+    default void getVarchar(int col, Utf16Sink utf16Sink) {
+        utf16Sink.put(getVarcharA(col));
+    }
+
+    /**
+     * Reads varchar-specific storage and presents the value as
+     * UTF8-encoded sequence of bytes. It is a part of value comparison
+     * system, which utilizes A and B objects to represent values of
+     * multiple fields of the same record. Functions, such as "=" must
+     * always compare getVarcharA(col) = getVarcharB(col) to make sure Utf8Sequence
+     * containers are not being spuriously reused.
+     * <p>
+     * Important: record implementations must not reuse a single flyweight
+     * across all columns.
+     *
+     * @param col numeric index of the column, 0-based
+     * @return lightweight container that avoids creating copies of strings in
+     * memory. Null if sting value is null.
+     */
+    @Nullable
+    default Utf8Sequence getVarcharA(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Reads varchar-specific storage and presents the value as
+     * UTF8-encoded sequence of bytes. It is a part of value comparison
+     * system, which utilizes A and B objects to represent values of
+     * multiple fields of the same record. Functions, such as "=" must
+     * always compare getVarcharA(col) = getVarcharB(col) to make sure Utf8Sequence
+     * containers are not being spuriously reused.
+     * <p>
+     * Important: record implementations must not reuse a single flyweight
+     * across all columns.
+     *
+     * @param col numeric index of the column, 0-based
+     * @return lightweight container that avoids creating copies of strings in
+     * memory. Null if sting value is null.
+     */
+    @Nullable
+    default Utf8Sequence getVarcharB(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the size of the varchar value of a column by index
+     *
+     * @param col numeric index of the column
+     * @return size of the varchar value or {@link TableUtils#NULL_LEN} in case of NULL
+     */
+    default int getVarcharSize(int col) {
+        throw new UnsupportedOperationException();
+    }
+
     @FunctionalInterface
     interface CharSequenceFunction {
         /**
          * @param record to retrieve CharSequence from
          * @param col    numeric index of the column
+         * @param sink   sink the function can use if a conversion is required
          * @return record as a char sequence
          */
-        CharSequence get(Record record, int col);
+        CharSequence get(Record record, int col, MutableUtf16Sink sink);
     }
 }

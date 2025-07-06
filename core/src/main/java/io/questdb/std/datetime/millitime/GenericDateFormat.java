@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,6 +32,8 @@ import io.questdb.std.datetime.AbstractDateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class GenericDateFormat extends AbstractDateFormat {
     private final IntList compiledOps;
@@ -43,7 +45,7 @@ public class GenericDateFormat extends AbstractDateFormat {
     }
 
     @Override
-    public void format(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink) {
+    public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
         int day = -1;
         int month = -1;
         int year = Integer.MIN_VALUE;
@@ -58,7 +60,6 @@ public class GenericDateFormat extends AbstractDateFormat {
         for (int i = 0, n = compiledOps.size(); i < n; i++) {
             int op = compiledOps.getQuick(i);
             switch (op) {
-
                 // AM/PM
                 case DateFormatCompiler.OP_AM_PM:
                     if (hour == -1) {
@@ -99,7 +100,6 @@ public class GenericDateFormat extends AbstractDateFormat {
                     DateFormatUtils.append0(sink, second);
                     break;
 
-
                 // MINUTE
                 case DateFormatCompiler.OP_MINUTE_ONE_DIGIT:
                 case DateFormatCompiler.OP_MINUTE_GREEDY:
@@ -115,7 +115,6 @@ public class GenericDateFormat extends AbstractDateFormat {
                     }
                     DateFormatUtils.append0(sink, minute);
                     break;
-
 
                 // HOUR (0-11)
                 case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT:
@@ -171,14 +170,14 @@ public class GenericDateFormat extends AbstractDateFormat {
                     if (hour == -1) {
                         hour = Dates.getHourOfDay(datetime);
                     }
-                    sink.put(hour + 1);
+                    DateFormatUtils.appendHour241(sink, hour);
                     break;
 
                 case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
                     if (hour == -1) {
                         hour = Dates.getHourOfDay(datetime);
                     }
-                    DateFormatUtils.append0(sink, hour + 1);
+                    DateFormatUtils.appendHour241Padded(sink, hour);
                     break;
 
                 // DAY
@@ -248,7 +247,6 @@ public class GenericDateFormat extends AbstractDateFormat {
                     break;
 
                 // MONTH
-
                 case DateFormatCompiler.OP_MONTH_ONE_DIGIT:
                 case DateFormatCompiler.OP_MONTH_GREEDY:
                     if (month == -1) {
@@ -297,7 +295,6 @@ public class GenericDateFormat extends AbstractDateFormat {
                     break;
 
                 // YEAR
-
                 case DateFormatCompiler.OP_YEAR_ONE_DIGIT:
                 case DateFormatCompiler.OP_YEAR_GREEDY:
                     if (year == Integer.MIN_VALUE) {
@@ -357,7 +354,7 @@ public class GenericDateFormat extends AbstractDateFormat {
     }
 
     @Override
-    public long parse(CharSequence in, int lo, int hi, DateLocale locale) throws NumericException {
+    public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException {
         int day = 1;
         int month = 1;
         int year = 1970;
@@ -376,7 +373,6 @@ public class GenericDateFormat extends AbstractDateFormat {
         for (int i = 0, n = compiledOps.size(); i < n; i++) {
             int op = compiledOps.getQuick(i);
             switch (op) {
-
                 // AM/PM
                 case DateFormatCompiler.OP_AM_PM:
                     l = locale.matchAMPM(in, pos, hi);
@@ -435,8 +431,22 @@ public class GenericDateFormat extends AbstractDateFormat {
                     pos += Numbers.decodeHighInt(l);
                     break;
 
-                // HOUR (0-11)
+                // HOUR - 12-hour clock convention
+                // Note: both the 0-11 system and the 1-12 system are parsed exactly the same way.
+                // In the 1-12 system, hour '12' is the same as hour '0' in the 0-11 system.
+                // All other values are the same.
+                // In fact, the 1-12 system should be called the 12-11 system, since it maps 12 to 0.
+                // Comparison table:
+                // 0-11 | 12-11
+                // 0    | 12
+                // 1    | 1
+                // 2    | 2
+                // [...]
+                //
+                // 11   | 11
+                // This means that in both the 0-11 and 1-12 systems, we can use the same parsing logic and later treat 12 as if it were 0.
                 case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT:
+                case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
                     DateFormatUtils.assertRemaining(pos, hi);
                     hour = Numbers.parseInt(in, pos, ++pos);
                     if (hourType == DateFormatUtils.HOUR_24) {
@@ -445,6 +455,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                     break;
 
                 case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS:
+                case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
                     DateFormatUtils.assertRemaining(pos + 1, hi);
                     hour = Numbers.parseInt(in, pos, pos += 2);
                     if (hourType == DateFormatUtils.HOUR_24) {
@@ -453,6 +464,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                     break;
 
                 case DateFormatCompiler.OP_HOUR_12_GREEDY:
+                case DateFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
                     l = Numbers.parseIntSafely(in, pos, hi);
                     hour = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
@@ -461,63 +473,23 @@ public class GenericDateFormat extends AbstractDateFormat {
                     }
                     break;
 
-                // HOUR (1-12)
-                case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
-                    DateFormatUtils.assertRemaining(pos, hi);
-                    hour = Numbers.parseInt(in, pos, ++pos) - 1;
-                    if (hourType == DateFormatUtils.HOUR_24) {
-                        hourType = DateFormatUtils.HOUR_AM;
-                    }
-                    break;
-
-                case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
-                    DateFormatUtils.assertRemaining(pos + 1, hi);
-                    hour = Numbers.parseInt(in, pos, pos += 2) - 1;
-                    if (hourType == DateFormatUtils.HOUR_24) {
-                        hourType = DateFormatUtils.HOUR_AM;
-                    }
-                    break;
-
-                case DateFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
-                    l = Numbers.parseIntSafely(in, pos, hi);
-                    hour = Numbers.decodeLowInt(l) - 1;
-                    pos += Numbers.decodeHighInt(l);
-                    if (hourType == DateFormatUtils.HOUR_24) {
-                        hourType = DateFormatUtils.HOUR_AM;
-                    }
-                    break;
-
-                // HOUR (0-23)
+                // HOUR
                 case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT:
+                case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
                     DateFormatUtils.assertRemaining(pos, hi);
                     hour = Numbers.parseInt(in, pos, ++pos);
                     break;
 
                 case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS:
+                case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
                     DateFormatUtils.assertRemaining(pos + 1, hi);
                     hour = Numbers.parseInt(in, pos, pos += 2);
                     break;
 
                 case DateFormatCompiler.OP_HOUR_24_GREEDY:
-                    l = Numbers.parseIntSafely(in, pos, hi);
-                    hour = Numbers.decodeLowInt(l);
-                    pos += Numbers.decodeHighInt(l);
-                    break;
-
-                // HOUR (1 - 24)
-                case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
-                    DateFormatUtils.assertRemaining(pos, hi);
-                    hour = Numbers.parseInt(in, pos, ++pos) - 1;
-                    break;
-
-                case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
-                    DateFormatUtils.assertRemaining(pos + 1, hi);
-                    hour = Numbers.parseInt(in, pos, pos += 2) - 1;
-                    break;
-
                 case DateFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
                     l = Numbers.parseIntSafely(in, pos, hi);
-                    hour = Numbers.decodeLowInt(l) - 1;
+                    hour = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;
 
@@ -556,7 +528,6 @@ public class GenericDateFormat extends AbstractDateFormat {
                     break;
 
                 // MONTH
-
                 case DateFormatCompiler.OP_MONTH_ONE_DIGIT:
                     DateFormatUtils.assertRemaining(pos, hi);
                     month = Numbers.parseInt(in, pos, ++pos);
@@ -579,7 +550,6 @@ public class GenericDateFormat extends AbstractDateFormat {
                     break;
 
                 // YEAR
-
                 case DateFormatCompiler.OP_YEAR_ONE_DIGIT:
                     DateFormatUtils.assertRemaining(pos, hi);
                     year = Numbers.parseInt(in, pos, ++pos);
@@ -590,7 +560,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                     break;
                 case DateFormatCompiler.OP_YEAR_THREE_DIGITS:
                     DateFormatUtils.assertRemaining(pos + 2, hi);
-                    year = DateFormatUtils.adjustYearMillenium(Numbers.parseInt(in, pos, pos += 3));
+                    year = DateFormatUtils.adjustYearMillennium(Numbers.parseInt(in, pos, pos += 3));
                     break;
                 case DateFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     if (pos < hi && in.charAt(pos) == '-') {

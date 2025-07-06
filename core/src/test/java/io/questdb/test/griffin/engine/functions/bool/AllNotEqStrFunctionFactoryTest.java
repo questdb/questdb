@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.bool;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class AllNotEqStrFunctionFactoryTest extends AbstractGriffinTest {
+public class AllNotEqStrFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testConstant() throws Exception {
@@ -77,6 +77,21 @@ public class AllNotEqStrFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testMatchVarcharColumn() throws Exception {
+        assertQuery(
+                "a\n" +
+                        "ганьба\n" +
+                        "слава\n" +
+                        "слава\n",
+                "select * from tab where a <> all('{добрий,вечір}'::text[])",
+                "create table tab as (select rnd_varchar('ганьба','слава','добрий','вечір') a from long_sequence(5));",
+                null,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testNoMatch() throws Exception {
         assertQuery(
                 "a\n",
@@ -109,6 +124,18 @@ public class AllNotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                 null,
                 false,
                 true
+        );
+    }
+
+    @Test
+    public void testNullVarchar() throws Exception {
+        assertQuery(
+                "a\n",
+                "select * from tab where a <> all('{добрий,вечір}'::text[])",
+                "create table tab as (select cast(null as varchar) a from long_sequence(15));",
+                null,
+                true,
+                false
         );
     }
 }

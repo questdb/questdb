@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,12 +24,13 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -41,7 +42,8 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -52,20 +54,23 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class UpdateConcurrentTest extends AbstractGriffinTest {
+import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
+import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
+
+public class UpdateConcurrentTest extends AbstractCairoTest {
     private static final ThreadLocal<SCSequence> eventSubSequence = new ThreadLocal<>(SCSequence::new);
     private static final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        writerCommandQueueCapacity = 128;
-        AbstractGriffinTest.setUpStatic();
+        setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 128);
+        AbstractCairoTest.setUpStatic();
     }
 
     @Override
     @Before
     public void setUp() {
-        writerCommandQueueCapacity = 128;
+        setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 128);
         super.setUp();
     }
 
@@ -114,35 +119,37 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
         testConcurrency(1, 1, 50, PartitionMode.SINGLE);
     }
 
-    private void assertReader(TableReader rdr, IntObjHashMap<CharSequence[]> expectedValues, IntObjHashMap<Validator> validators) throws SqlException {
-        final RecordMetadata metadata = rdr.getMetadata();
+    private void assertReader(TableReader reader, IntObjHashMap<CharSequence[]> expectedValues, IntObjHashMap<Validator> validators) throws SqlException {
+        final RecordMetadata metadata = reader.getMetadata();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             validators.get(i).reset();
         }
-        RecordCursor cursor = rdr.getCursor();
-        final Record record = cursor.getRecord();
-        int recordIndex = 0;
-        while (cursor.hasNext()) {
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                final StringSink readerSink = UpdateConcurrentTest.readerSink.get();
-                readerSink.clear();
-                TestUtils.printColumn(record, metadata, i, readerSink);
-                CharSequence[] expectedValueArray = expectedValues.get(i);
-                CharSequence expectedValue = expectedValueArray != null ? expectedValueArray[recordIndex] : null;
-                if (!validators.get(i).validate(expectedValue, readerSink)) {
-                    throw SqlException.$(0, "assertSql failed, recordIndex=").put(recordIndex)
-                            .put(", columnIndex=").put(i)
-                            .put(", expected=").put(expectedValue)
-                            .put(", actual=").put(readerSink);
+        try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
+            final Record record = cursor.getRecord();
+            int recordIndex = 0;
+            while (cursor.hasNext()) {
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    final StringSink readerSink = UpdateConcurrentTest.readerSink.get();
+                    readerSink.clear();
+                    CursorPrinter.printColumn(record, metadata, i, readerSink);
+                    CharSequence[] expectedValueArray = expectedValues.get(i);
+                    CharSequence expectedValue = expectedValueArray != null ? expectedValueArray[recordIndex] : null;
+                    if (!validators.get(i).validate(expectedValue, readerSink)) {
+                        throw SqlException.$(0, "assertSql failed, recordIndex=").put(recordIndex)
+                                .put(", columnIndex=").put(i)
+                                .put(", expected=").put(expectedValue)
+                                .put(", actual=").put(readerSink);
+                    }
                 }
+                recordIndex++;
             }
-            recordIndex++;
         }
     }
 
     private void testConcurrency(int numOfWriters, int numOfReaders, int numOfUpdates, PartitionMode partitionMode) throws Exception {
-        writerAsyncCommandBusyWaitTimeout = 20_000L; // On in CI Windows updates are particularly slow
-        writerAsyncCommandMaxTimeout = 30_000L;
+        setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 20000); // On in CI Windows updates are particularly slow
+        setProperty(CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000L);
+        node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 20_000L);
         spinLockTimeout = 20_000L;
         assertMemoryLeak(() -> {
             CyclicBarrier barrier = new CyclicBarrier(numOfWriters + numOfReaders);
@@ -150,15 +157,15 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
             AtomicInteger current = new AtomicInteger();
             ObjList<Thread> threads = new ObjList<>(numOfWriters + numOfReaders + 1);
 
-            compiler.compile("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, " + PartitionMode.getTimestampSeq(partitionMode) + ") ts," +
                     " 0 as x" +
                     " from long_sequence(5))" +
                     " timestamp(ts)" +
-                    (PartitionMode.isPartitioned(partitionMode) ? " partition by DAY" : ""), sqlExecutionContext);
+                    (PartitionMode.isPartitioned(partitionMode) ? " partition by DAY" : ""));
 
             Thread tick = new Thread(() -> {
-                while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
+                while (current.get() < numOfWriters * numOfUpdates && exceptions.isEmpty()) {
                     try (TableWriter tableWriter = getWriter(
                             "up"
                     )) {
@@ -174,8 +181,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
 
             for (int k = 0; k < numOfWriters; k++) {
                 Thread writer = new Thread(() -> {
-                    try {
-                        final SqlCompiler updateCompiler = new SqlCompiler(engine, snapshotAgent);
+                    try (SqlCompiler updateCompiler = engine.getSqlCompiler()) {
                         final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
                         barrier.await();
                         for (int i = 0; i < numOfUpdates; i++) {
@@ -187,12 +193,12 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                             }
                             current.incrementAndGet();
                         }
-                        updateCompiler.close();
                     } catch (Throwable th) {
                         LOG.error().$("writer error ").$(th).$();
                         exceptions.add(th);
+                    } finally {
+                        Path.clearThreadLocals();
                     }
-                    Path.clearThreadLocals();
                 });
                 threads.add(writer);
                 writer.start();
@@ -223,16 +229,14 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                     });
 
                     try {
-                        final SqlCompiler readerCompiler = new SqlCompiler(engine, snapshotAgent);
                         barrier.await();
                         try (TableReader rdr = getReader("up")) {
-                            while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
+                            while (current.get() < numOfWriters * numOfUpdates && exceptions.isEmpty()) {
                                 rdr.reload();
                                 assertReader(rdr, expectedValues, validators);
                                 Os.sleep(1);
                             }
                         }
-                        readerCompiler.close();
                     } catch (Throwable th) {
                         LOG.error().$("reader error ").$(th).$();
                         exceptions.add(th);
@@ -248,7 +252,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                 threads.get(i).join();
             }
 
-            if (exceptions.size() != 0) {
+            if (!exceptions.isEmpty()) {
                 Assert.fail(exceptions.poll().toString());
             }
         });

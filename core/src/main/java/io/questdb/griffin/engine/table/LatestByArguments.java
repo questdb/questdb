@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,9 +28,8 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 
 public final class LatestByArguments {
-    public static final long MEMORY_SIZE = 7 * 8;
-    private static final long FILTERED_SIZE_OFFSET = 6 * 8;
-    private static final long HASHES_ADDRESS_OFFSET = 5 * 8;
+    public static final long MEMORY_SIZE = 6 * 8;
+    private static final long FILTERED_SIZE_OFFSET = 5 * 8;
     private static final long KEY_HI_OFFSET = 8;
     private static final long KEY_LO_OFFSET = 0;
     private static final long ROWS_ADDRESS_OFFSET = 2 * 8;
@@ -47,10 +46,6 @@ public final class LatestByArguments {
 
     public static long getFilteredSize(long address) {
         return Unsafe.getUnsafe().getLong(address + FILTERED_SIZE_OFFSET);
-    }
-
-    public static long getHashesAddress(long address) {
-        return Unsafe.getUnsafe().getLong(address + HASHES_ADDRESS_OFFSET);
     }
 
     public static long getKeyHi(long address) {
@@ -83,10 +78,6 @@ public final class LatestByArguments {
 
     public static void setFilteredSize(long address, long size) {
         Unsafe.getUnsafe().putLong(address + FILTERED_SIZE_OFFSET, size);
-    }
-
-    public static void setHashesAddress(long address, long addr) {
-        Unsafe.getUnsafe().putLong(address + HASHES_ADDRESS_OFFSET, addr);
     }
 
     public static void setKeyHi(long address, long up) {

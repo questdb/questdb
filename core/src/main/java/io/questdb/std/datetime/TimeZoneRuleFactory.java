@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,7 +38,6 @@ import java.time.zone.ZoneRulesProvider;
 import java.util.Map;
 
 public class TimeZoneRuleFactory {
-
     public static final TimeZoneRuleFactory INSTANCE = new TimeZoneRuleFactory();
     public static final int RESOLUTION_MICROS = 1;
     public static final int RESOLUTION_MILLIS = 0;

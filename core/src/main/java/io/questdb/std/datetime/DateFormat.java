@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,8 @@ package io.questdb.std.datetime;
 
 import io.questdb.std.NumericException;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Instances of DateFormat do not have state. They are thread-safe. In that multiple threads can use
@@ -33,9 +35,9 @@ import io.questdb.std.str.CharSink;
  */
 public interface DateFormat {
 
-    void format(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink);
+    void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink);
 
-    long parse(CharSequence in, DateLocale locale) throws NumericException;
+    long parse(@NotNull CharSequence in, @NotNull DateLocale locale) throws NumericException;
 
-    long parse(CharSequence in, int lo, int hi, DateLocale locale) throws NumericException;
+    long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException;
 }

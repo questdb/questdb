@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,11 +33,10 @@ import java.net.Socket;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 class MockAlertTarget extends Thread {
-
     static final String ACK = "Ack";
     static final String DEATH_PILL = "]"; // /alert-manager-tpt.json ends with "]\n"
-
     private static final Log LOG = LogFactory.getLog(MockAlertTarget.class);
+    private static final int SO_TIMEOUT = 20_000;
     private final AtomicBoolean isRunning;
     private final Runnable onTargetEnd;
     private final Runnable onTargetStart;
@@ -66,7 +65,8 @@ class MockAlertTarget extends Thread {
                 // setup server socket and accept client
                 serverSkt = new ServerSocket(portNumber);
                 serverSkt.setReuseAddress(true);
-                serverSkt.setSoTimeout(5000);
+                serverSkt.setSoTimeout(SO_TIMEOUT);
+
                 if (portNumber == 0) {
                     portNumber = serverSkt.getLocalPort();
                 }
@@ -77,7 +77,7 @@ class MockAlertTarget extends Thread {
                 in = new BufferedReader(new InputStreamReader(clientSkt.getInputStream()));
                 out = new PrintWriter(clientSkt.getOutputStream(), true);
 
-                clientSkt.setSoTimeout(5000);
+                clientSkt.setSoTimeout(SO_TIMEOUT);
 
                 clientSkt.setTcpNoDelay(true);
                 clientSkt.setKeepAlive(false);

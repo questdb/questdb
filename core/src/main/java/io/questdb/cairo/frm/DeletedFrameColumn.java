@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.frm;
 
+import io.questdb.cairo.frm.file.RecycleBin;
+
 public class DeletedFrameColumn implements FrameColumn {
     public static final FrameColumn INSTANCE = new DeletedFrameColumn();
 
@@ -33,12 +35,12 @@ public class DeletedFrameColumn implements FrameColumn {
     }
 
     @Override
-    public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
+    public void append(long appendOffsetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void appendNulls(long offset, long count, int commitMode) {
+    public void appendNulls(long rowCount, long sourceColumnTop, int commitMode) {
         throw new UnsupportedOperationException();
     }
 
@@ -62,17 +64,31 @@ public class DeletedFrameColumn implements FrameColumn {
     }
 
     @Override
-    public int getPrimaryFd() {
+    public long getPrimaryFd() {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public int getSecondaryFd() {
+    public long getSecondaryFd() {
         throw new UnsupportedOperationException();
     }
 
     @Override
     public int getStorageType() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setRecycleBin(RecycleBin<FrameColumn> pool) {
+    }
+
+    @Override
+    public long getContiguousAuxAddr(long rowHi) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getContiguousDataAddr(long rowHi) {
         throw new UnsupportedOperationException();
     }
 }

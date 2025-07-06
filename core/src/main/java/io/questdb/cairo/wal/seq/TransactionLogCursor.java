@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,11 +26,22 @@ package io.questdb.cairo.wal.seq;
 
 import java.io.Closeable;
 
+/**
+ * Reads transaction log files.
+ * To start reading use {@code setPosition} method to set the starting position.
+ * To read a record use {@code hasNext} method.
+ */
 public interface TransactionLogCursor extends Closeable {
     @Override
     void close();
 
+    boolean extend();
+
     long getCommitTimestamp();
+
+    long getMaxTxn();
+
+    int getPartitionSize();
 
     int getSegmentId();
 
@@ -40,13 +51,23 @@ public interface TransactionLogCursor extends Closeable {
 
     long getTxn();
 
+    long getTxnMaxTimestamp();
+
+    long getTxnMinTimestamp();
+
+    long getTxnRowCount();
+
+    int getVersion();
+
     int getWalId();
 
     boolean hasNext();
 
-    boolean setPosition();
-
     void setPosition(long txn);
+
+    // Sets cursor to minimum available position.
+    // In case of chunked sequencer it will search for the min available position prior to the current position.
+    void toMinTxn();
 
     void toTop();
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -61,7 +61,7 @@ public final class GeoHashUtil {
                 throw SqlException.position(position)
                         .put("invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
         }
-        if (size < 1 || size > ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
+        if (size < 1 || size > ColumnType.GEOLONG_MAX_BITS) {
             throw SqlException.position(position)
                     .put("invalid GEOHASH type precision range, must be [1, 60] bits, provided=")
                     .put(size);
@@ -85,7 +85,7 @@ public final class GeoHashUtil {
                 // geohash from binary constant
                 // minus leading '##', truncates tail bits if over 60
                 int bits = len - 2;
-                if (bits <= ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
+                if (bits <= ColumnType.GEOLONG_MAX_BITS) {
                     return Constants.getGeoHashConstant(
                             GeoHashes.fromBitStringNl(tok, 2),
                             bits

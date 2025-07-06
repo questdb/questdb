@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,33 +24,25 @@
 
 package io.questdb.std;
 
+
 import java.util.Arrays;
 
 /**
- * Unlike {@link IntHashSet} doesn't keep an additional list for faster iteration and index-based access
- * and also has a slightly higher load factor.
+ * Specialized hash set for integers that uses a compact representation. Unlike {@link IntHashSet} it does not
+ * store a list of keys separately. This means that it is more memory efficient, but it also means that
+ * the order of keys is not preserved and the set does not support operations that require key order.
  */
 public class CompactIntHashSet extends AbstractIntHashSet {
 
-    private static final int MIN_INITIAL_CAPACITY = 16;
-
-    public CompactIntHashSet() {
-        this(MIN_INITIAL_CAPACITY);
-    }
-
-    public CompactIntHashSet(int initialCapacity) {
-        this(initialCapacity, 0.6, noEntryKey);
-    }
-
-    public CompactIntHashSet(int initialCapacity, double loadFactor, int noKeyValue) {
-        super(initialCapacity, loadFactor, noKeyValue);
+    public CompactIntHashSet(int initialCapacity, double loadFactor) {
+        super(initialCapacity, loadFactor);
         clear();
     }
 
     /**
      * Adds key to hash set preserving key uniqueness.
      *
-     * @param key immutable sequence of characters.
+     * @param key key to be added.
      * @return false if key is already in the set and true otherwise.
      */
     public boolean add(int key) {
@@ -70,72 +62,27 @@ public class CompactIntHashSet extends AbstractIntHashSet {
         }
     }
 
-    public boolean contains(int key) {
-        return keyIndex(key) < 0;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        CompactIntHashSet that = (CompactIntHashSet) o;
-        if (size() != that.size()) {
-            return false;
-        }
-        for (int i = 0, n = keys.length; i < n; i++) {
-            if (keys[i] != noEntryKeyValue && that.excludes(keys[i])) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    public boolean excludes(int key) {
-        return keyIndex(key) > -1;
-    }
-
-    @Override
-    public int hashCode() {
-        int hashCode = 0;
-        for (int i = 0, n = keys.length; i < n; i++) {
-            if (keys[i] != noEntryKeyValue) {
-                hashCode += keys[i];
-            }
-        }
-        return hashCode;
-    }
-
-    @Override
-    public int remove(int key) {
-        int keyIndex = keyIndex(key);
-        if (keyIndex < 0) {
-            removeAt(keyIndex);
-            return -keyIndex - 1;
-        }
-        return -1;
-    }
-
-    @Override
-    public String toString() {
-        return Arrays.toString(keys);
-    }
-
     private void rehash() {
+        int size = size();
         int newCapacity = capacity * 2;
         free = capacity = newCapacity;
         int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
+
         int[] oldKeys = keys;
-        keys = new int[len];
+        this.keys = new int[len];
         Arrays.fill(keys, noEntryKeyValue);
         mask = len - 1;
-        for (int i = 0, n = oldKeys.length; i < n; i++) {
+
+        free -= size;
+        for (int i = oldKeys.length; i-- > 0; ) {
             int key = oldKeys[i];
             if (key != noEntryKeyValue) {
-                keys[keyIndex(key)] = key;
-                free--;
+                final int index = keyIndex(key);
+                keys[index] = key;
             }
         }
     }
+
 
     @Override
     protected void erase(int index) {

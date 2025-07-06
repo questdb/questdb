@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,8 +27,11 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
 
+/**
+ * Note: this class only supports ASCII chars.
+ */
 public final class CharAdapter extends AbstractTypeAdapter {
 
     public static final CharAdapter INSTANCE = new CharAdapter();
@@ -42,15 +45,15 @@ public final class CharAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public boolean probe(DirectByteCharSequence text) {
-        if (text != null && text.length() == 1) {
-            return Character.isLetter(text.charAt(0));
+    public boolean probe(DirectUtf8Sequence text) {
+        if (text != null && text.size() == 1) {
+            return Character.isLetter(text.byteAt(0));
         }
         return false;
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
-        row.putChar(column, SqlKeywords.isNullKeyword(value) ? (char) 0 : value.charAt(0));
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
+        row.putChar(column, SqlKeywords.isNullKeyword(value) ? (char) 0 : (char) value.byteAt(0));
     }
 }

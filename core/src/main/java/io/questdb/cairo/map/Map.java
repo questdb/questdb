@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,20 +25,53 @@
 package io.questdb.cairo.map;
 
 import io.questdb.cairo.Reopenable;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.Mutable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
 public interface Map extends Mutable, Closeable, Reopenable {
+
     @Override
     void close();
 
-    RecordCursor getCursor();
+    MapRecordCursor getCursor();
+
+    @TestOnly
+    default long getHeapSize() {
+        return -1;
+    }
+
+    /**
+     * Returns full (physical) key capacity of the map ignoring the load factor.
+     */
+    @TestOnly
+    int getKeyCapacity();
 
     MapRecord getRecord();
 
+    /**
+     * Returns used heap size in bytes for maps that store keys and values separately like {@link OrderedMap}.
+     * Returns -1 if the map doesn't use heap.
+     */
+    default long getUsedHeapSize() {
+        return -1;
+    }
+
+    boolean isOpen();
+
+    void merge(Map srcMap, MapValueMergeFunction mergeFunc);
+
+    /**
+     * Reopens previously closed map with given key capacity and initial heap size.
+     * Key capacity is ignored if the map is not based on a hash table, e.g. {@link Unordered2Map}.
+     * Heap size value is ignored if the map does not use heap to store keys and values, e.g. {@link Unordered8Map}.
+     */
+    void reopen(int keyCapacity, long heapSize);
+
     void restoreInitialCapacity();
+
+    void setKeyCapacity(int keyCapacity);
 
     long size();
 

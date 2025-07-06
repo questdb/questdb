@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,7 +30,10 @@ import io.questdb.cairo.vm.MemoryPMARImpl;
 import io.questdb.cairo.vm.api.MemoryM;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -58,10 +61,10 @@ public class MemoryPMARImplTest {
             for (int thread = 0; thread < 10; thread++) {
                 Thread th = new Thread(() -> {
 
-                    try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
+                    try (Path path = new Path().of(temp.newFile().getAbsolutePath())) {
 
                         LOG.info().$(path).$();
-                        try (MemoryPARWImpl mem = new MemoryPMARImpl(ff, path, pageSize, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
+                        try (MemoryPARWImpl mem = new MemoryPMARImpl(ff, path.$(), pageSize, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
                             long pos;
 
                             mem.jumpTo(0);

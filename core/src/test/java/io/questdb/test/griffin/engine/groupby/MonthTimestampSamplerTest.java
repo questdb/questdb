@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class MonthTimestampSamplerTest {
+
     @Test
     public void testNextTimestamp() throws NumericException {
         MonthTimestampSampler sampler = new MonthTimestampSampler(1);
@@ -52,6 +53,29 @@ public class MonthTimestampSamplerTest {
         for (int i = 0; i < src.length; i++) {
             long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
             long nextTs = sampler.nextTimestamp(ts);
+            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(next[i]), nextTs);
+        }
+    }
+
+    @Test
+    public void testNextTimestampWithStep() throws NumericException {
+        MonthTimestampSampler sampler = new MonthTimestampSampler(1);
+
+        final String[] src = new String[]{
+                "2013-12-31T00:00:00.000000Z",
+                "2014-01-01T00:00:00.000000Z",
+                "2020-01-01T12:12:12.123456Z",
+        };
+        final String[] next = new String[]{
+                "2014-03-01T00:00:00.000000Z",
+                "2014-04-01T00:00:00.000000Z",
+                "2020-04-01T00:00:00.000000Z",
+        };
+        Assert.assertEquals(src.length, next.length);
+
+        for (int i = 0; i < src.length; i++) {
+            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
+            long nextTs = sampler.nextTimestamp(ts, 3);
             Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(next[i]), nextTs);
         }
     }

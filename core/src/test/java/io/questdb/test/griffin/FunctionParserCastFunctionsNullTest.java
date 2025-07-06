@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,19 +44,7 @@ import java.util.Collections;
 public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest {
 
     private static final FunctionFactory[] CAST_FUNCS = {
-            new CastBooleanToBooleanFunctionFactory(),
-            new CastByteToByteFunctionFactory(),
-            new CastShortToShortFunctionFactory(),
-            new CastIntToIntFunctionFactory(),
-            new CastLongToLongFunctionFactory(),
-            new CastDateToDateFunctionFactory(),
-            new CastTimestampToTimestampFunctionFactory(),
-            new CastFloatToFloatFunctionFactory(),
-            new CastDoubleToDoubleFunctionFactory(),
-            new CastStrToStrFunctionFactory(),
             new CastStrToBooleanFunctionFactory(),
-            new CastSymbolToSymbolFunctionFactory(),
-            new CastLong256ToLong256FunctionFactory(),
             new CastStrToGeoHashFunctionFactory(),
             new CastGeoHashToGeoHashFunctionFactory(),
             new CastNullTypeFunctionFactory(),
@@ -118,41 +106,36 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
 
     @Test
     public void testCastNullGeoHashMissingSize1() throws Exception {
-        assertFailure("cast(null as geohash())",
-                null,
+        assertException("cast(null as geohash())",
                 21,
                 "invalid GEOHASH, invalid type precision");
     }
 
     @Test
     public void testCastNullGeoHashMissingSize2() throws Exception {
-        assertFailure("cast(null as GEOHASH)",
-                null,
+        assertException("cast(null as GEOHASH)",
                 13,
                 "unsupported cast");
     }
 
     @Test
     public void testCastNullGeoHashMissingSize3() throws Exception {
-        assertFailure("cast(null as GEOHASH(21b)",
-                null,
+        assertException("cast(null as GEOHASH(21b)",
                 4,
                 "unbalanced (");
     }
 
     @Test
     public void testCastNullGeoHashMissingSize4() throws Exception {
-        assertFailure("cast(null as GEOHASH(21 b))",
-                null,
-                24,
-                "invalid GEOHASH, missing ')'");
+        assertException("cast(null as GEOHASH(21 b))",
+                21,
+                "invalid GEOHASH size units");
     }
 
     @Test
     public void testCastNullGeoHashMissingSize5() throws Exception {
-        assertFailure("cast(null as GEOHASH(c))",
-                null,
-                13,
+        assertException("cast(null as GEOHASH(c))",
+                21,
                 "invalid GEOHASH size, must be number followed by 'C' or 'B' character");
     }
 

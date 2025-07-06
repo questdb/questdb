@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -42,7 +43,6 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class CairoKeywordBenchmark {
-
 
     private final long memSize = "abcde.detached".length() + 1;
     private final StringSink sink = new StringSink();
@@ -64,10 +64,10 @@ public class CairoKeywordBenchmark {
     public void setup() {
         Os.init();
         mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
-        Chars.asciiStrCpy("wal.detached", mem);
+        Utf8s.strCpyAscii("wal.detached", mem);
         Unsafe.getUnsafe().putByte(mem + memSize - 1, (byte) 0);
         sink2.clear();
-        Chars.utf8toUtf16(mem, mem + memSize, sink2);
+        Utf8s.utf8ToUtf16(mem, mem + memSize, sink2);
     }
 
     @TearDown(Level.Iteration)
@@ -78,8 +78,18 @@ public class CairoKeywordBenchmark {
     @Benchmark
     public boolean testConventional() {
         sink.clear();
-        Chars.utf8toUtf16(mem, mem + memSize, sink);
+        Utf8s.utf8ToUtf16(mem, mem + memSize, sink);
         return Chars.endsWith(sink, ".detached");
+    }
+
+    @Benchmark
+    public boolean testFastPath() {
+        return CairoKeywords.isDetachedDirMarker(mem);
+    }
+
+    @Benchmark
+    public boolean testFullFatWal() {
+        return CairoKeywords.isWal(mem);
     }
 
     @Benchmark
@@ -90,15 +100,5 @@ public class CairoKeywordBenchmark {
     @Benchmark
     public boolean testHalfWal() {
         return Chars.startsWith(sink2, "wal");
-    }
-
-    @Benchmark
-    public boolean testFullFatWal() {
-        return CairoKeywords.isWal(mem);
-    }
-
-    @Benchmark
-    public boolean testFastPath() {
-        return CairoKeywords.isDetachedDirMarker(mem);
     }
 }

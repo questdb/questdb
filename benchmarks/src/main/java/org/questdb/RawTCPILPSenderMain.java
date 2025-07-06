@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,10 +25,10 @@
 package org.questdb;
 
 import io.questdb.network.Net;
-import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Utf8s;
 
 public class RawTCPILPSenderMain {
     public static void main(String[] args) {
@@ -37,8 +37,8 @@ public class RawTCPILPSenderMain {
 
         long mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         try {
-            Chars.asciiStrCpy(ilp, len, mem);
-            int fd = Net.socketTcp(true);
+            Utf8s.strCpyAscii(ilp, len, mem);
+            long fd = Net.socketTcp(true);
             if (fd != -1) {
                 if (Net.connect(fd, Net.sockaddr("127.0.0.1", 9009)) == 0) {
                     try {

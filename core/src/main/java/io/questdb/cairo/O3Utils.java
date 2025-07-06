@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,63 +24,51 @@
 
 package io.questdb.cairo;
 
-import io.questdb.MessageBus;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.cairo.sql.async.PageFrameReduceJob;
-import io.questdb.griffin.FunctionFactoryCache;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.WorkerPool;
-import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Vect;
 
 public class O3Utils {
 
     private static final Log LOG = LogFactory.getLog(O3Utils.class);
 
-    public static void setupWorkerPool(
-            WorkerPool workerPool,
-            CairoEngine cairoEngine,
-            @Nullable SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration,
-            @Nullable FunctionFactoryCache functionFactoryCache
-    ) throws SqlException {
-        final MessageBus messageBus = cairoEngine.getMessageBus();
-        final int workerCount = workerPool.getWorkerCount();
-        final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(messageBus, workerPool.getWorkerCount());
-        workerPool.assign(purgeDiscoveryJob);
+    public static void copyFixedSizeCol(
+            FilesFacade ff,
+            long srcAddr,
+            long srcLo,
+            long dstAddr,
+            long dstFixFileOffset,
+            long dstFd,
+            boolean mixedIOFlag,
+            long len,
+            int shl
+    ) {
+        final long fromAddress = srcAddr + (srcLo << shl);
+        o3Copy(ff, dstAddr, dstFixFileOffset, dstFd, fromAddress, len, mixedIOFlag);
+    }
 
-        // ColumnPurgeJob has expensive init (it creates a table), disable it in some tests.
-        if (!cairoEngine.getConfiguration().disableColumnPurgeJob()) {
-            final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine, functionFactoryCache);
-            workerPool.freeOnExit(columnPurgeJob);
-            workerPool.assign(columnPurgeJob);
-        }
-
-        workerPool.assign(new O3PartitionJob(messageBus));
-        workerPool.assign(new O3OpenColumnJob(messageBus));
-        workerPool.assign(new O3CopyJob(messageBus));
-        workerPool.assign(new O3CallbackJob(messageBus));
-        workerPool.freeOnExit(purgeDiscoveryJob);
-
-        final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
-        final NanosecondClock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();
-
-        for (int i = 0; i < workerCount; i++) {
-            // create job per worker to allow each worker to have
-            // own shard walk sequence
-            final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
-                    messageBus,
-                    new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks()),
-                    sqlExecutionCircuitBreakerConfiguration
-            );
-            workerPool.assign(i, pageFrameReduceJob);
-            workerPool.freeOnExit(pageFrameReduceJob);
+    public static void o3Copy(
+            FilesFacade ff,
+            long dstAddr,
+            long dstFileOffset,
+            long dstFd,
+            long fromAddress,
+            long len,
+            boolean mixedIOFlag
+    ) {
+        if (mixedIOFlag) {
+            if (ff.write(Math.abs(dstFd), fromAddress, len, dstFileOffset) != len) {
+                throw CairoException.critical(ff.errno()).put("cannot copy fixed column prefix [fd=")
+                        .put(dstFd).put(", len=").put(len).put(", offset=").put(fromAddress).put(']');
+            }
+        } else {
+            Vect.memcpy(dstAddr, fromAddress, len);
         }
     }
 
-    static void close(FilesFacade ff, int fd) {
+    static void close(FilesFacade ff, long fd) {
         if (fd > 0) {
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
             ff.close(fd);
@@ -96,33 +84,13 @@ public class O3Utils {
         Vect.copyFromTimestampIndex(src, srcLo, srcHi, dstAddr);
     }
 
-    static long findVarOffset(long srcFixAddr, long srcLo) {
-        long result = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
-        assert (srcLo == 0 && result == 0) || result > 0;
-        return result;
-    }
-
-    static long getVarColumnLength(long srcLo, long srcHi, long srcFixAddr) {
-        return findVarOffset(srcFixAddr, srcHi + 1) - findVarOffset(srcFixAddr, srcLo);
-    }
-
-    static void shiftCopyFixedSizeColumnData(
-            long shift,
-            long src,
-            long srcLo,
-            long srcHi,
-            long dstAddr
-    ) {
-        Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi, dstAddr);
-    }
-
     static void unmap(FilesFacade ff, long addr, long size) {
         if (addr != 0 && size > 0) {
             ff.munmap(addr, size, MemoryTag.MMAP_O3);
         }
     }
 
-    static void unmapAndClose(FilesFacade ff, int dstFixFd, long dstFixAddr, long dstFixSize) {
+    static void unmapAndClose(FilesFacade ff, long dstFixFd, long dstFixAddr, long dstFixSize) {
         unmap(ff, dstFixAddr, dstFixSize);
         close(ff, dstFixFd);
     }

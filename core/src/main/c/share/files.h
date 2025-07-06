@@ -143,6 +143,14 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readNonNegativeInt
 
 /*
  * Class:     com_questdb_std_Files
+ * Method:    readIntAsUnsignedLong
+ * Signature: (IJ)J
+ */
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readIntAsUnsignedLong
+        (JNIEnv *, jclass, jint, jlong);
+
+/*
+ * Class:     com_questdb_std_Files
  * Method:    readNonNegativeLong
  * Signature: (IJ)J
  */
@@ -163,7 +171,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_truncate
  * Signature: (IJ)Z
  */
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
-        (JNIEnv *, jclass, jint, jlong);        
+        (JNIEnv *, jclass, jint, jlong);
 
 /*
  * Class:     com_questdb_std_Files
@@ -220,9 +228,6 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
  */
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
         (JNIEnv *, jclass, jint, jlong, jlong, jlong, jlong, jint);
-
-JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
-        (jint, jlong, jlong, jlong, jlong, jint);
 
 /*
  * Class:     com_questdb_std_Files
@@ -360,6 +365,22 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename
         (JNIEnv *, jclass, jlong, jlong);
 
+/*
+ * Class:     com_questdb_std_Files
+ * Method:    getFileLimit
+ * Signature: ()J
+ */
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileLimit
+        (JNIEnv *, jclass);
+
+/*
+ * Class:     com_questdb_std_Files
+ * Method:    getMapCountLimit
+ * Signature: ()J
+ */
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getMapCountLimit
+        (JNIEnv *, jclass);
+
 // On Linux, read() (and similar system calls) will transfer at most 0x7ffff000 (2,147,479,552) bytes,
 // returning the number of bytes actually transferred or -1 depending on the platforms
 #define MAX_RW_COUNT 0x7ffff000
@@ -367,6 +388,8 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename
 #define FILES_RENAME_ERR_OK 0
 #define FILES_RENAME_ERR_EXDEV 1
 #define FILES_RENAME_ERR_OTHER 2
+
+#define FLAG_FS_SUPPORTED (-1)
 
 #ifdef __cplusplus
 }

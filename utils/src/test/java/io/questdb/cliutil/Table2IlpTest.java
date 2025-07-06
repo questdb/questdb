@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,62 +24,95 @@
 
 package io.questdb.cliutil;
 
+import io.questdb.DefaultServerConfiguration;
+import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
+import io.questdb.cutlass.http.HttpCookieHandler;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpHeaderParserFactory;
+import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.processors.JsonQueryProcessor;
+import io.questdb.cutlass.http.processors.LineHttpProcessorImpl;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
-import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.DefaultCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
+import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
-import org.junit.*;
+import org.junit.After;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.ClassRule;
+import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public class Table2IlpTest {
+    private static final int HTTP_PORT = 9900;
     private static final int ILP_PORT = 9909;
     private static final Log LOG = LogFactory.getLog(Table2IlpTest.class);
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
-    private static SqlCompiler compiler;
     private static DefaultCairoConfiguration configuration;
     private static CairoEngine engine;
-    private static PGWireServer pgServer;
+    private static HttpServer httpServer;
+    private static IPGWireServer pgServer;
     private static LineTcpReceiver receiver;
-    private static DatabaseSnapshotAgent snapshotAgent;
     private static SqlExecutionContextImpl sqlExecutionContext;
     private static WorkerPool workerPool;
 
+    public static void assertEventually(Runnable assertion, int timeoutSeconds) {
+        long maxSleepingTimeMillis = 1000;
+        long nextSleepingTimeMillis = 10;
+        long startTime = System.nanoTime();
+        long deadline = startTime + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        for (; ; ) {
+            try {
+                assertion.run();
+                return;
+            } catch (AssertionError error) {
+                if (System.nanoTime() >= deadline) {
+                    throw error;
+                }
+            }
+            Os.sleep(nextSleepingTimeMillis);
+            nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
+        }
+    }
+
     public static void createTestPath(CharSequence root) {
-        try (Path path = new Path().of(root).$()) {
-            if (Files.exists(path)) {
+        try (Path path = new Path().of(root)) {
+            if (Files.exists(path.$())) {
                 return;
             }
-            Files.mkdirs(path.of(root).slash$(), 509);
+            Files.mkdirs(path.of(root).slash(), 509);
         }
     }
 
     public static void removeTestPath(CharSequence root) {
         Path path = Path.getThreadLocal(root);
-        Files.rmdir(path.slash$());
+        Files.rmdir(path.slash(), true);
     }
 
     public static void setCairoStatic() {
@@ -96,11 +129,9 @@ public class Table2IlpTest {
         engine = new CairoEngine(configuration);
     }
 
-
     @BeforeClass
     public static void setUpStatic() throws SqlException {
         setCairoStatic();
-        compiler = new SqlCompiler(engine);
         BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(configuration);
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                 .with(
@@ -112,40 +143,31 @@ public class Table2IlpTest {
         bindVariableService.clear();
         final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
             @Override
+            public int getSendBufferSize() {
+                return 512;
+            }
+
+            @Override
             public int getWorkerCount() {
                 return 3;
             }
         };
 
-        CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
+        DefaultCircuitBreakerRegistry registry = new DefaultCircuitBreakerRegistry(conf, engine.getConfiguration());
 
         workerPool = new WorkerPool(conf);
-        snapshotAgent = new DatabaseSnapshotAgent(engine);
-        pgServer = new PGWireServer(
+        pgServer = IPGWireServer.newInstance(
                 conf,
                 engine,
                 workerPool,
-                compiler.getFunctionFactoryCache(),
-                snapshotAgent,
-                new PGWireServer.PGConnectionContextFactory(
-                        engine,
-                        conf,
-                        registry,
-                        () -> new SqlExecutionContextImpl(engine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
-                ),
-                registry
+                registry,
+                () -> new SqlExecutionContextImpl(engine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
         );
 
-        final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
+        receiver = new LineTcpReceiver(new DefaultLineTcpReceiverConfiguration(configuration) {
+            @Override
             public int getBindPort() {
                 return ILP_PORT;
-            }
-        };
-
-        receiver = new LineTcpReceiver(new DefaultLineTcpReceiverConfiguration() {
-            @Override
-            public IODispatcherConfiguration getDispatcherConfiguration() {
-                return ioDispatcherConfiguration;
             }
 
             @Override
@@ -158,34 +180,52 @@ public class Table2IlpTest {
                 return 500;
             }
         }, engine, workerPool, workerPool);
-        O3Utils.setupWorkerPool(workerPool, engine, null, null);
+        WorkerPoolUtils.setupWriterJobs(workerPool, engine);
+
+        httpServer = createHttpServer(
+                new DefaultServerConfiguration(root) {
+                    @Override
+                    public HttpFullFatServerConfiguration getHttpServerConfiguration() {
+                        return new DefaultHttpServerConfiguration(configuration) {
+                            @Override
+                            public int getBindPort() {
+                                return HTTP_PORT;
+                            }
+                        };
+                    }
+                },
+                engine,
+                workerPool,
+                1
+        );
+
         workerPool.start(LOG);
     }
 
     @AfterClass
     public static void tearDownStatic() {
         sqlExecutionContext.close();
-        compiler.close();
         workerPool.halt();
         receiver.close();
         pgServer.close();
-        snapshotAgent.close();
         engine.close();
+        httpServer.close();
     }
 
     @Test
     public void copyAllColumnTypes() throws SqlException, InterruptedException {
         String tableNameSrc = "src";
-        createTable(tableNameSrc, 20000);
+        createTable(tableNameSrc, 40_000, false);
 
         String tableNameDst = "dst";
-        createTable(tableNameDst, 1);
-        compiler.compile("truncate table " + tableNameDst, sqlExecutionContext);
+        createTable(tableNameDst, 1, false);
+        engine.execute("truncate table " + tableNameDst, sqlExecutionContext);
 
         addColumn(tableNameSrc, tableNameDst, "nullint", "int");
         addColumn(tableNameSrc, tableNameDst, "nulllong", "long");
         addColumn(tableNameSrc, tableNameDst, "nullts", "timestamp");
         addColumn(tableNameSrc, tableNameDst, "nullstr", "string");
+        addColumn(tableNameSrc, tableNameDst, "nulluuid", "uuid");
 
         Table2Ilp.Table2IlpParams params = Table2Ilp.Table2IlpParams.parse(
                 new String[]{
@@ -202,17 +242,55 @@ public class Table2IlpTest {
         new Table2IlpCopier().copyTable(params);
         done.await();
 
-        TestUtils.assertEquals(compiler, sqlExecutionContext, tableNameSrc, tableNameDst);
+        assertEventually(() -> {
+            try {
+                TestUtils.assertEquals(engine, sqlExecutionContext, tableNameSrc, tableNameDst);
+            } catch (SqlException e) {
+                throw new RuntimeException(e);
+            }
+        }, 60);
+    }
+
+    @Test
+    public void copyAllColumnTypesHttp() throws SqlException {
+        String tableNameSrc = "src";
+        createTable(tableNameSrc, 40_000, false);
+
+        String tableNameDst = "dst";
+        createTable(tableNameDst, 1, true);
+        engine.execute("truncate table " + tableNameDst, sqlExecutionContext);
+
+        addColumn(tableNameSrc, tableNameDst, "nullint", "int");
+        addColumn(tableNameSrc, tableNameDst, "nulllong", "long");
+        addColumn(tableNameSrc, tableNameDst, "nullts", "timestamp");
+        addColumn(tableNameSrc, tableNameDst, "nullstr", "string");
+        addColumn(tableNameSrc, tableNameDst, "nulluuid", "uuid");
+
+        Table2Ilp.Table2IlpParams params = Table2Ilp.Table2IlpParams.parse(
+                new String[]{
+                        "-s", tableNameSrc,
+                        "-d", tableNameDst,
+                        "-sc", "jdbc:postgresql://localhost:8812/qdb?ssl=false&user=admin&password=quest",
+                        "-dilp", "http::addr=localhost:" + HTTP_PORT + ";auto_flush_rows=1000;",
+                        "-sym", "sym_col,sym_col_2",
+                        "-sts", "ts",
+                }
+        );
+        new Table2IlpCopier().copyTable(params);
+
+        ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 1, 1);
+        job.run(0);
+        TestUtils.assertEquals(engine, sqlExecutionContext, tableNameSrc, tableNameDst);
     }
 
     @Test
     public void copyWithOffset() throws SqlException, InterruptedException {
         String tableNameSrc = "src";
-        createTable(tableNameSrc, 20000);
+        createTable(tableNameSrc, 20000, false);
 
         String tableNameDst = "dst";
-        createTable(tableNameDst, 1);
-        compiler.compile("truncate table " + tableNameDst, sqlExecutionContext);
+        createTable(tableNameDst, 1, false);
+        engine.execute("truncate table " + tableNameDst, sqlExecutionContext);
 
         addColumn(tableNameSrc, tableNameDst, "nullint", "int");
         addColumn(tableNameSrc, tableNameDst, "nulllong", "long");
@@ -234,7 +312,13 @@ public class Table2IlpTest {
         Assert.assertEquals(10568 - 189, rowsSent);
         done.await();
 
-        TestUtils.assertEquals(compiler, sqlExecutionContext, sourceQuery, tableNameDst);
+        assertEventually(() -> {
+            try {
+                TestUtils.assertEquals(engine, sqlExecutionContext, sourceQuery, tableNameDst);
+            } catch (SqlException e) {
+                throw new RuntimeException(e);
+            }
+        }, 60);
     }
 
     @Before
@@ -266,6 +350,24 @@ public class Table2IlpTest {
         );
 
         Assert.assertFalse(params.isValid());
+    }
+
+    @Test
+    public void testCommandLineHttp() {
+        Table2Ilp.Table2IlpParams params = Table2Ilp.Table2IlpParams.parse(
+                new String[]{
+                        "-s", "a",
+                        "-d", "b",
+                        "-sc", "jdbc:postgresql://localhost:8812/qdb?ssl=false&user=admin&password=quest",
+                        "-dilp", " http::addr=localhost:" + HTTP_PORT + ";auto_flush_rows=1000;",
+                        "-sts", "ts",
+                        "-dtls"
+                }
+        );
+
+        Assert.assertTrue(params.isValid());
+        Assert.assertTrue(params.enableDestinationTls());
+        Assert.assertEquals("http::addr=localhost:" + HTTP_PORT + ";auto_flush_rows=1000;", params.getDestinationIlpConnection());
     }
 
     @Test
@@ -374,16 +476,62 @@ public class Table2IlpTest {
 
         Assert.assertTrue(params.isValid());
         Assert.assertNotNull(params.getSymbols());
-        Assert.assertEquals(params.getSymbols().length, 0);
+        Assert.assertEquals(0, params.getSymbols().length);
     }
 
     private static void addColumn(String tableNameSrc, String tableNameDst, String name, String type) throws SqlException {
-        compiler.compile("alter table " + tableNameSrc + " add column " + name + " " + type, sqlExecutionContext);
-        compiler.compile("alter table " + tableNameDst + " add column " + name + " " + type, sqlExecutionContext);
+        engine.execute("alter table " + tableNameSrc + " add column " + name + " " + type, sqlExecutionContext);
+        engine.execute("alter table " + tableNameDst + " add column " + name + " " + type, sqlExecutionContext);
     }
 
-    private static void createTable(String tableName, int rows) throws SqlException {
-        compiler.compile(
+    private static HttpServer createHttpServer(
+            ServerConfiguration serverConfiguration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            int sharedWorkerCount
+    ) {
+        final HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
+        if (!httpServerConfiguration.isEnabled()) {
+            return null;
+        }
+
+        final HttpCookieHandler cookieHandler = serverConfiguration.getFactoryProvider().getHttpCookieHandler();
+        final HttpHeaderParserFactory headerParserFactory = serverConfiguration.getFactoryProvider().getHttpHeaderParserFactory();
+        final HttpServer server = new HttpServer(
+                httpServerConfiguration,
+                workerPool,
+                serverConfiguration.getFactoryProvider().getHttpSocketFactory(),
+                cookieHandler,
+                headerParserFactory
+        );
+        HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
+                httpServerConfiguration.getJsonQueryProcessorConfiguration(),
+                cairoEngine,
+                workerPool.getWorkerCount(),
+                sharedWorkerCount
+        );
+
+        HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
+                cairoEngine,
+                httpServerConfiguration.getRecvBufferSize(),
+                httpServerConfiguration.getSendBufferSize(),
+                httpServerConfiguration.getLineHttpProcessorConfiguration()
+        );
+
+        HttpServer.addDefaultEndpoints(
+                server,
+                serverConfiguration,
+                cairoEngine,
+                workerPool,
+                sharedWorkerCount,
+                jsonQueryProcessorBuilder,
+                ilpV2WriteProcessorBuilder
+        );
+        return server;
+    }
+
+    private static void createTable(String tableName, int rows, boolean isWAL) throws SqlException {
+        engine.execute(
                 "create table " + tableName + " as (select" +
                         " cast(x as int) kk, " +
                         " rnd_int() a," +
@@ -402,7 +550,7 @@ public class Table2IlpTest {
                         " rnd_geohash(5) geo8," +
                         // " rnd_geohash(11) geo16," + -- non char geo hashes cannot be sent in ILP, SELECT can convert them to string as a workaround
                         " rnd_str(5,16,2) n" +
-                        " from long_sequence(" + rows + ")) timestamp(ts) partition by DAY",
+                        " from long_sequence(" + rows + ")) timestamp(ts) partition by DAY " + (isWAL ? "WAL" : "BYPASS WAL"),
                 sqlExecutionContext
         );
     }

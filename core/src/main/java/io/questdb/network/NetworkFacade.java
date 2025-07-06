@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,31 +29,33 @@ import io.questdb.std.str.LPSZ;
 
 public interface NetworkFacade {
 
-    void abortAccept(int fd);
+    void abortAccept(long fd);
 
-    int accept(int serverFd);
+    long accept(long serverFd);
 
-    boolean bindTcp(int fd, int address, int port);
+    boolean bindTcp(long fd, int address, int port);
 
-    boolean bindTcp(int fd, CharSequence ipv4Address, int port);
+    boolean bindTcp(long fd, CharSequence ipv4Address, int port);
 
-    boolean bindUdp(int fd, int ipv4Address, int port);
+    boolean bindUdp(long fd, int ipv4Address, int port);
 
-    void bumpFdCount(int fd);
+    long bumpFdCount(int fd);
 
-    int close(int fd);
+    int close(long fd);
 
-    void close(int fd, Log logger);
+    void close(long fd, Log logger);
 
-    int configureLinger(int fd, int seconds);
+    void configureKeepAlive(long fd);
 
-    void configureNoLinger(int fd);
+    int configureLinger(long fd, int seconds);
 
-    int configureNonBlocking(int fd);
+    void configureNoLinger(long fd);
 
-    int connect(int fd, long pSockaddr);
+    int configureNonBlocking(long fd);
 
-    int connectAddrInfo(int fd, long pAddrInfo);
+    int connect(long fd, long pSockaddr);
+
+    int connectAddrInfo(long fd, long pAddrInfo);
 
     int errno();
 
@@ -71,58 +73,58 @@ public interface NetworkFacade {
 
     long getMMsgBufLen(long msg);
 
-    long getPeerIP(int fd);
+    long getPeerIP(long fd);
 
-    int getSndBuf(int fd);
+    int getSndBuf(long fd);
 
-    boolean join(int fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address);
+    boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address);
 
-    boolean join(int fd, int bindIPv4, int groupIPv4);
+    boolean join(long fd, int bindIPv4, int groupIPv4);
 
-    void listen(int serverFd, int backlog);
+    void listen(long serverFd, int backlog);
 
     long msgHeaders(int msgBufferSize, int msgCount);
 
     int parseIPv4(CharSequence ipv4Address);
 
-    int peek(int fd, long buffer, int bufferLen);
+    int peekRaw(long fd, long buffer, int bufferLen);
 
-    int recv(int fd, long buffer, int bufferLen);
+    int recvRaw(long fd, long buffer, int bufferLen);
 
     @SuppressWarnings("SpellCheckingInspection")
-    int recvmmsg(int fd, long msgVec, int msgCount);
+    int recvmmsgRaw(long fd, long msgVec, int msgCount);
 
-    int resolvePort(int fd);
+    int resolvePort(long fd);
 
-    int send(int fd, long buffer, int bufferLen);
+    int sendRaw(long fd, long buffer, int bufferLen);
 
-    int sendTo(int fd, long lo, int len, long socketAddress);
+    int sendToRaw(long fd, long lo, int len, long socketAddress);
 
-    int setMulticastInterface(int fd, CharSequence address);
+    int setMulticastInterface(long fd, CharSequence address);
 
-    int setMulticastInterface(int fd, int ipv4Address);
+    int setMulticastInterface(long fd, int ipv4Address);
 
-    int setMulticastLoop(int fd, boolean loop);
+    int setMulticastLoop(long fd, boolean loop);
 
-    int setMulticastTtl(int fd, int ttl);
+    int setMulticastTtl(long fd, int ttl);
 
-    int setRcvBuf(int fd, int size);
+    int setRcvBuf(long fd, int size);
 
-    int setReusePort(int fd);
+    int setReusePort(long fd);
 
-    boolean setSndBuf(int fd, int size);
+    boolean setSndBuf(long fd, int size);
 
-    int setTcpNoDelay(int fd, boolean noDelay);
+    int setTcpNoDelay(long fd, boolean noDelay);
 
-    int shutdown(int fd, int how);
+    int shutdown(long fd, int how);
 
     long sockaddr(int address, int port);
 
     long sockaddr(CharSequence address, int port);
 
-    int socketTcp(boolean blocking);
+    long socketTcp(boolean blocking);
 
-    int socketUdp();
+    long socketUdp();
 
     /**
      * Returns true if a disconnect happened, false otherwise.
@@ -132,5 +134,5 @@ public interface NetworkFacade {
      * @param bufferSize test buffer size
      * @return true if a disconnect happened, false otherwise
      */
-    boolean testConnection(int fd, long buffer, int bufferSize);
+    boolean testConnection(long fd, long buffer, int bufferSize);
 }

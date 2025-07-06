@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,11 +36,15 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.Files;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class TouchTableFunctionFactory implements FunctionFactory {
 
@@ -62,7 +66,7 @@ public class TouchTableFunctionFactory implements FunctionFactory {
 
         // factory belongs to the function, do not close
         final RecordCursorFactory recordCursorFactory = function.getRecordCursorFactory();
-        if (recordCursorFactory == null || !recordCursorFactory.supportPageFrameCursor()) {
+        if (recordCursorFactory == null || !recordCursorFactory.supportsPageFrameCursor()) {
             throw SqlException.$(pos, "query does not support framing execution and cannot be pre-touched");
         }
 
@@ -95,27 +99,16 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
-            touchTable();
-            sink.put("{\"data_pages\": ")
-                    .put(dataPages)
-                    .put(", \"index_key_pages\":")
-                    .put(indexKeyPages)
-                    .put(", \"index_values_pages\": ")
-                    .put(indexValuePages).put("}");
-        }
-
-        @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             sinkA.clear();
-            getStr(rec, sinkA);
+            getStr(sinkA);
             return sinkA;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
             sinkB.clear();
-            getStr(rec, sinkB);
+            getStr(sinkB);
             return sinkB;
         }
 
@@ -125,10 +118,25 @@ public class TouchTableFunctionFactory implements FunctionFactory {
             this.sqlExecutionContext = executionContext;
         }
 
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
         private void clearCounters() {
             dataPages = 0;
             indexKeyPages = 0;
             indexValuePages = 0;
+        }
+
+        private void getStr(Utf16Sink utf16Sink) {
+            touchTable();
+            utf16Sink.put("{\"data_pages\": ")
+                    .put(dataPages)
+                    .put(", \"index_key_pages\":")
+                    .put(indexKeyPages)
+                    .put(", \"index_values_pages\": ")
+                    .put(indexValuePages).put("}");
         }
 
         private long touchMemory(long pageSize, long baseAddress, long memorySize) {

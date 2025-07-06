@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,12 +27,12 @@ package io.questdb.test.griffin;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class TrailingDigitsTest extends AbstractGriffinTest {
+public class TrailingDigitsTest extends AbstractCairoTest {
     /**
      * Test if output contains trailing digits with a simple test case.
      */
@@ -41,7 +41,7 @@ public class TrailingDigitsTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     TestUtils.printSql(
-                            compiler,
+                            engine,
                             sqlExecutionContext,
                             "select * from (select 111.1111111 as val)",
                             sink
@@ -81,7 +81,7 @@ public class TrailingDigitsTest extends AbstractGriffinTest {
             String numStr = new String(s);
             String expected = "val\n" + numStr + "\n";
             TestUtils.printSql(
-                    compiler,
+                    engine,
                     sqlExecutionContext,
                     "select * from (select " + numStr + " as val)",
                     sink

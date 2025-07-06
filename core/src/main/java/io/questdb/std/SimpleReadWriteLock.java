@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ import java.util.concurrent.locks.ReadWriteLock;
 
 /**
  * This lock is not reentrant.
- * If a thread holds a write lock and it tries to grab a lock again it will deadlock.
+ * If a thread holds a write lock, and it tries to grab a lock again it will deadlock.
  * If a thread holding a read lock tries to upgrade its lock to a write lock it must first release its read lock or it will deadlock.
  * Threads waiting on a write lock have priority over threads waiting on a read lock.
  * Threads waiting on a write lock are not resumed fairly.
@@ -50,13 +50,17 @@ public class SimpleReadWriteLock implements ReadWriteLock {
     private final ReadLock readLock = new ReadLock();
     private final WriteLock writeLock = new WriteLock();
 
+    public boolean isWriteLocked() {
+        return lock.get();
+    }
+
     @Override
-    public Lock readLock() {
+    public @NotNull Lock readLock() {
         return readLock;
     }
 
     @Override
-    public Lock writeLock() {
+    public @NotNull Lock writeLock() {
         return writeLock;
     }
 
@@ -65,7 +69,7 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         public void lock() {
             while (nReaders.incrementAndGet() >= MAX_READERS) {
                 nReaders.decrementAndGet();
-                Os.pause();
+                Thread.yield();
             }
         }
 
@@ -75,7 +79,7 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         }
 
         @Override
-        public Condition newCondition() {
+        public @NotNull Condition newCondition() {
             throw new UnsupportedOperationException();
         }
 
@@ -99,7 +103,7 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         @Override
         public void lock() {
             while (!lock.compareAndSet(false, true)) {
-                Os.pause();
+                Thread.yield();
             }
             int n = nReaders.addAndGet(MAX_READERS);
             while (n != MAX_READERS) {
@@ -113,7 +117,7 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         }
 
         @Override
-        public Condition newCondition() {
+        public @NotNull Condition newCondition() {
             throw new UnsupportedOperationException();
         }
 
@@ -141,6 +145,5 @@ public class SimpleReadWriteLock implements ReadWriteLock {
             nReaders.addAndGet(-MAX_READERS);
             lock.set(false);
         }
-
     }
 }

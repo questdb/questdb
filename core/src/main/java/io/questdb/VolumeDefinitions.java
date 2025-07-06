@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,18 +27,26 @@ package io.questdb;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Mutable;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
-public class VolumeDefinitions {
-
+public class VolumeDefinitions implements Mutable {
     private static final char SEPARATOR = ',';
-
     private final LowerCaseCharSequenceObjHashMap<String> aliasToVolumeRoot = new LowerCaseCharSequenceObjHashMap<>(4);
     private int hi;
     private int limit;
     private int lo;
+
+    @TestOnly
+    @Override
+    public void clear() {
+        aliasToVolumeRoot.clear();
+        lo = hi = limit = 0;
+    }
 
     public void forEach(LowerCaseCharSequenceObjHashMap.CharSequenceObjConsumer<String> action) {
         aliasToVolumeRoot.forEach(action);
@@ -79,6 +87,17 @@ public class VolumeDefinitions {
         return aliasToVolumeRoot.get(alias);
     }
 
+    public @Nullable CharSequence resolvePath(@NotNull CharSequence path) {
+        for (int i = 0, n = aliasToVolumeRoot.keys().size(); i < n; i++) {
+            final CharSequence candidateAlias = aliasToVolumeRoot.keys().get(i);
+            final CharSequence candidatePath = aliasToVolumeRoot.get(candidateAlias);
+            if (Chars.equals(candidatePath, path)) {
+                return candidateAlias;
+            }
+        }
+        return null;
+    }
+
     private void addVolumeDefinition(String alias, CharSequence volumePath, Path path, String root) throws ServerConfigurationException {
         int len = volumePath.length();
         if (len > 0 && volumePath.charAt(len - 1) == Files.SEPARATOR) {
@@ -87,7 +106,7 @@ public class VolumeDefinitions {
         if (!Files.isDirOrSoftLinkDir(path.of(volumePath, 0, len).$())) {
             throw new ServerConfigurationException("inaccessible volume [path=" + volumePath + ']');
         }
-        String volumeRoot = Chars.toString(path);
+        String volumeRoot = Utf8s.toString(path);
         if (volumeRoot.equals(root)) {
             throw new ServerConfigurationException("standard volume cannot have an alias [alias=" + alias + ", root=" + root + ']');
         }

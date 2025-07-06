@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,9 +24,15 @@
 
 package io.questdb.test.fuzz;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.std.LongList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
 
-public interface FuzzTransactionOperation {
-    boolean apply(Rnd rnd, TableWriterAPI tableWriter, int virtualTimestampIndex);
+public interface FuzzTransactionOperation extends QuietCloseable {
+    boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex, LongList excludedTsIntervals);
+
+    default void close() {
+    }
 }

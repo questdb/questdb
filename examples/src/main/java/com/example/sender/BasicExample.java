@@ -4,16 +4,18 @@ import io.questdb.client.Sender;
 
 public class BasicExample {
     public static void main(String[] args) {
-        try (Sender sender = Sender.builder().address("localhost:9009").build()) {
-            sender.table("inventors")
-                    .symbol("born", "Austrian Empire")
-                    .longColumn("id", 0)
-                    .stringColumn("name", "Nicola Tesla")
+        try (Sender sender = Sender.fromConfig("tcp::addr=localhost:9009;")) {
+            sender.table("trades")
+                    .symbol("symbol", "ETH-USD")
+                    .symbol("side", "sell")
+                    .doubleColumn("price", 2615.54)
+                    .doubleColumn("amount", 0.00044)
                     .atNow();
-            sender.table("inventors")
-                    .symbol("born", "USA")
-                    .longColumn("id", 1)
-                    .stringColumn("name", "Thomas Alva Edison")
+            sender.table("trades")
+                    .symbol("symbol", "TC-USD")
+                    .symbol("side", "sell")
+                    .doubleColumn("price", 39269.98)
+                    .doubleColumn("amount", 0.001)
                     .atNow();
         }
     }

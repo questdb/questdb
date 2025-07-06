@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,24 +30,24 @@ import io.questdb.std.ObjList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3Basket implements Mutable {
-    private final ObjList<BitmapIndexWriter> indexers = new ObjList<BitmapIndexWriter>();
-    private final ObjList<AtomicInteger> partCounters = new ObjList<AtomicInteger>();
+    private final ObjList<BitmapIndexWriter> indexers = new ObjList<>();
+    private final ObjList<AtomicInteger> partCounters = new ObjList<>();
     private int columnCount;
     private int indexCount;
     private int indexerPointer;
     private int partCounterPointer;
 
+    public void checkCapacity(CairoConfiguration configuration, int columnCount, int indexCount) {
+        if (this.columnCount == columnCount && this.indexCount == indexCount) {
+            return;
+        }
+        checkCapacity0(configuration, columnCount, indexCount);
+    }
+
     @Override
     public void clear() {
         indexerPointer = 0;
         partCounterPointer = 0;
-    }
-
-    public void ensureCapacity(CairoConfiguration configuration, int columnCount, int indexCount) {
-        if (this.columnCount == columnCount && this.indexCount == indexCount) {
-            return;
-        }
-        ensureCapacity0(configuration, columnCount, indexCount);
     }
 
     public BitmapIndexWriter nextIndexer() {
@@ -58,7 +58,7 @@ public class O3Basket implements Mutable {
         return partCounters.getQuick(partCounterPointer++);
     }
 
-    private void ensureCapacity0(CairoConfiguration configuration, int columnCount, int indexCount) {
+    private void checkCapacity0(CairoConfiguration configuration, int columnCount, int indexCount) {
         if (this.columnCount < columnCount) {
             for (int i = this.columnCount; i < columnCount; i++) {
                 partCounters.add(new O3MutableAtomicInteger());

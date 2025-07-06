@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,8 +38,7 @@ import java.lang.management.ThreadMXBean;
 
 @RunListener.ThreadSafe
 public class TestListener extends RunListener {
-    private final static Log LOG = LogFactory.getLog(TestListener.class);
-
+    private static final Log LOG = LogFactory.getLog(TestListener.class);
     long testStartMs = -1;
 
     public static void dumpThreadStacks() {
@@ -66,9 +65,9 @@ public class TestListener extends RunListener {
     public void testAssumptionFailure(Failure failure) {
         Description description = failure.getDescription();
         LOG.error()
-                .$("***** Test Failed *****")
-                .$(description.getClassName()).$('.')
-                .$(description.getMethodName())
+                .$("***** Test Assumption Violated ***** ")
+                .$safe(description.getClassName()).$('.')
+                .$safe(description.getMethodName())
                 .$(" duration_ms=")
                 .$(getTestDuration())
                 .$(" : ")
@@ -77,18 +76,33 @@ public class TestListener extends RunListener {
 
     @Override
     public void testFailure(Failure failure) {
-        testAssumptionFailure(failure);
+        Description description = failure.getDescription();
+        LOG.error()
+                .$("***** Test Failed ***** ")
+                .$safe(description.getClassName()).$('.')
+                .$safe(description.getMethodName())
+                .$(" duration_ms=").$(getTestDuration())
+                .$(" : ")
+                .$(failure.getException()).$();
     }
 
     @Override
     public void testFinished(Description description) {
-        LOG.infoW().$("<<<< ").$(description.getClassName()).$('.').$(description.getMethodName()).$(" duration_ms=").$(getTestDuration()).$();
+        LOG.infoW().$("<<<< ")
+                .$safe(description.getClassName()).$('.')
+                .$safe(description.getMethodName())
+                .$(" duration_ms=").$(getTestDuration()).$();
+        System.out.println("<<<<= " + description.getClassName() + '.' + description.getMethodName() + " duration_ms=" + getTestDuration());
     }
 
     @Override
     public void testStarted(Description description) {
         testStartMs = System.currentTimeMillis();
-        LOG.infoW().$(">>>> ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
+        LOG.infoW().$(">>>> ")
+                .$safe(description.getClassName()).$('.')
+                .$safe(description.getMethodName())
+                .$();
+        System.out.println(">>>>= " + description.getClassName() + '.' + description.getMethodName());
     }
 
     private long getTestDuration() {
@@ -104,7 +118,7 @@ public class TestListener extends RunListener {
                 }
             } catch (Throwable t) {
                 System.out.println("Thread dumper failed!");
-                t.printStackTrace();
+                t.printStackTrace(System.out);
             }
         });
 

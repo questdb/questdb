@@ -7,27 +7,46 @@ jobs:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
-          jdk: "1.11"
-          testset: "coverage"
+          jdk: "1.17"
+          testset: "coverage-griffin"
           includeTests: "**/griffin/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        linux-fuzz:
+          imageName: "ubuntu-latest"
+          poolName: "Azure Pipelines"
+          os: Linux
+          jdk: "1.17"
+          testset: "coverage-fuzz"
+          includeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         linux-cairo:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
-          jdk: "1.11"
-          testset: "coverage"
+          jdk: "1.17"
+          testset: "coverage-cairo"
           includeTests: "**/cairo/**"
+          excludeTests: "**/O3*Test**,**/**Fuzz**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        linux-pgwire:
+          imageName: "ubuntu-latest"
+          poolName: "Azure Pipelines"
+          os: Linux
+          jdk: "1.17"
+          testset: "coverage-cutlass"
+          includeTests: "**/pgwire/**/*.java"
           javadoc_step: ""
           javadoc_profile: ""
         linux-other:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
-          jdk: "1.11"
-          testset: "coverage"
-          excludeTests: "**/griffin/**,**/cairo/**"
+          jdk: "1.17"
+          testset: "coverage-other"
+          excludeTests: "**/griffin/**,**/cairo/**,**/pgwire/**"
           javadoc_step: ""
           javadoc_profile: ""
     pool:
@@ -35,9 +54,11 @@ jobs:
       name: $(poolName)
     timeoutInMinutes: 60
     variables:
-      SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
+      SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
+      RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
       COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
       CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
+      DIFF_COVER_THRESHOLD_PCT: 50
       ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
     steps:
       - template: steps.yml

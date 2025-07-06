@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,27 +24,30 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlException;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class DBeaverTest extends AbstractGriffinTest {
+public class DBeaverTest extends AbstractCairoTest {
+
     @Test
-    public void testDotNetGetTypes() throws SqlException {
-        assertQuery12(
+    public void testDotNetGetTypes() throws Exception {
+        assertQuery(
                 "nspname\toid\ttypnamespace\ttypname\ttyptype\ttyprelid\ttypnotnull\trelkind\telemtypoid\telemtypname\telemrelkind\telemtyptype\tord\n" +
-                        "public\t1043\t2200\tvarchar\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t1114\t2200\ttimestamp\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t701\t2200\tfloat8\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t700\t2200\tfloat4\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t23\t2200\tint4\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t21\t2200\tint2\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t18\t2200\tchar\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t20\t2200\tint8\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t16\t2200\tbool\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t17\t2200\tbinary\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t1082\t2200\tdate\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t2950\t2200\tuuid\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n",
+                        "pg_catalog\t1043\t11\tvarchar\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "pg_catalog\t1114\t11\ttimestamp\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "pg_catalog\t701\t11\tfloat8\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "pg_catalog\t700\t11\tfloat4\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "pg_catalog\t23\t11\tint4\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "pg_catalog\t21\t11\tint2\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "pg_catalog\t1042\t11\tbpchar\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "pg_catalog\t20\t11\tint8\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "pg_catalog\t16\t11\tbool\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "pg_catalog\t17\t11\tbinary\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "pg_catalog\t1082\t11\tdate\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "pg_catalog\t2950\t11\tuuid\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "pg_catalog\t2281\t11\tinternal\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "pg_catalog\t26\t11\toid\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "pg_catalog\t1022\t11\t_float8\tb\tnull\tfalse\t\tnull\t\t\t\t0\n",
                 "SELECT ns.nspname, typ_and_elem_type.*,\n" +
                         "   CASE\n" +
                         "       WHEN typtype IN ('b', 'e', 'p') THEN 0           -- First base types, enums, pseudo-types\n" +
@@ -92,20 +95,18 @@ public class DBeaverTest extends AbstractGriffinTest {
                         "ORDER BY ord",
                 null,
                 true,
-                sqlExecutionContext,
-                false
+                true
         );
     }
 
     @Test
-    public void testFrequentSql() throws SqlException {
-        assertQuery12(
+    public void testFrequentSql() throws Exception {
+        assertQuery(
                 "current_schema\tsession_user\n" +
                         "public\tadmin\n",
                 "SELECT current_schema(),session_user",
                 null,
                 true,
-                sqlExecutionContext,
                 true
         );
     }
@@ -113,13 +114,13 @@ public class DBeaverTest extends AbstractGriffinTest {
     @Test
     public void testListColumns() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table xyz(a int, t timestamp)", sqlExecutionContext);
-            compiler.compile("create table tab2(b long, z binary)", sqlExecutionContext);
+            execute("create table xyz(a int, t timestamp)");
+            execute("create table tab2(b long, z binary)");
 
-            assertQuery12(
+            assertQueryNoLeakCheck(
                     "relname\tattrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\tdef_value\tdescription\n" +
-                            "xyz\t1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\t\t\n" +
-                            "xyz\t1\tt\t2\t1114\tfalse\t0\t-1\t\tfalse\ttrue\t\t\n",
+                            "xyz\t1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue\t\t\n" +
+                            "xyz\t1\tt\t2\t1114\tfalse\t-1\t8\t\tfalse\ttrue\t\t\n",
                     "SELECT \n" +
                             "    c.relname,\n" +
                             "    a.*,\n" +
@@ -132,7 +133,6 @@ public class DBeaverTest extends AbstractGriffinTest {
                             "WHERE NOT a.attisdropped AND c.oid=1 ORDER BY a.attnum",
                     null,
                     true,
-                    sqlExecutionContext,
                     false
             );
         });
@@ -141,57 +141,57 @@ public class DBeaverTest extends AbstractGriffinTest {
     @Test
     public void testListTables() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table xyz(a int)", sqlExecutionContext);
-            compiler.compile("create table tab2(b long)", sqlExecutionContext);
-            assertQuery12(
+            execute("create table xyz(a int)");
+            execute("create table tab2(b long)");
+            assertQueryNoLeakCheck(
                     "oid tral\toid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\tdescription\tpartition_expr\tpartition_key\n" +
-                            "2\t2\ttab2\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\t\t\t\n" +
-                            "1\t1\txyz\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\t\t\t\n",
+                            "2\t2\ttab2\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\t\t\t\n" +
+                            "1\t1\txyz\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\t\t\t\n",
                     "SELECT c.oid \"oid tral\",c.*,d.description,pg_catalog.pg_get_expr(c.relpartbound, c.oid) as partition_expr,  pg_catalog.pg_get_partkeydef(c.oid) as partition_key \n" +
                             "FROM pg_catalog.pg_class c\n" +
                             "LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=c.oid AND d.objsubid=0 AND d.classoid='pg_class'::regclass\n" +
                             "WHERE c.relnamespace=2200 AND c.relkind not in ('i','I','c') order by relname",
                     null,
                     true,
-                    sqlExecutionContext,
                     false
             );
-
         });
     }
 
     @Test
-    public void testListTypes() throws SqlException {
-        assertQuery12(
-                "oid1\toid\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttyprelid\ttypelem\ttypreceive\ttypdelim\ttypinput\trelkind\tbase_type_name\tdescription\n" +
-                        "16\t16\tbool\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "17\t17\tbinary\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "18\t18\tchar\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "20\t20\tint8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "21\t21\tint2\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "23\t23\tint4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "700\t700\tfloat4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "701\t701\tfloat8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "1043\t1043\tvarchar\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "1082\t1082\tdate\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "1114\t1114\ttimestamp\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "2950\t2950\tuuid\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n",
+    public void testListTypes() throws Exception {
+        assertQuery(
+                "oid1\toid\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttypcategory\ttyprelid\ttypelem\ttypreceive\ttypdelim\ttypinput\ttypowner\ttyplen\ttypbyval\ttypispreferred\ttypisdefined\ttypalign\ttypstorage\ttypndims\ttypcollation\ttypdefault\trelkind\tbase_type_name\tdescription\n" +
+                        "16\t16\tbool\t0\t0\t11\tfalse\t0\tb\tB\tnull\t0\t0\t0\t0\t0\t1\tfalse\tfalse\ttrue\tc\tp\t0\t0\tfalse\t\t\t\n" +
+                        "17\t17\tbinary\t0\t0\t11\tfalse\t0\tb\tU\tnull\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "20\t20\tint8\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "21\t21\tint2\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t2\tfalse\tfalse\ttrue\tc\tp\t0\t0\t0\t\t\t\n" +
+                        "23\t23\tint4\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "26\t26\toid\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "700\t700\tfloat4\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "701\t701\tfloat8\t0\t1022\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "1022\t1022\t_float8\t0\t0\t11\tfalse\t0\tb\tA\tnull\t701\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "1042\t1042\tbpchar\t0\t0\t11\tfalse\t0\tb\tZ\tnull\t0\t0\t0\t0\t0\t2\tfalse\tfalse\ttrue\tc\tp\t0\t0\t0\t\t\t\n" +
+                        "1043\t1043\tvarchar\t0\t0\t11\tfalse\t0\tb\tS\tnull\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "1082\t1082\tdate\t0\t0\t11\tfalse\t0\tb\tD\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "1114\t1114\ttimestamp\t0\t0\t11\tfalse\t0\tb\tD\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "2281\t2281\tinternal\t0\t0\t11\tfalse\t0\tb\tP\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "2950\t2950\tuuid\t0\t0\t11\tfalse\t0\tb\tU\tnull\t0\t0\t0\t0\t0\t16\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n",
                 "SELECT t.oid as oid1,t.*,c.relkind,format_type(nullif(t.typbasetype, 0), t.typtypmod) as base_type_name, d.description\n" +
                         "FROM pg_catalog.pg_type t\n" +
                         "LEFT OUTER JOIN pg_catalog.pg_class c ON c.oid=t.typrelid\n" +
                         "LEFT OUTER JOIN pg_catalog.pg_description d ON t.oid=d.objoid\n" +
-                        "WHERE typnamespace=2200\n" +
+                        "WHERE typnamespace=11\n" +
                         "ORDER by t.oid",
                 null,
                 true,
-                sqlExecutionContext,
                 false
         );
     }
 
     @Test
-    public void testNamespaceListSql() throws SqlException {
-        assertQuery12(
+    public void testNamespaceListSql() throws Exception {
+        assertQuery(
                 "n_oid\tnspname\toid\txmin\tnspowner\tdescription\n" +
                         "11\tpg_catalog\t11\t0\t1\t\n" +
                         "2200\tpublic\t2200\t0\t1\t\n",
@@ -200,20 +200,18 @@ public class DBeaverTest extends AbstractGriffinTest {
                         " ORDER BY nspname",
                 null,
                 true,
-                sqlExecutionContext,
                 false
         );
     }
 
     @Test
-    public void testShowSearchPath() throws SqlException {
-        assertQuery12(
+    public void testShowSearchPath() throws Exception {
+        assertQuery(
                 "search_path\n" +
                         "\"$user\", public\n",
                 "SHOW search_path",
                 null,
                 false,
-                sqlExecutionContext,
                 true
         );
     }

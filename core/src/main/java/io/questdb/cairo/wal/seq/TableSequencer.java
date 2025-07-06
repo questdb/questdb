@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,7 +32,12 @@ public interface TableSequencer extends QuietCloseable {
 
     void dropTable();
 
+    // This method can return empty cursor if the structureVersionLo
+    // equals to the sequencer metadata structure version.
     TableMetadataChangeLog getMetadataChangeLog(long structureVersionLo);
+
+    // This method will always read files to get the metadata change cursor.
+    TableMetadataChangeLog getMetadataChangeLogSlow(long structureVersionLo);
 
     int getNextWalId();
 
@@ -51,14 +56,12 @@ public interface TableSequencer extends QuietCloseable {
     // return txn cursor to apply transaction from given point
     TransactionLogCursor getTransactionLogCursor(long seqTxn);
 
-    boolean isSuspended();
-
     long lastTxn();
 
     long nextStructureTxn(long structureVersion, TableMetadataChange change);
 
     // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
-    long nextTxn(long expectedStructureVersion, int walId, int segmentId, int segmentTxn);
+    long nextTxn(long expectedStructureVersion, int walId, int segmentId, int segmentTxn, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount);
 
     TableToken reload();
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ import io.questdb.std.ObjList;
 public class StrArrayDereferenceFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "[](S[]I)";
+        return "[](WI)";
     }
 
     @Override
@@ -66,18 +66,18 @@ public class StrArrayDereferenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            return arrayFunction.getStr(rec, indexFunction.getInt(rec));
+        public CharSequence getStrA(Record rec) {
+            return arrayFunction.extendedOps().getStrA(rec, indexFunction.getInt(rec));
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return arrayFunction.getStrB(rec, indexFunction.getInt(rec));
+            return arrayFunction.extendedOps().getStrB(rec, indexFunction.getInt(rec));
         }
 
         @Override
-        public int getStrLen(Record rec, int arrayIndex) {
-            return arrayFunction.getStrLen(rec, indexFunction.getInt(rec));
+        public int getStrLen(Record rec) {
+            return arrayFunction.extendedOps().getStrLen(rec, indexFunction.getInt(rec));
         }
 
         @Override

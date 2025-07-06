@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -23,8 +23,8 @@
  ******************************************************************************/
 package io.questdb.test.std;
 
-import io.questdb.cairo.BinarySearch;
 import io.questdb.std.DoubleList;
+import io.questdb.std.Vect;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -51,11 +51,11 @@ public class DoubleListTest {
         a.add(2d);
         a.add(3d);
 
-        Assert.assertEquals(0, a.binarySearch(1d, BinarySearch.SCAN_UP));
-        Assert.assertEquals(1, a.binarySearch(2d, BinarySearch.SCAN_UP));
-        Assert.assertEquals(2, a.binarySearch(3d, BinarySearch.SCAN_UP));
-        Assert.assertEquals(-1, a.binarySearch(-3d, BinarySearch.SCAN_UP));
-        Assert.assertEquals(-4, a.binarySearch(5d, BinarySearch.SCAN_UP));
+        Assert.assertEquals(0, a.binarySearch(1d, Vect.BIN_SEARCH_SCAN_UP));
+        Assert.assertEquals(1, a.binarySearch(2d, Vect.BIN_SEARCH_SCAN_UP));
+        Assert.assertEquals(2, a.binarySearch(3d, Vect.BIN_SEARCH_SCAN_UP));
+        Assert.assertEquals(-1, a.binarySearch(-3d, Vect.BIN_SEARCH_SCAN_UP));
+        Assert.assertEquals(-4, a.binarySearch(5d, Vect.BIN_SEARCH_SCAN_UP));
     }
 
     @Test
@@ -65,7 +65,7 @@ public class DoubleListTest {
             a.add(i);
         }
 
-        for (int scan : new int[]{BinarySearch.SCAN_UP, BinarySearch.SCAN_DOWN}) {
+        for (int scan : new int[]{Vect.BIN_SEARCH_SCAN_UP, Vect.BIN_SEARCH_SCAN_DOWN}) {
             Assert.assertEquals(-1, a.binarySearch(-1d, scan));
 
             for (int i = 0; i < 100; i++) {
@@ -84,14 +84,14 @@ public class DoubleListTest {
         }
 
 
-        Assert.assertEquals(-1, a.binarySearch(-1d, BinarySearch.SCAN_UP));
+        Assert.assertEquals(-1, a.binarySearch(-1d, Vect.BIN_SEARCH_SCAN_UP));
 
         for (int i = 0; i < 10; i++) {
-            Assert.assertEquals(i * 10, a.binarySearch(i, BinarySearch.SCAN_UP));
-            Assert.assertEquals(i * 10 + 9, a.binarySearch(i, BinarySearch.SCAN_DOWN));
+            Assert.assertEquals(i * 10, a.binarySearch(i, Vect.BIN_SEARCH_SCAN_UP));
+            Assert.assertEquals(i * 10 + 9, a.binarySearch(i, Vect.BIN_SEARCH_SCAN_DOWN));
         }
 
-        Assert.assertEquals(-101, a.binarySearch(100d, BinarySearch.SCAN_UP));
+        Assert.assertEquals(-101, a.binarySearch(100d, Vect.BIN_SEARCH_SCAN_UP));
     }
 
     @Test

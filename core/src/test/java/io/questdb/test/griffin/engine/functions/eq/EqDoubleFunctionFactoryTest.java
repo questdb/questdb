@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,7 +27,6 @@ package io.questdb.test.griffin.engine.functions.eq;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.constants.DateConstant;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.griffin.engine.functions.constants.FloatConstant;
@@ -36,6 +35,7 @@ import io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -79,7 +79,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
         argPositions.add(1);
 
         Function function = factory.newInstance(4, args, argPositions, configuration, sqlExecutionContext);
-        Assert.assertFalse(function.getBool(null));
+        Assert.assertTrue(function.getBool(null));
         Assert.assertTrue(function.isConstant());
     }
 
@@ -176,7 +176,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
         // for constant expression this would generate
         // NaN = NaN the outcome will be false
         // however for col = NaN, where col is long this must be true
-        callCustomised(false, false, Double.NaN, Numbers.INT_NaN).andAssertOnlyColumnValues(true);
+        callCustomised(false, false, Double.NaN, Numbers.INT_NULL).andAssertOnlyColumnValues(true);
     }
 
     @Test
@@ -189,7 +189,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
         // for constant expression this would generate
         // NaN = NaN the outcome will be false
         // however for col = NaN, where col is long this must be true
-        callCustomised(false, false, Double.NaN, Numbers.LONG_NaN).andAssertOnlyColumnValues(true);
+        callCustomised(false, false, Double.NaN, Numbers.LONG_NULL).andAssertOnlyColumnValues(true);
     }
 
     @Test
@@ -274,7 +274,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testRightNaNDateNaN() throws SqlException {
         FunctionFactory factory = getFunctionFactory();
         ObjList<Function> args = new ObjList<>();
-        args.add(new DateConstant(Numbers.LONG_NaN));
+        args.add(new DateConstant(Numbers.LONG_NULL));
         args.add(new DoubleConstant(Double.NaN));
 
         IntList argPositions = new IntList();
@@ -336,7 +336,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testRightNaNTimestampNaN() throws SqlException {
         FunctionFactory factory = getFunctionFactory();
         ObjList<Function> args = new ObjList<>();
-        args.add(new TimestampConstant(Numbers.LONG_NaN) {
+        args.add(new TimestampConstant(Numbers.LONG_NULL) {
             @Override
             public boolean isConstant() {
                 return false;

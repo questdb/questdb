@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Misc;
 
 public class WalDataCursor implements RecordCursor {
@@ -50,22 +49,12 @@ public class WalDataCursor implements RecordCursor {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public boolean hasNext() {
         if (recordA.getRecordIndex() < maxRecordIndex) {
             recordA.incrementRecordIndex();
             return true;
         }
         return false;
-    }
-
-    @Override
-    public SymbolTable newSymbolTable(int columnIndex) {
-        throw new UnsupportedOperationException();
     }
 
     public void of(WalReader reader) {
@@ -76,6 +65,11 @@ public class WalDataCursor implements RecordCursor {
 
         final long segmentSize = reader.openSegment();
         maxRecordIndex = segmentSize - 1;
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return 0;
     }
 
     @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,18 +24,36 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.RecordFunction;
+import io.questdb.std.Interval;
+import org.jetbrains.annotations.NotNull;
 
-public class RecordColumn extends RecordFunction {
+public class RecordColumn extends RecordFunction implements FunctionExtension {
     private final int columnIndex;
     private final RecordMetadata metadata;
 
     public RecordColumn(int columnIndex, RecordMetadata metadata) {
         this.columnIndex = columnIndex;
         this.metadata = metadata;
+    }
+
+    @Override
+    public FunctionExtension extendedOps() {
+        return this;
+    }
+
+    @Override
+    public int getArrayLength() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -49,8 +67,18 @@ public class RecordColumn extends RecordFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return false;
+    public CharSequence getStrA(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CharSequence getStrB(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getStrLen(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

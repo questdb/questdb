@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -47,7 +47,6 @@ public class RecoverVarIndex extends RebuildColumnBase {
             ColumnVersionReader columnVersionReader,
             int columnWriterIndex,
             CharSequence columnName,
-
             long partitionNameTxn,
             long partitionSize,
             long partitionTimestamp,
@@ -58,16 +57,19 @@ public class RecoverVarIndex extends RebuildColumnBase {
         long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);
 
         if (columnTop == -1L) {
-            LOG.info().$("not rebuilding column ").$(columnName).$(" in partition ").$ts(partitionTimestamp).$(", column not added to partition").$();
+            LOG.info().$("not rebuilding column ").$safe(columnName)
+                    .$(" in partition ").$ts(partitionTimestamp)
+                    .$(", column not added to partition")
+                    .$();
             return;
         }
 
-        int trimTo = path.length();
-        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
+        int trimTo = path.size();
+        TableUtils.setPathForNativePartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
 
         try {
             path.concat(columnName);
-            int colNameLen = path.length();
+            int colNameLen = path.size();
             path.put(".d");
             if (columnNameTxn != -1L) {
                 path.put('.').put(columnNameTxn);
@@ -76,27 +78,14 @@ public class RecoverVarIndex extends RebuildColumnBase {
 
             long maxOffset = ff.length(path.$());
 
-            try (MemoryCMR roMem = new MemoryCMRImpl(
-                    ff,
-                    path.$(),
-                    maxOffset,
-                    MemoryTag.MMAP_DEFAULT
-            )) {
-
+            try (MemoryCMR roMem = new MemoryCMRImpl(ff, path.$(), maxOffset, MemoryTag.MMAP_DEFAULT)) {
                 path.trimTo(colNameLen).put(".i");
                 if (columnNameTxn != -1L) {
                     path.put('.').put(columnNameTxn);
                 }
                 LOG.info().$("writing: ").$(path).$();
 
-                try (MemoryCMARW rwMem = new MemoryCMARWImpl(
-                        ff,
-                        path.$(),
-                        8 * 1024 * 1024,
-                        0,
-                        MemoryTag.MMAP_DEFAULT,
-                        0
-                )) {
+                try (MemoryCMARW rwMem = new MemoryCMARWImpl(ff, path.$(), 8 * 1024 * 1024, 0, MemoryTag.MMAP_DEFAULT, 0)) {
                     long expectedRowCount = partitionSize - columnTop;
                     LOG.info().$("data file length: ").$(maxOffset).$(", expected record count: ").$(expectedRowCount).$();
 

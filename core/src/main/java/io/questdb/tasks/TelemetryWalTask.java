@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,32 +27,38 @@ package io.questdb.tasks;
 import io.questdb.Telemetry;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.QueryBuilder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.NotNull;
 
 public class TelemetryWalTask implements AbstractTelemetryTask {
+    public static final String NAME = "WAL TELEMETRY";
     public static final String TABLE_NAME = "telemetry_wal";
     public static final Telemetry.TelemetryTypeBuilder<TelemetryWalTask> WAL_TELEMETRY = configuration -> {
-        String tableName = configuration.getSystemTableNamePrefix() + TABLE_NAME;
-        return new Telemetry.TelemetryType<TelemetryWalTask>() {
+        final String tableName = configuration.getSystemTableNamePrefix() + TABLE_NAME;
+        return new Telemetry.TelemetryType<>() {
             @Override
-            public SqlCompiler.QueryBuilder getCreateSql(SqlCompiler.QueryBuilder builder) {
-                return builder.$("CREATE TABLE IF NOT EXISTS \"")
+            public QueryBuilder getCreateSql(QueryBuilder builder) {
+                return builder.$("CREATE TABLE IF NOT EXISTS '")
                         .$(tableName)
-                        .$("\" (" +
-                                "created timestamp, " +
-                                "event short, " +
-                                "tableId int, " +
-                                "walId int, " +
-                                "seqTxn long, " +
-                                "rowCount long," +
-                                "physicalRowCount long," +
-                                "latency float" +
-                                ") timestamp(created) partition by MONTH BYPASS WAL"
+                        .$("' (" +
+                                "created TIMESTAMP, " +
+                                "event SHORT, " +
+                                "tableId INT, " +
+                                "walId INT, " +
+                                "seqTxn LONG, " +
+                                "rowCount LONG, " +
+                                "physicalRowCount LONG, " +
+                                "latency FLOAT " +
+                                ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
                         );
+            }
+
+            @Override
+            public String getName() {
+                return NAME;
             }
 
             @Override
@@ -70,6 +76,7 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
     private short event;
     private float latency; // millis
     private long physicalRowCount;
+    private long queueCursor;
     private long rowCount;
     private long seqTxn;
     private int tableId;
@@ -78,7 +85,16 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
     private TelemetryWalTask() {
     }
 
-    public static void store(@NotNull Telemetry<TelemetryWalTask> telemetry, short event, int tableId, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs) {
+    public static void store(
+            @NotNull Telemetry<TelemetryWalTask> telemetry,
+            short event,
+            int tableId,
+            int walId,
+            long seqTxn,
+            long rowCount,
+            long physicalRowCount,
+            long latencyUs
+    ) {
         final TelemetryWalTask task = telemetry.nextTask();
         if (task != null) {
             task.event = event;
@@ -88,8 +104,17 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
             task.rowCount = rowCount;
             task.physicalRowCount = physicalRowCount;
             task.latency = latencyUs / 1000.0f; // millis
-            telemetry.store();
+            telemetry.store(task);
         }
+    }
+
+    public long getQueueCursor() {
+        return queueCursor;
+    }
+
+    @Override
+    public void setQueueCursor(long cursor) {
+        this.queueCursor = cursor;
     }
 
     @Override
@@ -106,7 +131,7 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
             row.append();
         } catch (CairoException e) {
             LOG.error().$("Could not insert a new ").$(TABLE_NAME).$(" row [errno=").$(e.getErrno())
-                    .$(", error=").$(e.getFlyweightMessage())
+                    .$(", error=").$safe(e.getFlyweightMessage())
                     .$(']').$();
         }
     }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -48,7 +48,7 @@ public class ForLoopOverObjListVsLCCSHashSetBenchmark {
         final int limit = COLUMN_NAMES_OL.size();
         for (int j = 0, m = 2 * limit; j < m; j++) {
             final CharSequence target = COLUMN_NAMES_OL.get(rnd.nextInt(limit));
-            if (!containsColumnByName(COLUMN_NAMES_OL, target)) {
+            if (!containsColumnByName(target)) {
                 throw new AssertionError();
             }
         }
@@ -77,9 +77,9 @@ public class ForLoopOverObjListVsLCCSHashSetBenchmark {
         ).run();
     }
 
-    private static final boolean containsColumnByName(ObjList<CharSequence> columns, CharSequence colName) {
-        for (int i = 0, limit = columns.size(); i < limit; i++) {
-            if (Chars.equalsIgnoreCase(columns.getQuick(i), colName)) {
+    private static boolean containsColumnByName(CharSequence colName) {
+        for (int i = 0, limit = ForLoopOverObjListVsLCCSHashSetBenchmark.COLUMN_NAMES_OL.size(); i < limit; i++) {
+            if (Chars.equalsIgnoreCase(ForLoopOverObjListVsLCCSHashSetBenchmark.COLUMN_NAMES_OL.getQuick(i), colName)) {
                 return true;
             }
         }

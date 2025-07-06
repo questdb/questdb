@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,27 +24,28 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class UnionAllCastTest extends AbstractGriffinTest {
+public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testAllNoCast() throws Exception {
         // we include byte <-> bool cast to make sure
         // sym <-> sym cast it not thrown away as redundant
         testUnionAll(
-                "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tp\tr\n" +
-                        "true\t51\tI\t-24455\t-230430837\t-8323443786521150653\t0.0212\t0.33747075654972813\t1970-01-01T00:00:55.172Z\t1970-01-01T00:00:00.000001Z\t0x994c39efcb88eb88810d53a53367e79138e4be9e19321b57832dd27952d949d8\t00000000 a5 18 93 bd 0b 61 f5 5d d0 eb\t010100\t01001111011100\tzyjh\tjzgum6yb\tPGLUO\n" +
-                        "true\t42\tZ\t-23702\t-210935524\t4502522085684189707\t0.7668\t0.4416432347777828\t1970-01-01T00:32:23.671Z\t1970-01-01T00:00:00.000001Z\t0x30f5a8b9a8a2672d1fae11870231bf0c54f33e997d4c2e14540bc0127276f42c\t00000000 84 52 d9 6f 04 ab 27 47 8f 23\t010001\t01100011100011\t46ng\tkwezzxdv\tNWIFF\n" +
-                        "true\t102\tB\t25721\t-1309308188\t8490886945852172597\t0.0930\t0.706473302224657\t1970-01-01T01:11:40.508Z\t1970-01-01T00:00:00.000001Z\t0x4a27205d291d7f124c83d07de0778e771bd70aaefd486767588c16c272288827\t00000000 52 d0 29 26 c5 aa da 18 ce 5f\t000001\t11011011111101\te7d9\t22y0ef3h\t\n" +
-                        "false\t36\tC\t2578\t-799774729\t812677186520066053\t0.0891\t0.7873229912811514\t1970-01-01T00:50:51.249Z\t1970-01-01T00:00:00.000000Z\t0x7cb055c54725b9527a19164d807cee6134570a2bee44673552c395ffb8982d58\t\t111100\t11010010000101\tsgzj\txp0bvd4d\tDTNPH\n" +
-                        "false\t33\tP\t-21417\t992057087\t-6482694999745905510\t0.9130\t0.8813290192134411\t1970-01-01T01:55:59.541Z\t1970-01-01T00:00:00.000001Z\t0x7d4dc4398a4592a6561fb054b568947d3e2ed2ca0fea47416fff79101ec5c1cf\t\t110100\t00100001101110\trr8p\tf6fdj7pr\t\n" +
-                        "false\t102\tJ\t-13027\t73575701\t8920866532787660373\t0.2992\t0.0843832076262595\t1970-01-01T00:10:02.536Z\t1970-01-01T00:00:00.000000Z\t0xc1e631285c1ab288c72bfc5230158059980eca62a219a0f16846d7a3aa5aecce\t00000000 91 3b 72 db f3 04 1b c7 88 de\t110110\t11001100100010\txn8n\t0n2gm6r7\tHFOWL\n" +
-                        "false\t40\tX\t4635\t-342047842\t6854658259142399220\t0.1911\t0.4022810626779558\t1970-01-01T01:24:18.302Z\t1970-01-01T00:00:00.000001Z\t0x3239ad1b0411a66a10bb226eb4243e3683b91ec970b04e788a50f7ff7f6ed330\t00000000 de e4 7c d2 35 07 42 fc 31 79\t110000\t11110001011010\tp1d7\tp2n3hk69\t\n" +
-                        "true\t88\tZ\t-13523\t-360860352\t-7266580375914176030\t0.7998\t0.16381374773748514\t1970-01-01T00:22:51.747Z\t1970-01-01T00:00:00.000001Z\t0x30d46a3a4749c41d7a902c77fa1a889c51686790e59377ca68653a6cd896f81e\t00000000 ac 37 c8 cd 82 89 2b 4d 5f f6\t010101\t11100011000001\tu7g3\tqjuztt7j\tCKYLS\n" +
-                        "true\t42\tD\t27519\t1235206821\t-4116381468144676168\t0.4856\t0.5065228336156442\t1970-01-01T02:04:31.430Z\t1970-01-01T00:00:00.000001Z\t0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\t\t101100\t10011001010000\tsfw9\tvbw85v0q\t\n" +
-                        "false\t64\tV\t-31322\t-283321892\t3446015290144635451\t0.1064\t0.49765193229684157\t1970-01-01T02:44:02.834Z\t1970-01-01T00:00:00.000001Z\t0xb20e1900caff819aaec65e34419d1077db217d41156b2ee1a90c04663c808638\t\t000000\t11010111011010\tpp3d\tur9ps7wg\tYPHRI\n",
+                "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tp\tr\ts\n" +
+                        "true\t37\tO\t10549\t171760612\t8503557900983561786\t0.7586254\t0.5913874468544745\t1970-01-01T00:05:56.479Z\t1970-01-01T00:00:00.000001Z\t0x434524824ca84f523ed391560ac327544a27205d291d7f124c83d07de0778e77\t00000000 29 26 c5 aa da 18 ce 5f b2 8b\t101000\t11000111111100\t6jq4\tn3ub6zju\tCKFMQ\tᣮաf@ץ\n" +
+                        "false\t113\tY\t21020\t-1915752164\t5922689877598858022\t0.43461353\t0.7195457109208119\t1970-01-01T00:40:51.578Z\t1970-01-01T00:00:00.000000Z\t0x20cfa22cd22bf054483c83d88ac674e3894499a1a1680580cfedff23a67d918f\t00000000 07 b1 32 57 ff 9a ef 88 cb 4b\t001011\t01000101000010\txf81\tcbj71euv\tLNYRZ\t9іa\uDA76\uDDD4*\n" +
+                        "true\t62\tP\t13143\t-770962341\t-4036499202601723677\t0.84029645\t0.5794665369115236\t1970-01-01T02:26:24.738Z\t1970-01-01T00:00:00.000000Z\t0x7f19777ec13680558a2d082bfad3aa844a20938221fd7f431bd29676f6902e64\t00000000 dd 44 11 e2 a3 24 4e 44 a8 0d\t001110\t10101011111110\tnz3p\tz1rvm419\tGIJYD\t\n" +
+                        "false\t79\tN\t-29677\t-8264817\t-9118587154366063429\t0.6397125\t0.798471808479839\t1970-01-01T00:02:12.849Z\t1970-01-01T00:00:00.000001Z\t0xb19ddb7ff5abcafec82c35a389f834dababcd0482f05618f926cdd99e63abb35\t\t001001\t11010000011000\tgj7w\txd3qr0fm\tQEMXD\t\n" +
+                        "false\t123\tJ\t-4254\t-735934368\t8384866408379441071\t0.52348924\t0.5778817852306684\t1970-01-01T01:12:18.900Z\t\t0x705380a68d53d93c2692845742d6674742bdf2c301f7f43b9747f18a1ed2ef46\t\t010001\t01000000100001\tz403\trcc9nh2x\tDHHGG\tX\uDA8B\uDFC4︵Ƀ^\n" +
+                        "false\t102\tJ\t-13027\t73575701\t8920866532787660373\t0.29919904\t0.0843832076262595\t1970-01-01T00:10:02.536Z\t1970-01-01T00:00:00.000000Z\t0xc1e631285c1ab288c72bfc5230158059980eca62a219a0f16846d7a3aa5aecce\t00000000 91 3b 72 db f3 04 1b c7 88 de\t110110\t11001100100010\txn8n\t0n2gm6r7\tHFOWL\t͛Ԉ龘и\uDA89\uDFA4\n" +
+                        "true\t62\tL\t5639\t-1418341054\t3152466304308949756\t0.76642567\t0.4138164748227684\t1970-01-01T02:34:54.347Z\t\t0x6698c6c186b7571a9cba3ef59083484d98c2d832d83de9934a0705e1136e872b\t00000000 78 b5 b9 11 53 d0 fb 64 bb 1a\t011110\t01011100110001\tqytg\t7kfnr23n\tWEKGH\t\uDB8D\uDE4Eᯤ\\篸{\n" +
+                        "false\t33\tL\t-20409\t-712702244\t-6190031864817509934\t0.58112466\t0.4971342426836798\t1970-01-01T01:17:56.168Z\t\t0x4b0a72b3339b8c7c1872e79ea10322460cb5f439cbc22e9d1f0481ab7acd1f4a\t\t101010\t10101111000001\tttz9\tnzxtf741\t\t|\\軦۽㒾\n" +
+                        "true\t92\tP\t4215\t-889224806\t8889492928577876455\t0.069444776\t0.6697969295620055\t1970-01-01T00:02:10.728Z\t1970-01-01T00:00:00.000001Z\t0x3d9491e7e14eba8e1de93a9cf1483e290ec6c3651b1c029f825c96def9f2fcc2\t\t010111\t10110011101001\tvgyb\tg6mmvcdb\tZRMFM\t\n" +
+                        "true\t107\tG\t-5240\t-1121895896\t-2000273984235276379\t0.18336213\t0.2711532808184136\t1970-01-01T00:55:56.811Z\t1970-01-01T00:00:00.000001Z\t0x76ffd1a81bf39767b92d0771d78263eb5479ae0482582ad03c84de8f7bd9235d\t00000000 a7 6a 71 34 e0 b0 e9 98 f7 67\t100011\t00001000010100\tvs9s\tn0vjumxz\tLDGLO\ṱ\uD8F2\uDE8E>\uDAE6\uDEE3g\n",
                 // column "u" is not ultimately selected from neither X nor Y
                 // we expect this column to be ignored by optimiser, and also
                 // we expect optimiser to correctly select column "b" from Y as
@@ -67,7 +68,8 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         " rnd_geohash(14) n," +
                         " rnd_geohash(20) o," +
                         " rnd_geohash(40) p," +
-                        " rnd_str(5,5,1) r " +
+                        " rnd_str(5,5,1) r, " +
+                        " rnd_varchar(5,5,1) s " +
                         "from long_sequence(5))",
                 "create table y as (" +
                         "select" +
@@ -87,7 +89,8 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         " rnd_geohash(14) n," +
                         " rnd_geohash(20) o," +
                         " rnd_geohash(40) p," +
-                        " rnd_str(5,5,1) r " +
+                        " rnd_str(5,5,1) r, " +
+                        " rnd_varchar(5,5,1) s " +
                         "from long_sequence(5))"
         );
     }
@@ -149,7 +152,8 @@ public class UnionAllCastTest extends AbstractGriffinTest {
 
     @Test
     public void testBoolNull() throws Exception {
-        testUnionAll("a\tc\n" +
+        testUnionAllWithNull(
+                "a\tc\n" +
                         "false\tfalse\n" +
                         "true\tfalse\n" +
                         "true\tfalse\n" +
@@ -160,12 +164,11 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "false\tfalse\n" +
                         "false\ttrue\n" +
                         "false\tfalse\n",
-                "create table x as (select rnd_boolean() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_boolean() c from long_sequence(5))",
+                "rnd_boolean()",
                 false
         );
 
-        testUnion(
+        testUnionWithNull(
                 "a\tc\n" +
                         "false\tfalse\n" +
                         "true\tfalse\n" +
@@ -227,8 +230,27 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testByteNull() throws Exception {
+    public void testByteChar() throws Exception {
         testUnionAll(
+                "a\n" +
+                        "79\n" +
+                        "122\n" +
+                        "83\n" +
+                        "90\n" +
+                        "76\n" +
+                        "V\n" +
+                        "T\n" +
+                        "J\n" +
+                        "W\n" +
+                        "C\n",
+                "create table x as (select rnd_byte() a from long_sequence(5))",
+                "create table y as (select rnd_char() b from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testByteNull() throws Exception {
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "79\t0\n" +
                         "122\t0\n" +
@@ -240,8 +262,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "0\t27\n" +
                         "0\t87\n" +
                         "0\t79\n",
-                "create table x as (select rnd_byte() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_byte() c from long_sequence(5))"
+                "rnd_byte()"
         );
     }
 
@@ -280,24 +301,24 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     public void testCharByte() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "O\n" +
-                        "z\n" +
+                        "P\n" +
                         "S\n" +
-                        "Z\n" +
-                        "L\n" +
-                        "V\n" +
-                        "T\n" +
-                        "J\n" +
                         "W\n" +
-                        "C\n",
-                "create table x as (select rnd_byte() a from long_sequence(5))",
-                "create table y as (select rnd_char() b from long_sequence(5))"
+                        "H\n" +
+                        "Y\n" +
+                        "76\n" +
+                        "102\n" +
+                        "27\n" +
+                        "87\n" +
+                        "79\n",
+                "create table x as (select rnd_char() a from long_sequence(5))",
+                "create table y as (select rnd_byte() b from long_sequence(5))"
         );
     }
 
     @Test
     public void testCharNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "P\t\n" +
                         "S\t\n" +
@@ -309,8 +330,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "\tJ\n" +
                         "\tW\n" +
                         "\tC\n",
-                "create table x as (select rnd_char() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_char() c from long_sequence(5))"
+                "rnd_char()"
         );
     }
 
@@ -318,18 +338,18 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     public void testCharShort() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "-22955\n" +
-                        "-1398\n" +
-                        "21015\n" +
-                        "30202\n" +
-                        "-19496\n" +
-                        "86\n" +
-                        "84\n" +
-                        "74\n" +
-                        "87\n" +
-                        "67\n",
+                        "-27056\n" +
+                        "24814\n" +
+                        "-11455\n" +
+                        "-13027\n" +
+                        "-21227\n" +
+                        "0\n" +
+                        "3\n" +
+                        "5\n" +
+                        "9\n" +
+                        "8\n",
                 "create table x as (select rnd_short() a from long_sequence(5))",
-                "create table y as (select rnd_char() b from long_sequence(5))"
+                "create table y as (select '0'::char a union select '3'::char union select '5'::char union select '9'::char union select '8'::char)"
         );
     }
 
@@ -402,7 +422,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
 
     @Test
     public void testDateNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "1970-01-01T02:07:40.373Z\t\n" +
                         "1970-01-01T00:18:02.998Z\t\n" +
@@ -414,8 +434,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "\t1970-01-01T01:45:29.025Z\n" +
                         "\t1970-01-01T01:15:01.475Z\n" +
                         "\t1970-01-01T00:43:07.029Z\n",
-                "create table x as (select rnd_date() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_date() c from long_sequence(5))"
+                "rnd_date()"
         );
     }
 
@@ -557,20 +576,19 @@ public class UnionAllCastTest extends AbstractGriffinTest {
 
     @Test
     public void testDoubleNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
-                        "0.6508594025855301\tNaN\n" +
-                        "0.8423410920883345\tNaN\n" +
-                        "0.9856290845874263\tNaN\n" +
-                        "0.22452340856088226\tNaN\n" +
-                        "0.5093827001617407\tNaN\n" +
-                        "NaN\t0.6607777894187332\n" +
-                        "NaN\t0.2246301342497259\n" +
-                        "NaN\t0.08486964232560668\n" +
-                        "NaN\t0.299199045961845\n" +
-                        "NaN\t0.20447441837877756\n",
-                "create table x as (select rnd_double() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_double() c from long_sequence(5))"
+                        "0.6508594025855301\tnull\n" +
+                        "0.8423410920883345\tnull\n" +
+                        "0.9856290845874263\tnull\n" +
+                        "0.22452340856088226\tnull\n" +
+                        "0.5093827001617407\tnull\n" +
+                        "null\t0.6607777894187332\n" +
+                        "null\t0.2246301342497259\n" +
+                        "null\t0.08486964232560668\n" +
+                        "null\t0.299199045961845\n" +
+                        "null\t0.20447441837877756\n",
+                "rnd_double()"
         );
     }
 
@@ -605,15 +623,15 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     @Test
     public void testExceptDoubleFloat() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events1 (contact symbol, groupid float, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
+            execute("create table events1 (contact symbol, groupid float, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
 
-            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     // Empty table expected
                     "contact\tgroupid\teventid\n",
                     "events1\n" +
@@ -628,17 +646,17 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     @Test
     public void testExceptDoubleFloatSort() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events1 (contact symbol, groupid float, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
-            executeInsert("insert into events1 values ('1', 1.6, 'stand')");
-            executeInsert("insert into events1 values ('2', 1.6, 'stand')");
+            execute("create table events1 (contact symbol, groupid float, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
+            execute("insert into events1 values ('1', 1.6, 'stand')");
+            execute("insert into events1 values ('2', 1.6, 'stand')");
 
-            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     // Empty table expected
                     "contact\tgroupid\teventid\n" +
                             "2\t1.600000023841858\tstand\n" +
@@ -655,15 +673,15 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     @Test
     public void testExceptFloatDouble() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events1 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
+            execute("create table events1 (contact symbol, groupid double, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
 
-            compiler.compile("create table events2 (contact symbol, groupid float, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid float, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     // Empty table expected
                     "contact\tgroupid\teventid\n",
                     "events1\n" +
@@ -678,17 +696,17 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     @Test
     public void testExceptSort() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events1 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
-            executeInsert("insert into events1 values ('1', 1.6, 'stand')");
-            executeInsert("insert into events1 values ('2', 1.6, 'stand')");
+            execute("create table events1 (contact symbol, groupid double, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
+            execute("insert into events1 values ('1', 1.6, 'stand')");
+            execute("insert into events1 values ('2', 1.6, 'stand')");
 
-            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     // Empty table expected
                     "contact\tgroupid\teventid\n" +
                             "2\t1.6\tstand\n" +
@@ -712,11 +730,11 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n",
+                        "0.66077775\n" +
+                        "0.80432236\n" +
+                        "0.22463012\n" +
+                        "0.12966657\n" +
+                        "0.08486962\n",
                 "create table x as (select rnd_boolean() a from long_sequence(5))",
                 "create table y as (select rnd_float() b from long_sequence(5))",
                 false
@@ -726,11 +744,11 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                 "a\n" +
                         "false\n" +
                         "true\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n"
+                        "0.66077775\n" +
+                        "0.80432236\n" +
+                        "0.22463012\n" +
+                        "0.12966657\n" +
+                        "0.08486962\n"
         );
     }
 
@@ -738,16 +756,16 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     public void testFloatByte() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "79.0000\n" +
-                        "122.0000\n" +
-                        "83.0000\n" +
-                        "90.0000\n" +
-                        "76.0000\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n",
+                        "79.0\n" +
+                        "122.0\n" +
+                        "83.0\n" +
+                        "90.0\n" +
+                        "76.0\n" +
+                        "0.66077775\n" +
+                        "0.80432236\n" +
+                        "0.22463012\n" +
+                        "0.12966657\n" +
+                        "0.08486962\n",
                 "create table x as (select rnd_byte() a from long_sequence(5))",
                 "create table y as (select rnd_float() b from long_sequence(5))"
         );
@@ -799,11 +817,11 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "0101101\n" +
                         "0111011\n" +
                         "0010101\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n",
+                        "0.66077775\n" +
+                        "0.80432236\n" +
+                        "0.22463012\n" +
+                        "0.12966657\n" +
+                        "0.08486962\n",
                 "create table x as (select rnd_geohash(7) a from long_sequence(5))",
                 "create table y as (select rnd_float() b from long_sequence(5))"
         );
@@ -818,11 +836,11 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "5.9285965E8\n" +
                         "1.86872371E9\n" +
                         "-8.4753107E8\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n",
+                        "0.66077775\n" +
+                        "0.80432236\n" +
+                        "0.22463012\n" +
+                        "0.12966657\n" +
+                        "0.08486962\n",
                 "create table x as (select rnd_int() a from long_sequence(5))",
                 "create table y as (select rnd_float() b from long_sequence(5))"
         );
@@ -832,11 +850,11 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     public void testFloatLong() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "0.2846\n" +
-                        "0.2992\n" +
-                        "0.0844\n" +
-                        "0.2045\n" +
-                        "0.9345\n" +
+                        "0.28455776\n" +
+                        "0.29919904\n" +
+                        "0.08438319\n" +
+                        "0.20447439\n" +
+                        "0.93446046\n" +
                         "4.6895921E15\n" +
                         "4.7299965E15\n" +
                         "7.7465361E18\n" +
@@ -849,20 +867,19 @@ public class UnionAllCastTest extends AbstractGriffinTest {
 
     @Test
     public void testFloatNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
-                        "0.2846\tNaN\n" +
-                        "0.2992\tNaN\n" +
-                        "0.0844\tNaN\n" +
-                        "0.2045\tNaN\n" +
-                        "0.9345\tNaN\n" +
-                        "NaN\t0.6608\n" +
-                        "NaN\t0.8043\n" +
-                        "NaN\t0.2246\n" +
-                        "NaN\t0.1297\n" +
-                        "NaN\t0.0849\n",
-                "create table x as (select rnd_float() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_float() c from long_sequence(5))"
+                        "0.28455776\tnull\n" +
+                        "0.29919904\tnull\n" +
+                        "0.08438319\tnull\n" +
+                        "0.20447439\tnull\n" +
+                        "0.93446046\tnull\n" +
+                        "null\t0.66077775\n" +
+                        "null\t0.80432236\n" +
+                        "null\t0.22463012\n" +
+                        "null\t0.12966657\n" +
+                        "null\t0.08486962\n",
+                "rnd_float()"
         );
     }
 
@@ -870,16 +887,16 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     public void testFloatShort() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "-22955.0000\n" +
-                        "-1398.0000\n" +
-                        "21015.0000\n" +
-                        "30202.0000\n" +
-                        "-19496.0000\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n",
+                        "-22955.0\n" +
+                        "-1398.0\n" +
+                        "21015.0\n" +
+                        "30202.0\n" +
+                        "-19496.0\n" +
+                        "0.66077775\n" +
+                        "0.80432236\n" +
+                        "0.22463012\n" +
+                        "0.12966657\n" +
+                        "0.08486962\n",
                 "create table x as (select rnd_short() a from long_sequence(5))",
                 "create table y as (select rnd_float() b from long_sequence(5))"
         );
@@ -908,7 +925,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
 
     @Test
     public void testGeoByteNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "1110010\t\n" +
                         "1100000\t\n" +
@@ -920,8 +937,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "\t1000110\n" +
                         "\t1111101\n" +
                         "\t1000010\n",
-                "create table x as (select rnd_geohash(7) a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_geohash(7) c from long_sequence(5))"
+                "rnd_geohash(7)"
         );
     }
 
@@ -1000,7 +1016,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
 
     @Test
     public void testGeoIntNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "wh4b6v\t\n" +
                         "s2z2fy\t\n" +
@@ -1012,8 +1028,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "\tjnw97u\n" +
                         "\tzfuqd3\n" +
                         "\thp4muv\n",
-                "create table x as (select rnd_geohash(30) a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_geohash(30) c from long_sequence(5))"
+                "rnd_geohash(30)"
         );
     }
 
@@ -1137,7 +1152,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
 
     @Test
     public void testGeoLongNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "wh4b6vnt\t\n" +
                         "s2z2fyds\t\n" +
@@ -1149,8 +1164,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "\tjnw97u4y\n" +
                         "\tzfuqd3bf\n" +
                         "\thp4muv5t\n",
-                "create table x as (select rnd_geohash(40) a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_geohash(40) c from long_sequence(5))"
+                "rnd_geohash(40)"
         );
     }
 
@@ -1256,7 +1270,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
 
     @Test
     public void testGeoShortNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "wh4\t\n" +
                         "s2z\t\n" +
@@ -1268,8 +1282,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "\tjnw\n" +
                         "\tzfu\n" +
                         "\thp4\n",
-                "create table x as (select rnd_geohash(15) a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_geohash(15) c from long_sequence(5))"
+                "rnd_geohash(15)"
         );
     }
 
@@ -1310,6 +1323,77 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "8260188555232587029\n",
                 "create table x as (select rnd_geohash(12) a from long_sequence(5))",
                 "create table y as (select rnd_long() b from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testIPv4String() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "101.77.34.89\n" +
+                        "66.56.51.126\n" +
+                        "74.188.217.59\n" +
+                        "249.60.8.8\n" +
+                        "230.202.108.161\n" +
+                        "JWCPSWHYR\n" +
+                        "EHNRX\n" +
+                        "SXUXI\n" +
+                        "TGPGW\n" +
+                        "YUDEYYQEHB\n",
+                "create table x as (select rnd_ipv4() a from long_sequence(5))",
+                "create table y as (select rnd_str() b from long_sequence(5))",
+                true
+        );
+    }
+
+    @Test
+    public void testIPv4Symbol() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "199.122.166.85\n" +
+                        "79.15.250.138\n" +
+                        "35.86.82.23\n" +
+                        "111.98.117.250\n" +
+                        "205.123.179.216\n" +
+                        "aaa\n" +
+                        "aaa\n" +
+                        "bbb\n" +
+                        "bbb\n" +
+                        "bbb\n",
+                "create table x as (select rnd_ipv4() a from long_sequence(5))",
+                "create table y as (select rnd_symbol('aaa', 'bbb') a from long_sequence(5))",
+                false
+        );
+
+        testUnion(
+                "a\n" +
+                        "199.122.166.85\n" +
+                        "79.15.250.138\n" +
+                        "35.86.82.23\n" +
+                        "111.98.117.250\n" +
+                        "205.123.179.216\n" +
+                        "aaa\n" +
+                        "bbb\n"
+        );
+    }
+
+    @Test
+    public void testIPv4Varchar() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "49.254.54.230\n" +
+                        "89.207.251.208\n" +
+                        "66.9.11.179\n" +
+                        "50.89.42.43\n" +
+                        "219.41.127.7\n" +
+                        "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\n" +
+                        "8#3TsZ\n" +
+                        "zV衞͛Ԉ龘и\uDA89\uDFA4~\n" +
+                        "ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\n" +
+                        "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\n",
+                "create table x as (select rnd_ipv4() a from long_sequence(5))",
+                "create table y as (select rnd_varchar() b from long_sequence(5))",
+                true
         );
     }
 
@@ -1368,17 +1452,17 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     public void testIntChar() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "80\n" +
-                        "83\n" +
-                        "87\n" +
-                        "72\n" +
-                        "89\n" +
+                        "0\n" +
+                        "3\n" +
+                        "5\n" +
+                        "9\n" +
+                        "8\n" +
                         "-1148479920\n" +
                         "315515118\n" +
                         "1548800833\n" +
                         "-727724771\n" +
                         "73575701\n",
-                "create table x as (select rnd_char() a from long_sequence(5))",
+                "create table x as (select '0'::char a union select '3'::char union select '5'::char union select '9'::char union select '8'::char)",
                 "create table y as (select rnd_int() b from long_sequence(5))"
         );
     }
@@ -1406,20 +1490,19 @@ public class UnionAllCastTest extends AbstractGriffinTest {
 
     @Test
     public void testIntNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
-                        "-948263339\tNaN\n" +
-                        "1326447242\tNaN\n" +
-                        "592859671\tNaN\n" +
-                        "1868723706\tNaN\n" +
-                        "-847531048\tNaN\n" +
-                        "NaN\t-1148479920\n" +
-                        "NaN\t315515118\n" +
-                        "NaN\t1548800833\n" +
-                        "NaN\t-727724771\n" +
-                        "NaN\t73575701\n",
-                "create table x as (select rnd_int() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_int() c from long_sequence(5))"
+                        "-948263339\tnull\n" +
+                        "1326447242\tnull\n" +
+                        "592859671\tnull\n" +
+                        "1868723706\tnull\n" +
+                        "-847531048\tnull\n" +
+                        "null\t-1148479920\n" +
+                        "null\t315515118\n" +
+                        "null\t1548800833\n" +
+                        "null\t-727724771\n" +
+                        "null\t73575701\n",
+                "rnd_int()"
         );
     }
 
@@ -1445,17 +1528,17 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     @Test
     public void testIntersectDoubleFloatSort() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events1 (contact symbol, groupid float, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
-            executeInsert("insert into events1 values ('1', 1.6, 'stand')");
-            executeInsert("insert into events1 values ('2', 1.6, 'stand')");
+            execute("create table events1 (contact symbol, groupid float, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
+            execute("insert into events1 values ('1', 1.6, 'stand')");
+            execute("insert into events1 values ('2', 1.6, 'stand')");
 
-            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     // Empty table expected
                     "contact\tgroupid\teventid\n" +
                             "2\t1.5\tstand\n" +
@@ -1472,17 +1555,17 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     @Test
     public void testIntersectSort() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table events1 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
-            executeInsert("insert into events1 values ('1', 1.6, 'stand')");
-            executeInsert("insert into events1 values ('2', 1.6, 'stand')");
+            execute("create table events1 (contact symbol, groupid double, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
+            execute("insert into events1 values ('1', 1.6, 'stand')");
+            execute("insert into events1 values ('2', 1.6, 'stand')");
 
-            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
-            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     // Empty table expected
                     "contact\tgroupid\teventid\n" +
                             "2\t1.5\tstand\n" +
@@ -1494,6 +1577,78 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                     true
             );
         });
+    }
+
+    @Test
+    public void testInterval1() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "i\ttypeOf\n" +
+                        "('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\tINTERVAL\n" +
+                        "('1970-01-01T00:00:00.300Z', '1970-01-01T00:00:00.400Z')\tINTERVAL\n" +
+                        "\tINTERVAL\n",
+                "select i, typeOf(i) from ((select interval(100000,200000) i) union all (select interval(300000,400000) i) union all (select null::interval i))"
+        ));
+    }
+
+    @Test
+    public void testInterval2() throws Exception {
+        setCurrentMicros(7 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
+        assertMemoryLeak(() -> assertSql(
+                "a\tb\n" +
+                        "('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\n",
+                "select * from (\n" +
+                        "  select today() a, yesterday() b\n" +
+                        "  union all\n" +
+                        "  select yesterday(), yesterday()\n" +
+                        "  union all\n" +
+                        "  select today() a, null b\n" +
+                        ")\n" +
+                        "where b = a"
+        ));
+    }
+
+    @Test
+    public void testInterval3() throws Exception {
+        setCurrentMicros(7 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
+        assertMemoryLeak(() -> assertSql(
+                "a\ta1\n" +
+                        "('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\t('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\n" +
+                        "('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\n" +
+                        "('1970-01-09T00:00:00.000Z', '1970-01-09T23:59:59.999Z')\t('1970-01-09T00:00:00.000Z', '1970-01-09T23:59:59.999Z')\n",
+                "select * from (\n" +
+                        "  select today() a\n" +
+                        "  union \n" +
+                        "  select yesterday()\n" +
+                        "  union \n" +
+                        "  select tomorrow()\n" +
+                        ") a\n" +
+                        "join (\n" +
+                        "  select today() a\n" +
+                        "  union \n" +
+                        "  select yesterday()\n" +
+                        "  union \n" +
+                        "  select tomorrow()\n" +
+                        ") b\n" +
+                        "on a.a = b.a"
+        ));
+    }
+
+    @Test
+    public void testInterval4() throws Exception {
+        setCurrentMicros(7 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
+        assertMemoryLeak(() -> assertSql(
+                "a\tb\n" +
+                        "('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\n" +
+                        "foobar\t\n",
+                "select * from (\n" +
+                        "  select today() a, yesterday() b\n" +
+                        "  union all\n" +
+                        "  select yesterday(), yesterday()\n" +
+                        "  union all\n" +
+                        "  select 'foobar' a, null b\n" +
+                        ")\n" +
+                        "where b != a"
+        ));
     }
 
     @Test
@@ -1518,7 +1673,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
 
     @Test
     public void testLong256Null() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\t\n" +
                         "0xa0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88c8b1863d4316f9c7\t\n" +
@@ -1530,8 +1685,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "\t0x322a2198864beb14797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fa\n" +
                         "\t0xc1e631285c1ab288c72bfc5230158059980eca62a219a0f16846d7a3aa5aecce\n" +
                         "\t0x4b0f595f143e5d722f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4\n",
-                "create table x as (select rnd_long256() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_long256() c from long_sequence(5))"
+                "rnd_long256()"
         );
     }
 
@@ -1595,17 +1749,17 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     public void testLongChar() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "80\n" +
-                        "83\n" +
-                        "87\n" +
-                        "72\n" +
-                        "89\n" +
+                        "0\n" +
+                        "3\n" +
+                        "5\n" +
+                        "9\n" +
+                        "8\n" +
                         "4689592037643856\n" +
                         "4729996258992366\n" +
                         "7746536061816329025\n" +
                         "-6945921502384501475\n" +
                         "8260188555232587029\n",
-                "create table x as (select rnd_char() a from long_sequence(5))",
+                "create table x as (select '0'::char a union select '3'::char union select '5'::char union select '9'::char union select '8'::char)",
                 "create table y as (select rnd_long() b from long_sequence(5))"
         );
     }
@@ -1650,20 +1804,19 @@ public class UnionAllCastTest extends AbstractGriffinTest {
 
     @Test
     public void testLongNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
-                        "8920866532787660373\tNaN\n" +
-                        "-7611843578141082998\tNaN\n" +
-                        "-5354193255228091881\tNaN\n" +
-                        "-2653407051020864006\tNaN\n" +
-                        "-1675638984090602536\tNaN\n" +
-                        "NaN\t4689592037643856\n" +
-                        "NaN\t4729996258992366\n" +
-                        "NaN\t7746536061816329025\n" +
-                        "NaN\t-6945921502384501475\n" +
-                        "NaN\t8260188555232587029\n",
-                "create table x as (select rnd_long() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_long() c from long_sequence(5))"
+                        "8920866532787660373\tnull\n" +
+                        "-7611843578141082998\tnull\n" +
+                        "-5354193255228091881\tnull\n" +
+                        "-2653407051020864006\tnull\n" +
+                        "-1675638984090602536\tnull\n" +
+                        "null\t4689592037643856\n" +
+                        "null\t4729996258992366\n" +
+                        "null\t7746536061816329025\n" +
+                        "null\t-6945921502384501475\n" +
+                        "null\t8260188555232587029\n",
+                "rnd_long()"
         );
     }
 
@@ -1720,8 +1873,8 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     @Test
     public void testLongTimestamp() throws Exception {
         assertFailure(
-                "create table x as (select rnd_long() a from long_sequence(5))",
-                "create table y as (select cast(rnd_long() as timestamp) b from long_sequence(5))",
+                "create table x as (select cast(rnd_long() as timestamp) b from long_sequence(5))",
+                "create table y as (select rnd_long() a from long_sequence(5))",
                 12
         );
     }
@@ -1781,24 +1934,24 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     public void testShortChar() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "80\n" +
-                        "83\n" +
-                        "87\n" +
-                        "72\n" +
-                        "89\n" +
+                        "0\n" +
+                        "3\n" +
+                        "5\n" +
+                        "9\n" +
+                        "8\n" +
                         "-27056\n" +
                         "24814\n" +
                         "-11455\n" +
                         "-13027\n" +
                         "-21227\n",
-                "create table x as (select rnd_char() a from long_sequence(5))",
+                "create table x as (select '0'::char a union select '3'::char union select '5'::char union select '9'::char union select '8'::char)",
                 "create table y as (select rnd_short() b from long_sequence(5))"
         );
     }
 
     @Test
     public void testShortNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "-22955\t0\n" +
                         "-1398\t0\n" +
@@ -1810,8 +1963,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "0\t-11455\n" +
                         "0\t-13027\n" +
                         "0\t-21227\n",
-                "create table x as (select rnd_short() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_short() c from long_sequence(5))"
+                "rnd_short()"
         );
     }
 
@@ -1917,8 +2069,28 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testStringNull() throws Exception {
+    public void testStringIPv4() throws Exception {
         testUnionAll(
+                "b\n" +
+                        "JWCPSWHYR\n" +
+                        "EHNRX\n" +
+                        "SXUXI\n" +
+                        "TGPGW\n" +
+                        "YUDEYYQEHB\n" +
+                        "101.77.34.89\n" +
+                        "66.56.51.126\n" +
+                        "74.188.217.59\n" +
+                        "249.60.8.8\n" +
+                        "230.202.108.161\n",
+                "create table y as (select rnd_ipv4() a from long_sequence(5))",
+                "create table x as (select rnd_str() b from long_sequence(5))",
+                true
+        );
+    }
+
+    @Test
+    public void testStringNull() throws Exception {
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "\t\n" +
                         "ZSX\t\n" +
@@ -1930,12 +2102,11 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "\tSWH\n" +
                         "\tRXP\n" +
                         "\tHNR\n",
-                "create table x as (select rnd_str(3,3,1) a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_str(3,3,1) c from long_sequence(5))",
+                "rnd_str(3,3,1)",
                 false
         );
 
-        testUnion(
+        testUnionWithNull(
                 "a\tc\n" +
                         "\t\n" +
                         "ZSX\t\n" +
@@ -1956,7 +2127,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
 
     @Test
     public void testSymNull() throws Exception {
-        testUnionAll("a\tc\n" +
+        testUnionAllWithNull("a\tc\n" +
                         "bb\t\n" +
                         "aa\t\n" +
                         "bb\t\n" +
@@ -1967,12 +2138,11 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "\tbb\n" +
                         "\tbb\n" +
                         "\tbb\n",
-                "create table x as (select rnd_symbol('aa','bb') a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_symbol('aa','bb') c from long_sequence(5))",
+                "rnd_symbol('aa','bb')",
                 false
         );
 
-        testUnion(
+        testUnionWithNull(
                 "a\tc\n" +
                         "bb\t\n" +
                         "aa\t\n" +
@@ -2037,7 +2207,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
         // we expect this column to be ignored by optimiser, and also
         // we expect optimiser to correctly select column "b" from Y as
         // a match against column "a" in the union
-        compile("create table y as (select rnd_double() u, rnd_byte() b, rnd_symbol('x','y') c from long_sequence(5))");
+        execute("create table y as (select rnd_double() u, rnd_byte() b, rnd_symbol('x','y') c from long_sequence(5))");
         engine.releaseAllWriters();
         assertQuery(
                 "u\ta\tc\n" +
@@ -2127,7 +2297,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "1970-01-01T00:00:00.023853Z\t\n" +
                         "1970-01-01T00:00:00.083620Z\t\n" +
@@ -2139,12 +2309,11 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "\t1970-01-01T00:00:00.045299Z\n" +
                         "\t1970-01-01T00:00:00.078334Z\n" +
                         "\t\n",
-                "create table x as (select rnd_timestamp(0, 100000, 2) a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_timestamp(0, 100000, 2) c from long_sequence(5))",
+                "rnd_timestamp(0, 100000, 2)",
                 false
         );
 
-        testUnion(
+        testUnionWithNull(
                 "a\tc\n" +
                         "1970-01-01T00:00:00.023853Z\t\n" +
                         "1970-01-01T00:00:00.083620Z\t\n" +
@@ -2168,7 +2337,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
 
     @Test
     public void testUuidNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "322a2198-864b-4b14-b97f-a69eb8fec6cc\t\n" +
                         "980eca62-a219-40f1-a846-d7a3aa5aecce\t\n" +
@@ -2180,8 +2349,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n" +
                         "\tb5b2159a-2356-4217-965d-4c984f0ffa8a\n" +
                         "\te8beef38-cd7b-43d8-9b2d-34586f6275fa\n",
-                "create table x as (select rnd_uuid4() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_uuid4() c from long_sequence(5))"
+                "rnd_uuid4()"
         );
     }
 
@@ -2201,23 +2369,8 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "YUDEYYQEHB\n",
                 "create table x as (select rnd_uuid4() a from long_sequence(5))",
                 "create table y as (select rnd_str() b from long_sequence(5))",
-                false
+                true
         );
-
-        testUnion(
-                "a\n" +
-                        "7f98b0c7-4238-437e-b6ee-542d654d2259\n" +
-                        "7c1b058a-f93c-4808-abaf-c47f4abcd93b\n" +
-                        "63eb3740-c80f-461e-9c8a-fa23e6ca6ca1\n" +
-                        "c2593f82-b430-428d-84a0-9f29df637e38\n" +
-                        "58dfd08e-eb9c-439e-8ec8-2869edec121b\n" +
-                        "JWCPSWHYR\n" +
-                        "EHNRX\n" +
-                        "SXUXI\n" +
-                        "TGPGW\n" +
-                        "YUDEYYQEHB\n"
-        );
-
     }
 
     @Test
@@ -2254,10 +2407,104 @@ public class UnionAllCastTest extends AbstractGriffinTest {
         );
     }
 
-    private void assertFailure(String ddlX, String ddlY, int pos) throws Exception {
-        compile(ddlY);
+    @Test
+    public void testUuidVarchar() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "acb025f7-59cf-4bd0-9e9b-e4e331fe36e6\n" +
+                        "8fd449ba-3259-4a2b-9beb-329042090bb3\n" +
+                        "b482cff5-7e9c-4398-ac09-f1b4db297f07\n" +
+                        "dbd7587f-2077-4576-9b4b-ae41862e09cc\n" +
+                        "7ee6a03f-4f93-4fa3-9d6c-b7b4fbf1fa48\n" +
+                        "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\n" +
+                        "8#3TsZ\n" +
+                        "zV衞͛Ԉ龘и\uDA89\uDFA4~\n" +
+                        "ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\n" +
+                        "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\n",
+                "create table x as (select rnd_uuid4() a from long_sequence(5))",
+                "create table y as (select rnd_varchar() b from long_sequence(5))",
+                true
+        );
+    }
+
+    @Test
+    public void testVarcharNull() throws Exception {
+        testUnionAllWithNull(
+                "a\tc\n" +
+                        "衞͛Ԉ\t\n" +
+                        "\uD93C\uDEC1ӍK\t\n" +
+                        "\uD905\uDCD0\\ꔰ\t\n" +
+                        "\u008B}ѱ\t\n" +
+                        "\uD96C\uDF5FƐ㙎\t\n" +
+                        "\t\u1755\uDA1F\uDE98|\n" +
+                        "\t鈄۲ӄ\n" +
+                        "\tȞ鼷G\n" +
+                        "\t\uF644䶓z\n" +
+                        "\t\n",
+                "rnd_varchar(3,3,1)"
+        );
+    }
+
+    @Test
+    public void testVarcharVarchar() throws Exception {
+        // we include byte <-> bool cast to make sure
+        // bool <-> bool cast it not thrown away as redundant
+        testUnionAll(
+                "a\tc\n" +
+                        "false\tZ끫\uDB53\uDEDA\n" +
+                        "false\t\"\uDB87\uDFA35\n" +
+                        "false\t톬F\uD9E6\uDECD\n" +
+                        "false\tЃَᯤ\n" +
+                        "false\t篸{\uD9D7\uDFE5\n" +
+                        "76\t핕\u05FA씎鈄\n" +
+                        "21\t\uDB8C\uDD1BȞ鼷G\n" +
+                        "35\t\uD8D1\uDD54ZzV\n" +
+                        "117\tB͛Ԉ龘\n" +
+                        "103\tL➤~2\n",
+                "create table x as (select rnd_boolean() a, rnd_varchar(3,3,1) c from long_sequence(5))",
+                "create table y as (select rnd_byte() b, rnd_varchar(4,4,1) c from long_sequence(5))"
+        );
+    }
+
+    private static void testUnionAllWithNull(String expected, String function) throws Exception {
+        testUnionAllWithNull(expected, function, true);
+    }
+
+    private static void testUnionAllWithNull(String expected, String function, boolean testUnion) throws Exception {
+        execute("create table y as (select " + function + " c from long_sequence(5))");
+        execute("create table x as (select " + function + " a from long_sequence(5))");
         engine.releaseAllWriters();
-        assertFailure("x union all y",
+
+        assertQuery(
+                expected,
+                "(select a, null c from x) union all (select null b, c from y)",
+                null,
+                null,
+                false,
+                true
+        );
+
+        if (testUnion) {
+            testUnionWithNull(expected);
+        }
+    }
+
+    private static void testUnionWithNull(String expected) throws Exception {
+        assertQuery(
+                expected,
+                "(select a, null c from x) union (select null b, c from y)",
+                null,
+                null,
+                false,
+                false
+        );
+    }
+
+    private void assertFailure(String ddlX, String ddlY, int pos) throws Exception {
+        execute(ddlY);
+        engine.releaseAllWriters();
+        assertException(
+                "x union all y",
                 ddlX,
                 pos,
                 "unsupported cast"
@@ -2286,7 +2533,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     private void testUnionAll(String expected, String sql, String ddlX, String ddlY) throws Exception {
-        compile(ddlY);
+        execute(ddlY);
         engine.releaseAllWriters();
         assertQuery(expected, sql, ddlX, null, false, true);
     }

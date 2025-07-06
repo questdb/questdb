@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,6 +38,7 @@ import java.net.Socket;
 import java.security.KeyStore;
 import java.security.SecureRandom;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -49,6 +50,7 @@ public final class TlsProxy {
     private final char[] keystorePassword;
     private final Set<Link> links = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private Thread acceptorThread;
+    private volatile boolean killAfterAccepting;
     private ServerSocket serverSocket;
     private volatile boolean shutdownRequested;
 
@@ -57,6 +59,19 @@ public final class TlsProxy {
         this.dstPort = dstPort;
         this.keystore = keystore;
         this.keystorePassword = keystorePassword;
+    }
+
+    public synchronized void killAfterAccepting() {
+        killAfterAccepting = true;
+    }
+
+    public synchronized void killConnections() {
+        Iterator<Link> iterator = links.iterator();
+        while (iterator.hasNext()) {
+            Link link = iterator.next();
+            link.kill();
+            iterator.remove();
+        }
     }
 
     public int start() {
@@ -121,6 +136,11 @@ public final class TlsProxy {
                     closeQuietly(backendSocket);
                     return;
                 }
+                if (killAfterAccepting) {
+                    closeQuietly(frontendSocket);
+                    closeQuietly(backendSocket);
+                    continue;
+                }
                 Link link = new Link(frontendSocket, backendSocket);
                 links.add(link);
                 link.start();
@@ -129,13 +149,22 @@ public final class TlsProxy {
     }
 
     private static class Link {
+        private final Socket backend;
         private final Pump backendToFrontend;
+        private final Socket frontend;
         private final Pump frontendToBackend;
 
         private Link(Socket frontend, Socket backend) {
             AtomicInteger race = new AtomicInteger(2);
+            this.frontend = frontend;
+            this.backend = backend;
             frontendToBackend = TestUtils.unchecked(() -> new Pump(frontend.getInputStream(), backend.getOutputStream(), race, "front->backend"));
             backendToFrontend = TestUtils.unchecked(() -> new Pump(backend.getInputStream(), frontend.getOutputStream(), race, "backend->frontend"));
+        }
+
+        private void kill() {
+            closeQuietly(frontend);
+            closeQuietly(backend);
         }
 
         private void shutDown() {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,15 +24,32 @@
 
 package org.questdb;
 
-import io.questdb.Metrics;
-import io.questdb.cairo.*;
-import io.questdb.griffin.SqlCompiler;
+import io.questdb.MessageBusImpl;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DefaultDdlListener;
+import io.questdb.cairo.DefaultLifecycleManager;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
-import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Level;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Param;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -44,10 +61,10 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 public class TableWriterBenchmark {
-
     // Should be set close enough to the cairo.max.uncommitted.rows default value.
     private static final int ROWS_PER_ITERATION = 1;
-
+    private static final CairoConfiguration configuration = new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir"));
+    private static CairoEngine cairoEngine;
     private static TableWriter writer;
     private static TableWriter writer2;
     private static TableWriter writer3;
@@ -57,6 +74,8 @@ public class TableWriterBenchmark {
     private long ts;
 
     public static void main(String[] args) throws RunnerException {
+        cairoEngine = new CairoEngine(configuration);
+
         Options opt = new OptionsBuilder()
                 .include(TableWriterBenchmark.class.getSimpleName())
                 .warmupIterations(1)
@@ -68,7 +87,7 @@ public class TableWriterBenchmark {
     }
 
     @Setup(Level.Iteration)
-    public void setup() throws Exception {
+    public void setup() {
         final CairoConfiguration configuration = getConfiguration();
 
         executeDdl("create table if not exists test1(f long)", configuration);
@@ -77,13 +96,46 @@ public class TableWriterBenchmark {
 
         LogFactory.haltInstance();
 
-        TableToken tableToken1 = new TableToken("test1", "test1", 0, false);
-        TableToken tableToken2 = new TableToken("test2", "test2", 0, false);
-        TableToken tableToken3 = new TableToken("test3", "test3", 0, false);
+        TableToken tableToken1 = new TableToken("test1", "test1", 0, false, false, false);
+        TableToken tableToken2 = new TableToken("test2", "test2", 0, false, false, false);
+        TableToken tableToken3 = new TableToken("test3", "test3", 0, false, false, false);
 
-        writer = new TableWriter(configuration, tableToken1, Metrics.disabled());
-        writer2 = new TableWriter(configuration, tableToken2, Metrics.disabled());
-        writer3 = new TableWriter(configuration, tableToken3, Metrics.disabled());
+        writer = new TableWriter(
+                configuration,
+                tableToken1,
+                null,
+                new MessageBusImpl(configuration),
+                true,
+                DefaultLifecycleManager.INSTANCE,
+                configuration.getDbRoot(),
+                DefaultDdlListener.INSTANCE,
+                () -> Numbers.LONG_NULL,
+                cairoEngine
+        );
+        writer2 = new TableWriter(
+                configuration,
+                tableToken2,
+                null,
+                new MessageBusImpl(configuration),
+                true,
+                DefaultLifecycleManager.INSTANCE,
+                configuration.getDbRoot(),
+                DefaultDdlListener.INSTANCE,
+                () -> Numbers.LONG_NULL,
+                cairoEngine
+        );
+        writer3 = new TableWriter(
+                configuration,
+                tableToken3,
+                null,
+                new MessageBusImpl(configuration),
+                true,
+                DefaultLifecycleManager.INSTANCE,
+                configuration.getDbRoot(),
+                DefaultDdlListener.INSTANCE,
+                () -> Numbers.LONG_NULL,
+                cairoEngine
+        );
         rnd.reset();
     }
 
@@ -170,7 +222,7 @@ public class TableWriterBenchmark {
                             -1,
                             null
                     );
-            try (SqlCompiler compiler = new SqlCompiler(engine)) {
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 compiler.compile(ddl, sqlExecutionContext);
             } catch (SqlException e) {
                 e.printStackTrace();

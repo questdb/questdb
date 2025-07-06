@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,17 +28,23 @@ import io.questdb.cairo.*;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.str.Utf8StringSink;
 
 public class LineUdpParserSupport {
     private final static Log LOG = LogFactory.getLog(LineUdpParserSupport.class);
 
     public static int getValueType(CharSequence value) {
-        return getValueType(value, ColumnType.DOUBLE, ColumnType.LONG);
+        return getValueType(value, ColumnType.DOUBLE, ColumnType.LONG, true);
     }
 
-    public static int getValueType(CharSequence value, short defaultFloatColumnType, short defaultIntegerColumnType) {
+    public static int getValueType(CharSequence value, boolean useLegacyStringDefault) {
+        return getValueType(value, ColumnType.DOUBLE, ColumnType.LONG, useLegacyStringDefault);
+    }
+
+    public static int getValueType(CharSequence value, short defaultFloatColumnType, short defaultIntegerColumnType, boolean useLegacyStringDefault) {
         // method called for inbound ilp messages on each value.
         // returning UNDEFINED makes the whole line be skipped.
         // 0 len values, return null type.
@@ -80,7 +86,7 @@ public class LineUdpParserSupport {
                         LOG.error().$("incorrectly quoted string: ").$(value).$();
                         return ColumnType.UNDEFINED;
                     }
-                    return ColumnType.STRING;
+                    return useLegacyStringDefault ? ColumnType.STRING : ColumnType.VARCHAR;
                 default:
                     if (last >= '0' && last <= '9' && ((first >= '0' && first <= '9') || first == '-' || first == '.')) {
                         return defaultFloatColumnType;
@@ -128,6 +134,11 @@ public class LineUdpParserSupport {
                     case ColumnType.STRING:
                         row.putStr(columnIndex, value, 1, value.length() - 2);
                         break;
+                    case ColumnType.VARCHAR:
+                        Utf8StringSink utf8Sink = Misc.getThreadLocalUtf8Sink();
+                        utf8Sink.put(value, 1, value.length() - 1);
+                        row.putVarchar(columnIndex, utf8Sink);
+                        break;
                     case ColumnType.SYMBOL:
                         row.putSym(columnIndex, value);
                         break;
@@ -139,6 +150,9 @@ public class LineUdpParserSupport {
                         break;
                     case ColumnType.INT:
                         row.putInt(columnIndex, Numbers.parseInt(value, 0, value.length() - 1));
+                        break;
+                    case ColumnType.IPv4:
+                        row.putIPv4(columnIndex, Numbers.parseIPv4UDP(value));
                         break;
                     case ColumnType.SHORT:
                         row.putShort(columnIndex, Numbers.parseShort(value, 0, value.length() - 1));
@@ -245,6 +259,9 @@ public class LineUdpParserSupport {
             case ColumnType.STRING:
                 row.putStr(columnIndex, null);
                 break;
+            case ColumnType.VARCHAR:
+                row.putVarchar(columnIndex, null);
+                break;
             case ColumnType.SYMBOL:
                 row.putSym(columnIndex, null);
                 break;
@@ -255,11 +272,13 @@ public class LineUdpParserSupport {
                 row.putFloat(columnIndex, Float.NaN);
                 break;
             case ColumnType.LONG:
-                row.putLong(columnIndex, Numbers.LONG_NaN);
+                row.putLong(columnIndex, Numbers.LONG_NULL);
                 break;
             case ColumnType.INT:
-                row.putInt(columnIndex, Numbers.INT_NaN);
+                row.putInt(columnIndex, Numbers.INT_NULL);
                 break;
+            case ColumnType.IPv4:
+                row.putIPv4(columnIndex, Numbers.IPv4_NULL);
             case ColumnType.SHORT:
                 row.putShort(columnIndex, (short) 0);
                 break;
@@ -270,10 +289,10 @@ public class LineUdpParserSupport {
                 row.putChar(columnIndex, (char) 0);
                 break;
             case ColumnType.DATE:
-                row.putDate(columnIndex, Numbers.LONG_NaN);
+                row.putDate(columnIndex, Numbers.LONG_NULL);
                 break;
             case ColumnType.TIMESTAMP:
-                row.putTimestamp(columnIndex, Numbers.LONG_NaN);
+                row.putTimestamp(columnIndex, Numbers.LONG_NULL);
                 break;
             case ColumnType.LONG256:
                 row.putLong256(columnIndex, "");

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,7 +35,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
@@ -46,14 +45,20 @@ public class ToCharBinFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         return new ToCharBinFunc(args.getQuick(0));
     }
 
     private static class ToCharBinFunc extends StrFunction implements UnaryFunction {
         private final Function arg;
-        private final StringSink sink1 = new StringSink();
-        private final StringSink sink2 = new StringSink();
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
 
         public ToCharBinFunc(Function arg) {
             this.arg = arg;
@@ -70,18 +75,13 @@ public class ToCharBinFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
-            Chars.toSink(arg.getBin(rec), sink);
-        }
-
-        @Override
-        public CharSequence getStr(Record rec) {
-            return toSink(rec, sink1);
+        public CharSequence getStrA(Record rec) {
+            return toSink(rec, sinkA);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return toSink(rec, sink2);
+            return toSink(rec, sinkB);
         }
 
         @Override
@@ -103,6 +103,11 @@ public class ToCharBinFunctionFactory implements FunctionFactory {
             return count;
         }
 
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
         @Nullable
         private CharSequence toSink(Record rec, StringSink sink) {
             final BinarySequence sequence = arg.getBin(rec);
@@ -113,6 +118,5 @@ public class ToCharBinFunctionFactory implements FunctionFactory {
             Chars.toSink(sequence, sink);
             return sink;
         }
-
     }
 }

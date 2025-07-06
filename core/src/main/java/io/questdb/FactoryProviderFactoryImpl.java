@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,18 +25,13 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.griffin.FunctionFactoryCache;
+import org.jetbrains.annotations.NotNull;
 
 public class FactoryProviderFactoryImpl implements FactoryProviderFactory {
     public static final FactoryProviderFactory INSTANCE = new FactoryProviderFactoryImpl();
 
     @Override
-    public FactoryProvider getInstance(
-            ServerConfiguration configuration,
-            CairoEngine engine,
-            FunctionFactoryCache functionFactoryCache,
-            FreeOnExit freeOnExit
-    ) {
+    public @NotNull FactoryProvider getInstance(ServerConfiguration configuration, CairoEngine engine, FreeOnExit freeOnExit) {
         return new FactoryProviderImpl(configuration);
     }
 }

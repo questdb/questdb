@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,10 +40,9 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import io.questdb.std.datetime.microtime.TimestampFormatFactory;
 
 public class ToTimestampVCFunctionFactory implements FunctionFactory {
-    private static final ThreadLocal<TimestampFormatCompiler> tlCompiler = ThreadLocal.withInitial(TimestampFormatCompiler::new);
 
     @Override
     public String getSignature() {
@@ -59,19 +58,19 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final Function arg = args.getQuick(0);
-        final CharSequence pattern = args.getQuick(1).getStr(null);
+        final CharSequence pattern = args.getQuick(1).getStrA(null);
         if (pattern == null) {
             throw SqlException.$(argPositions.getQuick(1), "pattern is required");
         }
         if (arg.isConstant()) {
-            return evaluateConstant(arg, tlCompiler.get().compile(pattern), configuration.getDefaultDateLocale());
+            return evaluateConstant(arg, TimestampFormatFactory.INSTANCE.get(pattern), configuration.getDefaultDateLocale());
         } else {
-            return new Func(arg, tlCompiler.get().compile(pattern), configuration.getDefaultDateLocale());
+            return new Func(arg, TimestampFormatFactory.INSTANCE.get(pattern), configuration.getDefaultDateLocale());
         }
     }
 
-    private TimestampConstant evaluateConstant(Function arg, DateFormat timestampFormat, DateLocale locale) {
-        CharSequence value = arg.getStr(null);
+    protected TimestampConstant evaluateConstant(Function arg, DateFormat timestampFormat, DateLocale locale) {
+        CharSequence value = arg.getStrA(null);
         try {
             if (value != null) {
                 return new TimestampConstant(timestampFormat.parse(value, locale));
@@ -82,7 +81,7 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
         return TimestampConstant.NULL;
     }
 
-    private static final class Func extends TimestampFunction implements UnaryFunction {
+    protected static final class Func extends TimestampFunction implements UnaryFunction {
 
         private final Function arg;
         private final DateLocale locale;
@@ -101,14 +100,14 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            CharSequence value = arg.getStr(rec);
+            CharSequence value = arg.getStrA(rec);
             try {
                 if (value != null) {
                     return timestampFormat.parse(value, locale);
                 }
             } catch (NumericException ignore) {
             }
-            return Numbers.LONG_NaN;
+            return Numbers.LONG_NULL;
         }
 
         @Override

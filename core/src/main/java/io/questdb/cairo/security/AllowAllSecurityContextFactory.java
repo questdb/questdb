@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.cairo.security;
 
 import io.questdb.cairo.SecurityContext;
+import io.questdb.std.ObjList;
 
 public class AllowAllSecurityContextFactory implements SecurityContextFactory {
     public static final AllowAllSecurityContextFactory INSTANCE = new AllowAllSecurityContextFactory();
@@ -33,7 +34,7 @@ public class AllowAllSecurityContextFactory implements SecurityContextFactory {
     }
 
     @Override
-    public SecurityContext getInstance(CharSequence principal, int interfaceId) {
+    public SecurityContext getInstance(CharSequence principal, ObjList<CharSequence> groups, byte authType, byte interfaceId) {
         return AllowAllSecurityContext.INSTANCE;
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -40,6 +41,7 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
 
     public SampleByFillPrevNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
+            CairoConfiguration configuration,
             RecordCursorFactory base,
             @NotNull TimestampSampler timestampSampler,
             RecordMetadata groupByMetadata,
@@ -50,13 +52,18 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) {
         super(base, groupByMetadata, recordFunctions);
         try {
             final SimpleMapValue simpleMapValue = new SimpleMapValue(groupByValueCount);
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             this.cursor = new SampleByFillPrevNotKeyedRecordCursor(
+                    configuration,
                     groupByFunctions,
                     updater,
                     recordFunctions,
@@ -66,7 +73,11 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,
-                    offsetFuncPos
+                    offsetFuncPos,
+                    sampleFromFunc,
+                    sampleFromFuncPos,
+                    sampleToFunc,
+                    sampleToFuncPos
             );
         } catch (Throwable e) {
             Misc.freeObjList(recordFunctions);
@@ -76,7 +87,8 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("SampleByFillPrev");
+        sink.type("Sample By");
+        sink.attr("fill").val("prev");
         sink.optAttr("values", cursor.groupByFunctions, true);
         sink.child(base);
     }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,9 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -65,28 +68,8 @@ public class SymbolFunctionTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testChar() {
-        function.getChar(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoByte() {
-        function.getGeoByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoInt() {
-        function.getGeoInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoLong() {
-        function.getGeoLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoShort() {
-        function.getGeoShort(null);
+    public void testGetArray() {
+        function.getArray(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -109,6 +92,11 @@ public class SymbolFunctionTest {
         function.getByte(null);
     }
 
+    @Test
+    public void testGetChar() {
+        Assert.assertEquals('X', function.getChar(null));
+    }
+
     @Test(expected = UnsupportedOperationException.class)
     public void testGetDate() {
         function.getDate(null);
@@ -125,8 +113,63 @@ public class SymbolFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoByte() {
+        function.getGeoByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoInt() {
+        function.getGeoInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoLong() {
+        function.getGeoLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoShort() {
+        function.getGeoShort(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetIPv4() {
+        function.getIPv4(null);
+    }
+
+    @Test(expected = Exception.class)
+    public void testGetInvalidTimestamp() {
+        function.getTimestamp(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetLong() {
         function.getLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Hi() {
+        function.getLong128Hi(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Lo() {
+        function.getLong128Lo(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256() {
+        function.getLong256(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256A() {
+        function.getLong256A(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256B() {
+        function.getLong256B(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -141,7 +184,7 @@ public class SymbolFunctionTest {
 
     @Test
     public void testGetStr() {
-        Assert.assertEquals("XYZ", function.getStr(null));
+        Assert.assertEquals("XYZ", function.getStrA(null));
     }
 
     @Test
@@ -154,28 +197,54 @@ public class SymbolFunctionTest {
         function.getStrLen(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStrSink() {
-        function.getStr(null, null);
+    @Test
+    public void testGetVarcharA() {
+        Utf8Sequence value = function.getVarcharA(null);
+        Assert.assertNotNull(value);
+        TestUtils.assertEquals("XYZ", value.toString());
     }
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetTimestamp() {
-        function.getTimestamp(null);
+    @Test
+    public void testGetVarcharB() {
+        Utf8Sequence value = function.getVarcharB(null);
+        Assert.assertNotNull(value);
+        TestUtils.assertEquals("XYZ", value.toString());
     }
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testLong256() {
-        function.getLong256(null, null);
-    }
+    @Test
+    public void testTimestamp() {
+        try (SymbolFunction symbolFunction = new SymbolFunction() {
+            @Override
+            public int getInt(Record rec) {
+                throw new UnsupportedOperationException();
+            }
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testLong256A() {
-        function.getLong256A(null);
-    }
+            @Override
+            public CharSequence getSymbol(Record rec) {
+                return "2024-04-09";
+            }
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testLong256B() {
-        function.getLong256B(null);
+            @Override
+            public CharSequence getSymbolB(Record rec) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean isSymbolTableStatic() {
+                return false;
+            }
+
+            @Override
+            public CharSequence valueBOf(int key) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public CharSequence valueOf(int key) {
+                throw new UnsupportedOperationException();
+            }
+        }) {
+            Assert.assertEquals("2024-04-09T00:00:00.000Z", Timestamps.toString(symbolFunction.getTimestamp(null)));
+        }
     }
 }

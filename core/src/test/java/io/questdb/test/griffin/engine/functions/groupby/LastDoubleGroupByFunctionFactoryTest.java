@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,18 +28,18 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class LastDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
-
-        compiler.compile("create table tab (f double)", sqlExecutionContext);
+        execute("create table tab (f double)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -49,12 +49,12 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select last(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertTrue(Double.isNaN(record.getDouble(0)));
+                Assert.assertTrue(Numbers.isNull(record.getDouble(0)));
             }
         }
     }
@@ -76,7 +76,7 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
     public void testLastDoubleNull() throws Exception {
         assertQuery(
                 "y\n" +
-                        "NaN\n",
+                        "null\n",
                 "select last(y) y from tab",
                 "create table tab as (select cast(x as double) x, cast(null as double) y from long_sequence(100))",
                 null,
@@ -87,8 +87,7 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testNonNull() throws SqlException {
-
-        compiler.compile("create table tab (f double)", sqlExecutionContext);
+        execute("create table tab (f double)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -99,7 +98,7 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select last(f) from tab")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -111,7 +110,8 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery13("b\tlast\tk\n" +
+        assertQuery(
+                "b\tlast\tk\n" +
                         "\t0.44804689668613573\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t0.8685154305419587\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t0.5659429139861241\t1970-01-03T00:00:00.000000Z\n" +
@@ -165,8 +165,8 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "CGFN\t2.7171094533334066\t1970-01-03T00:00:00.000000Z\n" +
                         "NPIW\t4.115364146194077\t1970-01-03T00:00:00.000000Z\n" +
                         "PEVM\t-3.15429689776691\t1970-01-03T00:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "WGRM\tnull\t1970-01-03T00:00:00.000000Z\n" +
+                        "ZNFK\tnull\t1970-01-03T00:00:00.000000Z\n" +
                         "\t0.05758228485190853\t1970-01-03T03:00:00.000000Z\n" +
                         "VTJW\t0.6697969295620055\t1970-01-03T03:00:00.000000Z\n" +
                         "CPSW\t0.6940904779678791\t1970-01-03T03:00:00.000000Z\n" +
@@ -176,8 +176,8 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "CGFN\t2.505608562668917\t1970-01-03T03:00:00.000000Z\n" +
                         "NPIW\t3.750106582628655\t1970-01-03T03:00:00.000000Z\n" +
                         "PEVM\t-2.7606061299772864\t1970-01-03T03:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                        "WGRM\tnull\t1970-01-03T03:00:00.000000Z\n" +
+                        "ZNFK\tnull\t1970-01-03T03:00:00.000000Z\n" +
                         "\t0.49153268154777974\t1970-01-03T06:00:00.000000Z\n" +
                         "VTJW\t0.8196554745841765\t1970-01-03T06:00:00.000000Z\n" +
                         "HYRX\t0.23493793601747937\t1970-01-03T06:00:00.000000Z\n" +
@@ -187,8 +187,8 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "CGFN\t2.294107672004426\t1970-01-03T06:00:00.000000Z\n" +
                         "NPIW\t3.3848490190632345\t1970-01-03T06:00:00.000000Z\n" +
                         "PEVM\t-2.3669153621876635\t1970-01-03T06:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                        "WGRM\tnull\t1970-01-03T06:00:00.000000Z\n" +
+                        "ZNFK\tnull\t1970-01-03T06:00:00.000000Z\n" +
                         "\t0.7202789791127316\t1970-01-03T09:00:00.000000Z\n" +
                         "RXGZ\t0.03192108074989719\t1970-01-03T09:00:00.000000Z\n" +
                         "VTJW\t0.7732229848518976\t1970-01-03T09:00:00.000000Z\n" +
@@ -198,8 +198,8 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "CGFN\t2.0826067813399365\t1970-01-03T09:00:00.000000Z\n" +
                         "NPIW\t3.0195914554978125\t1970-01-03T09:00:00.000000Z\n" +
                         "PEVM\t-1.9732245943980409\t1970-01-03T09:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                        "WGRM\tnull\t1970-01-03T09:00:00.000000Z\n" +
+                        "ZNFK\tnull\t1970-01-03T09:00:00.000000Z\n" +
                         "\t0.6914896391199901\t1970-01-03T12:00:00.000000Z\n" +
                         "VTJW\t0.7267904951196187\t1970-01-03T12:00:00.000000Z\n" +
                         "RXGZ\t0.055856706541069105\t1970-01-03T12:00:00.000000Z\n" +
@@ -209,8 +209,8 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "CGFN\t1.8711058906754459\t1970-01-03T12:00:00.000000Z\n" +
                         "NPIW\t2.6543338919323913\t1970-01-03T12:00:00.000000Z\n" +
                         "PEVM\t-1.5795338266084187\t1970-01-03T12:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                        "WGRM\tnull\t1970-01-03T12:00:00.000000Z\n" +
+                        "ZNFK\tnull\t1970-01-03T12:00:00.000000Z\n" +
                         "\t0.6627002991272485\t1970-01-03T15:00:00.000000Z\n" +
                         "VTJW\t0.6803580053873398\t1970-01-03T15:00:00.000000Z\n" +
                         "RXGZ\t0.07979233233224103\t1970-01-03T15:00:00.000000Z\n" +
@@ -220,8 +220,8 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "CGFN\t1.6596050000109557\t1970-01-03T15:00:00.000000Z\n" +
                         "NPIW\t2.28907632836697\t1970-01-03T15:00:00.000000Z\n" +
                         "PEVM\t-1.1858430588187956\t1970-01-03T15:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                        "WGRM\tnull\t1970-01-03T15:00:00.000000Z\n" +
+                        "ZNFK\tnull\t1970-01-03T15:00:00.000000Z\n" +
                         "\t0.6339109591345069\t1970-01-03T18:00:00.000000Z\n" +
                         "VTJW\t0.6339255156550605\t1970-01-03T18:00:00.000000Z\n" +
                         "RXGZ\t0.10372795812341296\t1970-01-03T18:00:00.000000Z\n" +
@@ -231,8 +231,8 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "CGFN\t1.4481041093464653\t1970-01-03T18:00:00.000000Z\n" +
                         "NPIW\t1.9238187648015488\t1970-01-03T18:00:00.000000Z\n" +
                         "PEVM\t-0.7921522910291726\t1970-01-03T18:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                        "WGRM\tnull\t1970-01-03T18:00:00.000000Z\n" +
+                        "ZNFK\tnull\t1970-01-03T18:00:00.000000Z\n" +
                         "\t0.6051216191417653\t1970-01-03T21:00:00.000000Z\n" +
                         "VTJW\t0.5874930259227816\t1970-01-03T21:00:00.000000Z\n" +
                         "RXGZ\t0.12766358391458488\t1970-01-03T21:00:00.000000Z\n" +
@@ -242,8 +242,8 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "CGFN\t1.2366032186819753\t1970-01-03T21:00:00.000000Z\n" +
                         "NPIW\t1.5585612012361274\t1970-01-03T21:00:00.000000Z\n" +
                         "PEVM\t-0.3984615232395501\t1970-01-03T21:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                        "WGRM\tnull\t1970-01-03T21:00:00.000000Z\n" +
+                        "ZNFK\tnull\t1970-01-03T21:00:00.000000Z\n" +
                         "\t0.5763322791490237\t1970-01-04T00:00:00.000000Z\n" +
                         "VTJW\t0.5410605361905028\t1970-01-04T00:00:00.000000Z\n" +
                         "RXGZ\t0.15159920970575683\t1970-01-04T00:00:00.000000Z\n" +
@@ -253,8 +253,8 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "CGFN\t1.025102328017485\t1970-01-04T00:00:00.000000Z\n" +
                         "NPIW\t1.1933036376707062\t1970-01-04T00:00:00.000000Z\n" +
                         "PEVM\t-0.004770755449927295\t1970-01-04T00:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                        "WGRM\tnull\t1970-01-04T00:00:00.000000Z\n" +
+                        "ZNFK\tnull\t1970-01-04T00:00:00.000000Z\n" +
                         "\t0.5475429391562822\t1970-01-04T03:00:00.000000Z\n" +
                         "CGFN\t0.8136014373529948\t1970-01-04T03:00:00.000000Z\n" +
                         "NPIW\t0.8280460741052847\t1970-01-04T03:00:00.000000Z\n" +
@@ -264,8 +264,8 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "PEHN\t-1.6786720005549198\t1970-01-04T03:00:00.000000Z\n" +
                         "HYRX\t1.51841129309067\t1970-01-04T03:00:00.000000Z\n" +
                         "CPSW\t0.8448066640209855\t1970-01-04T03:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                        "WGRM\tnull\t1970-01-04T03:00:00.000000Z\n" +
+                        "ZNFK\tnull\t1970-01-04T03:00:00.000000Z\n" +
                         "WGRM\t0.8387598218385978\t1970-01-04T06:00:00.000000Z\n" +
                         "CGFN\t0.6021005466885047\t1970-01-04T06:00:00.000000Z\n" +
                         "\t0.5364603752015349\t1970-01-04T06:00:00.000000Z\n" +
@@ -278,7 +278,8 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "HYRX\t1.7017646298154117\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t0.8636461872776237\t1970-01-04T06:00:00.000000Z\n",
                 true,
-                true
+                true,
+                false
         );
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,18 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.http.ex.RetryFailedOperationException;
-import io.questdb.mp.*;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.SPSequence;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.SynchronizedJob;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IOOperation;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.PeerIsSlowToWriteException;
+import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -37,6 +48,7 @@ import java.util.PriorityQueue;
 public class WaitProcessor extends SynchronizedJob implements RescheduleContext, Closeable {
 
     private final MillisecondClock clock;
+    private final IODispatcher<HttpConnectionContext> dispatcher;
     private final double exponentialWaitMultiplier;
     private final Sequence inPubSequence;
     private final RingQueue<RetryHolder> inQueue;
@@ -47,11 +59,12 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
     private final RingQueue<RetryHolder> outQueue;
     private final Sequence outSubSequence;
 
-    public WaitProcessor(WaitProcessorConfiguration configuration) {
+    public WaitProcessor(WaitProcessorConfiguration configuration, IODispatcher<HttpConnectionContext> dispatcher) {
         clock = configuration.getClock();
         maxWaitCapMs = configuration.getMaxWaitCapMs();
         exponentialWaitMultiplier = configuration.getExponentialWaitMultiplier();
         nextRerun = new PriorityQueue<>(configuration.getInitialWaitQueueSize(), WaitProcessor::compareRetriesInQueue);
+        this.dispatcher = dispatcher;
 
         int retryQueueLength = configuration.getMaxProcessingQueueSize();
         inQueue = new RingQueue<>(RetryHolder::new, retryQueueLength);
@@ -87,13 +100,7 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
             Retry retry = getNextRerun();
             if (retry != null) {
                 useful = true;
-                if (!retry.tryRerun(selector, this)) {
-                    try {
-                        reschedule(retry, retry.getAttemptDetails().attempt + 1, retry.getAttemptDetails().waitStartTimestamp);
-                    } catch (RetryFailedOperationException e) {
-                        retry.fail(selector, e);
-                    }
-                }
+                run(selector, retry);
             } else {
                 return useful;
             }
@@ -192,6 +199,27 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
             retryHolder.retry = retry;
             inPubSequence.done(cursor);
             return;
+        }
+    }
+
+    private void run(HttpRequestProcessorSelector selector, Retry retry) {
+        try {
+            if (!retry.tryRerun(selector, this)) {
+                try {
+                    reschedule(retry, retry.getAttemptDetails().attempt + 1, retry.getAttemptDetails().waitStartTimestamp);
+                } catch (RetryFailedOperationException e) {
+                    retry.fail(selector, e);
+                }
+            }
+        } catch (PeerIsSlowToReadException e) {
+            HttpConnectionContext context = (HttpConnectionContext) retry;
+            dispatcher.registerChannel(context, IOOperation.WRITE);
+        } catch (PeerIsSlowToWriteException e) {
+            HttpConnectionContext context = (HttpConnectionContext) retry;
+            dispatcher.registerChannel(context, IOOperation.READ);
+        } catch (ServerDisconnectException e) {
+            HttpConnectionContext context = (HttpConnectionContext) retry;
+            dispatcher.disconnect((HttpConnectionContext) retry, context.getDisconnectReason());
         }
     }
 

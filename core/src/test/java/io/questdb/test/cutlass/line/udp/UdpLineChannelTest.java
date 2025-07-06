@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,9 +26,12 @@ package io.questdb.test.cutlass.line.udp;
 
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.udp.UdpLineChannel;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static org.junit.Assert.fail;
@@ -36,22 +39,32 @@ import static org.junit.Assert.fail;
 public class UdpLineChannelTest {
     private static final NetworkFacade FAILS_SET_SET_TTL_NET_FACADE = new NetworkFacadeImpl() {
         @Override
-        public int setMulticastTtl(int fd, int ttl) {
+        public int setMulticastTtl(long fd, int ttl) {
             return -1;
         }
     };
     private static final NetworkFacade FAILS_TO_SET_MULTICAST_IFACE_NET_FACADE = new NetworkFacadeImpl() {
         @Override
-        public int setMulticastInterface(int fd, int ipv4Address) {
+        public int setMulticastInterface(long fd, int ipv4Address) {
             return -1;
         }
     };
     private static final NetworkFacade FD_EXHAUSTED_NET_FACADE = new NetworkFacadeImpl() {
         @Override
-        public int socketUdp() {
+        public long socketUdp() {
             return -1;
         }
     };
+    private static final Log LOG = LogFactory.getLog(UdpLineChannelTest.class);
+
+    @BeforeClass
+    public static void setUpStatic() {
+        // it is necessary to initialise logger before tests start
+        // logger doesn't relinquish memory until JVM stops
+        // which causes memory leak detector to fail should logger be
+        // created mid-test
+        LOG.info().$("setup logger").$();
+    }
 
     @Test
     public void testConstructorLeak_DescriptorsExhausted() throws Exception {

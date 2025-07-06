@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,10 @@ package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
@@ -35,7 +38,7 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Uuid;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * Specialized functions for comparing UUIDs with Strings.
@@ -52,15 +55,14 @@ final class UuidEqUtils {
     private UuidEqUtils() {
     }
 
-    @Nullable
-    static BooleanFunction eqStrUuid(Function strFun, Function uuidFun) {
-        if (strFun.isConstant()) {
-            CharSequence uuidStr = strFun.getStr(null);
+    static @NotNull BooleanFunction eqStrUuid(Function strFunc, Function uuidFunc) {
+        if (strFunc.isConstant()) {
+            CharSequence uuidStr = strFunc.getStrA(null);
             long lo;
             long hi;
             if (uuidStr == null) {
-                lo = Numbers.LONG_NaN;
-                hi = Numbers.LONG_NaN;
+                lo = Numbers.LONG_NULL;
+                hi = Numbers.LONG_NULL;
             } else {
                 try {
                     Uuid.checkDashesAndLength(uuidStr);
@@ -71,53 +73,47 @@ final class UuidEqUtils {
                     return BooleanConstant.FALSE;
                 }
             }
-            if (uuidFun.isConstant()) {
-                return BooleanConstant.of(hi == uuidFun.getLong128Hi(null) && lo == uuidFun.getLong128Hi(null));
-            } else {
-                return new ConstStrFun(lo, hi, uuidFun);
+            return new ConstStrFunc(lo, hi, uuidFunc);
+        } else if (strFunc.isRuntimeConstant()) {
+            return new RuntimeConstStrFunc(strFunc, uuidFunc);
+        } else if (uuidFunc.isConstant()) {
+            long lo = uuidFunc.getLong128Lo(null);
+            long hi = uuidFunc.getLong128Hi(null);
+            if (Uuid.isNull(lo, hi)) {
+                return new EqStrFunctionFactory.NullCheckFunc(strFunc);
             }
-        } else {
-            if (uuidFun.isConstant()) {
-                long lo = uuidFun.getLong128Lo(null);
-                long hi = uuidFun.getLong128Hi(null);
-                if (Uuid.isNull(lo, hi)) {
-                    return new EqStrFunctionFactory.NullCheckFunc(strFun);
-                } else {
-                    return new ConstUuidFun(lo, hi, strFun);
-                }
-            } else {
-                return new Fun(strFun, uuidFun);
-            }
+            return new ConstUuidFunc(lo, hi, strFunc);
         }
+        return new Func(strFunc, uuidFunc);
     }
 
     /**
      * The string function is constant and the UUID function is not constant.
      */
-    private static class ConstStrFun extends NegatableBooleanFunction implements UnaryFunction {
+    private static class ConstStrFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final long constStrHi;
         private final long constStrLo;
-        private final Function fun;
+        private final Function uuidFunc;
 
-        private ConstStrFun(long constStrLo, long constStrHi, Function fun) {
+        private ConstStrFunc(long constStrLo, long constStrHi, Function uuidFunc) {
             this.constStrLo = constStrLo;
             this.constStrHi = constStrHi;
-            this.fun = fun;
+            this.uuidFunc = uuidFunc;
         }
 
         @Override
         public Function getArg() {
-            return fun;
+            return uuidFunc;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (constStrHi == fun.getLong128Hi(rec) && constStrLo == fun.getLong128Lo(rec));
+            return negated != (constStrHi == uuidFunc.getLong128Hi(rec) && constStrLo == uuidFunc.getLong128Lo(rec));
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(fun);
+            sink.val(uuidFunc);
             if (negated) {
                 sink.val('!');
             }
@@ -128,12 +124,12 @@ final class UuidEqUtils {
     /**
      * The UUID function is constant and the string function is not constant.
      */
-    private static class ConstUuidFun extends NegatableBooleanFunction implements UnaryFunction {
+    private static class ConstUuidFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final long constUuidHi;
         private final long constUuidLo;
         private final Function fun;
 
-        private ConstUuidFun(long constUuidLo, long constUuidHi, Function fun) {
+        private ConstUuidFunc(long constUuidLo, long constUuidHi, Function fun) {
             this.constUuidLo = constUuidLo;
             this.constUuidHi = constUuidHi;
             this.fun = fun;
@@ -146,9 +142,9 @@ final class UuidEqUtils {
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence uuidStr = fun.getStr(rec);
+            CharSequence uuidStr = fun.getStrA(rec);
             if (uuidStr == null) {
-                return negated != (constUuidHi == Numbers.LONG_NaN && constUuidLo == Numbers.LONG_NaN);
+                return negated != (constUuidHi == Numbers.LONG_NULL && constUuidLo == Numbers.LONG_NULL);
             }
             try {
                 Uuid.checkDashesAndLength(uuidStr);
@@ -171,14 +167,15 @@ final class UuidEqUtils {
     /**
      * The string function is not constant and the UUID function is not constant either.
      */
-    private static class Fun extends AbstractEqBinaryFunction implements BinaryFunction {
-        private Fun(Function strFunction, Function uuidFunction) {
-            super(strFunction, uuidFunction);
+    private static class Func extends AbstractEqBinaryFunction implements BinaryFunction {
+
+        private Func(Function strFunc, Function uuidFunc) {
+            super(strFunc, uuidFunc);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence str = left.getStr(rec);
+            CharSequence str = left.getStrA(rec);
             long lo = right.getLong128Lo(rec);
             long hi = right.getLong128Hi(rec);
             if (str == null) {
@@ -190,6 +187,70 @@ final class UuidEqUtils {
             } catch (NumericException e) {
                 return negated;
             }
+        }
+    }
+
+    /**
+     * The string function is runtime constant and the UUID function is not constant.
+     */
+    private static class RuntimeConstStrFunc extends NegatableBooleanFunction implements BinaryFunction {
+        private final Function strFunc;
+        private final Function uuidFunc;
+        private long constStrHi;
+        private long constStrLo;
+        private boolean validUuidStr;
+
+        private RuntimeConstStrFunc(Function strFunc, Function uuidFunc) {
+            this.strFunc = strFunc;
+            this.uuidFunc = uuidFunc;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            if (!validUuidStr) {
+                // ok, so the constant string is not a UUID format -> it cannot be equal to any UUID
+                return negated;
+            }
+            return negated != (constStrHi == uuidFunc.getLong128Hi(rec) && constStrLo == uuidFunc.getLong128Lo(rec));
+        }
+
+        @Override
+        public Function getLeft() {
+            return uuidFunc;
+        }
+
+        @Override
+        public Function getRight() {
+            return strFunc;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+
+            validUuidStr = true;
+            CharSequence uuidStr = strFunc.getStrA(null);
+            if (uuidStr == null) {
+                constStrLo = Numbers.LONG_NULL;
+                constStrHi = Numbers.LONG_NULL;
+            } else {
+                try {
+                    Uuid.checkDashesAndLength(uuidStr);
+                    constStrLo = Uuid.parseLo(uuidStr);
+                    constStrHi = Uuid.parseHi(uuidStr);
+                } catch (NumericException e) {
+                    validUuidStr = false;
+                }
+            }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(uuidFunc);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val("='").val(strFunc).val('\'');
         }
     }
 }

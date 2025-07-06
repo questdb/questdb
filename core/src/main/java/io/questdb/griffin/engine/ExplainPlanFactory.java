@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,9 +31,12 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.*;
+import io.questdb.griffin.JsonPlanSink;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.model.ExplainModel;
-import io.questdb.std.str.CharSink;
 
 /**
  * Simple stub for returning query execution plan text as result set with one column and one row .
@@ -50,7 +53,6 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
         super(METADATA);
         this.base = base;
         this.cursor = new ExplainPlanRecordCursor(format);
-        this.isBaseClosed = false;
     }
 
     @Override
@@ -85,18 +87,13 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public CharSequence getStr(int col) {
+        public CharSequence getStrA(int col) {
             return planSink.getLine(cursor.row);
         }
 
         @Override
-        public void getStr(int col, CharSink sink) {
-            sink.put(planSink.getLine(cursor.row));
-        }
-
-        @Override
         public CharSequence getStrB(int col) {
-            return getStr(col);
+            return getStrA(col);
         }
 
         @Override
@@ -140,15 +137,17 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
         }
 
         public void of(RecordCursorFactory base, SqlExecutionContext executionContext) throws SqlException {
-            //we can't use getCursor() because that could take a lot of time and execute e.g. table hashing
-            //on the other hand until we run it factories may be incomplete
-            if (!isBaseClosed) {
+            // open the cursor to ensure bind variable types are initialized
+            try (RecordCursor ignored = base.getCursor(executionContext)) {
                 planSink.of(base, executionContext);
-                base.close();//close base factory and associated cursors, otherwise it may keep holding eagerly allocated memory
-                isBaseClosed = true;
             }
             rowCount = planSink.getLineCount();
             toTop();
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
         }
 
         @Override

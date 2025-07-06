@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ import java.io.Closeable;
 import java.util.Arrays;
 
 public class TextDelimiterScanner implements Closeable {
-    private static final double DOUBLE_TOLERANCE = 0.05d;
+    private static final double DOUBLE_TOLERANCE = 0.0000005d;
     private static final Log LOG = LogFactory.getLog(TextDelimiterScanner.class);
     private static final byte[] potentialDelimiterBytes = new byte[256];
     private static final byte[] priorities = new byte[Byte.MAX_VALUE + 1];
@@ -48,12 +48,17 @@ public class TextDelimiterScanner implements Closeable {
     private CharSequence tableName;
 
     public TextDelimiterScanner(TextConfiguration configuration) {
-        this.lineCountLimit = configuration.getTextAnalysisMaxLines();
-        this.matrixRowSize = 256 * Integer.BYTES;
-        this.matrixSize = matrixRowSize * lineCountLimit;
-        this.matrix = Unsafe.malloc(this.matrixSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);
-        this.maxRequiredDelimiterStdDev = configuration.getMaxRequiredDelimiterStdDev();
-        this.maxRequiredLineLengthStdDev = configuration.getMaxRequiredLineLengthStdDev();
+        try {
+            this.lineCountLimit = configuration.getTextAnalysisMaxLines();
+            this.matrixRowSize = 256 * Integer.BYTES;
+            this.matrixSize = matrixRowSize * lineCountLimit;
+            this.matrix = Unsafe.malloc(this.matrixSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);
+            this.maxRequiredDelimiterStdDev = configuration.getMaxRequiredDelimiterStdDev();
+            this.maxRequiredLineLengthStdDev = configuration.getMaxRequiredLineLengthStdDev();
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     @Override
@@ -155,7 +160,7 @@ public class TextDelimiterScanner implements Closeable {
         byte delimiter = Byte.MIN_VALUE;
 
         if (lineCount < 2) {
-            LOG.info().$("not enough lines [table=").$(tableName).$(']').$();
+            LOG.info().$("not enough lines [table=").$safe(tableName).$(']').$();
             throw NotEnoughLinesException.$("not enough lines [table=").put(tableName).put(']');
         }
 
@@ -223,7 +228,7 @@ public class TextDelimiterScanner implements Closeable {
         // exclude '.' as delimiter
         if (delimiter != '.' && lastDelimiterStdDev < maxRequiredDelimiterStdDev) {
             LOG.info()
-                    .$("scan result [table=`").$(tableName)
+                    .$("scan result [table=`").$safe(tableName)
                     .$("`, delimiter='").$((char) delimiter)
                     .$("', priority=").$(lastDelimiterPriority)
                     .$(", mean=").$(lastDelimiterMean)

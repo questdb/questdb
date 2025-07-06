@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -61,7 +61,7 @@ abstract class LineUdpInsertGeoHashTest extends LineUdpInsertTest {
     private static Supplier<String> randomGeoHashGenerator(int chars) {
         final Rnd rnd = new Rnd();
         return () -> {
-            StringSink sink = Misc.getThreadLocalBuilder();
+            StringSink sink = Misc.getThreadLocalSink();
             GeoHashes.appendChars(rnd.nextGeoHash(chars * 5), chars, sink);
             return sink.toString();
         };

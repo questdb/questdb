@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
+public class SymbolNotEqualsValueTest extends AbstractCairoTest {
 
     @Test
     public void testNotEquals1SymbolsNonExistent() throws Exception {
@@ -65,32 +65,23 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
     public void testNotEquals1SymbolsWithConstantFilter() throws Exception {
         final String expected = "k\tj\tprice\tts\n";
 
-        assertQuery13(
-                "k\tj\tprice\tts\n",
-                "select sym k, sym2 j, price, ts from x where sym != 'ABB' and 2 = 1",
-                "create table x (\n" +
-                        "    sym symbol cache index,\n" +
-                        "    sym2 symbol cache index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                "ts",
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_symbol('D', 'E', 'F') sym2, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "        from long_sequence(10)) timestamp (ts)",
-                expected,
-                false,
-                true
-        );
+        assertQuery("k\tj\tprice\tts\n", "select sym k, sym2 j, price, ts from x where sym != 'ABB' and 2 = 1", "create table x (\n" +
+                "    sym symbol cache index,\n" +
+                "    sym2 symbol cache index,\n" +
+                "    price double,\n" +
+                "    ts timestamp\n" +
+                ") timestamp(ts) partition by DAY", "ts", "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                "        rnd_symbol('D', 'E', 'F') sym2, \n" +
+                "        rnd_double() price, \n" +
+                "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                "        from long_sequence(10)) timestamp (ts)", expected, false, true, false);
     }
 
     @Test
     public void testNotEquals1SymbolsWithEqualsAnother() throws Exception {
         final String expected = "k\tprice\tts\tj\n" +
-                "DXR\t0.6778564558839208\t1970-01-03T00:48:00.000000Z\tF\n" +
-                "DXR\t0.299199045961845\t1970-01-03T00:06:00.000000Z\tF\n";
+                "DXR\t0.299199045961845\t1970-01-03T00:06:00.000000Z\tF\n" +
+                "DXR\t0.6778564558839208\t1970-01-03T00:48:00.000000Z\tF\n";
 
         assertQuery(
                 "k\tprice\tts\tj\n",
@@ -142,11 +133,11 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
     @Test
     public void testNotEquals1SymbolsWithInvariantOrderBy() throws Exception {
         final String expected = "k\tprice\tts\n" +
-                "DXR\t0.0843832076262595\t1970-01-03T00:12:00.000000Z\n" +
                 "DXR\t0.08486964232560668\t1970-01-03T00:06:00.000000Z\n" +
-                "HBC\t0.0367581207471136\t1970-01-03T00:54:00.000000Z\n" +
+                "DXR\t0.0843832076262595\t1970-01-03T00:12:00.000000Z\n" +
+                "HBC\t0.6508594025855301\t1970-01-03T00:18:00.000000Z\n" +
                 "HBC\t0.7905675319675964\t1970-01-03T00:24:00.000000Z\n" +
-                "HBC\t0.6508594025855301\t1970-01-03T00:18:00.000000Z\n";
+                "HBC\t0.0367581207471136\t1970-01-03T00:54:00.000000Z\n";
 
         assertQuery(
                 "k\tprice\tts\n",
@@ -169,12 +160,12 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
     @Test
     public void testNotEquals1SymbolsWithInvariantOrderBy2SymsDesc() throws Exception {
         final String expected = "k\tj\tprice\tts\n" +
-                "DXR\tF\t0.6778564558839208\t1970-01-03T00:48:00.000000Z\n" +
                 "DXR\tF\t0.299199045961845\t1970-01-03T00:06:00.000000Z\n" +
+                "DXR\tF\t0.6778564558839208\t1970-01-03T00:48:00.000000Z\n" +
                 "DXR\tD\t0.38539947865244994\t1970-01-03T00:54:00.000000Z\n" +
                 "HBC\tE\t0.9856290845874263\t1970-01-03T00:18:00.000000Z\n" +
-                "HBC\tD\t0.2390529010846525\t1970-01-03T00:42:00.000000Z\n" +
-                "HBC\tD\t0.7611029514995744\t1970-01-03T00:30:00.000000Z\n";
+                "HBC\tD\t0.7611029514995744\t1970-01-03T00:30:00.000000Z\n" +
+                "HBC\tD\t0.2390529010846525\t1970-01-03T00:42:00.000000Z\n";
 
         assertQuery(
                 "k\tj\tprice\tts\n",
@@ -206,7 +197,7 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
                 "ABB\t0.3491070363730514\t1970-01-03T00:36:00.000000Z\n" +
                 "ABB\t0.7611029514995744\t1970-01-03T00:42:00.000000Z\n" +
                 "ABB\t0.4217768841969397\t1970-01-03T00:48:00.000000Z\n";
-        assertQuery11(
+        assertQuery(
                 "k\tprice\tts\n",
                 "select sym k, price, ts from x where sym != 'HBC' and sym != 'AAA'",
                 "create table x (\n" +
@@ -219,7 +210,8 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
                         "    from long_sequence(10)) timestamp (ts)",
-                expected
+                expected,
+                true
         );
         // insert query values:
         //

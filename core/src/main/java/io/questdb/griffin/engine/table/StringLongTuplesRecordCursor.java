@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,10 +25,11 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
+import org.jetbrains.annotations.NotNull;
 
-final class StringLongTuplesRecordCursor implements RecordCursor {
+final class StringLongTuplesRecordCursor implements NoRandomAccessRecordCursor {
     private final TableWriterMetricsRecord record = new TableWriterMetricsRecord();
     private String[] keys;
     private int pos;
@@ -41,11 +42,6 @@ final class StringLongTuplesRecordCursor implements RecordCursor {
     @Override
     public Record getRecord() {
         return record;
-    }
-
-    @Override
-    public Record getRecordB() {
-        throw new UnsupportedOperationException("RecordB not supported");
     }
 
     @Override
@@ -65,8 +61,8 @@ final class StringLongTuplesRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        throw new UnsupportedOperationException("random access not supported");
+    public long preComputedStateSize() {
+        return 0;
     }
 
     @Override
@@ -89,7 +85,8 @@ final class StringLongTuplesRecordCursor implements RecordCursor {
         }
 
         @Override
-        public CharSequence getStr(int col) {
+        @NotNull
+        public CharSequence getStrA(int col) {
             if (col != 0) {
                 throw CairoException.nonCritical().put("unsupported string column number [column=").put(col).put("]");
             }
@@ -98,15 +95,12 @@ final class StringLongTuplesRecordCursor implements RecordCursor {
 
         @Override
         public CharSequence getStrB(int col) {
-            return getStr(col);
+            return getStrA(col);
         }
 
         @Override
         public int getStrLen(int col) {
-            if (col != 0) {
-                throw CairoException.nonCritical().put("unsupported string column number [column=").put(col).put("]");
-            }
-            return getStr(col).length();
+            return getStrA(col).length();
         }
     }
 }

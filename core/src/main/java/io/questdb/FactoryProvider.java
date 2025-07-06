@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,28 +24,66 @@
 
 package io.questdb;
 
+import io.questdb.cairo.WalJobFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cairo.wal.WalInitializerFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
+import io.questdb.cutlass.http.DefaultRejectProcessorFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
+import io.questdb.cutlass.http.HttpCookieHandler;
+import io.questdb.cutlass.http.HttpHeaderParserFactory;
+import io.questdb.cutlass.http.RejectProcessorFactory;
+import io.questdb.cutlass.http.processors.TextImportRequestHeaderProcessor;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
-import io.questdb.griffin.SqlCompilerFactory;
+import io.questdb.network.SocketFactory;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.NotNull;
 
 public interface FactoryProvider extends QuietCloseable {
+
     @Override
     default void close() {
     }
 
+    @NotNull
     HttpAuthenticatorFactory getHttpAuthenticatorFactory();
 
+    @NotNull
+    HttpCookieHandler getHttpCookieHandler();
+
+    @NotNull
+    HttpHeaderParserFactory getHttpHeaderParserFactory();
+
+    @NotNull
+    SocketFactory getHttpMinSocketFactory();
+
+    @NotNull
+    SocketFactory getHttpSocketFactory();
+
+    @NotNull
     LineAuthenticatorFactory getLineAuthenticatorFactory();
 
+    @NotNull
+    SocketFactory getLineSocketFactory();
+
+    @NotNull
+    SocketFactory getPGWireSocketFactory();
+
+    @NotNull
     PgWireAuthenticatorFactory getPgWireAuthenticatorFactory();
 
+    @NotNull
+    default RejectProcessorFactory getRejectProcessorFactory() {
+        return DefaultRejectProcessorFactory.INSTANCE;
+    }
+
+    @NotNull
     SecurityContextFactory getSecurityContextFactory();
 
-    SqlCompilerFactory getSqlCompilerFactory();
+    @NotNull
+    default TextImportRequestHeaderProcessor getTextImportRequestHeaderProcessor() {
+        return TextImportRequestHeaderProcessor.DEFAULT;
+    }
 
-    WalInitializerFactory getWalInitializerFactory();
+    @NotNull
+    WalJobFactory getWalJobFactory();
 }

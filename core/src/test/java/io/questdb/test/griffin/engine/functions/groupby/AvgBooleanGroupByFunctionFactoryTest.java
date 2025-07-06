@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,23 +24,21 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class AvgBooleanGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class AvgBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAll() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "select avg(rnd_boolean()), max(rnd_boolean()), min(rnd_boolean()) from long_sequence(10)",
                 "avg\tmax\tmin\n" +
-                        "0.7\t1.0\t0.0\n"
+                        "0.7\t1.0\t0.0\n", "select avg(rnd_boolean()), max(rnd_boolean()), min(rnd_boolean()) from long_sequence(10)"
         ));
 
         assertMemoryLeak(() -> assertSql(
-                "select avg(rnd_double() >= 0.5) from long_sequence(10)",
                 "avg\n" +
-                        "0.4\n"
+                        "0.4\n", "select avg(rnd_double() >= 0.5) from long_sequence(10)"
         ));
     }
 }

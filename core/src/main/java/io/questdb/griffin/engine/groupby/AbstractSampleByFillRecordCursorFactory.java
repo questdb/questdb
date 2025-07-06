@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,12 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
@@ -47,10 +52,10 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
     protected final RecordSink mapSink;
 
     public AbstractSampleByFillRecordCursorFactory(
+            @Transient @NotNull BytecodeAssembler asm,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             @Transient @NotNull ListColumnFilter listColumnFilter,
-            @Transient @NotNull BytecodeAssembler asm,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             RecordMetadata groupByMetadata,
@@ -58,33 +63,38 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             ObjList<Function> recordFunctions
     ) {
         super(base, groupByMetadata, recordFunctions);
-        this.groupByFunctions = groupByFunctions;
-        // sink will be storing record columns to map key
-        mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
-        // this is the map itself, which we must not forget to free when factory closes
-        map = MapFactory.createSmallMap(configuration, keyTypes, valueTypes);
+        try {
+            this.groupByFunctions = groupByFunctions;
+            // sink will be storing record columns to map key
+            mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter);
+            // this is the map itself, which we must not forget to free when factory closes
+            map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursor baseCursor = base.getCursor(executionContext);
-        AbstractNoRecordSampleByCursor rawCursor = null;
+        AbstractNoRecordSampleByCursor cursor = null;
         try {
-            rawCursor = getRawCursor();
-            if (rawCursor instanceof Reopenable) {
-                ((Reopenable) rawCursor).reopen();
+            cursor = getRawCursor();
+            if (cursor instanceof Reopenable) {
+                ((Reopenable) cursor).reopen();
             }
-            return initFunctionsAndCursor(executionContext, baseCursor);
-        } catch (Throwable ex) {
-            baseCursor.close();
-            Misc.free(rawCursor);
-            throw ex;
+        } catch (Throwable th) {
+            Misc.free(cursor);
+            throw th;
         }
+
+        final RecordCursor baseCursor = base.getCursor(executionContext);
+        return initFunctionsAndCursor(executionContext, baseCursor);
     }
 
     @Override
     protected void _close() {
         super._close();
-        getRawCursor().close();
+        Misc.free(getRawCursor());
     }
 }

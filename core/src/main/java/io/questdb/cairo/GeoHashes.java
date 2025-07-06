@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,10 +27,12 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
 
 public class GeoHashes {
 
@@ -86,48 +88,59 @@ public class GeoHashes {
         prefixes.add(mask);
     }
 
-    public static void append(long hash, int bits, CharSink sink) {
+    public static void append(long hash, int bits, CharSink<?> sink) {
         if (hash == GeoHashes.NULL) {
-            sink.put("null");
+            sink.putAscii("null");
         } else {
-            sink.put('\"');
+            sink.putAscii('\"');
             if (bits < 0) {
                 GeoHashes.appendCharsUnsafe(hash, -bits, sink);
             } else {
                 GeoHashes.appendBinaryStringUnsafe(hash, bits, sink);
             }
-            sink.put('\"');
+            sink.putAscii('\"');
         }
     }
 
-
-    public static void appendBinary(long hash, int bits, CharSink sink) {
+    public static void appendBinary(long hash, int bits, CharSink<?> sink) {
         if (hash != NULL) {
             appendBinaryStringUnsafe(hash, bits, sink);
         }
     }
 
-    public static void appendBinaryStringUnsafe(long hash, int bits, CharSink sink) {
+    public static void appendBinaryStringUnsafe(long hash, int bits, CharSink<?> sink) {
         // Below assertion can happen if there is corrupt metadata
         // which should not happen in production code since reader and writer check table metadata
-        assert bits > 0 && bits <= ColumnType.GEO_HASH_MAX_BITS_LENGTH;
+        assert bits > 0 && bits <= ColumnType.GEOLONG_MAX_BITS;
         for (int i = bits - 1; i >= 0; --i) {
-            sink.put(((hash >> i) & 1) == 1 ? '1' : '0');
+            sink.putAscii(((hash >> i) & 1) == 1 ? '1' : '0');
         }
     }
 
-    public static void appendChars(long hash, int chars, CharSink sink) {
+    public static void appendChars(long hash, int chars, CharSink<?> sink) {
         if (hash != NULL) {
             appendCharsUnsafe(hash, chars, sink);
         }
     }
 
-    public static void appendCharsUnsafe(long hash, int chars, CharSink sink) {
+    public static void appendCharsUnsafe(long hash, int chars, CharSink<?> sink) {
         // Below assertion can happen if there is corrupt metadata
         // which should not happen in production code since reader and writer check table metadata
         assert chars > 0 && chars <= MAX_STRING_LENGTH;
         for (int i = chars - 1; i >= 0; --i) {
-            sink.put(base32[(int) ((hash >> i * 5) & 0x1F)]);
+            sink.putAscii(base32[(int) ((hash >> i * 5) & 0x1F)]);
+        }
+    }
+
+    public static void appendNoQuotes(long hash, int bits, CharSink<?> sink) {
+        if (hash == GeoHashes.NULL) {
+            sink.putAscii("null");
+        } else {
+            if (bits < 0) {
+                GeoHashes.appendCharsUnsafe(hash, -bits, sink);
+            } else {
+                GeoHashes.appendBinaryStringUnsafe(hash, bits, sink);
+            }
         }
     }
 
@@ -136,13 +149,43 @@ public class GeoHashes {
         return ((1L << count) - 1) << shift;
     }
 
+    public static byte encodeByte(byte b) {
+        // element at index 11 is -1
+        return base32Indexes[b > 47 && b < 123 ? b - 48 : 11];
+    }
+
     public static byte encodeChar(char c) {
         // element at index 11 is -1
         return base32Indexes[c > 47 && c < 123 ? c - 48 : 11];
     }
 
+    public static long fromAscii(Utf8Sequence hash, int start, int end) throws NumericException {
+        // no bounds/length/nullity checks
+        long geohash = 0;
+        for (int i = start; i < end; ++i) {
+            geohash = appendByte(geohash, encodeByte(hash.byteAt(i)));
+        }
+        return geohash;
+    }
+
+    public static long fromAsciiTruncatingNl(long lo, long hi, int bits) throws NumericException {
+        if (lo == hi) {
+            return NULL;
+        }
+        final int byteCount = Math.min((int) (hi - lo), MAX_STRING_LENGTH);
+        int actualBits = 5 * byteCount;
+        if (actualBits < bits || bits == 0) {
+            throw NumericException.INSTANCE;
+        }
+        long geohash = 0;
+        for (long p = lo, limit = p + byteCount; p < limit; p++) {
+            geohash = appendByte(geohash, encodeByte(Unsafe.getUnsafe().getByte(p))); // base32
+        }
+        return widen(geohash, actualBits, bits);
+    }
+
     public static long fromBitString(CharSequence bits, int start) throws NumericException {
-        return fromBitString(bits, start, Math.min(bits.length(), ColumnType.GEO_HASH_MAX_BITS_LENGTH + start));
+        return fromBitString(bits, start, Math.min(bits.length(), ColumnType.GEOLONG_MAX_BITS + start));
     }
 
     public static long fromBitStringNl(CharSequence bits, int start) throws NumericException {
@@ -150,7 +193,7 @@ public class GeoHashes {
         if (len - start <= 0) {
             return NULL;
         }
-        return fromBitString(bits, start, Math.min(bits.length(), ColumnType.GEO_HASH_MAX_BITS_LENGTH + start));
+        return fromBitString(bits, start, Math.min(bits.length(), ColumnType.GEOLONG_MAX_BITS + start));
     }
 
     public static long fromCoordinatesDeg(double lat, double lon, int bits) throws NumericException {
@@ -160,7 +203,7 @@ public class GeoHashes {
         if (lon < -180.0 || lon > 180.0) {
             throw NumericException.INSTANCE;
         }
-        if (bits < 0 || bits > ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
+        if (bits < 0 || bits > ColumnType.GEOLONG_MAX_BITS) {
             throw NumericException.INSTANCE;
         }
         return fromCoordinatesDegUnsafe(lat, lon, bits);
@@ -180,7 +223,7 @@ public class GeoHashes {
         // no bounds/length/nullity checks
         long geohash = 0;
         for (int i = start; i < end; ++i) {
-            geohash = appendChar(geohash, hash.charAt(i));
+            geohash = appendByte(geohash, encodeChar(hash.charAt(i)));
         }
         return geohash;
     }
@@ -202,22 +245,6 @@ public class GeoHashes {
             throw NumericException.INSTANCE;
         }
         return widen(fromString(hash, start, start + chars), fromBits, toBits);
-    }
-
-    public static long fromStringTruncatingNl(long lo, long hi, int bits) throws NumericException {
-        if (lo == hi) {
-            return NULL;
-        }
-        final int chars = Math.min((int) (hi - lo), MAX_STRING_LENGTH);
-        int actualBits = 5 * chars;
-        if (actualBits < bits || bits == 0) {
-            throw NumericException.INSTANCE;
-        }
-        long geohash = 0;
-        for (long p = lo, limit = p + chars; p < limit; p++) {
-            geohash = appendChar(geohash, (char) Unsafe.getUnsafe().getByte(p)); // base32
-        }
-        return widen(geohash, actualBits, bits);
     }
 
     public static int getBitFlags(int columnType) {
@@ -270,12 +297,27 @@ public class GeoHashes {
         return start < len;
     }
 
+    public static String toString0(long hash, int columnType) {
+        CharSink<?> sink = Misc.getThreadLocalSink();
+        if (hash == GeoHashes.NULL) {
+            return "null";
+        }
+        sink.put('#');
+        int bits = ColumnType.getGeoHashBits(columnType);
+        if (bits % 5 == 0) {
+            GeoHashes.appendCharsUnsafe(hash, bits / 5, sink);
+        } else {
+            sink.put('#');
+            GeoHashes.appendBinaryStringUnsafe(hash, bits, sink);
+        }
+        return sink.toString();
+    }
+
     public static long widen(long hash, int fromBits, int toBits) {
         return hash >> (fromBits - toBits);
     }
 
-    private static long appendChar(long hash, char c) throws NumericException {
-        final byte idx = encodeChar(c);
+    private static long appendByte(long hash, byte idx) throws NumericException {
         if (idx > -1) {
             return (hash << 5) | idx;
         }
@@ -287,7 +329,7 @@ public class GeoHashes {
         for (int i = start; i < limit; i++) {
             switch (bits.charAt(i)) {
                 case '0':
-                    result = result << 1;
+                    result <<= 1;
                     break;
                 case '1':
                     result = (result << 1) | 1;

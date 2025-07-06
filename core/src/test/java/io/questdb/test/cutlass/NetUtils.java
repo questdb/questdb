@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ public class NetUtils {
             CharSequence ipv4Address,
             int port
     ) {
-        int clientFd = nf.socketTcp(true);
+        long clientFd = nf.socketTcp(true);
         long sockAddress = nf.sockaddr(Net.parseIPv4(ipv4Address), port);
         TestUtils.assertConnect(clientFd, sockAddress);
 
@@ -66,7 +66,7 @@ public class NetUtils {
                         if (mode == 0) {
                             // we were sending - lets wrap up and send
                             if (expectedLen > 0) {
-                                int m = nf.send(clientFd, sendBuf, expectedLen);
+                                int m = nf.sendRaw(clientFd, sendBuf, expectedLen);
                                 // if we expect disconnect we might get it on either `send` or `recv`
                                 // check if we expect disconnect on recv?
                                 if (m == -2 && script.charAt(i + 1) == '!' && script.charAt(i + 2) == '!') {
@@ -81,7 +81,7 @@ public class NetUtils {
                             // we meant to receive; sendBuf will contain expected bytes we have to receive
                             // and this buffer will also drive the length of the message
                             if (expectedLen > 0) {
-                                int actualLen = nf.recv(clientFd, recvBuf, expectedLen);
+                                int actualLen = nf.recvRaw(clientFd, recvBuf, expectedLen);
                                 if (expectDisconnect) {
                                     Assert.assertTrue(actualLen < 0);
                                     // force exit
@@ -128,7 +128,7 @@ public class NetUtils {
             if (mode == 0) {
                 // we were sending - lets wrap up and send
                 if (expectedLen > 0) {
-                    int m = nf.send(clientFd, sendBuf, expectedLen);
+                    int m = nf.sendRaw(clientFd, sendBuf, expectedLen);
                     Assert.assertEquals(expectedLen, m);
                 }
             } else {
@@ -138,7 +138,7 @@ public class NetUtils {
                     if (expectDisconnect) {
                         Assert.assertTrue(Net.isDead(clientFd));
                     } else {
-                        int actualLen = nf.recv(clientFd, recvBuf, expectedLen);
+                        int actualLen = nf.recvRaw(clientFd, recvBuf, expectedLen);
                         assertBuffers(line, sendBuf, expectedLen, recvBuf, actualLen);
                     }
                 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ public class SOUnboundedCountDownLatchTest {
         SPSequence pubSeq = new SPSequence(1024);
         SCSequence subSeq = new SCSequence();
 
-        // this latch does not require initial count. Instead it is able to wait
+        // this latch does not require initial count. Instead, it is able to wait
         // for a specific target count. This is useful when it is hard to
         // determine work item count upfront.
 
@@ -80,7 +80,14 @@ public class SOUnboundedCountDownLatchTest {
         Assert.assertEquals(count, dc.get());
     }
 
-    private void doTest(SPSequence pubSeq, SCSequence subSeq, SOUnboundedCountDownLatch latch, AtomicInteger dc, int count, int s) throws BrokenBarrierException, InterruptedException {
+    private void doTest(
+            SPSequence pubSeq,
+            SCSequence subSeq,
+            SOUnboundedCountDownLatch latch,
+            AtomicInteger dc,
+            int count,
+            int s
+    ) throws BrokenBarrierException, InterruptedException {
         final CyclicBarrier barrier = new CyclicBarrier(2);
         AtomicInteger errors = new AtomicInteger();
         LOG.info().$("starting thread").$();

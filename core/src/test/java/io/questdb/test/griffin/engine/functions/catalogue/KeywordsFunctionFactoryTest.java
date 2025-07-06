@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,24 +24,27 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 import java.util.Arrays;
 
 import static io.questdb.griffin.engine.functions.catalogue.Constants.KEYWORDS;
 
-public class KeywordsFunctionFactoryTest extends AbstractGriffinTest {
+public class KeywordsFunctionFactoryTest extends AbstractCairoTest {
+
     @Test
     public void testSelectKeywords() throws Exception {
-        CharSequence[] keywords = KEYWORDS.clone();
-        Arrays.sort(keywords);
-        String expected = "keyword\n" + String.join("\n", keywords) + '\n';
-        assertSql("select keyword from keywords() order by keyword asc", expected);
+        assertMemoryLeak(() -> {
+            CharSequence[] keywords = KEYWORDS.clone();
+            Arrays.sort(keywords);
+            String expected = "keyword\n" + String.join("\n", keywords) + '\n';
+            assertSql(expected, "select keyword from keywords() order by keyword asc");
+        });
     }
 
     @Test
     public void testSelectKeywordsWithFilter() throws Exception {
-        assertSql("keywords() where keyword = 'add'", "keyword\nadd\n");
+        assertMemoryLeak(() -> assertSql("keyword\nadd\n", "keywords() where keyword = 'add'"));
     }
 }

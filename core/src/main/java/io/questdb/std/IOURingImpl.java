@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ package io.questdb.std;
 import io.questdb.cairo.CairoException;
 import org.jetbrains.annotations.TestOnly;
 
+import static io.questdb.std.Files.toOsFd;
 import static io.questdb.std.IOUringAccessor.*;
 
 public class IOURingImpl implements IOURing {
@@ -39,7 +40,7 @@ public class IOURingImpl implements IOURing {
     private final long cqesAddr;
     private final IOURingFacade facade;
     private final long ringAddr;
-    private final int ringFd;
+    private final long ringFd;
     private final long sqKheadAddr;
     private final int sqKringEntries;
     private final int sqKringMask;
@@ -60,7 +61,7 @@ public class IOURingImpl implements IOURing {
         }
         this.ringAddr = res;
 
-        this.ringFd = Unsafe.getUnsafe().getInt(ringAddr + RING_FD_OFFSET);
+        int ringFd = Unsafe.getUnsafe().getInt(ringAddr + RING_FD_OFFSET);
 
         this.sqesAddr = Unsafe.getUnsafe().getLong(ringAddr + SQ_SQES_OFFSET);
         this.sqKheadAddr = Unsafe.getUnsafe().getLong(ringAddr + SQ_KHEAD_OFFSET);
@@ -78,7 +79,7 @@ public class IOURingImpl implements IOURing {
         int cqKringEntries = Unsafe.getUnsafe().getInt(cqEntriesAddr);
         cachedCqes = new long[2 * cqKringEntries];
 
-        Files.bumpFileCount(ringFd);
+        this.ringFd = Files.createUniqueFd(ringFd);
     }
 
     @Override
@@ -86,7 +87,7 @@ public class IOURingImpl implements IOURing {
         if (closed) {
             return;
         }
-        Files.decrementFileCount(ringFd);
+        Files.detach(ringFd);
         facade.close(ringAddr);
         closed = true;
     }
@@ -94,11 +95,11 @@ public class IOURingImpl implements IOURing {
     @Override
     @TestOnly
     public long enqueueNop() {
-        return enqueueSqe(IORING_OP_NOP, 0, 0, 0, 0);
+        return enqueueSqe(IORING_OP_NOP, -1, 0, 0, 0);
     }
 
     @Override
-    public long enqueueRead(int fd, long offset, long bufAddr, int len) {
+    public long enqueueRead(long fd, long offset, long bufAddr, int len) {
         return enqueueSqe(IORING_OP_READ, fd, offset, bufAddr, len);
     }
 
@@ -152,13 +153,13 @@ public class IOURingImpl implements IOURing {
         return facade.submitAndWait(ringAddr, 1);
     }
 
-    private long enqueueSqe(byte op, int fd, long offset, long bufAddr, int len) {
+    private long enqueueSqe(byte op, long fd, long offset, long bufAddr, int len) {
         final long sqeAddr = nextSqe();
         if (sqeAddr == 0) {
             return -1;
         }
         Unsafe.getUnsafe().putByte(sqeAddr + SQE_OPCODE_OFFSET, op);
-        Unsafe.getUnsafe().putInt(sqeAddr + SQE_FD_OFFSET, fd);
+        Unsafe.getUnsafe().putInt(sqeAddr + SQE_FD_OFFSET, toOsFd(fd));
         Unsafe.getUnsafe().putLong(sqeAddr + SQE_OFF_OFFSET, offset);
         Unsafe.getUnsafe().putLong(sqeAddr + SQE_ADDR_OFFSET, bufAddr);
         Unsafe.getUnsafe().putInt(sqeAddr + SQE_LEN_OFFSET, len);
@@ -181,4 +182,5 @@ public class IOURingImpl implements IOURing {
         }
         return 0;
     }
+
 }

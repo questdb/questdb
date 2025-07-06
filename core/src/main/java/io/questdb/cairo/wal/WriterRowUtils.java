@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.NumericException;
+import io.questdb.std.str.Utf8Sequence;
 
 public class WriterRowUtils {
 
@@ -53,28 +54,52 @@ public class WriterRowUtils {
     }
 
     public static void putGeoStr(int index, CharSequence hash, int type, TableWriter.Row row) {
-        long val;
-        if (hash != null) {
-            final int hashLen = hash.length();
-            final int typeBits = ColumnType.getGeoHashBits(type);
-            final int charsRequired = (typeBits - 1) / 5 + 1;
-            if (hashLen < charsRequired) {
-                throw ImplicitCastException.inconvertibleValue(hash, ColumnType.STRING, type);
-            } else {
-                try {
-                    val = GeoHashes.widen(
-                            GeoHashes.fromString(hash, 0, charsRequired),
-                            charsRequired * 5,
-                            typeBits
-                    );
-                } catch (NumericException e) {
-                    throw ImplicitCastException.inconvertibleValue(hash, ColumnType.STRING, type);
-                }
-            }
-        } else {
-            val = GeoHashes.NULL;
+        if (hash == null) {
+            putGeoHash(index, GeoHashes.NULL, type, row);
+            return;
         }
-        putGeoHash(index, val, type, row);
+
+        final int hashLen = hash.length();
+        final int typeBits = ColumnType.getGeoHashBits(type);
+        final int charsRequired = (typeBits - 1) / 5 + 1;
+        if (hashLen < charsRequired) {
+            throw ImplicitCastException.inconvertibleValue(hash, ColumnType.STRING, type);
+        }
+
+        try {
+            long val = GeoHashes.widen(
+                    GeoHashes.fromString(hash, 0, charsRequired),
+                    charsRequired * 5,
+                    typeBits
+            );
+            putGeoHash(index, val, type, row);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(hash, ColumnType.STRING, type);
+        }
     }
 
+    public static void putGeoVarchar(int index, Utf8Sequence hash, int type, TableWriter.Row row) {
+        if (hash == null) {
+            putGeoHash(index, GeoHashes.NULL, type, row);
+            return;
+        }
+
+        final int hashLen = hash.size();
+        final int typeBits = ColumnType.getGeoHashBits(type);
+        final int bytesRequired = (typeBits - 1) / 5 + 1;
+        if (hashLen < bytesRequired) {
+            throw ImplicitCastException.inconvertibleValue(hash, ColumnType.VARCHAR, type);
+        }
+
+        try {
+            long val = GeoHashes.widen(
+                    GeoHashes.fromAscii(hash, 0, bytesRequired),
+                    bytesRequired * 5,
+                    typeBits
+            );
+            putGeoHash(index, val, type, row);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(hash, ColumnType.VARCHAR, type);
+        }
+    }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,8 +28,12 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -52,8 +56,16 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(base.getCursor(executionContext), executionContext.getCircuitBreaker());
-        return cursor;
+        // Forcefully disable column pre-touch for nested filter queries.
+        executionContext.setColumnPreTouchEnabled(false);
+        final RecordCursor baseCursor = base.getCursor(executionContext);
+        try {
+            cursor.of(baseCursor, executionContext.getCircuitBreaker());
+            return cursor;
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -73,16 +85,30 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
+    @Override
     protected void _close() {
         base.close();
     }
 
     private static class CountRecordCursor implements NoRandomAccessRecordCursor {
         private final CountRecord countRecord = new CountRecord();
+        private final RecordCursor.Counter counter = new Counter();
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long count;
         private boolean hasNext = true;
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            if (hasNext) {
+                counter.add(1);
+                hasNext = false;
+            }
+        }
 
         @Override
         public void close() {
@@ -96,18 +122,26 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (baseCursor != null) {
-                while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    count++;
-                }
-                baseCursor = Misc.free(baseCursor);
-            }
             if (hasNext) {
+                // recalculate state only when new query is executed and not after toTop() is called.
+                if (this.count == -1) {
+                    long size = baseCursor.size();
+                    if (size > -1) {
+                        count = size;
+                    } else {
+                        baseCursor.calculateSize(circuitBreaker, counter);
+                        count = counter.get();
+                    }
+                }
                 hasNext = false;
                 return true;
             }
             return false;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return count;
         }
 
         @Override
@@ -117,21 +151,16 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void toTop() {
+            baseCursor.toTop();
             hasNext = true;
         }
 
         private void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             this.baseCursor = baseCursor;
             this.circuitBreaker = circuitBreaker;
-
-            final long size = baseCursor.size();
-            if (size < 0) {
-                count = 0;
-            } else {
-                count = size;
-                this.baseCursor = Misc.free(baseCursor);
-            }
-            toTop();
+            this.count = -1;
+            this.hasNext = true;
+            this.counter.clear();
         }
 
         private class CountRecord implements Record {

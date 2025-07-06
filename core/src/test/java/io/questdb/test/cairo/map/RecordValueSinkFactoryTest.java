@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,25 +24,38 @@
 
 package io.questdb.test.cairo.map;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.map.*;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SingleColumnType;
+import io.questdb.cairo.SymbolAsIntTypes;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.map.RecordValueSink;
+import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class RecordValueSinkFactoryTest extends AbstractCairoTest {
+
     @Test
     public void testAllSupportedTypes() {
         SingleColumnType keyTypes = new SingleColumnType(ColumnType.INT);
-        try (TableModel model = new TableModel(configuration, "all", PartitionBy.NONE)
+        TableModel model = new TableModel(configuration, "all", PartitionBy.NONE)
                 .col("int", ColumnType.INT)
                 .col("short", ColumnType.SHORT)
                 .col("byte", ColumnType.BYTE)
@@ -53,14 +66,12 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                 .col("bool", ColumnType.BOOLEAN)
                 .col("date", ColumnType.DATE)
                 .col("ts", ColumnType.TIMESTAMP)
-        ) {
-            CreateTableTestUtils.create(model);
-        }
+                .col("ipv4", ColumnType.IPv4);
+        AbstractCairoTest.create(model);
 
         final int N = 1024;
         final Rnd rnd = new Rnd();
-        try (TableWriter writer = newTableWriter(configuration, "all", metrics)) {
-
+        try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
             for (int i = 0; i < N; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putInt(0, rnd.nextInt());
@@ -73,19 +84,21 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                 row.putBool(7, rnd.nextBoolean());
                 row.putDate(8, rnd.nextLong());
                 row.putTimestamp(9, rnd.nextLong());
+                row.putInt(10, rnd.nextInt());
                 row.append();
             }
             writer.commit();
         }
 
-        try (TableReader reader = newTableReader(configuration, "all")) {
+        try (
+                TableReader reader = newOffPoolReader(configuration, "all");
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
             final SymbolAsIntTypes valueTypes = new SymbolAsIntTypes().of(reader.getMetadata());
-            try (final Map map = new FastMap(Numbers.SIZE_1MB, keyTypes, valueTypes, N, 0.5, 100)) {
-
+            try (final Map map = new OrderedMap(Numbers.SIZE_1MB, keyTypes, valueTypes, N, 0.5, 100)) {
                 EntityColumnFilter columnFilter = new EntityColumnFilter();
                 columnFilter.of(reader.getMetadata().getColumnCount());
                 RecordValueSink sink = RecordValueSinkFactory.getInstance(new BytecodeAssembler(), reader.getMetadata(), columnFilter);
-                RecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
 
                 int index = 0;
@@ -118,6 +131,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextBoolean(), value.getBool(7));
                     Assert.assertEquals(rnd.nextLong(), value.getDate(8));
                     Assert.assertEquals(rnd.nextLong(), value.getTimestamp(9));
+                    Assert.assertEquals(rnd.nextInt(), value.getIPv4(10));
                 }
             }
         }
@@ -126,7 +140,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
     @Test
     public void testSubset() {
         SingleColumnType keyTypes = new SingleColumnType(ColumnType.INT);
-        try (TableModel model = new TableModel(configuration, "all", PartitionBy.NONE)
+        TableModel model = new TableModel(configuration, "all", PartitionBy.NONE)
                 .col("int", ColumnType.INT)
                 .col("short", ColumnType.SHORT)
                 .col("byte", ColumnType.BYTE)
@@ -137,14 +151,12 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                 .col("bool", ColumnType.BOOLEAN)
                 .col("date", ColumnType.DATE)
                 .col("ts", ColumnType.TIMESTAMP)
-        ) {
-            CreateTableTestUtils.create(model);
-        }
+                .col("IPv4", ColumnType.IPv4);
+        AbstractCairoTest.create(model);
 
         final int N = 1024;
         final Rnd rnd = new Rnd();
-        try (TableWriter writer = newTableWriter(configuration, "all", metrics)) {
-
+        try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
             for (int i = 0; i < N; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putInt(0, rnd.nextInt());
@@ -157,26 +169,27 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                 row.putBool(7, rnd.nextBoolean());
                 row.putDate(8, rnd.nextLong());
                 row.putTimestamp(9, rnd.nextLong());
+                row.putInt(10, rnd.nextInt());
                 row.append();
             }
             writer.commit();
         }
 
-        try (TableReader reader = newTableReader(configuration, "all")) {
+        try (
+                TableReader reader = newOffPoolReader(configuration, "all");
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
             ArrayColumnTypes valueTypes = new ArrayColumnTypes();
             valueTypes.add(ColumnType.BOOLEAN);
             valueTypes.add(ColumnType.TIMESTAMP);
             valueTypes.add(ColumnType.INT);
-            try (final Map map = new FastMap(Numbers.SIZE_1MB, keyTypes, valueTypes, N, 0.5, 100)) {
-
+            try (Map map = new OrderedMap(Numbers.SIZE_1MB, keyTypes, valueTypes, N, 0.5, 100)) {
                 ListColumnFilter columnFilter = new ListColumnFilter();
                 columnFilter.add(8);
                 columnFilter.add(10);
                 columnFilter.add(7);
 
-
                 RecordValueSink sink = RecordValueSinkFactory.getInstance(new BytecodeAssembler(), reader.getMetadata(), columnFilter);
-                RecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
 
                 int index = 0;
@@ -209,6 +222,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextBoolean(), value.getBool(0)); // 7
                     rnd.nextLong(); // 8
                     Assert.assertEquals(rnd.nextLong(), value.getTimestamp(1)); // 9
+                    rnd.nextInt(); //10
                 }
             }
         }

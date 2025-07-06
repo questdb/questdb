@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,8 +26,9 @@ package io.questdb.griffin.model;
 
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
-import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * Execution model for EXPLAIN statement.
@@ -61,6 +62,16 @@ public class ExplainModel implements ExecutionModel, Mutable, Sinkable {
         return EXPLAIN;
     }
 
+    @Override
+    public CharSequence getTableName() {
+        return model.getTableName();
+    }
+
+    @Override
+    public ExpressionNode getTableNameExpr() {
+        return model.getTableNameExpr();
+    }
+
     public void setFormat(int format) {
         this.format = format;
     }
@@ -70,8 +81,8 @@ public class ExplainModel implements ExecutionModel, Mutable, Sinkable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("EXPLAIN");
-        sink.put(" (FORMAT ").put(format == FORMAT_TEXT ? "TEXT" : "JSON").put(") ");
+    public void toSink(@NotNull CharSink<?> sink) {
+        sink.putAscii("EXPLAIN");
+        sink.putAscii(" (FORMAT ").putAscii(format == FORMAT_TEXT ? "TEXT" : "JSON").putAscii(") ");
     }
 }

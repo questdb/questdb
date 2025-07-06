@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,9 +27,11 @@
 #include <unistd.h>
 #include <sys/errno.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/time.h>
 #include <time.h>
 #include "../share/os.h"
+#include "jemalloc-cmake/include/jemalloc/jemalloc.h"
 
 #ifdef __APPLE__
 
@@ -49,11 +51,11 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_getRss
         (JNIEnv *e, jclass cl) {
     struct mach_task_basic_info info;
     mach_msg_type_number_t infoCount = MACH_TASK_BASIC_INFO_COUNT;
-    kern_return_t status = task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &infoCount);
-    if ( status != KERN_SUCCESS){
-        return (jlong)0L;
+    kern_return_t status = task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t) &info, &infoCount);
+    if (status != KERN_SUCCESS) {
+        return (jlong) 0L;
     }
-    return (jlong)info.resident_size;
+    return (jlong) info.resident_size;
 }
 
 #else
@@ -68,7 +70,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_getRss
     int res = fscanf(fd, "%*s%ld", &rss);
     fclose(fd);
 
-    if ( res == 1 ){
+    if (res == 1) {
         return rss * sysconf(_SC_PAGESIZE);
     } else {
         return 0L;
@@ -96,6 +98,44 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Os_errno
         (JNIEnv *e, jclass cl) {
     return errno;
 }
+
+#if defined(__linux__)
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Os_getEnvironmentType
+        (JNIEnv *e, jclass cl) {
+    FILE* fd = fopen("/proc/version", "r");
+    if (fd == NULL) {
+        return 0;
+    }
+    char version[64];
+    int res = fscanf(fd, "%*s %*s %63s", version);
+    fclose(fd);
+
+    if (res == 1) {
+        if (strstr(version, "aws") != NULL || strstr(version, "amzn") != NULL) {
+            return 1;
+        }
+        if (strstr(version, "azure") != NULL) {
+            return 2;
+        }
+        if (strstr(version, "cloud") != NULL) {
+            return 3;
+        }
+        if (strstr(version, "WSL2") != NULL) {
+            return 4;
+        }
+    }
+    return 0;
+}
+
+#else
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Os_getEnvironmentType
+        (JNIEnv *e, jclass cl) {
+    return 0; // no-op
+}
+
+#endif
 
 typedef struct {
     int fdRead;

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,14 +25,21 @@
 package io.questdb.cutlass;
 
 import io.questdb.Metrics;
+import io.questdb.ServerConfiguration;
 import io.questdb.WorkerPoolManager;
 import io.questdb.WorkerPoolManager.Requester;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.HttpCookieHandler;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpHeaderParserFactory;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHandlerFactory;
+import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
+import io.questdb.cutlass.http.processors.LineHttpProcessorImpl;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
-import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
@@ -40,31 +47,30 @@ import io.questdb.cutlass.line.udp.LineUdpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.DefaultCircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.HexTestsCircuitBreakRegistry;
+import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
 
-public final class Services {
+public class Services {
+    public static final Services INSTANCE = new Services();
 
-    private Services() {
-        throw new UnsupportedOperationException("not instantiatable");
+    protected Services() {
     }
 
     @Nullable
-    public static HttpServer createHttpServer(
-            HttpServerConfiguration configuration,
+    public HttpServer createHttpServer(
+            ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
-            WorkerPoolManager workerPoolManager,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            @Nullable DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics
+            WorkerPoolManager workerPoolManager
     ) {
-        if (!configuration.isEnabled()) {
+        HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
+        if (!httpServerConfiguration.isEnabled()) {
             return null;
         }
 
@@ -72,60 +78,65 @@ public final class Services {
         // - DEDICATED when PropertyKey.HTTP_WORKER_COUNT is > 0
         // - SHARED otherwise
         return createHttpServer(
-                configuration,
+                serverConfiguration,
                 cairoEngine,
-                workerPoolManager.getInstance(configuration, metrics.health(), Requester.HTTP_SERVER),
-                workerPoolManager.getSharedWorkerCount(),
-                functionFactoryCache,
-                snapshotAgent,
-                metrics
+                workerPoolManager.getInstance(httpServerConfiguration, Requester.HTTP_SERVER),
+                workerPoolManager.getSharedWorkerCount()
         );
     }
 
     @Nullable
-    public static HttpServer createHttpServer(
-            HttpServerConfiguration configuration,
+    public HttpServer createHttpServer(
+            ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
-            int sharedWorkerCount,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            @Nullable DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics
+            int sharedWorkerCount
     ) {
-        if (!configuration.isEnabled()) {
+        final HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
+        if (!httpServerConfiguration.isEnabled()) {
             return null;
         }
 
-        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool);
-        QueryCache.configure(configuration, metrics);
-        HttpServer.HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
-                configuration.getJsonQueryProcessorConfiguration(),
+        final HttpCookieHandler cookieHandler = serverConfiguration.getFactoryProvider().getHttpCookieHandler();
+        final HttpHeaderParserFactory headerParserFactory = serverConfiguration.getFactoryProvider().getHttpHeaderParserFactory();
+        final HttpServer server = new HttpServer(
+                httpServerConfiguration,
+                workerPool,
+                serverConfiguration.getFactoryProvider().getHttpSocketFactory(),
+                cookieHandler,
+                headerParserFactory
+        );
+        HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
+                httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
                 workerPool.getWorkerCount(),
-                sharedWorkerCount,
-                functionFactoryCache,
-                snapshotAgent
+                sharedWorkerCount
+        );
+
+        HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
+                cairoEngine,
+                httpServerConfiguration.getRecvBufferSize(),
+                httpServerConfiguration.getSendBufferSize(),
+                httpServerConfiguration.getLineHttpProcessorConfiguration()
         );
 
         HttpServer.addDefaultEndpoints(
                 server,
-                configuration,
+                serverConfiguration,
                 cairoEngine,
                 workerPool,
                 sharedWorkerCount,
                 jsonQueryProcessorBuilder,
-                functionFactoryCache,
-                snapshotAgent
+                ilpV2WriteProcessorBuilder
         );
         return server;
     }
 
     @Nullable
-    public static LineTcpReceiver createLineTcpReceiver(
+    public LineTcpReceiver createLineTcpReceiver(
             LineTcpReceiverConfiguration config,
             CairoEngine cairoEngine,
-            WorkerPoolManager workerPoolManager,
-            Metrics metrics
+            WorkerPoolManager workerPoolManager
     ) {
         if (!config.isEnabled()) {
             return null;
@@ -144,19 +155,17 @@ public final class Services {
 
         final WorkerPool ioPool = workerPoolManager.getInstance(
                 config.getIOWorkerPoolConfiguration(),
-                metrics.health(),
                 Requester.LINE_TCP_IO
         );
         final WorkerPool writerPool = workerPoolManager.getInstance(
                 config.getWriterWorkerPoolConfiguration(),
-                metrics.health(),
                 Requester.LINE_TCP_WRITER
         );
         return new LineTcpReceiver(config, cairoEngine, ioPool, writerPool);
     }
 
     @Nullable
-    public static AbstractLineProtoUdpReceiver createLineUdpReceiver(
+    public AbstractLineProtoUdpReceiver createLineUdpReceiver(
             LineUdpReceiverConfiguration config,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager
@@ -173,75 +182,74 @@ public final class Services {
     }
 
     @Nullable
-    public static HttpServer createMinHttpServer(
-            HttpMinServerConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPoolManager workerPoolManager,
-            Metrics metrics
+    public HttpServer createMinHttpServer(
+            HttpServerConfiguration configuration,
+            WorkerPoolManager workerPoolManager
     ) {
         if (!configuration.isEnabled()) {
             return null;
         }
 
         // The pool is:
-        // - DEDICATED when PropertyKey.HTTP_WORKER_COUNT is > 0
-        // - DEDICATED (1 worker) when ^ ^ is not set and host has > 16 cpus
-        // - SHARED otherwise
+        // - SHARED if PropertyKey.HTTP_MIN_WORKER_COUNT (http.min.worker.count) <= 0
+        // - DEDICATED (1 worker) otherwise
         final WorkerPool workerPool = workerPoolManager.getInstance(
                 configuration,
-                metrics.health(),
                 Requester.HTTP_MIN_SERVER
         );
-        return createMinHttpServer(configuration, cairoEngine, workerPool, metrics);
+        return createMinHttpServer(configuration, workerPool);
     }
 
     @Nullable
-    public static HttpServer createMinHttpServer(
-            HttpMinServerConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            Metrics metrics
-    ) {
+    public HttpServer createMinHttpServer(HttpServerConfiguration configuration, WorkerPool workerPool) {
         if (!configuration.isEnabled()) {
             return null;
         }
 
-        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool);
-        server.bind(new HttpRequestProcessorFactory() {
-            @Override
-            public String getUrl() {
-                return metrics.isEnabled() ? "/status" : "*";
-            }
+        final HttpServer server = new HttpServer(configuration, workerPool, configuration.getFactoryProvider().getHttpMinSocketFactory());
+        Metrics metrics = configuration.getHttpContextConfiguration().getMetrics();
+        server.bind(
+                new HttpRequestHandlerFactory() {
+                    @Override
+                    public ObjList<String> getUrls() {
+                        return configuration.getContextPathStatus();
+                    }
 
-            @Override
-            public HttpRequestProcessor newInstance() {
-                return new HealthCheckProcessor(configuration);
-            }
-        }, true);
+                    @Override
+                    public HttpRequestHandler newInstance() {
+                        return new HealthCheckProcessor(configuration);
+                    }
+                },
+                true
+        );
+
         if (metrics.isEnabled()) {
-            server.bind(new HttpRequestProcessorFactory() {
-                @Override
-                public String getUrl() {
-                    return "/metrics";
-                }
+            final PrometheusMetricsProcessor.RequestStatePool pool = new PrometheusMetricsProcessor.RequestStatePool(
+                    configuration.getWorkerCount()
+            );
+            server.registerClosable(pool);
+            server.bind(
+                    new HttpRequestHandlerFactory() {
+                        @Override
+                        public ObjList<String> getUrls() {
+                            return configuration.getContextPathMetrics();
+                        }
 
-                @Override
-                public HttpRequestProcessor newInstance() {
-                    return new PrometheusMetricsProcessor(metrics, configuration);
-                }
-            });
+                        @Override
+                        public HttpRequestHandler newInstance() {
+                            return new PrometheusMetricsProcessor(metrics, configuration, pool);
+                        }
+                    }
+            );
         }
         return server;
     }
 
     @Nullable
-    public static PGWireServer createPGWireServer(
+    public IPGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
-            WorkerPoolManager workerPoolManager,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics
+            WorkerPoolManager workerPoolManager
     ) {
         if (!configuration.isEnabled()) {
             return null;
@@ -252,29 +260,21 @@ public final class Services {
         // - SHARED otherwise
         final WorkerPool workerPool = workerPoolManager.getInstance(
                 configuration,
-                metrics.health(),
                 Requester.PG_WIRE_SERVER
         );
 
-        CircuitBreakerRegistry registry = new CircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
+        CircuitBreakerRegistry registry = configuration.getDumpNetworkTraffic() ? HexTestsCircuitBreakRegistry.INSTANCE : new DefaultCircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
 
-        return new PGWireServer(
+        return IPGWireServer.newInstance(
                 configuration,
                 cairoEngine,
                 workerPool,
-                functionFactoryCache,
-                snapshotAgent,
-                new PGWireServer.PGConnectionContextFactory(
+                registry,
+                () -> new SqlExecutionContextImpl(
                         cairoEngine,
-                        configuration,
-                        registry,
-                        () -> new SqlExecutionContextImpl(
-                                cairoEngine,
-                                workerPool.getWorkerCount(),
-                                workerPoolManager.getSharedWorkerCount()
-                        )
-                ),
-                registry
+                        workerPool.getWorkerCount(),
+                        workerPoolManager.getSharedWorkerCount()
+                )
         );
     }
 }

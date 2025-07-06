@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,13 +25,18 @@
 package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf16Sink;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
 public class IntList implements Mutable, Sinkable {
+    public static final int NO_ENTRY_VALUE = -1;
     private static final int DEFAULT_ARRAY_SIZE = 16;
-    private static final int NO_ENTRY_VALUE = -1;
-    private int[] buffer;
+    private static final int[] EMPTY_ARRAY = new int[0];
+    private final int initialCapacity;
+    private int[] data;
     private int pos = 0;
 
     public IntList() {
@@ -39,31 +44,41 @@ public class IntList implements Mutable, Sinkable {
     }
 
     public IntList(int capacity) {
-        this.buffer = new int[Math.max(capacity, DEFAULT_ARRAY_SIZE)];
+        this.initialCapacity = capacity;
+        this.data = capacity == 0 ? EMPTY_ARRAY : new int[initialCapacity];
+    }
+
+    public IntList(IntList source) {
+        this(source.size());
+        addAll(source);
     }
 
     public void add(int value) {
-        ensureCapacity0(pos + 1);
-        buffer[pos++] = value;
+        checkCapacity(pos + 1);
+        data[pos++] = value;
     }
 
     public void addAll(IntList that) {
         int p = pos;
         int s = that.size();
-        ensureCapacity(p + s);
-        System.arraycopy(that.buffer, 0, this.buffer, p, s);
+        setPos(p + s);
+        System.arraycopy(that.data, 0, this.data, p, s);
+    }
+
+    public void allocate(int size) {
+        checkCapacity(size);
     }
 
     public void arrayCopy(int srcPos, int dstPos, int length) {
-        System.arraycopy(buffer, srcPos, buffer, dstPos, length);
+        System.arraycopy(data, srcPos, data, dstPos, length);
     }
 
     public int binarySearchUniqueList(int v) {
         int low = 0;
         int high = pos - 1;
         while (high - low > 65) {
-            int mid = (low + high) / 2;
-            int midVal = buffer[mid];
+            int mid = (low + high) >>> 1;
+            int midVal = data[mid];
 
             if (midVal < v)
                 low = mid + 1;
@@ -76,23 +91,36 @@ public class IntList implements Mutable, Sinkable {
         return scanSearch(v, low, high + 1);
     }
 
+    public int capacity() {
+        return data.length;
+    }
+
+    public void checkCapacity(int capacity) {
+        int l = data.length;
+        if (capacity > l) {
+            int newCap = Math.max(l << 1, capacity);
+            this.data = Arrays.copyOf(data, newCap);
+        }
+    }
+
+    /**
+     * Resets the size of this list to zero.
+     * <p>
+     * <strong>Does not overwrite the underlying array with empty values.</strong>
+     * Use <code>clear(0)</code> to overwrite it.
+     */
     public void clear() {
         pos = 0;
     }
 
     public void clear(int capacity) {
-        ensureCapacity(capacity);
+        checkCapacity(capacity);
         pos = 0;
-        Arrays.fill(buffer, NO_ENTRY_VALUE);
+        Arrays.fill(data, NO_ENTRY_VALUE);
     }
 
     public boolean contains(int value) {
         return indexOf(value, 0, pos) > -1;
-    }
-
-    public void ensureCapacity(int capacity) {
-        ensureCapacity0(capacity);
-        pos = capacity;
     }
 
     /**
@@ -103,12 +131,19 @@ public class IntList implements Mutable, Sinkable {
         return this == that || that instanceof IntList && equals((IntList) that);
     }
 
+    /**
+     * Sets the value at index, extending the backing array if needed.
+     * <p>
+     * <strong>WARNING:</strong> does not initialize the newly revealed portion of
+     * the backing array! This may reveal values that were never set, or were set
+     * before calling <code>clear()</code>.
+     */
     public void extendAndSet(int index, int value) {
-        ensureCapacity0(index + 1);
+        checkCapacity(index + 1);
         if (index >= pos) {
             pos = index + 1;
         }
-        buffer[index] = value;
+        data[index] = value;
     }
 
     public int get(int index) {
@@ -117,7 +152,7 @@ public class IntList implements Mutable, Sinkable {
 
     public int getLast() {
         if (pos > 0) {
-            return buffer[pos - 1];
+            return data[pos - 1];
         }
         return NO_ENTRY_VALUE;
     }
@@ -132,8 +167,9 @@ public class IntList implements Mutable, Sinkable {
      * @return element at the specified position.
      */
     public int getQuick(int index) {
-        assert index < pos;
-        return buffer[index];
+        assert index >= 0 : "negative index";
+        assert index < pos : String.format("index %,d out of bounds for list size %,d", index, pos);
+        return data[index];
     }
 
     /**
@@ -150,26 +186,19 @@ public class IntList implements Mutable, Sinkable {
     }
 
     public void increment(int index) {
-        buffer[index] = buffer[index] + 1;
-    }
-
-    // increment at index and return previous value
-    public int postIncrement(int index) {
-        final int prev = buffer[index];
-        buffer[index] = prev + 1;
-        return prev;
+        data[index] = data[index] + 1;
     }
 
     public void increment(int index, int delta) {
         assert delta > -1;
-        buffer[index] = buffer[index] + delta;
+        data[index] = data[index] + delta;
     }
 
     public int indexOf(int v, int low, int high) {
         assert high <= pos;
 
         for (int i = low; i < high; i++) {
-            int f = buffer[i];
+            int f = data[i];
             if (f == v) {
                 return i;
             }
@@ -178,9 +207,16 @@ public class IntList implements Mutable, Sinkable {
     }
 
     public void insert(int index, int element) {
-        ensureCapacity(++pos);
-        System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
-        buffer[index] = element;
+        setPos(++pos);
+        System.arraycopy(data, index, data, index + 1, pos - index - 1);
+        data[index] = element;
+    }
+
+    // increment at index and return previous value
+    public int postIncrement(int index) {
+        final int prev = data[index];
+        data[index] = prev + 1;
+        return prev;
     }
 
     public void remove(int key) {
@@ -192,67 +228,121 @@ public class IntList implements Mutable, Sinkable {
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
     public void removeIndex(int index) {
         if (pos < 1 || index >= pos) {
             return;
         }
         int move = pos - index - 1;
         if (move > 0) {
-            System.arraycopy(buffer, index + 1, buffer, index, move);
+            System.arraycopy(data, index + 1, data, index, move);
         }
         int index1 = --pos;
-        buffer[index1] = NO_ENTRY_VALUE;
+        data[index1] = NO_ENTRY_VALUE;
+    }
+
+    public void restoreInitialCapacity() {
+        data = new int[initialCapacity];
+        pos = 0;
+    }
+
+    public void reverse() {
+        final int len = size();
+        for (int index = 0, mid = len / 2; index < mid; ++index) {
+            final int temp = get(index);
+            set(index, get(len - index - 1));
+            set(len - index - 1, temp);
+        }
+    }
+
+    /**
+     * Shifts all elements in the list to the right by the specified number of positions.
+     * This creates empty spaces at the beginning of the list which are filled with {@link #NO_ENTRY_VALUE}.
+     * The size of the list is increased by the shift amount.
+     *
+     * <p>For example, if the list contains [1,2,3] and rshift(2) is called, the result would be
+     * [-1,-1,1,2,3] (assuming NO_ENTRY_VALUE is -1).</p>
+     *
+     * @param level the number of positions to shift elements to the right
+     */
+    public void rshift(int level) {
+        if (level == 0) {
+            return;
+        }
+        assert level > 0;
+
+        int newCapacityRequired = pos + level;
+        if (newCapacityRequired > data.length) {
+            int[] buf = new int[newCapacityRequired];
+            System.arraycopy(data, 0, buf, level, pos);
+            data = buf;
+        } else {
+            System.arraycopy(data, 0, data, level, pos);
+        }
+        Arrays.fill(data, 0, level, NO_ENTRY_VALUE);
+        pos += level;
     }
 
     public void set(int index, int element) {
         if (index < pos) {
-            buffer[index] = element;
+            data[index] = element;
             return;
         }
         throw new ArrayIndexOutOfBoundsException(index);
     }
 
     public void setAll(int capacity, int value) {
-        ensureCapacity0(capacity);
+        checkCapacity(capacity);
         pos = capacity;
-        Arrays.fill(buffer, 0, pos, value);
+        Arrays.fill(data, 0, pos, value);
     }
 
-    public void setPos(int capacity) {
-        ensureCapacity(capacity);
-        pos = capacity;
+    public void setPos(int position) {
+        checkCapacity(position);
+        pos = position;
     }
 
     public void setQuick(int index, int value) {
         assert index < pos;
-        buffer[index] = value;
+        data[index] = value;
     }
 
     public int size() {
         return pos;
     }
 
+    /**
+     * Sorts groups of N elements. The size of the group is specified by {@code groupSize}.
+     * Comparison between groups is done by comparing the first element of each group, then
+     * if the first elements are equal the second elements are compared and so on.
+     *
+     * @param groupSize size of the group
+     */
+    public void sortGroups(int groupSize) {
+        if (groupSize > 0 && pos % groupSize == 0) {
+            IntGroupSort.quickSort(groupSize, data, 0, pos / groupSize);
+            return;
+        }
+        throw new IllegalStateException("sorting not supported for group size: " + groupSize + ", length: " + pos);
+    }
+
     @Override
-    public void toSink(CharSink sink) {
-        sink.put('[');
+    public void toSink(@NotNull CharSink<?> sink) {
+        sink.putAscii('[');
         for (int i = 0, k = size(); i < k; i++) {
             if (i > 0) {
-                sink.put(',');
+                sink.putAscii(',');
             }
             sink.put(get(i));
         }
-        sink.put(']');
+        sink.putAscii(']');
     }
 
-    public void toSink(CharSink sink, int exceptValue) {
-        sink.put('[');
+    public void toSink(CharSink<?> sink, int exceptValue) {
+        sink.putAscii('[');
         boolean pastFirst = false;
         for (int i = 0, k = size(); i < k; i++) {
             if (pastFirst) {
-                sink.put(',');
+                sink.putAscii(',');
             }
             int val = get(i);
             if (val == exceptValue) {
@@ -261,7 +351,7 @@ public class IntList implements Mutable, Sinkable {
             sink.put(val);
             pastFirst = true;
         }
-        sink.put(']');
+        sink.putAscii(']');
     }
 
     /**
@@ -269,23 +359,13 @@ public class IntList implements Mutable, Sinkable {
      */
     @Override
     public String toString() {
-        CharSink b = Misc.getThreadLocalBuilder();
+        Utf16Sink b = Misc.getThreadLocalSink();
         toSink(b);
         return b.toString();
     }
 
     public void zero(int value) {
-        Arrays.fill(buffer, 0, pos, value);
-    }
-
-    private void ensureCapacity0(int capacity) {
-        int l = buffer.length;
-        if (capacity > l) {
-            int newCap = Math.max(l << 1, capacity);
-            int[] buf = new int[newCap];
-            System.arraycopy(buffer, 0, buf, 0, l);
-            this.buffer = buf;
-        }
+        Arrays.fill(data, 0, pos, value);
     }
 
     private boolean equals(IntList that) {
@@ -303,7 +383,7 @@ public class IntList implements Mutable, Sinkable {
 
     private int scanSearch(int v, int low, int high) {
         for (int i = low; i < high; i++) {
-            int f = buffer[i];
+            int f = data[i];
             if (f == v) {
                 return i;
             }

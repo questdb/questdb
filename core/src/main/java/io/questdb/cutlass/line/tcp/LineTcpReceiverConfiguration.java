@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,9 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.FactoryProvider;
-import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.Metrics;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -33,10 +35,15 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
-public interface LineTcpReceiverConfiguration {
+public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration {
+
+    String getAuthDB();
+
     boolean getAutoCreateNewColumns();
 
     boolean getAutoCreateNewTables();
+
+    CairoConfiguration getCairoConfiguration();
 
     long getCommitInterval();
 
@@ -54,11 +61,9 @@ public interface LineTcpReceiverConfiguration {
 
     boolean getDisconnectOnError();
 
-    IODispatcherConfiguration getDispatcherConfiguration();
+    FactoryProvider getFactoryProvider();
 
     FilesFacade getFilesFacade();
-
-    String getAuthDB();
 
     WorkerPoolConfiguration getIOWorkerPoolConfiguration();
 
@@ -74,17 +79,19 @@ public interface LineTcpReceiverConfiguration {
 
     int getMaxMeasurementSize();
 
+    long getMaxRecvBufferSize();
+
+    Metrics getMetrics();
+
     MicrosecondClock getMicrosecondClock();
 
     MillisecondClock getMillisecondClock();
 
-    int getNetMsgBufferSize();
-
     NetworkFacade getNetworkFacade();
 
-    long getSymbolCacheWaitUsBeforeReload();
+    long getSymbolCacheWaitBeforeReload();
 
-    LineProtoTimestampAdapter getTimestampAdapter();
+    LineTcpTimestampAdapter getTimestampAdapter();
 
     long getWriterIdleTimeout();
 
@@ -94,13 +101,9 @@ public interface LineTcpReceiverConfiguration {
 
     boolean isEnabled();
 
-    boolean isStringAsTagSupported();
-
     boolean isStringToCharCastAllowed();
 
-    boolean isSymbolAsFieldSupported();
+    boolean isUseLegacyStringDefault();
 
-    boolean readOnlySecurityContext();
-
-    FactoryProvider getFactoryProvider();
+    boolean logMessageOnError();
 }

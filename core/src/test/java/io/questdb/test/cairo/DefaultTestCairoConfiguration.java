@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,13 +24,21 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import org.jetbrains.annotations.NotNull;
 
 public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
-    public DefaultTestCairoConfiguration(CharSequence root) {
-        super(root);
+    private final Metrics metrics = Metrics.ENABLED;
+
+    public DefaultTestCairoConfiguration(CharSequence dbRoot, CharSequence installRoot) {
+        super(dbRoot, installRoot);
+    }
+
+    public DefaultTestCairoConfiguration(CharSequence dbRoot) {
+        super(dbRoot);
     }
 
     @Override
@@ -44,8 +52,13 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
-    public FilesFacade getFilesFacade() {
+    public @NotNull FilesFacade getFilesFacade() {
         return TestFilesFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return metrics;
     }
 
     @Override
@@ -55,7 +68,22 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
-    public CharSequence getSystemTableNamePrefix() {
+    public int getPartitionEncoderParquetDataPageSize() {
+        return 1024; // 1KB
+    }
+
+    @Override
+    public int getPartitionEncoderParquetRowGroupSize() {
+        return 1000;
+    }
+
+    @Override
+    public long getPartitionO3SplitMinSize() {
+        return 512 * (1L << 10); // 512KiB
+    }
+
+    @Override
+    public @NotNull CharSequence getSystemTableNamePrefix() {
         return "sys.";
     }
 
@@ -71,12 +99,22 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
+    public boolean isDevModeEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isMatViewEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean mangleTableDirNames() {
         return true;
     }
 
     @Override
-    public long getPartitionO3SplitMinSize() {
-        return 512 * (1L << 10); // 512KiB
+    public boolean isColumnAliasExpressionEnabled() {
+        return false;
     }
 }

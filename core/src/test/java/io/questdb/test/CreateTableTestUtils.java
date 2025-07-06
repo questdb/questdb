@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,52 +24,43 @@
 
 package io.questdb.test;
 
-import io.questdb.Metrics;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.tools.TestUtils;
 
 public class CreateTableTestUtils {
 
-    public static TableToken create(TableModel model) {
-        return TestUtils.create(model, AbstractCairoTest.engine);
-    }
-
     public static void createAllTable(CairoEngine engine, int partitionBy) {
-        try (TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy)) {
-            TestUtils.create(model, engine);
-        }
+        TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy);
+        TestUtils.createTable(engine, model);
     }
 
     public static void createAllTableWithNewTypes(CairoEngine engine, int partitionBy) {
-        try (TableModel model = getAllTypesModelWithNewTypes(engine.getConfiguration(), partitionBy)) {
-            TestUtils.create(model, engine);
-        }
+        TableModel model = getAllTypesModelWithNewTypes(engine.getConfiguration(), partitionBy);
+        TestUtils.createTable(engine, model);
     }
 
     public static void createAllTableWithTimestamp(CairoEngine engine, int partitionBy) {
-        try (TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy).col("ts", ColumnType.TIMESTAMP).timestamp()) {
-            TestUtils.create(model, engine);
-        }
+        TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy).col("ts", ColumnType.TIMESTAMP).timestamp();
+        TestUtils.createTable(engine, model);
     }
 
     public static void createTableWithVersionAndId(TableModel model, CairoEngine engine, int version, int tableId) {
-        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false);
+        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false, false);
         if (tableToken == null) {
             throw CairoException.critical(0).put("table already exists: ").put(model.getTableName());
         }
-        TableUtils.createTable(
-                model.getConfiguration(),
-                model.getMem(),
-                model.getPath(),
-                model,
-                version,
-                tableId,
-                tableToken.getDirName()
-        );
+        TestUtils.createTable(model, model.getConfiguration(), version, tableId, tableToken);
         engine.registerTableToken(tableToken);
     }
 
@@ -79,26 +70,26 @@ public class CreateTableTestUtils {
 
     public static void createTestTable(CairoEngine engine, int n, Rnd rnd, TestRecord.ArrayBinarySequence binarySequence) {
         try {
-            try (TableModel model = new TableModel(engine.getConfiguration(), "x", PartitionBy.NONE)) {
-                model
-                        .col("a", ColumnType.BYTE)
-                        .col("b", ColumnType.SHORT)
-                        .col("c", ColumnType.INT)
-                        .col("d", ColumnType.LONG)
-                        .col("e", ColumnType.DATE)
-                        .col("f", ColumnType.TIMESTAMP)
-                        .col("g", ColumnType.FLOAT)
-                        .col("h", ColumnType.DOUBLE)
-                        .col("i", ColumnType.STRING)
-                        .col("j", ColumnType.SYMBOL)
-                        .col("k", ColumnType.BOOLEAN)
-                        .col("l", ColumnType.BINARY)
-                        .col("m", ColumnType.UUID);
-                TestUtils.create(model, engine);
-            }
+            TableModel model = new TableModel(engine.getConfiguration(), "x", PartitionBy.NONE);
+            model
+                    .col("a", ColumnType.BYTE)
+                    .col("b", ColumnType.SHORT)
+                    .col("c", ColumnType.INT)
+                    .col("d", ColumnType.LONG)
+                    .col("e", ColumnType.DATE)
+                    .col("f", ColumnType.TIMESTAMP)
+                    .col("g", ColumnType.FLOAT)
+                    .col("h", ColumnType.DOUBLE)
+                    .col("i", ColumnType.STRING)
+                    .col("j", ColumnType.SYMBOL)
+                    .col("k", ColumnType.BOOLEAN)
+                    .col("l", ColumnType.BINARY)
+                    .col("m", ColumnType.UUID)
+                    .col("n", ColumnType.VARCHAR);
+            TestUtils.createTable(engine, model);
         } catch (RuntimeException e) {
             if ("table already exists: x".equals(e.getMessage())) {
-                try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.verifyTableName("x"), Metrics.disabled())) {
+                try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("x"), engine)) {
                     writer.truncate();
                 }
             } else {
@@ -106,32 +97,33 @@ public class CreateTableTestUtils {
             }
         }
 
-        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.verifyTableName("x"), Metrics.disabled())) {
+        Utf8StringSink utf8Sink = new Utf8StringSink();
+        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("x"), engine)) {
             for (int i = 0; i < n; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putByte(0, rnd.nextByte());
                 row.putShort(1, rnd.nextShort());
 
                 if (rnd.nextInt() % 4 == 0) {
-                    row.putInt(2, Numbers.INT_NaN);
+                    row.putInt(2, Numbers.INT_NULL);
                 } else {
                     row.putInt(2, rnd.nextInt());
                 }
 
                 if (rnd.nextInt() % 4 == 0) {
-                    row.putLong(3, Numbers.LONG_NaN);
+                    row.putLong(3, Numbers.LONG_NULL);
                 } else {
                     row.putLong(3, rnd.nextLong());
                 }
 
                 if (rnd.nextInt() % 4 == 0) {
-                    row.putLong(4, Numbers.LONG_NaN);
+                    row.putLong(4, Numbers.LONG_NULL);
                 } else {
                     row.putDate(4, rnd.nextLong());
                 }
 
                 if (rnd.nextInt() % 4 == 0) {
-                    row.putLong(5, Numbers.LONG_NaN);
+                    row.putLong(5, Numbers.LONG_NULL);
                 } else {
                     row.putTimestamp(5, rnd.nextLong());
                 }
@@ -171,10 +163,24 @@ public class CreateTableTestUtils {
 
                 // UUID
                 if (rnd.nextInt() % 4 == 0) {
-                    row.putLong128(12, Numbers.LONG_NaN, Numbers.LONG_NaN);
+                    row.putLong128(12, Numbers.LONG_NULL, Numbers.LONG_NULL);
                 } else {
                     row.putLong128(12, rnd.nextLong(), rnd.nextLong());
                 }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putVarchar(13, null);
+                } else {
+                    utf8Sink.clear();
+                    if (rnd.nextInt() % 4 == 0) {
+                        rnd.nextUtf8AsciiStr(5, utf8Sink);
+                        row.putVarchar(13, utf8Sink);
+                    } else {
+                        rnd.nextUtf8Str(5, utf8Sink);
+                        row.putVarchar(13, utf8Sink);
+                    }
+                }
+
                 row.append();
             }
             writer.commit();
@@ -183,9 +189,9 @@ public class CreateTableTestUtils {
 
     public static TableModel getAllTypesModel(CairoConfiguration configuration, int partitionBy) {
         return new TableModel(configuration, "all", partitionBy)
-                .col("int", ColumnType.INT)
-                .col("short", ColumnType.SHORT)
-                .col("byte", ColumnType.BYTE)
+                .col("int", ColumnType.INT) // 0
+                .col("short", ColumnType.SHORT) // 1
+                .col("byte", ColumnType.BYTE) // 2
                 .col("double", ColumnType.DOUBLE)
                 .col("float", ColumnType.FLOAT)
                 .col("long", ColumnType.LONG)
@@ -193,7 +199,8 @@ public class CreateTableTestUtils {
                 .col("sym", ColumnType.SYMBOL).symbolCapacity(64)
                 .col("bool", ColumnType.BOOLEAN)
                 .col("bin", ColumnType.BINARY)
-                .col("date", ColumnType.DATE);
+                .col("date", ColumnType.DATE) // 10
+                .col("varchar", ColumnType.VARCHAR); // 11
     }
 
     public static TableModel getAllTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy) {
@@ -205,11 +212,24 @@ public class CreateTableTestUtils {
                 .col("float", ColumnType.FLOAT)
                 .col("long", ColumnType.LONG)
                 .col("str", ColumnType.STRING)
-                .col("sym", ColumnType.SYMBOL).symbolCapacity(64).col("bool", ColumnType.BOOLEAN).col("bin", ColumnType.BINARY).col("date", ColumnType.DATE).col("long256", ColumnType.LONG256).col("chr", ColumnType.CHAR).timestamp();
-
+                .col("sym", ColumnType.SYMBOL).symbolCapacity(64)
+                .col("bool", ColumnType.BOOLEAN)
+                .col("bin", ColumnType.BINARY)
+                .col("date", ColumnType.DATE)
+                .col("long256", ColumnType.LONG256)
+                .col("chr", ColumnType.CHAR)
+                .col("uuid", ColumnType.UUID)
+                .col("ipv4", ColumnType.IPv4)
+                .col("varchar", ColumnType.VARCHAR)
+                .timestamp();
     }
 
     public static TableModel getGeoHashTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy) {
-        return new TableModel(configuration, "allgeo", partitionBy).col("hb", ColumnType.getGeoHashTypeWithBits(6)).col("hs", ColumnType.getGeoHashTypeWithBits(12)).col("hi", ColumnType.getGeoHashTypeWithBits(27)).col("hl", ColumnType.getGeoHashTypeWithBits(44)).timestamp();
+        return new TableModel(configuration, "allgeo", partitionBy)
+                .col("hb", ColumnType.getGeoHashTypeWithBits(6))
+                .col("hs", ColumnType.getGeoHashTypeWithBits(12))
+                .col("hi", ColumnType.getGeoHashTypeWithBits(27))
+                .col("hl", ColumnType.getGeoHashTypeWithBits(44))
+                .timestamp();
     }
 }

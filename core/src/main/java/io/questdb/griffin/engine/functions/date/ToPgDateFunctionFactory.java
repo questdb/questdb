@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -64,14 +64,14 @@ public class ToPgDateFunctionFactory implements FunctionFactory {
 
         @Override
         public long getDate(Record rec) {
-            CharSequence value = arg.getStr(rec);
+            CharSequence value = arg.getStrA(rec);
             try {
                 if (value != null) {
-                    return DateFormatUtils.PG_DATE_FORMAT.parse(value, DateFormatUtils.enLocale);
+                    return DateFormatUtils.PG_DATE_FORMAT.parse(value, DateFormatUtils.EN_LOCALE);
                 }
             } catch (NumericException ignore) {
             }
-            return Numbers.LONG_NaN;
+            return Numbers.LONG_NULL;
         }
 
         @Override

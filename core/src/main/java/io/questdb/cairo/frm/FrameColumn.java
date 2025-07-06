@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,14 +24,34 @@
 
 package io.questdb.cairo.frm;
 
+import io.questdb.cairo.frm.file.RecycleBin;
+
 import java.io.Closeable;
 
 public interface FrameColumn extends Closeable {
+    /**
+     * Column type for contiguous file columns, usually it means it's a partition or a WAL segment stored on disk
+     */
     int COLUMN_CONTIGUOUS_FILE = 0;
+    /**
+     * Column type for memory columns, usually it comes from uncommitted, sorted data stored in memory or mapped WAL files
+     */
+    int COLUMN_MEMORY = 1;
 
     void addTop(long value);
 
-    void appendNulls(long offset, long count, int commitMode);
+    /**
+     * Appends source frame to this frame starting at the specific offset in this frame.
+     *
+     * @param appendOffsetRowCount offset in number of rows after which data is appended
+     * @param sourceColumn         the source frame
+     * @param sourceLo             low index in the source frame
+     * @param sourceHi             high index in the source frame, exclusive
+     * @param commitMode           the commit mode, which drives durability of the change.
+     */
+    void append(long appendOffsetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode);
+
+    void appendNulls(long rowCount, long sourceColumnTop, int commitMode);
 
     void close();
 
@@ -41,11 +61,15 @@ public interface FrameColumn extends Closeable {
 
     int getColumnType();
 
-    int getPrimaryFd();
+    long getContiguousAuxAddr(long rowHi);
 
-    int getSecondaryFd();
+    long getContiguousDataAddr(long rowHi);
+
+    long getPrimaryFd();
+
+    long getSecondaryFd();
 
     int getStorageType();
 
-    void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode);
+    void setRecycleBin(RecycleBin<FrameColumn> pool);
 }

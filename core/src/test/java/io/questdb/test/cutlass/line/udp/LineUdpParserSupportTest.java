@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,9 @@
 
 package io.questdb.test.cutlass.line.udp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
@@ -79,6 +81,11 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
         Assert.assertEquals(ColumnType.STRING, LineUdpParserSupport.getValueType("\"0x123a4\""));
         Assert.assertEquals(ColumnType.STRING, LineUdpParserSupport.getValueType("\"0x123a4 looks \\\" like=long256,\\\n but tis not!\""));
         Assert.assertEquals(ColumnType.STRING, LineUdpParserSupport.getValueType("\"0x123a4 looks like=long256, but tis not!\""));
+
+        Assert.assertEquals(ColumnType.VARCHAR, LineUdpParserSupport.getValueType("\"0x123a4\"", false));
+        Assert.assertEquals(ColumnType.VARCHAR, LineUdpParserSupport.getValueType("\"0x123a4 looks \\\" like=long256,\\\n but tis not!\"", false));
+        Assert.assertEquals(ColumnType.VARCHAR, LineUdpParserSupport.getValueType("\"0x123a4 looks like=long256, but tis not!\"", false));
+
         Assert.assertEquals(ColumnType.UNDEFINED, LineUdpParserSupport.getValueType("\"0x123a4 looks \\\" like=long256,\\\n but tis not!")); // missing closing '"'
         Assert.assertEquals(ColumnType.UNDEFINED, LineUdpParserSupport.getValueType("0x123a4 looks \\\" like=long256,\\\n but tis not!\"")); // wanted to be a string, missing opening '"'
 
@@ -87,21 +94,21 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
 
         Assert.assertEquals(ColumnType.LONG, LineUdpParserSupport.getValueType("123i"));
         Assert.assertEquals(ColumnType.LONG, LineUdpParserSupport.getValueType("1i"));
-        Assert.assertEquals(ColumnType.INT, LineUdpParserSupport.getValueType("123i", ColumnType.DOUBLE, ColumnType.INT));
-        Assert.assertEquals(ColumnType.INT, LineUdpParserSupport.getValueType("1i", ColumnType.FLOAT, ColumnType.INT));
-        Assert.assertEquals(ColumnType.SHORT, LineUdpParserSupport.getValueType("123i", ColumnType.DOUBLE, ColumnType.SHORT));
-        Assert.assertEquals(ColumnType.SHORT, LineUdpParserSupport.getValueType("1i", ColumnType.DOUBLE, ColumnType.SHORT));
-        Assert.assertEquals(ColumnType.BYTE, LineUdpParserSupport.getValueType("123i", ColumnType.FLOAT, ColumnType.BYTE));
-        Assert.assertEquals(ColumnType.BYTE, LineUdpParserSupport.getValueType("1i", ColumnType.DOUBLE, ColumnType.BYTE));
+        Assert.assertEquals(ColumnType.INT, LineUdpParserSupport.getValueType("123i", ColumnType.DOUBLE, ColumnType.INT, true));
+        Assert.assertEquals(ColumnType.INT, LineUdpParserSupport.getValueType("1i", ColumnType.FLOAT, ColumnType.INT, true));
+        Assert.assertEquals(ColumnType.SHORT, LineUdpParserSupport.getValueType("123i", ColumnType.DOUBLE, ColumnType.SHORT, true));
+        Assert.assertEquals(ColumnType.SHORT, LineUdpParserSupport.getValueType("1i", ColumnType.DOUBLE, ColumnType.SHORT, true));
+        Assert.assertEquals(ColumnType.BYTE, LineUdpParserSupport.getValueType("123i", ColumnType.FLOAT, ColumnType.BYTE, true));
+        Assert.assertEquals(ColumnType.BYTE, LineUdpParserSupport.getValueType("1i", ColumnType.DOUBLE, ColumnType.BYTE, true));
 
         Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("1.45"));
         Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("1e-13"));
         Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("1.0"));
         Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("1"));
-        Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("1.45", ColumnType.FLOAT, ColumnType.LONG));
-        Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("1e-13", ColumnType.FLOAT, ColumnType.INT));
-        Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("1.0", ColumnType.FLOAT, ColumnType.BYTE));
-        Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("1", ColumnType.FLOAT, ColumnType.LONG));
+        Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("1.45", ColumnType.FLOAT, ColumnType.LONG, true));
+        Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("1e-13", ColumnType.FLOAT, ColumnType.INT, true));
+        Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("1.0", ColumnType.FLOAT, ColumnType.BYTE, true));
+        Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("1", ColumnType.FLOAT, ColumnType.LONG, true));
 
         Assert.assertEquals(ColumnType.TIMESTAMP, LineUdpParserSupport.getValueType("123t"));
 
@@ -137,7 +144,8 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                             .field(targetColumnName, 5)
                             .$(4000000000L);
                     sender.flush();
-                });
+                }
+        );
     }
 
     @Test
@@ -162,7 +170,8 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                             .field(targetColumnName, 5)
                             .$(4000000000L);
                     sender.flush();
-                });
+                }
+        );
     }
 
     @Test
@@ -170,9 +179,9 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
         testColumnType(
                 ColumnType.FLOAT,
                 "column\tlocation\ttimestamp\n" +
-                        "NaN\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
-                        "3.1416\t\t1970-01-01T00:00:02.000000Z\n" +
-                        "5.0000\t\t1970-01-01T00:00:05.000000Z\n",
+                        "null\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
+                        "3.14159\t\t1970-01-01T00:00:02.000000Z\n" +
+                        "5.0\t\t1970-01-01T00:00:05.000000Z\n",
                 (sender) -> {
                     sender.metric(tableName)
                             .field(targetColumnName, Double.MAX_VALUE)
@@ -192,7 +201,37 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                             .field(targetColumnName, 5.0)
                             .$(5000000000L);
                     sender.flush();
-                });
+                }
+        );
+    }
+
+    @Test
+    public void testPutIPv4BadValueIsTreatedAsNull() throws Exception {
+        testColumnType(
+                ColumnType.IPv4,
+                "column\tlocation\ttimestamp\n" +
+                        "1.1.1.1\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
+                        "\t\t1970-01-01T00:00:02.000000Z\n" +
+                        "12.25.6.8\tsp052w\t1970-01-01T00:00:03.000000Z\n" +
+                        "\t\t1970-01-01T00:00:04.000000Z\n",
+                (sender) -> {
+                    sender.metric(tableName)
+                            .field(targetColumnName, "1.1.1.1")
+                            .field(locationColumnName, "sp052w")
+                            .$(1000000000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, "")
+                            .$(2000000000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, "12.25.6.8")
+                            .field(locationColumnName, "sp052w12")
+                            .$(3000000000L);
+                    sender.metric(tableName)
+                            .field(targetColumnName, "null")
+                            .$(4000000000L);
+                    sender.flush();
+                }
+        );
     }
 
     @Test
@@ -200,7 +239,7 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
         testColumnType(
                 ColumnType.INT,
                 "column\tlocation\ttimestamp\n" +
-                        "NaN\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
+                        "null\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
                         "5\t\t1970-01-01T00:00:04.000000Z\n",
                 (sender) -> {
                     sender.metric(tableName)
@@ -218,7 +257,8 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                             .field(targetColumnName, 5)
                             .$(4000000000L);
                     sender.flush();
-                });
+                }
+        );
     }
 
     @Test
@@ -242,7 +282,8 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                             .field(targetColumnName, 5)
                             .$(4000000000L);
                     sender.flush();
-                });
+                }
+        );
     }
 
     @Test
@@ -269,7 +310,8 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                             .field(targetColumnName, 5)
                             .$(4000000000L);
                     sender.flush();
-                });
+                }
+        );
     }
 
     private void testColumnType(
@@ -277,8 +319,8 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
             String expected,
             Consumer<AbstractLineSender> senderConsumer
     ) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
+        assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                     if (event == PoolListener.EV_RETURN && name.getTableName().equals(tableName)
@@ -287,13 +329,12 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                     }
                 });
                 try (AbstractLineProtoUdpReceiver receiver = createLineProtoReceiver(engine)) {
-                    try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-                        TestUtils.create(model
-                                        .col(targetColumnName, columnType)
-                                        .col(locationColumnName, ColumnType.getGeoHashTypeWithBits(30))
-                                        .timestamp(),
-                                engine);
-                    }
+                    TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE);
+                    TestUtils.createTable(engine, model
+                            .col(targetColumnName, columnType)
+                            .col(locationColumnName, ColumnType.getGeoHashTypeWithBits(30))
+                            .timestamp()
+                    );
                     receiver.start();
                     try (AbstractLineSender sender = createLineProtoSender()) {
                         senderConsumer.accept(sender);

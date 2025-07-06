@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,10 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.PeerIsSlowToWriteException;
+import io.questdb.network.ServerDisconnectException;
+
 import java.io.Closeable;
 
 public interface Retry extends Closeable {
@@ -33,7 +37,7 @@ public interface Retry extends Closeable {
      * @param selector processor selector
      * @param e        exception information
      */
-    void fail(HttpRequestProcessorSelector selector, HttpException e);
+    void fail(HttpRequestProcessorSelector selector, HttpException e) throws PeerIsSlowToReadException, ServerDisconnectException;
 
     /**
      * Provides retry information
@@ -49,5 +53,5 @@ public interface Retry extends Closeable {
      * @param rescheduleContext context to be retried
      * @return success indicator
      */
-    boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext);
+    boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) throws PeerIsSlowToReadException, PeerIsSlowToWriteException, ServerDisconnectException;
 }

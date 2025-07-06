@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,78 +24,22 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-public class IDGenerator implements Closeable {
-    private final CairoConfiguration configuration;
-    private final String uniqueIdFileName;
-    private final long uniqueIdMemSize;
-
-    private int uniqueIdFd = -1;
-    private long uniqueIdMem = 0;
-
-    public IDGenerator(CairoConfiguration configuration, String uniqueIdFileName) {
-        this.configuration = configuration;
-        this.uniqueIdFileName = uniqueIdFileName;
-        this.uniqueIdMemSize = Files.PAGE_SIZE;
-    }
-
-    @Override
-    public void close() {
-        final FilesFacade ff = configuration.getFilesFacade();
-        if (uniqueIdMem != 0) {
-            ff.munmap(uniqueIdMem, uniqueIdMemSize, MemoryTag.MMAP_DEFAULT);
-            uniqueIdMem = 0;
-        }
-        if (ff.close(uniqueIdFd)) {
-            uniqueIdFd = -1;
-        }
-    }
-
-    public long getNextId() {
-        long next;
-        long x = getCurrentId();
-        do {
-            next = x;
-            x = Os.compareAndSwap(uniqueIdMem, next, next + 1);
-        } while (next != x);
-        return next + 1;
-    }
-
-    public void open() {
+public interface IDGenerator extends Closeable {
+    default void open() {
         open(null);
     }
 
-    public void open(Path path) {
-        close();
-        if (path == null) {
-            path = Path.getThreadLocal(configuration.getRoot());
-        }
-        final int rootLen = path.length();
-        try {
-            path.concat(uniqueIdFileName).$();
-            final FilesFacade ff = configuration.getFilesFacade();
-            uniqueIdFd = TableUtils.openFileRWOrFail(ff, path, configuration.getWriterFileOpenOpts());
-            uniqueIdMem = TableUtils.mapRW(ff, uniqueIdFd, uniqueIdMemSize, MemoryTag.MMAP_DEFAULT);
-        } catch (Throwable e) {
-            close();
-            throw e;
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
+    void open(Path path);
 
-    // This is not thread safe way to reset the id back to 0
-    // It is useful for testing only
-    public void reset() {
-        Unsafe.getUnsafe().putLong(uniqueIdMem, 0);
-    }
+    long getCurrentId();
 
-    long getCurrentId() {
-        assert uniqueIdMem > 0;
-        return Unsafe.getUnsafe().getLong(uniqueIdMem);
-    }
+    long getNextId();
+
+    void reset();
+
+    void close();
 }

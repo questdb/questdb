@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,10 +28,13 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Long256Util;
+import io.questdb.std.Numbers;
 
 public class SimpleMapValue implements MapValue {
+
     private final Long256Impl long256 = new Long256Impl();
     private final long[] values;
+    private boolean isNew;
 
     public SimpleMapValue(int columnCount) {
         this.values = new long[4 * columnCount];
@@ -80,14 +83,20 @@ public class SimpleMapValue implements MapValue {
         values[4 * index] += value;
     }
 
-    public void copy(SimpleMapValue other) {
-        assert values.length >= other.values.length;
-        System.arraycopy(other.values, 0, values, 0, other.values.length);
+    public void clear() {
+        for (int i = 0, n = values.length; i < n; i++) {
+            values[i] = 0;
+        }
+    }
+
+    public void copy(SimpleMapValue srcValue) {
+        assert values.length >= srcValue.values.length;
+        System.arraycopy(srcValue.values, 0, values, 0, srcValue.values.length);
     }
 
     @Override
-    public long getAddress() {
-        throw new UnsupportedOperationException();
+    public void copyFrom(MapValue value) {
+        copy((SimpleMapValue) value);
     }
 
     @Override
@@ -141,6 +150,11 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
+    public int getIPv4(int index) {
+        return (int) values[4 * index];
+    }
+
+    @Override
     public int getInt(int index) {
         return (int) values[4 * index];
     }
@@ -173,13 +187,44 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
+    public long getStartAddress() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public long getTimestamp(int index) {
         return values[4 * index];
     }
 
     @Override
     public boolean isNew() {
-        return false;
+        return isNew;
+    }
+
+    @Override
+    public void maxInt(int index, int value) {
+        values[4 * index] = Math.max(value, values[4 * index]);
+    }
+
+    @Override
+    public void maxLong(int index, long value) {
+        values[4 * index] = Math.max(value, values[4 * index]);
+    }
+
+    @Override
+    public void minInt(int index, int value) {
+        if (value != Numbers.INT_NULL) {
+            final int current = (int) values[4 * index];
+            values[4 * index] = (current != Numbers.INT_NULL) ? Math.min(value, current) : value;
+        }
+    }
+
+    @Override
+    public void minLong(int index, long value) {
+        if (value != Numbers.LONG_NULL) {
+            final long current = values[4 * index];
+            values[4 * index] = (current != Numbers.LONG_NULL) ? Math.min(value, current) : value;
+        }
     }
 
     @Override
@@ -251,5 +296,9 @@ public class SimpleMapValue implements MapValue {
     @Override
     public void setMapRecordHere() {
         throw new UnsupportedOperationException();
+    }
+
+    public void setNew(boolean isNew) {
+        this.isNew = isNew;
     }
 }

@@ -1,0 +1,301 @@
+name: Build and Push Release CXX Libraries
+on:
+  workflow_dispatch:
+# This workflow is triggered manually from the Actions tab.
+# It's meant to be run on a PR that changes the native C++ code.
+
+# It builds native libraries for all supported platforms and pushes them to the current branch.
+# It splits the building process into 3 build jobs:
+# 1. build-macos - Builds native libraries for MacOS: both ARM and x64.
+#    It uses native runners for each platform, because cross compilation on MacOS is complicated.
+# 2. build-others - Builds native libraries for x64 Linux, ARM Linux and Windows.
+#    It uses cross-compilation for ARM Linux and Windows.
+#
+# Each build job saves the resulting binaries to the cache under a unique key
+# When all build jobs are finished, the collect-commit-and-push job restores the binaries from the cache
+# and pushes them to the current branch.
+
+jobs:
+  build-all-macos:
+    strategy:
+      matrix:
+        # macos-14 = ARM M1
+        # macos-13 = x64
+        # if you change OS definitions then you need to change conditions in cache-save steps below
+        os: [ macos-14, macos-13 ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install toolchains (CXX/NASM)
+        run: |
+          brew install make cmake gcc nasm
+      - name: Build CXX Library
+        run: |
+          cd core
+          export MACOSX_DEPLOYMENT_TARGET=13.0
+          cmake -B build/release -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/release --config Release
+      - name: Copy darwin-aarch64 CXX Library to the final directory
+        if: ${{ matrix.os == 'macos-14' }}
+        run: |
+          mkdir -p core/src/main/resources/io/questdb/bin/darwin-aarch64/
+          mkdir -p core/src/main/bin/darwin-aarch64/
+          cp core/target/classes/io/questdb/bin-local/libquestdb.dylib core/src/main/resources/io/questdb/bin/darwin-aarch64/
+          cp core/target/classes/io/questdb/bin-local/libjemalloc.dylib core/src/main/bin/darwin-aarch64/
+      - name: Copy darwin-x86-64 CXX Library to the final directory
+        if: ${{ matrix.os == 'macos-13' }}
+        run: |
+          mkdir -p core/src/main/resources/io/questdb/bin/darwin-x86-64/
+          mkdir -p core/src/main/bin/darwin-x86-64/
+          cp core/target/classes/io/questdb/bin-local/libquestdb.dylib core/src/main/resources/io/questdb/bin/darwin-x86-64/
+          cp core/target/classes/io/questdb/bin-local/libjemalloc.dylib core/src/main/bin/darwin-x86-64/
+      - name: Save darwin-aarch64 Libraries to Cache
+        if: ${{ matrix.os == 'macos-14' }}
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdb.dylib
+            core/src/main/bin/darwin-aarch64/libjemalloc.dylib
+          key: nativelibs-armosx-${{ github.sha }}
+      - name: Save darwin-x86-64 Libraries to Cache
+        if: ${{ matrix.os == 'macos-13' }}
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdb.dylib
+            core/src/main/bin/darwin-x86-64/libjemalloc.dylib
+          key: nativelibs-osx-${{ github.sha }}
+  build-all-linux-x86-64:
+    runs-on: ubuntu-latest
+    # manylinux2014 is a container with new-ish compilers and tools, but old glibc - 2.17
+    # 2.17 is old enough to be compatible with most Linux distributions out there
+    container:
+      image:
+        quay.io/pypa/manylinux2014_x86_64
+      volumes:
+        - /node20217:/node20217
+        - /node20217:/__e/node20
+    steps:
+      - name: Install tools, most are needed to build nasm
+        run: |
+          ldd --version
+          yum update -y
+          yum install 'perl(Env)' perl-Font-TTF perl-Sort-Versions gcc wget perf asciidoc xmlto ghostscript adobe-source-sans-pro-fonts adobe-source-code-pro-fonts rpm-build zstd curl -y
+      - name: Build nasm
+        # we need nasm 2.14+ due to this bug https://bugzilla.nasm.us/show_bug.cgi?id=3392205
+        # manylinux2014 distribution includes nasm 2.10
+        # the nasm project itself provides RPMs, but they built against a newer glibc and other dependencies too
+        # thus we take src.rpm from nasm project and rebuild it in the manylinux2014 container
+        # this way we get a nasm binary that is compatible with the manylinux2014 environment
+        run: |
+          wget https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/linux/nasm-2.16.03-0.fc39.src.rpm
+          rpmbuild --rebuild ./nasm-2.16.03-0.fc39.src.rpm
+          rpm -i ~/rpmbuild/RPMS/x86_64/nasm-2.16.03-0.el7.x86_64.rpm
+      - name: Install Node.js 20 glibc2.17
+        # A hack to override default nodejs 20 to a build compatible with older glibc.
+        # Inspired by https://github.com/pytorch/test-infra/pull/5959 If it's good for pytorch, it's good for us too! :)
+        # Q: Why do we need this hack at all? A: Because many github actions, include action/checkout@v4, depend on nodejs 20.
+        # GitHub Actions runner provides a build of nodejs 20 that requires a newer glibc than manylinux2014 has.
+        # Thus we download a build of nodejs 20 that is compatible with manylinux2014 and override the default one.
+        run: |
+          curl -LO https://unofficial-builds.nodejs.org/download/release/v20.9.0/node-v20.9.0-linux-x64-glibc-217.tar.xz
+          tar -xf node-v20.9.0-linux-x64-glibc-217.tar.xz --strip-components 1 -C /node20217
+          ldd /__e/node20/bin/node
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install up-to-date CMake
+        run: |
+          wget -nv https://github.com/Kitware/CMake/releases/download/v3.29.2/cmake-3.29.2-linux-x86_64.tar.gz
+          tar -zxf cmake-3.29.2-linux-x86_64.tar.gz
+          echo "PATH=`pwd`/cmake-3.29.2-linux-x86_64/bin/:$PATH" >> "$GITHUB_ENV"
+      - name: Install JDK17 (for jni.h)
+        run: |
+          wget -nv https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.11%2B9/OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
+          tar xfz OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
+          echo "JAVA_HOME=`pwd`/jdk-17.0.11+9/" >> "$GITHUB_ENV"
+      - name: Generate Makefiles
+        run: |
+          cd ./core
+          # git submodule update --init
+          cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+      - name: Build linux-x86-64 CXX Library
+        run: |
+          cd core
+          cmake --build cmake-build-release --config Release
+          mkdir -p src/main/resources/io/questdb/bin/linux-x86-64/
+          mkdir -p src/main/bin/linux-x86-64/
+          cp target/classes/io/questdb/bin-local/libquestdb.so src/main/resources/io/questdb/bin/linux-x86-64/
+          cp target/classes/io/questdb/bin-local/libjemalloc.so src/main/bin/linux-x86-64/
+      - name: Save linux-x86-64 Libraries to Cache
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
+            core/src/main/bin/linux-x86-64/libjemalloc.so
+          key: nativelibs-linux-${{ github.sha }}
+  build-all-linux-aarch64:
+    runs-on: ubuntu-22.04-arm
+    container:
+      image: quay.io/pypa/manylinux_2_28_aarch64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install tooling
+        run: |
+          yum update -y
+          yum install wget nasm zstd -y
+      - name: Install JDK17 (for jni.h)
+        run: |
+          wget -v --timeout=180 https://api.adoptium.net/v3/binary/version/jdk-17.0.11+9/linux/aarch64/jdk/hotspot/normal/eclipse
+          tar xfvz eclipse
+          echo "JAVA_HOME=`pwd`/jdk-17.0.11+9/" >> "$GITHUB_ENV"
+      - name: CMAKE linux-aarch64
+        run: |
+          cd ./core
+          cmake -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-arm64 -S.
+      - name: Build linux-aarch64 CXX Library
+        run: |
+          cd core
+          cmake --build cmake-build-release-arm64 --config Release
+          mkdir -p src/main/resources/io/questdb/bin/linux-aarch64/
+          mkdir -p src/main/bin/linux-aarch64/
+          cp target/classes/io/questdb/bin-local/libquestdb.so src/main/resources/io/questdb/bin/linux-aarch64/
+          cp target/classes/io/questdb/bin-local/libjemalloc.so src/main/bin/linux-aarch64/
+      - name: Check git status
+        run: |
+          git config --global --add safe.directory /__w/questdb/questdb
+          git status
+      - name: Save linux-aarch64 Libraries to Cache
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
+            core/src/main/bin/linux-aarch64/libjemalloc.so
+          key: nativelibs-armlinux-${{ github.sha }}
+  build-cxx-windows:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Increase file count and install tooling
+        run: |
+          sudo sysctl -w fs.file-max=500000
+          sudo apt-get update -y
+          sudo apt-get install -y nasm gcc-mingw-w64 g++-mingw-w64
+      - name: Generate Makefiles
+        run: |
+          cd ./core
+          cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+      - name: Download windows jni_md.h from JDK 11
+        run: |
+          cd core
+          curl https://raw.githubusercontent.com/AdoptOpenJDK/openjdk-jdk11/master/src/java.base/windows/native/include/jni_md.h > $JAVA_HOME/include/jni_md.h
+      - name: CMake Windows
+        run: |
+          cd core
+          cmake -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/windows-x86_64.cmake -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-win64
+      - name: Build Windows CXX Library
+        run: |
+          cd core
+          cmake --build cmake-build-release-win64 --config Release
+          mkdir -p src/main/resources/io/questdb/bin/windows-x86-64/
+          cp target/classes/io/questdb/bin-local/libquestdb.dll src/main/resources/io/questdb/bin/windows-x86-64/
+      - name: Check CXX runtime dependency
+        run: |
+          cd ./core
+          if x86_64-w64-mingw32-objdump -p ./src/main/resources/io/questdb/bin/windows-x86-64/libquestdb.dll | grep -q libstdc++; then
+            echo "Failure: CXX runtime dependency detected"
+            exit 1
+          fi
+      - name: Check git status
+        run: |
+          git status
+      - name: Save Windows CXX Library to Cache
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/windows-x86-64/libquestdb.dll
+          key: nativelibs-windows-${{ github.sha }}
+  collect-commit-and-push:
+    needs: [ build-all-macos,build-cxx-windows, build-all-linux-x86-64, build-all-linux-aarch64 ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Print file sizes before
+        run: |
+          mkdir -p ./core/src/main/resources/io/questdb/bin/
+          mkdir -p ./core/src/test/resources/io/questdb/bin/
+          find ./core/src/main/resources/io/questdb/bin/ -type f -exec ls -l {} \;
+          find ./core/src/main/bin/ -type f -exec ls -l {} \;
+      - name: Restore darwin-aarch64 Libraries from Cache
+        uses: actions/cache/restore@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdb.dylib
+            core/src/main/bin/darwin-aarch64/libjemalloc.dylib
+          key: nativelibs-armosx-${{ github.sha }}
+      - name: Restore darwin-x86-64 Libraries from Cache
+        uses: actions/cache/restore@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdb.dylib
+            core/src/main/bin/darwin-x86-64/libjemalloc.dylib
+          key: nativelibs-osx-${{ github.sha }}
+      - name: Restore linux-x86-64 Libraries from Cache
+        uses: actions/cache/restore@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
+            core/src/main/bin/linux-x86-64/libjemalloc.so
+          key: nativelibs-linux-${{ github.sha }}
+      - name: Restore linux-aarch64 Libraries from Cache
+        uses: actions/cache/restore@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
+            core/src/main/bin/linux-aarch64/libjemalloc.so
+          key: nativelibs-armlinux-${{ github.sha }}
+      - name: Restore Windows CXX Library from Cache
+        uses: actions/cache/restore@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/windows-x86-64/libquestdb.dll
+          key: nativelibs-windows-${{ github.sha }}
+      - name: Check git status before
+        run: |
+          git status
+      - name: Commit the files
+        run: |
+          git config --global user.name 'GitHub Actions - Rebuild Native Libraries'
+          git config --global user.email 'jaromir@questdb.io'
+          git add core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdb.dylib
+          git add core/src/main/bin/darwin-aarch64/libjemalloc.dylib
+          git add core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdb.dylib
+          git add core/src/main/bin/darwin-x86-64/libjemalloc.dylib
+          git add core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
+          git add core/src/main/bin/linux-x86-64/libjemalloc.so
+          git add core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
+          git add core/src/main/bin/linux-aarch64/libjemalloc.so
+          git add core/src/main/resources/io/questdb/bin/windows-x86-64/libquestdb.dll
+          
+          git commit -m "Rebuild CXX libraries"
+      - name: Check git status after
+        run: |
+          git status
+      - name: Print file sizes after
+        run: |
+          find ./core/src/main/resources/io/questdb/bin/ -type f -exec ls -l {} \;
+          find ./core/src/main/bin/ -type f -exec ls -l {} \;
+      - name: Push the files to the current branch
+        uses: ad-m/github-push-action@d91a481090679876dfc4178fef17f286781251df
+        # Why do we use a commit hash instead of a tag for the github-push-action?
+        # ad-m/github-push-action is not as well-known repo as e.g. actions/checkout, and therefore we trust it less.
+        # d91a48109 is the same as the tag v0.8.0, but it's guaranteed to be immutable.
+        # So even if a bad actor takes over the repo, and rewrites tags to point to malicious commits, we will still be safe.
+        with:
+          branch: ${{ github.head_ref || github.ref_name }}

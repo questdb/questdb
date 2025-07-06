@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.cairo.vm.Vm.PARANOIA_MODE;
+import static io.questdb.ParanoiaState.VM_PARANOIA_MODE;
 
 public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
     private final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
@@ -56,10 +56,10 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
 
             TestUtils.assertMemoryLeak(() -> {
                 try (MemoryCMORImpl memoryROffset = new MemoryCMORImpl()) {
-                    memoryROffset.ofOffset(ff, path, Files.PAGE_SIZE, Files.PAGE_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    memoryROffset.ofOffset(ff, path.$(), Files.PAGE_SIZE, Files.PAGE_SIZE, MemoryTag.NATIVE_DEFAULT);
                     memoryROffset.extend(Files.PAGE_SIZE);
-                    Assert.assertEquals(memoryROffset.size(), Files.PAGE_SIZE);
-                    Assert.assertEquals(memoryROffset.getOffset(), 0);
+                    Assert.assertEquals(Files.PAGE_SIZE, memoryROffset.size());
+                    Assert.assertEquals(0, memoryROffset.getOffset());
                 }
             });
         }
@@ -79,19 +79,19 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
                 ) {
                     FilesFacade ff = new TestFilesFacadeImpl() {
                         @Override
-                        public long length(int fd) {
+                        public long length(long fd) {
                             return -1;
                         }
 
                         @Override
-                        public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+                        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                             return -1;
                         }
                     };
 
                     // Fail to get file size
                     try {
-                        memoryROffset.of(ff, path, Files.PAGE_SIZE, -1L, MemoryTag.NATIVE_DEFAULT);
+                        memoryROffset.of(ff, path.$(), Files.PAGE_SIZE, -1L, MemoryTag.NATIVE_DEFAULT);
                         Assert.fail();
                     } catch (CairoException ex) {
                         TestUtils.assertContains(ex.getFlyweightMessage(), "could not get length");
@@ -100,26 +100,27 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
 
                     // Fail to map
                     try {
-                        memoryROffset.of(ff, path, Files.PAGE_SIZE, 1234, MemoryTag.NATIVE_DEFAULT);
+                        memoryROffset.of(ff, path.$(), Files.PAGE_SIZE, 1234, MemoryTag.NATIVE_DEFAULT);
                         Assert.fail();
                     } catch (CairoException ex) {
                         TestUtils.assertContains(ex.getFlyweightMessage(), "could not mmap");
+                        Assert.assertEquals(-1, memoryROffset.getFd());
                     } catch (AssertionError ex) {
                         // expected in PARANOIA_MODE == true
-                        Assert.assertTrue(PARANOIA_MODE);
+                        Assert.assertTrue(VM_PARANOIA_MODE);
                     }
-                    Assert.assertEquals(-1, memoryROffset.getFd());
 
                     // Failed to remap
                     ff = new TestFilesFacadeImpl() {
                         @Override
-                        public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+                        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                             return -1;
                         }
                     };
 
-                    memoryROffset.ofOffset(ff, path, Files.PAGE_SIZE - 10, 2 * Files.PAGE_SIZE + 10, MemoryTag.NATIVE_DEFAULT);
+                    memoryROffset.ofOffset(ff, path.$(), Files.PAGE_SIZE - 10, 2 * Files.PAGE_SIZE + 10, MemoryTag.NATIVE_DEFAULT);
                     try {
+                        memoryROffset.map();
                         memoryROffset.growToFileSize();
                         Assert.fail();
                     } catch (CairoException ex) {
@@ -130,16 +131,19 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
                     // Cannot get length to grow to file size
                     ff = new TestFilesFacadeImpl() {
                         @Override
-                        public long length(int fd) {
+                        public long length(long fd) {
                             return -1;
                         }
                     };
-                    memoryROffset.of(ff, path, Files.PAGE_SIZE, 1234, MemoryTag.NATIVE_DEFAULT);
                     try {
+                        memoryROffset.of(ff, path.$(), Files.PAGE_SIZE, 1234, MemoryTag.NATIVE_DEFAULT);
                         memoryROffset.growToFileSize();
                         Assert.fail();
                     } catch (CairoException ex) {
                         TestUtils.assertContains(ex.getFlyweightMessage(), "could not get length");
+                    } catch (AssertionError ex) {
+                        // expected in PARANOIA_MODE == true
+                        Assert.assertTrue(VM_PARANOIA_MODE);
                     }
                 }
             });
@@ -159,7 +163,7 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
                         MemoryCMRImpl memoryR = new MemoryCMRImpl();
                         MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
                 ) {
-                    memoryR.of(ff, path, Files.PAGE_SIZE, -1L, MemoryTag.NATIVE_DEFAULT);
+                    memoryR.of(ff, path.$(), Files.PAGE_SIZE, -1L, MemoryTag.NATIVE_DEFAULT);
                     long fileSize = memoryR.size();
 
 
@@ -167,7 +171,7 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
                     for (int i = 0; i < 10; i++) {
                         long lo = rnd.nextLong(appendCount / 2) * 8L;
 
-                        memoryROffset.ofOffset(ff, path, lo, fileSize / 2, MemoryTag.NATIVE_DEFAULT);
+                        memoryROffset.ofOffset(ff, path.$(), lo, fileSize / 2, MemoryTag.NATIVE_DEFAULT);
                         Assert.assertEquals(fileSize / 2, memoryROffset.size() + memoryROffset.getOffset());
 
                         memoryROffset.extend(fileSize - lo);
@@ -191,14 +195,14 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
 
             TestUtils.assertMemoryLeak(() -> {
                 try (MemoryCMORImpl memoryROffset = new MemoryCMORImpl()) {
-                    memoryROffset.ofOffset(ff, path, Files.PAGE_SIZE, 2 * Files.PAGE_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    memoryROffset.ofOffset(ff, path.$(), Files.PAGE_SIZE, 2 * Files.PAGE_SIZE, MemoryTag.NATIVE_DEFAULT);
                     memoryROffset.extend(Files.PAGE_SIZE / 2);
                     Assert.assertEquals(Files.PAGE_SIZE, memoryROffset.size());
 
                     memoryROffset.growToFileSize();
                     Assert.assertEquals(2 * Files.PAGE_SIZE, memoryROffset.size());
-                    Assert.assertEquals(memoryROffset.size(), 2 * Files.PAGE_SIZE);
-                    Assert.assertEquals(memoryROffset.getOffset() + memoryROffset.size(), 3 * Files.PAGE_SIZE);
+                    Assert.assertEquals(2 * Files.PAGE_SIZE, memoryROffset.size());
+                    Assert.assertEquals(3 * Files.PAGE_SIZE, memoryROffset.getOffset() + memoryROffset.size());
                 }
             });
         }
@@ -217,9 +221,9 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
                         MemoryCMRImpl memoryR = new MemoryCMRImpl();
                         MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
                 ) {
-                    memoryR.of(ff, path, Files.PAGE_SIZE, -1L, MemoryTag.NATIVE_DEFAULT);
+                    memoryR.of(ff, path.$(), Files.PAGE_SIZE, -1L, MemoryTag.NATIVE_DEFAULT);
 
-                    memoryROffset.of(ff, path, Files.PAGE_SIZE, -1L, MemoryTag.NATIVE_DEFAULT);
+                    memoryROffset.of(ff, path.$(), Files.PAGE_SIZE, -1L, MemoryTag.NATIVE_DEFAULT);
                     Assert.assertEquals(memoryR.size(), memoryROffset.size());
 
                     for (long pos = 8L; pos < appendCount; pos += 8L) {
@@ -230,7 +234,7 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
                     Rnd rnd = new Rnd();
                     for (int i = 0; i < 10; i++) {
                         long lo = rnd.nextLong(appendCount) * 8L;
-                        memoryROffset.ofOffset(ff, path, lo, memoryR.size(), MemoryTag.NATIVE_DEFAULT);
+                        memoryROffset.ofOffset(ff, path.$(), lo, memoryR.size(), MemoryTag.NATIVE_DEFAULT);
                         Assert.assertEquals(memoryR.size(), memoryROffset.size() + memoryROffset.getOffset());
 
                         Assert.assertEquals(lo, memoryR.getLong(lo));
@@ -247,15 +251,16 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
         } else {
             System.out.println("Created file " + path.$());
         }
-        int fd = ff.openRW(path, CairoConfiguration.O_NONE);
+        long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
         Assert.assertTrue(fd > 0);
 
-        try (MemoryMARW memoryW = Vm.getMARWInstance()) {
-            memoryW.of(ff, fd, testName.getMethodName(), 16, 0);
-
+        try (
+                MemoryMARW memoryW = Vm.getCMARWInstance();
+                Path fileName = new Path().of(testName.getMethodName())
+        ) {
+            memoryW.of(ff, fd, fileName.$(), 16, 0);
             if (writeData) {
                 memoryW.jumpTo(0);
-
 
                 for (long i = 0; i < appendCount; i++) {
                     memoryW.putLong(i * 8L);

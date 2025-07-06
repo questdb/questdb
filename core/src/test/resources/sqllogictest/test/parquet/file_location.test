@@ -1,0 +1,32 @@
+# name: test/sql/copy/parquet/file_location.test
+# description: Test allowed path to read parquet file
+# group: [parquet]
+
+# Absolute path
+control substitution on
+query TT
+SELECT MIN(comments), MAX(comments) FROM parquet_scan('${TEST_RESOURCE_ROOT}/data/parquet-testing/userdata1.parquet')
+----
+(empty)	𠜎𠜱𠝹𠱓𠱸𠲖𠳏
+
+
+# Relative path
+statement error
+SELECT MIN(comments), MAX(comments) FROM parquet_scan('../sqllogictest/data/parquet-testing/userdata1.parquet')
+----
+db error: ERROR: failed to read parquet file: ../sqllogictest/data/parquet-testing/userdata1.parquet: [54] relative path is not allowed
+
+
+# Relative path
+statement error
+SELECT MIN(comments), MAX(comments) FROM parquet_scan('..\\userdata1.parquet')
+----
+db error: ERROR: failed to read parquet file: ..\userdata1.parquet: [54] relative path is not allowed
+
+
+# Relative path
+statement error
+SELECT MIN(comments), MAX(comments) FROM parquet_scan(null)
+----
+db error: ERROR: failed to read parquet file: : [54] parquet file path pattern is empty
+

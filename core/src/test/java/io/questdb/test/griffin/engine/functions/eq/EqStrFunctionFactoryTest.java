@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.eq;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
+public class EqStrFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSimple() throws Exception {
@@ -49,17 +49,16 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "OS\tOS\t0.7693457725433892\n";
 
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (" +
+            execute("create table x as (" +
                     " select" +
                     " rnd_str(2,2,0) a," +
                     " rnd_str(2,2,0) b," +
                     " rnd_double(0) c" +
                     " from long_sequence(10000)" +
-                    ")", sqlExecutionContext);
+                    ")");
 
             assertSql(
-                    "x where a = b",
-                    expected
+                    expected, "x where a = b"
             );
         });
     }
@@ -98,17 +97,16 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "\t\t0.3295206953565475\n";
 
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (" +
+            execute("create table x as (" +
                     " select" +
                     " rnd_str(4,4,8) a," +
                     " rnd_str(4,4,8) b," +
                     " rnd_double(0) c" +
                     " from long_sequence(10000)" +
-                    ")", sqlExecutionContext);
+                    ")");
 
             assertSql(
-                    "x where a = b",
-                    expected
+                    expected, "x where a = b"
             );
         });
     }
@@ -131,17 +129,16 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "UW\tMK\t0.9642333434663315\n";
 
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (" +
+            execute("create table x as (" +
                     " select" +
                     " rnd_str(2,2,0) a," +
                     " rnd_str(2,2,0) b," +
                     " rnd_double(0) c" +
                     " from long_sequence(10000)" +
-                    ")", sqlExecutionContext);
+                    ")");
 
             assertSql(
-                    "x where a = 'UW'",
-                    expected
+                    expected, "x where a = 'UW'"
             );
         });
     }
@@ -164,17 +161,16 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "UW\tMK\t0.9642333434663315\n";
 
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (" +
+            execute("create table x as (" +
                     " select" +
                     " rnd_str(2,2,0) a," +
                     " rnd_str(2,2,0) b," +
                     " rnd_double(0) c" +
                     " from long_sequence(10000)" +
-                    ")", sqlExecutionContext);
+                    ")");
 
             assertSql(
-                    "x where 'UW' = a",
-                    expected
+                    expected, "x where 'UW' = a"
             );
         });
     }
@@ -196,17 +192,16 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                 "\tPD\t0.8501026132754606\n";
 
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (" +
+            execute("create table x as (" +
                     " select" +
                     " rnd_str(2,2,400) a," +
                     " rnd_str(2,2,0) b," +
                     " rnd_double(0) c" +
                     " from long_sequence(10000)" +
-                    ")", sqlExecutionContext);
+                    ")");
 
             assertSql(
-                    "x where a = null",
-                    expected
+                    expected, "x where a = null"
             );
         });
     }

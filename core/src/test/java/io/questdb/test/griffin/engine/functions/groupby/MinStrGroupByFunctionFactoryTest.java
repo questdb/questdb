@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,12 +26,13 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class MinStrGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testConstant() throws Exception {
@@ -40,7 +41,7 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "a\t42\n" +
                         "b\t42\n" +
                         "c\t42\n",
-                "select a, min('42') from x",
+                "select a, min('42') from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
                 true,
@@ -55,7 +56,7 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "a\taaaaaa\n" +
                         "b\taaaaaa\n" +
                         "c\taaaaaa\n",
-                "select a, min(concat(s, s)) from x",
+                "select a, min(concat(s, s)) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
                 null,
                 true,
@@ -70,7 +71,7 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "a\t111\n" +
                         "b\t111\n" +
                         "c\t111\n",
-                "select a, min(s) from x",
+                "select a, min(s) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('111','222','333') s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
                 true,
@@ -93,20 +94,22 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testGroupNotKeyedWithNulls() throws Exception {
-        String expected = "min\n" +
-                "a\n";
-        assertQuery(
-                expected,
-                "select min(s) from x",
-                "create table x as (select * from (select rnd_str('a','b','c') s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
-                null,
-                false,
-                true
-        );
+        assertMemoryLeak(() -> {
+            String expected = "min\n" +
+                    "a\n";
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select min(s) from x",
+                    "create table x as (select * from (select rnd_str('a','b','c') s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
+                    null,
+                    false,
+                    true
+            );
 
-        executeInsert("insert into x values(cast(null as STRING), '2021-05-21')");
-        executeInsert("insert into x values(cast(null as STRING), '1970-01-01')");
-        assertSql("select min(s) from x", expected);
+            execute("insert into x values(cast(null as STRING), '2021-05-21')");
+            execute("insert into x values(cast(null as STRING), '1970-01-01')");
+            assertSql(expected, "select min(s) from x");
+        });
     }
 
     @Test
@@ -116,7 +119,7 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "a\t\n" +
                         "b\t\n" +
                         "c\t\n",
-                "select a, min(cast(null as STRING)) from x",
+                "select a, min(cast(null as STRING)) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
                 true,
@@ -127,15 +130,15 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testSampleFillLinearNotSupported() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select * from (select rnd_int() i, rnd_str('a','b','c') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))", sqlExecutionContext);
+            execute("create table x as (select * from (select rnd_int() i, rnd_str('a','b','c') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
             try (
-                    final RecordCursorFactory factory = compiler.compile("select ts, avg(i), min(s) from x sample by 1s fill(linear)", sqlExecutionContext).getRecordCursorFactory();
+                    final RecordCursorFactory factory = select("select ts, avg(i), min(s) from x sample by 1s fill(linear)");
                     final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
                 cursor.hasNext();
                 Assert.fail();
             } catch (SqlException e) {
-                Assert.assertEquals("[0] interpolation is not supported for function: io.questdb.griffin.engine.functions.groupby.MinStrGroupByFunction", e.getMessage());
+                TestUtils.assertContains(e.getFlyweightMessage(), "support for LINEAR fill is not yet implemented");
             }
         });
     }
@@ -156,7 +159,7 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "c\tдве\t1970-01-01T00:00:05.000000Z\n" +
                         "f\tдве\t1970-01-01T00:00:05.000000Z\n" +
                         "e\tдве\t1970-01-01T00:00:05.000000Z\n",
-                "select a, min(s), ts from x sample by 5s",
+                "select a, min(s), ts from x sample by 5s align to first observation",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_str('едно','две','три') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 false

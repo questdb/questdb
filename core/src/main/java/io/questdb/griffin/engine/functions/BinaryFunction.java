@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,24 +25,28 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 
 public interface BinaryFunction extends Function {
 
     @Override
     default void close() {
-        getLeft().close();
-        getRight().close();
+        Misc.free(getLeft());
+        Misc.free(getRight());
+    }
+
+    @Override
+    default void cursorClosed() {
+        getLeft().cursorClosed();
+        getRight().cursorClosed();
     }
 
     Function getLeft();
-
-    default String getName() {
-        return getClass().getName();
-    }
 
     Function getRight();
 
@@ -53,30 +57,64 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
-    default void initCursor() {
-        getLeft().initCursor();
-        getRight().initCursor();
-    }
-
-    @Override
     default boolean isConstant() {
         return getLeft().isConstant() && getRight().isConstant();
     }
 
-    //used in generic toSink implementation
+    @Override
+    default boolean isNonDeterministic() {
+        return getLeft().isNonDeterministic() || getRight().isNonDeterministic();
+    }
+
+    // used in generic toSink implementation
     default boolean isOperator() {
         return false;
     }
 
     @Override
-    default boolean isReadThreadSafe() {
-        return getLeft().isReadThreadSafe() && getRight().isReadThreadSafe();
+    default boolean isRandom() {
+        return getLeft().isRandom() || getRight().isRandom();
     }
 
+    @Override
     default boolean isRuntimeConstant() {
         final Function l = getLeft();
         final Function r = getRight();
         return (l.isConstant() && r.isRuntimeConstant()) || (r.isConstant() && l.isRuntimeConstant()) || (l.isRuntimeConstant() && r.isRuntimeConstant());
+    }
+
+    @Override
+    default boolean isThreadSafe() {
+        return getLeft().isThreadSafe() && getRight().isThreadSafe();
+    }
+
+    @Override
+    default void memoize(Record recordA) {
+        getLeft().memoize(recordA);
+        getRight().memoize(recordA);
+    }
+
+    @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof BinaryFunction) {
+            getLeft().offerStateTo(((BinaryFunction) that).getLeft());
+            getRight().offerStateTo(((BinaryFunction) that).getRight());
+        }
+    }
+
+    @Override
+    default boolean shouldMemoize() {
+        return getLeft().shouldMemoize() || getRight().shouldMemoize();
+    }
+
+    @Override
+    default boolean supportsParallelism() {
+        return getLeft().supportsParallelism() && getRight().supportsParallelism();
+    }
+
+    @Override
+    default boolean supportsRandomAccess() {
+        return getLeft().supportsRandomAccess() && getRight().supportsRandomAccess();
     }
 
     @Override

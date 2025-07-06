@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,8 @@
 #define WINDOWS_FILES_H
 
 #define FD_TO_HANDLE(fd) (HANDLE) ((uintptr_t) fd)
+
+#define UTF8_MAX_PATH (MAX_PATH * 4)
 
 #define HANDLE_TO_FD(handle) (jint) ((uintptr_t) handle)
 

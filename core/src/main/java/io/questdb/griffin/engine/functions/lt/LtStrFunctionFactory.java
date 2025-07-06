@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -61,14 +61,14 @@ public class LtStrFunctionFactory implements FunctionFactory {
         final Function a = args.getQuick(0);
         final Function b = args.getQuick(1);
         if (a.isConstant() && !b.isConstant()) {
-            CharSequence constValue = a.getStr(null);
+            CharSequence constValue = a.getStrA(null);
             if (constValue == null) {
                 return BooleanConstant.FALSE;
             }
             return new ConstOnLeftFunc(constValue, b);
         }
         if (!a.isConstant() && b.isConstant()) {
-            CharSequence constValue = b.getStr(null);
+            CharSequence constValue = b.getStrA(null);
             if (constValue == null) {
                 return BooleanConstant.FALSE;
             }
@@ -77,7 +77,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
         return new Func(a, b);
     }
 
-    private static class ConstOnLeftFunc extends NegatableBooleanFunction implements UnaryFunction {
+    static class ConstOnLeftFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final CharSequence constant;
         private final Function right;
 
@@ -93,11 +93,11 @@ public class LtStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final CharSequence r = right.getStrB(rec);
-            if (r == null) {
-                return false;
-            }
-            return negated == (Chars.compare(constant, r) >= 0);
+            return Chars.lessThan(
+                    constant,
+                    right.getStrB(rec),
+                    negated
+            );
         }
 
         @Override
@@ -111,7 +111,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(constant);
+            sink.val('\'').val(constant).val('\'');
             if (negated) {
                 sink.val(">=");
             } else {
@@ -121,7 +121,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class ConstOnRightFunc extends NegatableBooleanFunction implements UnaryFunction {
+    static class ConstOnRightFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final CharSequence constant;
         private final Function left;
 
@@ -137,11 +137,11 @@ public class LtStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final CharSequence l = left.getStrB(rec);
-            if (l == null) {
-                return false;
-            }
-            return negated == (Chars.compare(l, constant) >= 0);
+            return Chars.lessThan(
+                    left.getStrB(rec),
+                    constant,
+                    negated
+            );
         }
 
         @Override
@@ -161,11 +161,11 @@ public class LtStrFunctionFactory implements FunctionFactory {
             } else {
                 sink.val("<");
             }
-            sink.val(constant);
+            sink.val('\'').val(constant).val('\'');
         }
     }
 
-    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
+    static class Func extends NegatableBooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
@@ -179,12 +179,11 @@ public class LtStrFunctionFactory implements FunctionFactory {
             // important to compare A and B strings in case
             // these are columns of the same record
             // records have re-usable character sequences
-            final CharSequence l = left.getStr(rec);
-            final CharSequence r = right.getStrB(rec);
-            if (l == null || r == null) {
-                return false;
-            }
-            return negated == (Chars.compare(l, r) >= 0);
+            return Chars.lessThan(
+                    left.getStrA(rec),
+                    right.getStrB(rec),
+                    negated
+            );
         }
 
         @Override

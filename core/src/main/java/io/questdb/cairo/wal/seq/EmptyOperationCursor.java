@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,18 +24,11 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.cairo.TableToken;
-
 public class EmptyOperationCursor implements TableMetadataChangeLog {
-    private TableToken tableToken;
+    public final static TableMetadataChangeLog INSTANCE = new EmptyOperationCursor();
 
     @Override
     public void close() {
-    }
-
-    @Override
-    public TableToken getTableToken() {
-        return tableToken;
     }
 
     @Override
@@ -46,10 +39,5 @@ public class EmptyOperationCursor implements TableMetadataChangeLog {
     @Override
     public TableMetadataChange next() {
         throw new UnsupportedOperationException();
-    }
-
-    public EmptyOperationCursor of(TableToken tableToken) {
-        this.tableToken = tableToken;
-        return this;
     }
 }

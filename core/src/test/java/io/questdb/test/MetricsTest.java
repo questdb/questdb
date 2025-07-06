@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,19 +25,41 @@
 package io.questdb.test;
 
 import io.questdb.Metrics;
-import io.questdb.metrics.*;
+import io.questdb.metrics.AtomicLongGauge;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.CounterWithOneLabel;
+import io.questdb.metrics.CounterWithTwoLabels;
+import io.questdb.metrics.DoubleGauge;
+import io.questdb.metrics.LongGauge;
+import io.questdb.metrics.MetricsRegistry;
+import io.questdb.metrics.NullMetricsRegistry;
+import io.questdb.metrics.Target;
+import io.questdb.metrics.VirtualLongGauge;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.*;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class MetricsTest {
+
+    @Test
+    public void testGetMetricsRegistry() {
+        final NullMetricsRegistry registry = new NullMetricsRegistry();
+        final Metrics metrics = new Metrics(true, registry);
+        Assert.assertNotNull(metrics.getRegistry());
+        Assert.assertSame(registry, metrics.getRegistry());
+    }
 
     @Test
     public void testLabelNames() {
@@ -88,17 +110,18 @@ public class MetricsTest {
 
     @Test
     public void testMetricNamesContainGCMetrics() {
-        Metrics metrics = new Metrics(true, new MetricsRegistryImpl());
+        final Metrics metrics = Metrics.ENABLED;
 
-        StringSink sink = new StringSink();
+        final DirectUtf8Sink sink = new DirectUtf8Sink(32);
         metrics.scrapeIntoPrometheus(sink);
 
-        TestUtils.assertContains(sink, "jvm_major_gc_count");
-        TestUtils.assertContains(sink, "jvm_major_gc_time");
-        TestUtils.assertContains(sink, "jvm_minor_gc_count");
-        TestUtils.assertContains(sink, "jvm_minor_gc_time");
-        TestUtils.assertContains(sink, "jvm_unknown_gc_count");
-        TestUtils.assertContains(sink, "jvm_unknown_gc_time");
+        final String encoded = sink.toString();
+        TestUtils.assertContains(encoded, "jvm_major_gc_count");
+        TestUtils.assertContains(encoded, "jvm_major_gc_time");
+        TestUtils.assertContains(encoded, "jvm_minor_gc_count");
+        TestUtils.assertContains(encoded, "jvm_minor_gc_time");
+        TestUtils.assertContains(encoded, "jvm_unknown_gc_count");
+        TestUtils.assertContains(encoded, "jvm_unknown_gc_time");
     }
 
     @Test
@@ -117,8 +140,8 @@ public class MetricsTest {
         private final Set<CharSequence> notUniqueMetrics = new HashSet<>();
 
         @Override
-        public void addScrapable(Scrapable scrapable) {
-            delegate.addScrapable(scrapable);
+        public void addTarget(Target target) {
+            delegate.addTarget(target);
         }
 
         public Set<CharSequence> getLabelNames() {
@@ -138,6 +161,12 @@ public class MetricsTest {
         }
 
         @Override
+        public AtomicLongGauge newAtomicLongGauge(CharSequence name) {
+            addMetricName(name);
+            return delegate.newAtomicLongGauge(name);
+        }
+
+        @Override
         public Counter newCounter(CharSequence name) {
             addMetricName(name);
             return delegate.newCounter(name);
@@ -151,9 +180,11 @@ public class MetricsTest {
         }
 
         @Override
-        public CounterWithTwoLabels newCounter(CharSequence name,
-                                               CharSequence labelName0, CharSequence[] labelValues0,
-                                               CharSequence labelName1, CharSequence[] labelValues1) {
+        public CounterWithTwoLabels newCounter(
+                CharSequence name,
+                CharSequence labelName0, CharSequence[] labelValues0,
+                CharSequence labelName1, CharSequence[] labelValues1
+        ) {
             addMetricName(name);
             addLabelNames(name, Arrays.asList(labelName0, labelName1));
             return delegate.newCounter(name, labelName0, labelValues0, labelName1, labelValues1);
@@ -184,7 +215,7 @@ public class MetricsTest {
         }
 
         @Override
-        public void scrapeIntoPrometheus(CharSink sink) {
+        public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
             delegate.scrapeIntoPrometheus(sink);
         }
 

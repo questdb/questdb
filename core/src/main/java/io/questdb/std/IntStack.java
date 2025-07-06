@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,7 +29,8 @@ import java.util.Arrays;
 public class IntStack implements Mutable {
     private static final int DEFAULT_INITIAL_CAPACITY = 16;
     private static final int MIN_INITIAL_CAPACITY = 8;
-    private static final int noEntryValue = -1;
+    private static final int NO_ENTRY_VALUE = -1;
+    private int bottom;
     private int[] elements;
     private int head;
     private int mask;
@@ -43,46 +44,66 @@ public class IntStack implements Mutable {
         allocateElements(initialCapacity);
     }
 
+    public int bottom() {
+        return bottom;
+    }
+
     public void clear() {
         if (head != tail) {
             head = tail = 0;
-            Arrays.fill(elements, noEntryValue);
-        }
-    }
-
-    public void copyTo(IntStack there, int count) {
-        int n = Math.min(count, size());
-        while (n-- > 0) {
-            there.push(pop());
+            Arrays.fill(elements, NO_ENTRY_VALUE);
+            bottom = 0;
         }
     }
 
     public boolean notEmpty() {
-        return head != tail;
+        return size() > 0;
     }
 
     public int peek() {
-        return elements[head];
+        return peek(0);
+    }
+
+    public int peek(int n) {
+        return n < size() ? elements[(head + n) & mask] : NO_ENTRY_VALUE;
     }
 
     public int pollLast() {
-        final int[] es = elements;
-        final int t;
-        final int e = es[t = dec(tail)];
-        tail = t;
-        es[t] = noEntryValue;
-        return e;
+        if (bottom != 0) {
+            throw new IllegalStateException("pollLast() called while bottom != 0");
+        }
+        final int[] elems = elements;
+        int newTail = tail;
+        if (head != newTail && --newTail < 0) {
+            newTail = mask;
+        }
+        final int elem = elems[newTail];
+        tail = newTail;
+        elems[newTail] = NO_ENTRY_VALUE;
+        return elem;
     }
 
     public int pop() {
+        if (size() == 0) {
+            return NO_ENTRY_VALUE;
+        }
         int h = head;
         int result = elements[h];
-        if (result == noEntryValue) {
-            return noEntryValue;
+        if (result == NO_ENTRY_VALUE) {
+            return NO_ENTRY_VALUE;
         }
-        elements[h] = noEntryValue;
+        elements[h] = NO_ENTRY_VALUE;
         head = (h + 1) & mask;
         return result;
+    }
+
+    public void popAll() {
+        int h = head;
+        while (((tail - h) & mask) > bottom) {
+            elements[h] = NO_ENTRY_VALUE;
+            h = (h + 1) & mask;
+        }
+        head = h;
     }
 
     public void push(int e) {
@@ -92,7 +113,19 @@ public class IntStack implements Mutable {
         }
     }
 
+    public void setBottom(int bottom) {
+        if (bottom <= sizeRaw()) {
+            this.bottom = bottom;
+        } else {
+            throw new IllegalStateException("Tried to set bottom beyond the top of the stack");
+        }
+    }
+
     public int size() {
+        return sizeRaw() - bottom;
+    }
+
+    public int sizeRaw() {
         return (tail - head) & mask;
     }
 
@@ -104,13 +137,7 @@ public class IntStack implements Mutable {
         capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
         elements = new int[capacity];
         mask = capacity - 1;
-    }
-
-    private int dec(int i) {
-        if (head != tail && --i < 0) {
-            i = mask;
-        }
-        return i;
+        Arrays.fill(elements, NO_ENTRY_VALUE);
     }
 
     private void doubleCapacity() {
@@ -125,7 +152,7 @@ public class IntStack implements Mutable {
         int[] next = new int[newCapacity];
         System.arraycopy(elements, h, next, 0, r);
         System.arraycopy(elements, 0, next, r, h);
-        Arrays.fill(next, r + h, newCapacity, noEntryValue);
+        Arrays.fill(next, r + h, newCapacity, NO_ENTRY_VALUE);
         elements = next;
         head = 0;
         tail = n;

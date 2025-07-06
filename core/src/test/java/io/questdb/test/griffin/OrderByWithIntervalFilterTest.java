@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -23,21 +23,21 @@
  ******************************************************************************/
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class OrderByWithIntervalFilterTest extends AbstractGriffinTest {
+public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
 
     public static final String ORDER_BY_DESC = " order by ts desc";
 
     @Test
     public void testOrderByWithMaxTableTimestampBeyondLastInterval() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE itest ( " +
+            execute("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
                     "  ts TIMESTAMP " +
                     ") timestamp (ts) PARTITION BY HOUR");
-            compile("insert into itest " +
+            execute("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T00:00:00.000000Z') " +
                     "from long_sequence(200)");
         });
@@ -92,11 +92,11 @@ public class OrderByWithIntervalFilterTest extends AbstractGriffinTest {
     @Test
     public void testOrderByWithMaxTableTimestampMatchingFirstInterval() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE itest ( " +
+            execute("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
                     "  ts TIMESTAMP " +
                     ") timestamp (ts) PARTITION BY HOUR");
-            compile("insert into itest " +
+            execute("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T00:00:00.000000Z') " +
                     "from long_sequence(90)");
         });
@@ -116,11 +116,11 @@ public class OrderByWithIntervalFilterTest extends AbstractGriffinTest {
     @Test
     public void testOrderByWithMaxTableTimestampMatchingIntermediateInterval() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE itest ( " +
+            execute("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
                     "  ts TIMESTAMP " +
                     ") timestamp (ts) PARTITION BY HOUR");
-            compile("insert into itest " +
+            execute("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T00:00:00.000000Z') " +
                     "from long_sequence(90)");
         });
@@ -175,11 +175,11 @@ public class OrderByWithIntervalFilterTest extends AbstractGriffinTest {
     @Test //end value of last interval
     public void testOrderByWithMaxTableTimestampMatchingLastInterval1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE itest ( " +
+            execute("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
                     "  ts TIMESTAMP " +
                     ") timestamp (ts) PARTITION BY HOUR");
-            compile("insert into itest " +
+            execute("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T00:00:00.000000Z') " +
                     "from long_sequence(90)");
         });
@@ -234,11 +234,11 @@ public class OrderByWithIntervalFilterTest extends AbstractGriffinTest {
     @Test //start value of last interval
     public void testOrderByWithMaxTableTimestampMatchingLastInterval2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE itest ( " +
+            execute("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
                     "  ts TIMESTAMP " +
                     ") timestamp (ts) PARTITION BY HOUR");
-            compile("insert into itest " +
+            execute("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T00:00:00.000000Z') " +
                     "from long_sequence(90)");
         });
@@ -293,11 +293,11 @@ public class OrderByWithIntervalFilterTest extends AbstractGriffinTest {
     @Test
     public void testOrderByWithMinTableTimestampBeyondLastInterval() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE itest ( " +
+            execute("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
                     "  ts TIMESTAMP " +
                     ") timestamp (ts) PARTITION BY HOUR");
-            compile("insert into itest " +
+            execute("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T01:30:00.000000Z') " +
                     "from long_sequence(90)");
         });
@@ -313,11 +313,11 @@ public class OrderByWithIntervalFilterTest extends AbstractGriffinTest {
     @Test
     public void testOrderByWithMinTableTimestampMatchingLastInterval1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE itest ( " +
+            execute("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
                     "  ts TIMESTAMP " +
                     ") timestamp (ts) PARTITION BY HOUR");
-            compile("insert into itest " +
+            execute("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T01:29:00.000000Z') " +
                     "from long_sequence(90)");
         });
@@ -338,11 +338,11 @@ public class OrderByWithIntervalFilterTest extends AbstractGriffinTest {
     @Test
     public void testOrderByWithMinTableTimestampMatchingLastInterval2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE itest ( " +
+            execute("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
                     "  ts TIMESTAMP " +
                     ") timestamp (ts) PARTITION BY HOUR");
-            compile("insert into itest " +
+            execute("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T01:28:00.000000Z') " +
                     "from long_sequence(90)");
         });

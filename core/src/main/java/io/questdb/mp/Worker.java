@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,58 +24,74 @@
 
 package io.questdb.mp;
 
+import io.questdb.Metrics;
 import io.questdb.log.Log;
-import io.questdb.metrics.HealthMetrics;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import org.jetbrains.annotations.Nullable;
 
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class Worker extends Thread {
-    private final static AtomicInteger COUNTER = new AtomicInteger();
+    public static final MicrosecondClock CLOCK_MICROS = MicrosecondClockImpl.INSTANCE;
+    public static final int NO_THREAD_AFFINITY = -1;
     private final int affinity;
-    private final WorkerCleaner cleaner;
     private final String criticalErrorLine;
     private final SOCountDownLatch haltLatch;
     private final boolean haltOnError;
+    private final AtomicLong jobStartMicros = new AtomicLong();
     private final ObjHashSet<? extends Job> jobs;
+    private final AtomicReference<Lifecycle> lifecycle = new AtomicReference<>(Lifecycle.BORN);
     private final Log log;
-    private final HealthMetrics metrics;
-    private final AtomicInteger running = new AtomicInteger();
-    private final Job.RunStatus runStatus = () -> running.get() == 2;
+    private final Metrics metrics;
+    private final long napThreshold;
+    private final OnHaltAction onHaltAction;
+    private final String poolName;
+    private final Job.RunStatus runStatus = () -> lifecycle.get() == Lifecycle.HALTED;
     private final long sleepMs;
     private final long sleepThreshold;
     private final int workerId;
     private final long yieldThreshold;
 
     public Worker(
-            final ObjHashSet<? extends Job> jobs,
-            final SOCountDownLatch haltLatch,
-            final int affinity,
-            final Log log,
-            final WorkerCleaner cleaner,
-            final boolean haltOnError,
-            final int workerId,
             String poolName,
+            int workerId,
+            int affinity,
+            ObjHashSet<? extends Job> jobs,
+            SOCountDownLatch haltLatch,
+            @Nullable OnHaltAction onHaltAction,
+            boolean haltOnError,
             long yieldThreshold,
+            long napThreshold,
             long sleepThreshold,
             long sleepMs,
-            HealthMetrics metrics
+            Metrics metrics,
+            @Nullable Log log
     ) {
-        this.log = log;
+        assert yieldThreshold > 0L;
+        this.setName(poolName + '_' + workerId);
+        this.poolName = poolName;
+        this.workerId = workerId;
+        this.affinity = affinity;
         this.jobs = jobs;
         this.haltLatch = haltLatch;
-        this.setName("questdb-" + poolName + "-" + COUNTER.incrementAndGet());
-        this.affinity = affinity;
-        this.cleaner = cleaner;
+        this.onHaltAction = onHaltAction;
         this.haltOnError = haltOnError;
-        this.workerId = workerId;
+        this.criticalErrorLine = "0000-00-00T00:00:00.000000Z C Unhandled exception in worker " + getName();
         this.yieldThreshold = yieldThreshold;
+        this.napThreshold = napThreshold;
         this.sleepThreshold = sleepThreshold;
         this.sleepMs = sleepMs;
         this.metrics = metrics;
-        this.criticalErrorLine = "0000-00-00T00:00:00.000000Z C Unhandled exception in worker " + getName();
+        this.log = log;
+    }
+
+    public String getPoolName() {
+        return poolName;
     }
 
     public int getWorkerId() {
@@ -83,62 +99,90 @@ public class Worker extends Thread {
     }
 
     public void halt() {
-        running.set(2);
+        lifecycle.set(Lifecycle.HALTED);
     }
 
     @Override
     public void run() {
         Throwable ex = null;
         try {
-            if (running.compareAndSet(0, 1)) {
-                if (affinity > -1) {
-                    if (Os.setCurrentThreadAffinity(this.affinity) == 0) {
+            if (lifecycle.compareAndSet(Lifecycle.BORN, Lifecycle.RUNNING)) {
+
+                String workerName = getName();
+
+                // set affinity
+                if (affinity > NO_THREAD_AFFINITY) {
+                    if (Os.setCurrentThreadAffinity(affinity) == 0) {
                         if (log != null) {
-                            log.info().$("affinity set [cpu=").$(affinity).$(", name=").$(getName()).I$();
+                            log.info().$("affinity set [cpu=").$(affinity).$(", name=").$(workerName).I$();
                         }
                     } else {
                         if (log != null) {
-                            log.error().$("could not set affinity [cpu=").$(affinity).$(", name=").$(getName()).I$();
+                            log.error().$("could not set affinity [cpu=").$(affinity).$(", name=").$(workerName).I$();
                         }
                     }
                 } else {
                     if (log != null) {
-                        log.info().$("os scheduled worker started [name=").$(getName()).I$();
+                        log.info().$("os scheduled worker started [name=").$(workerName).I$();
                     }
                 }
-                setupJobs();
-                int n = jobs.size();
-                long uselessCounter = 0;
-                while (running.get() == 1) {
-                    boolean useful = false;
-                    for (int i = 0; i < n; i++) {
+
+                // setup eager jobs
+                for (int i = 0, n = jobs.size(); i < n; i++) {
+                    Unsafe.getUnsafe().loadFence();
+                    try {
+                        Job job = jobs.get(i);
+                        if (job instanceof EagerThreadSetup) {
+                            ((EagerThreadSetup) job).setup();
+                        }
+                    } finally {
+                        Unsafe.getUnsafe().storeFence();
+                    }
+                }
+
+                // enter main loop
+                long ticker = 0L;
+                while (lifecycle.get() == Lifecycle.RUNNING) {
+                    boolean runAsap = false;
+                    // measure latency of all jobs tick
+                    jobStartMicros.lazySet(CLOCK_MICROS.getTicks());
+                    for (int i = 0, n = jobs.size(); i < n; i++) {
                         Unsafe.getUnsafe().loadFence();
                         try {
-                            try {
-                                useful |= jobs.get(i).run(workerId, runStatus);
-                            } catch (Throwable e) {
-                                onError(i, e);
+                            runAsap |= jobs.get(i).run(workerId, runStatus);
+                        } catch (Throwable e) {
+                            if (metrics.isEnabled()) {
+                                try {
+                                    metrics.healthMetrics().incrementUnhandledErrors();
+                                } catch (Throwable t) {
+                                    stdErrCritical(t);
+                                }
+                            }
+                            if (log != null) {
+                                log.critical().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).I$();
+                            } else {
+                                stdErrCritical(e); // log regardless
+                            }
+                            if (haltOnError) {
+                                throw e;
                             }
                         } finally {
                             Unsafe.getUnsafe().storeFence();
                         }
                     }
 
-                    if (useful) {
-                        uselessCounter = 0;
+                    if (runAsap) {
+                        ticker = 0;
                         continue;
                     }
-
-                    uselessCounter++;
-
-                    if (uselessCounter < 0) {
-                        // deal with overflow
-                        uselessCounter = sleepThreshold + 1;
+                    if (++ticker < 0) {
+                        ticker = sleepThreshold + 1; // overflow
                     }
-
-                    if (uselessCounter > sleepThreshold) {
+                    if (ticker > sleepThreshold) {
                         Os.sleep(sleepMs);
-                    } else if (uselessCounter > yieldThreshold) {
+                    } else if (ticker > napThreshold) {
+                        Os.sleep(1);
+                    } else if (ticker > yieldThreshold) {
                         Os.pause();
                     }
                 }
@@ -147,10 +191,15 @@ public class Worker extends Thread {
             ex = e;
             stdErrCritical(e);
         } finally {
-            // cleaner will typically attempt to release
-            // thread-local instances
-            if (cleaner != null) {
-                cleaner.run(ex);
+            if (onHaltAction != null) {
+                try {
+                    onHaltAction.run(ex);
+                    if (log != null) {
+                        log.info().$("cleaned worker [name=").$(poolName).$(", worker=").$(workerId).I$();
+                    }
+                } catch (Throwable t) {
+                    stdErrCritical(t);
+                }
             }
             haltLatch.countDown();
             if (log != null) {
@@ -159,42 +208,21 @@ public class Worker extends Thread {
         }
     }
 
-    private void onError(int i, Throwable e) throws Throwable {
-        try {
-            metrics.incrementUnhandledErrors();
-        } catch (Throwable t) {
-            stdErrCritical(e);
-        }
-
-        // Log error even then halt if halt error setting is on.
-        if (log != null) {
-            log.critical().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).I$();
-        } else {
-            stdErrCritical(e);
-        }
-        if (haltOnError) {
-            throw e;
-        }
-    }
-
-    private void setupJobs() {
-        if (running.get() == 1) {
-            for (int i = 0; i < jobs.size(); i++) {
-                Unsafe.getUnsafe().loadFence();
-                try {
-                    Job job = jobs.get(i);
-                    if (job instanceof EagerThreadSetup) {
-                        ((EagerThreadSetup) job).setup();
-                    }
-                } finally {
-                    Unsafe.getUnsafe().storeFence();
-                }
-            }
-        }
-    }
-
     private void stdErrCritical(Throwable e) {
         System.err.println(criticalErrorLine);
-        e.printStackTrace();
+        e.printStackTrace(System.err);
+    }
+
+    long getJobStartMicros() {
+        return jobStartMicros.get();
+    }
+
+    private enum Lifecycle {
+        BORN, RUNNING, HALTED
+    }
+
+    @FunctionalInterface
+    public interface OnHaltAction {
+        void run(Throwable ex);
     }
 }

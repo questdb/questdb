@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,27 +24,19 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.PropertyKey;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class MinDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class MinDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
-        pageFrameMaxRows = 10_000;
-        assertQuery13(
-                "avg\n" +
-                        "0.511848387\n",
-                "select round(avg(f),9) avg from tab",
-                "create table tab as (select rnd_double(2) f from long_sequence(131))",
-                null,
-                "alter table tab add column b double",
-                "avg\n" +
-                        "0.511848387\n",
-                false,
-                true
-        );
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
+        assertQuery("avg\n" +
+                "0.511848387\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_double(2) f from long_sequence(131))", null, "alter table tab add column b double", "avg\n" +
+                "0.511848387\n", false, true, false);
 
         assertQuery(
                 "avg\tmin\n" +
@@ -59,18 +51,9 @@ public class MinDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery13(
-                "min\n" +
-                        "NaN\n",
-                "select min(f) from tab",
-                "create table tab as (select cast(null as double) f from long_sequence(33))",
-                null,
-                "insert into tab select 22.009 from long_sequence(1)",
-                "min\n" +
-                        "22.009\n",
-                false,
-                true
-        );
+        assertQuery("min\n" +
+                "null\n", "select min(f) from tab", "create table tab as (select cast(null as double) f from long_sequence(33))", null, "insert into tab select 22.009 from long_sequence(1)", "min\n" +
+                "22.009\n", false, true, false);
     }
 
     @Test

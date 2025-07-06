@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,9 +36,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.Sinkable;
+import io.questdb.std.Transient;
+import io.questdb.std.str.Sinkable;
 
 public class ListFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "list(V)";
@@ -47,11 +49,14 @@ public class ListFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        if (args == null || args.size() == 0) {
+            throw SqlException.$(position, "no arguments provided");
+        }
         final ObjList<String> symbols = new ObjList<>(args.size());
         RndStringListFunctionFactory.copyConstants(args, argPositions, symbols);
         return new Func(symbols);

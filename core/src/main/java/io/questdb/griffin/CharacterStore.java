@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,14 +26,16 @@ package io.questdb.griffin;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.AbstractCharSink;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-public class CharacterStore extends AbstractCharSink implements CharacterStoreEntry, Mutable {
+public class CharacterStore implements CharacterStoreEntry, Mutable, Utf16Sink {
     private static final Log LOG = LogFactory.getLog(CharacterStore.class);
     private final ObjectPool<NameAssemblerCharSequence> csPool;
     private int capacity;
@@ -66,7 +68,7 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
     }
 
     @Override
-    public CharSink put(char c) {
+    public Utf16Sink put(char c) {
         if (size < capacity) {
             chars[size++] = c;
         } else {
@@ -76,7 +78,7 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
     }
 
     @Override
-    public CharSink put(char[] chars, int start, int len) {
+    public Utf16Sink put(char @NotNull [] chars, int start, int len) {
         for (int i = 0; i < len; i++) {
             put(chars[start + i]);
         }
@@ -84,9 +86,11 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
     }
 
     @Override
-    public CharSink put(CharSequence cs) {
-        assert cs != null;
-        return put(cs, 0, cs.length());
+    public Utf16Sink put(@Nullable CharSequence cs) {
+        if (cs != null) {
+            put(cs, 0, cs.length());
+        }
+        return this;
     }
 
     @Override
@@ -108,7 +112,7 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
         LOG.info().$("resize [capacity=").$(capacity).$(']').$();
     }
 
-    public class NameAssemblerCharSequence extends AbstractCharSequence implements Mutable {
+    public class NameAssemblerCharSequence extends AbstractCharSequence implements Mutable, BufferWindowCharSequence {
         int hi;
         int lo;
 
@@ -124,6 +128,11 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
         @Override
         public int length() {
             return hi - lo;
+        }
+
+        @Override
+        public void shiftLo(int positiveOffset) {
+            lo += positiveOffset;
         }
 
         @Override

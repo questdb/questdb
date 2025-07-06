@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,9 +24,11 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
@@ -35,8 +37,12 @@ import org.jetbrains.annotations.Nullable;
 public abstract class AbstractOperation implements AsyncWriterCommand, QuietCloseable {
     private static final long NO_CORRELATION_ID = -1L;
     protected @Nullable TableToken tableToken;
-    @Nullable SqlExecutionContext sqlExecutionContext;
-    @Nullable CharSequence sqlText;
+    @Nullable
+    SecurityContext securityContext;
+    @Nullable
+    SqlExecutionContext sqlExecutionContext;
+    @Nullable
+    CharSequence sqlText;
     int tableNamePosition;
     private String cmdName;
     private int cmdType;
@@ -48,9 +54,15 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         setCommandCorrelationId(NO_CORRELATION_ID);
     }
 
+    public void clearSecurityContext() {
+        Misc.clear(securityContext);
+    }
+
     @Override
     public void close() {
-        // intentionally left empty
+        // todo: temporary fix, until a proper lifecycle around CompiledQuery
+        // is implemented
+//        this.tableToken = null;
     }
 
     @Override
@@ -87,7 +99,8 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
     }
 
     @Override
-    public @Nullable TableToken getTableToken() {
+    public @NotNull TableToken getTableToken() {
+        assert tableToken != null : "initialized operation";
         return tableToken;
     }
 
@@ -109,9 +122,14 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
 
     public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
         this.sqlExecutionContext = sqlExecutionContext;
+        this.securityContext = sqlExecutionContext.getSecurityContext();
     }
 
-    public void withSqlStatement(String sqlStatement) {
+    public void withSecurityContext(@Nullable SecurityContext securityContext) {
+        this.securityContext = securityContext;
+    }
+
+    public void withSqlStatement(CharSequence sqlStatement) {
         this.sqlText = sqlStatement;
     }
 
@@ -130,5 +148,9 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         this.tableVersion = tableVersion;
         this.tableNamePosition = tableNamePosition;
         this.correlationId = NO_CORRELATION_ID;
+    }
+
+    public boolean isForceWalBypass() {
+        return false;
     }
 }

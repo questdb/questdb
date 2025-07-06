@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -42,28 +42,33 @@ class RndStringMemory implements Closeable {
     private final MemoryAR strMem;
 
     RndStringMemory(String signature, int count, int lo, int hi, int position, CairoConfiguration configuration) throws SqlException {
-        this.count = count;
-        this.lo = lo;
-        this.hi = hi;
+        try {
+            this.count = count;
+            this.lo = lo;
+            this.hi = hi;
 
-        final int pageSize = configuration.getRndFunctionMemoryPageSize();
-        final int maxPages = configuration.getRndFunctionMemoryMaxPages();
-        final long memLimit = (long) maxPages * pageSize;
-        // check against worst case, the highest possible mem usage
-        final long requiredMem = count * (Vm.getStorageLength(hi) + Long.BYTES);
-        if (requiredMem > memLimit) {
-            throw SqlException.position(position)
-                    .put("breached memory limit set for ").put(signature)
-                    .put(" [pageSize=").put(pageSize)
-                    .put(", maxPages=").put(maxPages)
-                    .put(", memLimit=").put(memLimit)
-                    .put(", requiredMem=").put(requiredMem)
-                    .put(']');
+            final int pageSize = configuration.getRndFunctionMemoryPageSize();
+            final int maxPages = configuration.getRndFunctionMemoryMaxPages();
+            final long memLimit = (long) maxPages * pageSize;
+            // check against worst case, the highest possible mem usage
+            final long requiredMem = count * (Vm.getStorageLength(hi) + Long.BYTES);
+            if (requiredMem > memLimit) {
+                throw SqlException.position(position)
+                        .put("breached memory limit set for ").put(signature)
+                        .put(" [pageSize=").put(pageSize)
+                        .put(", maxPages=").put(maxPages)
+                        .put(", memLimit=").put(memLimit)
+                        .put(", requiredMem=").put(requiredMem)
+                        .put(']');
+            }
+
+            final int idxPages = count * 8 / pageSize + 1;
+            strMem = Vm.getCARWInstance(pageSize, maxPages - idxPages, MemoryTag.NATIVE_FUNC_RSS);
+            idxMem = Vm.getCARWInstance(pageSize, idxPages, MemoryTag.NATIVE_FUNC_RSS);
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
-
-        final int idxPages = count * 8 / pageSize + 1;
-        strMem = Vm.getARInstance(pageSize, maxPages - idxPages, MemoryTag.NATIVE_FUNC_RSS);
-        idxMem = Vm.getARInstance(pageSize, idxPages, MemoryTag.NATIVE_FUNC_RSS);
     }
 
     @Override
@@ -104,14 +109,14 @@ class RndStringMemory implements Closeable {
         if (index < 0) {
             return null;
         }
-        return strMem.getStr(getStrAddress(index));
+        return strMem.getStrA(getStrAddress(index));
     }
 
     CharSequence getStr2(long index) {
         if (index < 0) {
             return null;
         }
-        return strMem.getStr2(getStrAddress(index));
+        return strMem.getStrB(getStrAddress(index));
     }
 
     void init(Rnd rnd) {

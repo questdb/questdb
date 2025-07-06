@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,15 +26,15 @@ package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.math.SubLongFunctionFactory;
 import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class SubLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testLeftNan() throws SqlException {
-        call(Numbers.LONG_NaN, 5L).andAssert(Numbers.LONG_NaN);
+        call(Numbers.LONG_NULL, 5L).andAssert(Numbers.LONG_NULL);
     }
 
     @Test
@@ -44,7 +44,7 @@ public class SubLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testRightNan() throws SqlException {
-        call(123L, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN);
+        call(123L, Numbers.LONG_NULL).andAssert(Numbers.LONG_NULL);
     }
 
     @Test

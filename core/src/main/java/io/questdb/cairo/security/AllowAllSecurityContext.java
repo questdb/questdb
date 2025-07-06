@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,26 +24,26 @@
 
 package io.questdb.cairo.security;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
-import io.questdb.std.LongList;
+import io.questdb.griffin.engine.functions.catalogue.Constants;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.NotNull;
 
 public class AllowAllSecurityContext implements SecurityContext {
-    public static final AllowAllSecurityContext INSTANCE = new AllowAllSecurityContext();
+    public static final AllowAllSecurityContext INSTANCE = new AllowAllSecurityContext(false);
+    public static final AllowAllSecurityContext SETTINGS_READ_ONLY = new AllowAllSecurityContext(true);
 
-    @Override
-    public void assumeRole(CharSequence roleName) {
+    private final boolean settingsReadOnly;
+
+    protected AllowAllSecurityContext() {
+        this(false);
     }
 
-    @Override
-    public void authorizeAddPassword() {
-    }
-
-    @Override
-    public void authorizeAddUser() {
+    private AllowAllSecurityContext(boolean settingsReadOnly) {
+        this.settingsReadOnly = settingsReadOnly;
     }
 
     @Override
@@ -51,11 +51,15 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAlterTableAddIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeAlterTableAddIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
     @Override
-    public void authorizeAlterTableAlterColumnCache(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeAlterTableAlterColumnCache(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+    }
+
+    @Override
+    public void authorizeAlterTableAlterColumnType(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
     @Override
@@ -63,15 +67,23 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterTableDedupDisable(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableDedupEnable(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeAlterTableDetachPartition(TableToken tableToken) {
     }
 
     @Override
-    public void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeAlterTableDropColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
     @Override
-    public void authorizeAlterTableDropIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeAlterTableDropIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
     @Override
@@ -79,7 +91,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAlterTableRenameColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
     @Override
@@ -87,31 +99,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAssignRole() {
-    }
-
-    @Override
-    public void authorizeCopy() {
-    }
-
-    @Override
     public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
-    }
-
-    @Override
-    public void authorizeCreateGroup() {
-    }
-
-    @Override
-    public void authorizeCreateJwk() {
-    }
-
-    @Override
-    public void authorizeCreateRole() {
-    }
-
-    @Override
-    public void authorizeCreateUser() {
     }
 
     @Override
@@ -119,47 +107,58 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeDisableUser() {
+    public void authorizeHttp() {
     }
 
     @Override
-    public void authorizeDropGroup() {
+    public void authorizeInsert(TableToken tableToken) {
     }
 
     @Override
-    public void authorizeDropJwk() {
+    public void authorizeLineTcp() {
     }
 
     @Override
-    public void authorizeDropRole() {
+    public void authorizeMatViewCreate() {
     }
 
     @Override
-    public void authorizeDropUser() {
+    public void authorizeMatViewDrop(TableToken tableToken) {
     }
 
     @Override
-    public void authorizeEnableUser() {
+    public void authorizeMatViewRefresh(TableToken tableToken) {
     }
 
     @Override
-    public void authorizeGrant(LongList permissions, CharSequence tableName, ObjList<CharSequence> columns) {
+    public void authorizePGWire() {
     }
 
     @Override
-    public void authorizeInsert(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeResumeWal(TableToken tableToken) {
     }
 
     @Override
-    public void authorizeRemovePassword() {
+    public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
     @Override
-    public void authorizeRemoveUser() {
+    public void authorizeSelectOnAnyColumn(TableToken tableToken) {
     }
 
     @Override
-    public void authorizeSelect(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeSettings() {
+        if (settingsReadOnly) {
+            throw CairoException.authorization().put("The /settings endpoint is read-only").setCacheable(true);
+        }
+    }
+
+    @Override
+    public void authorizeSqlEngineAdmin() {
+    }
+
+    @Override
+    public void authorizeSystemAdmin() {
     }
 
     @Override
@@ -175,7 +174,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeTableReindex(TableToken tableToken, @Nullable CharSequence columnName) {
+    public void authorizeTableReindex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
     @Override
@@ -187,7 +186,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeTableUpdate(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeTableUpdate(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
     @Override
@@ -195,10 +194,16 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeUnassignRole() {
+    public void checkEntityEnabled() {
     }
 
     @Override
-    public void exitRole(CharSequence roleName) {
+    public String getPrincipal() {
+        return Constants.USER_NAME;
+    }
+
+    @Override
+    public boolean isSystemAdmin() {
+        return true;
     }
 }

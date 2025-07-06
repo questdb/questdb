@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,9 +35,12 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.Nullable;
 
 public class SplitPartCharFunctionFactory implements FunctionFactory {
@@ -59,7 +62,7 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
                 return StrConstant.NULL;
             } else if (indexFunc.isConstant()) {
                 int index = indexFunc.getInt(null);
-                if (index == Numbers.INT_NaN) {
+                if (index == Numbers.INT_NULL) {
                     return StrConstant.NULL;
                 } else if (index == 0) {
                     throw SqlException.$(indexPosition, "field position must not be zero");
@@ -72,7 +75,7 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         }
         if (indexFunc.isConstant()) {
             int index = indexFunc.getInt(null);
-            if (index == Numbers.INT_NaN) {
+            if (index == Numbers.INT_NULL) {
                 return StrConstant.NULL;
             } else if (index == 0) {
                 throw SqlException.$(indexPosition, "field position must not be zero");
@@ -90,7 +93,7 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         protected final Function indexFunc;
         protected final Function strFunc;
         private final int indexPosition;
-        private final StringSink sink = new StringSink();
+        private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
         public AbstractSplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
@@ -121,18 +124,13 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
-            getStr0(rec, sink, false);
-        }
-
-        @Override
-        public CharSequence getStr(Record rec) {
-            return getStr0(rec, sink, true);
+        public CharSequence getStrA(Record rec) {
+            return getStrWithClear(rec, sinkA);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return getStr0(rec, sinkB, true);
+            return getStrWithClear(rec, sinkB);
         }
 
         @Override
@@ -146,12 +144,23 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
             }
         }
 
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
         @Nullable
-        private <S extends CharSink> S getStr0(Record rec, S sink, boolean clearSink) {
-            CharSequence str = strFunc.getStr(rec);
+        private CharSequence getStrWithClear(Record rec, StringSink sink) {
+            sink.clear();
+            return getStrWithoutClear(rec, sink);
+        }
+
+        @Nullable
+        private <S extends Utf16Sink> S getStrWithoutClear(Record rec, S sink) {
+            CharSequence str = strFunc.getStrA(rec);
             char delimiter = getDelimiter(rec);
             int index = getIndex(rec);
-            if (str == null || delimiter == CharConstant.ZERO.getChar(null) || index == Numbers.INT_NaN) {
+            if (str == null || delimiter == CharConstant.ZERO.getChar(null) || index == Numbers.INT_NULL) {
                 return null;
             }
             if (index == 0) {
@@ -175,7 +184,7 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
                 if (end == -1) {
                     end = str.length();
                 }
-            } else {    // if index is negative, returns index-from-last field
+            } else { // if index is negative, returns index-from-last field
                 if (index == -1) {
                     end = str.length();
                 } else {
@@ -193,9 +202,6 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
                 }
             }
 
-            if (clearSink && sink instanceof Mutable) {
-                ((Mutable) sink).clear();
-            }
             sink.put(str, start, end);
             return sink;
         }
@@ -209,8 +215,14 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         private final char delimiter;
         private final int index;
 
-        public SplitPartConstDelimiterConstIndexFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
-                                                         char delimiter, int index) {
+        public SplitPartConstDelimiterConstIndexFunction(
+                Function strFunc,
+                Function delimiterFunc,
+                Function indexFunc,
+                int indexPosition,
+                char delimiter,
+                int index
+        ) {
             super(strFunc, delimiterFunc, indexFunc, indexPosition);
             this.delimiter = delimiter;
             this.index = index;
@@ -230,8 +242,13 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
     private static class SplitPartConstDelimiterFunction extends AbstractSplitPartFunction {
         private final char delimiter;
 
-        public SplitPartConstDelimiterFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
-                                               char delimiter) {
+        public SplitPartConstDelimiterFunction(
+                Function strFunc,
+                Function delimiterFunc,
+                Function indexFunc,
+                int indexPosition,
+                char delimiter
+        ) {
             super(strFunc, delimiterFunc, indexFunc, indexPosition);
             this.delimiter = delimiter;
         }
@@ -250,8 +267,13 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
     private static class SplitPartConstIndexFunction extends AbstractSplitPartFunction {
         private final int index;
 
-        public SplitPartConstIndexFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
-                                           int index) {
+        public SplitPartConstIndexFunction(
+                Function strFunc,
+                Function delimiterFunc,
+                Function indexFunc,
+                int indexPosition,
+                int index
+        ) {
             super(strFunc, delimiterFunc, indexFunc, indexPosition);
             this.index = index;
         }
@@ -268,7 +290,13 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
     }
 
     private static class SplitPartFunction extends AbstractSplitPartFunction implements TernaryFunction {
-        public SplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
+
+        public SplitPartFunction(
+                Function strFunc,
+                Function delimiterFunc,
+                Function indexFunc,
+                int indexPosition
+        ) {
             super(strFunc, delimiterFunc, indexFunc, indexPosition);
         }
 

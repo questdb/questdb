@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,23 +24,33 @@
 
 package io.questdb.network;
 
+import static io.questdb.std.Files.toOsFd;
+
 public class EpollAccessor {
+    public static final short DATA_OFFSET;
+    public static final int EPOLLET;
     public static final int EPOLLIN;
+    public static final int EPOLLONESHOT;
     public static final int EPOLLOUT;
     public static final int EPOLL_CTL_ADD;
     public static final int EPOLL_CTL_DEL;
     public static final int EPOLL_CTL_MOD;
-    public static final short SIZEOF_EVENT;
-    static final short DATA_OFFSET;
-    static final int EPOLLET;
-    static final int EPOLLONESHOT;
-    static final short EVENTS_OFFSET;
+    public static final short EVENTS_OFFSET;
+    static final short SIZEOF_EVENT;
+
+    private static native int epollWait(int epfd, long eventPtr, int eventCount, int timeout);
+
+    private static native long readEventFd(int fd);
+
+    private static native int writeEventFd(int fd);
 
     static native int epollCreate();
 
     static native int epollCtl(int epfd, int op, int fd, long eventPtr);
 
-    static native int epollWait(int epfd, long eventPtr, int eventCount, int timeout);
+    static int epollWait(long epfd, long eventPtr, int eventCount, int timeout) {
+        return epollWait(toOsFd(epfd), eventPtr, eventCount, timeout);
+    }
 
     static native int eventFd();
 
@@ -64,9 +74,13 @@ public class EpollAccessor {
 
     static native short getEventsOffset();
 
-    static native long readEventFd(int fd);
+    static long readEventFd(long fd) {
+        return readEventFd(toOsFd(fd));
+    }
 
-    static native int writeEventFd(int fd);
+    static int writeEventFd(long fd) {
+        return writeEventFd(toOsFd(fd));
+    }
 
     static {
         DATA_OFFSET = getDataOffset();

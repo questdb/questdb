@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,31 +25,29 @@
 package io.questdb.test.griffin.engine.functions.cast;
 
 import io.questdb.griffin.engine.functions.cast.CastNullTypeFunctionFactory;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 
-public class CastNullTypeFunctionFactoryTest extends AbstractGriffinTest {
+public class CastNullTypeFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testCastNullToNonCastFriendlyTypeShouldFail() {
-        try {
-            assertQuery(null, "cast(null as CURSOR)", null, null);
-            Assert.fail();
-        } catch (Exception expected) {
-            Assert.assertEquals("[13] invalid constant: CURSOR", expected.getMessage());
-        }
+    public void testCastNullToNonCastFriendlyTypeShouldFail() throws Exception {
+        assertException(
+                "cast(null as CURSOR)",
+                13,
+                "unsupported cast"
+        );
     }
 
     @Test
-    public void testCastNullToNonexistentTypeShouldFail() {
-        try {
-            assertQuery(null, "cast(null as NON_EXISTING_TYPE)", null, null);
-            Assert.fail();
-        } catch (Exception expected) {
-            Assert.assertEquals("[13] invalid constant: NON_EXISTING_TYPE", expected.getMessage());
-        }
+    public void testCastNullToNonexistentTypeShouldFail() throws Exception {
+        assertException(
+                "cast(null as NON_EXISTING_TYPE)",
+                13,
+                "unsupported cast"
+        );
     }
 
     @Test

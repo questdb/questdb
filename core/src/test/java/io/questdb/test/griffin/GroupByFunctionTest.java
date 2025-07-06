@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,14 +24,15 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class GroupByFunctionTest extends AbstractGriffinTest {
+public class GroupByFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testCaseInitsArgs() throws Exception {
@@ -130,7 +131,8 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         "    WHERE\n" +
                         "        (seller = 'sf' OR buyer = 'sf')\n" +
                         "    )\n" +
-                        "group by y_utc_15m",
+                        "group by y_utc_15m " +
+                        "order by y_utc_15m",
                 "create table trades as (" +
                         "select" +
                         " timestamp_sequence(0, 15*60*1000000L) delivery_start_utc," +
@@ -139,7 +141,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " rnd_double() volume_mw" +
                         " from long_sequence(100)" +
                         "), index(seller), index(buyer) timestamp(delivery_start_utc)",
-                null,
+                "y_utc_15m",
                 true,
                 true
         );
@@ -148,14 +150,14 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testKeyedAvgDoubleAllNaN() throws Exception {
         assertQuery("s\tsum\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, avg(d) sum from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",
@@ -245,14 +247,14 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testKeyedKSumDoubleAllNaN() throws Exception {
         assertQuery("s\tksum\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, ksum(d) ksum from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",
@@ -264,7 +266,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testKeyedKSumDoubleSomeNaN() throws Exception {
-        pageFrameMaxRows = 1_000_000;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
         assertQuery("s\tksum\n" +
                         "aa\t416262.4729439181\n" +
                         "bb\t416933.3416598129\n",
@@ -285,7 +287,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testKeyedKSumKSumDoubleSomeNaN() throws Exception {
-        pageFrameMaxRows = 1_000_000;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
         assertQueryExpectSize("s\tksum\tksum1\n" +
                         "aa\t416262.47294392\t416262.47294392\n" +
                         "bb\t416933.34165981\t416933.34165981\n",
@@ -303,7 +305,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testKeyedKSumSumDoubleSomeNaN() throws Exception {
-        pageFrameMaxRows = 1_000_000;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
         assertQuery("s\tksum\tsum\n" +
                         "aa\t416262.4729439\t416262.4729439\n" +
                         "bb\t416933.3416598\t416933.3416598\n",
@@ -365,14 +367,14 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testKeyedMaxDoubleAllNaN() throws Exception {
         assertQuery("s\tmax\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, max(d) max from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",
@@ -385,8 +387,8 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testKeyedMaxIntAllNaN() throws Exception {
         assertQueryExpectSize("s\tmax\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, max(d) max from x order by s",
                 "create table x as " +
                         "(" +
@@ -419,8 +421,8 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testKeyedMaxLongAllNaN() throws Exception {
         assertQueryExpectSize("s\tmax\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, max(d) max from x order by s",
                 "create table x as " +
                         "(" +
@@ -533,14 +535,14 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testKeyedMinDoubleAllNaN() throws Exception {
         assertQuery("s\tmin\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, min(d) min from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",
@@ -553,8 +555,8 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testKeyedMinIntAllNaN() throws Exception {
         assertQueryExpectSize("s\tmin\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, min(d) min from x order by s",
                 "create table x as " +
                         "(" +
@@ -590,8 +592,8 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testKeyedMinLongAllNaN() throws Exception {
         assertQuery("s\tmin\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, min(d) min from x order by s",
                 "create table x as " +
                         "(" +
@@ -650,14 +652,14 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testKeyedNSumDoubleAllNaN() throws Exception {
         assertQuery("s\tnsum\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, nsum(d) nsum from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",
@@ -690,14 +692,14 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testKeyedSumDoubleAllNaN() throws Exception {
         assertQueryExpectSize("s\tsum\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, sum(d) sum from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")"
@@ -727,8 +729,8 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testKeyedSumIntAllNaN() throws Exception {
         assertQuery("s\tsum\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, sum(d) sum from x order by s",
                 "create table x as " +
                         "(" +
@@ -767,8 +769,8 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testKeyedSumLongAllNaN() throws Exception {
         assertQuery("s\tsum\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, sum(d) sum from x order by s",
                 "create table x as " +
                         "(" +
@@ -807,9 +809,9 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testNestedGroupByFn() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));", sqlExecutionContext);
-            try (RecordCursorFactory ignored = compiler.compile("select sym, max(sum(x + min(x)) - avg(x)) from test", sqlExecutionContext).getRecordCursorFactory()) {
-                Assert.fail();
+            execute("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));");
+            try {
+                assertExceptionNoLeakCheck("select sym, max(sum(x + min(x)) - avg(x)) from test");
             } catch (SqlException e) {
                 Assert.assertTrue(Chars.contains(e.getMessage(), "Aggregate function cannot be passed as an argument"));
             }
@@ -819,11 +821,9 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testNonNestedGroupByFn() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));", sqlExecutionContext);
-            try (RecordCursorFactory ignored = compiler.compile("select sym, max(x) - (min(x) + 1) from test", sqlExecutionContext).getRecordCursorFactory()) {
+            execute("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));");
+            try (RecordCursorFactory ignored = select("select sym, max(x) - (min(x) + 1) from test")) {
                 Assert.assertTrue(true);
-            } catch (SqlException e) {
-                Assert.fail();
             }
         });
     }
@@ -874,12 +874,12 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testVectorKSumDoubleAllNaN() throws Exception {
         assertQuery("sum\n" +
-                        "NaN\n",
+                        "null\n",
                 "select ksum(d) sum from x",
                 "create table x as " +
                         "(" +
                         "select" +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",
@@ -2976,12 +2976,12 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     @Test
     public void testVectorNSumDoubleAllNaN() throws Exception {
         assertQuery("sum\n" +
-                        "NaN\n",
+                        "null\n",
                 "select nsum(d) sum from x",
                 "create table x as " +
                         "(" +
                         "select" +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,11 +29,11 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
-import io.questdb.cutlass.text.CopyRequestTask;
 import io.questdb.cutlass.text.CopyContext;
+import io.questdb.cutlass.text.CopyRequestTask;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -53,6 +53,7 @@ public class CopyFactory extends AbstractRecordCursorFactory {
 
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private final int atomicity;
+    private final CopyContext copyContext;
     private final byte delimiter;
     private final String fileName;
     private final boolean headerFlag;
@@ -62,7 +63,6 @@ public class CopyFactory extends AbstractRecordCursorFactory {
     private final CopyRecord record = new CopyRecord();
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
     private final String tableName;
-    private final CopyContext copyContext;
     private final String timestampColumn;
     private final String timestampFormat;
 
@@ -147,14 +147,14 @@ public class CopyFactory extends AbstractRecordCursorFactory {
         private CharSequence value;
 
         @Override
-        public CharSequence getStr(int col) {
+        public CharSequence getStrA(int col) {
             return value;
         }
 
         @Override
         public CharSequence getStrB(int col) {
             // the sink is immutable
-            return getStr(col);
+            return getStrA(col);
         }
 
         @Override

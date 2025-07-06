@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
 
 public final class Long256Adapter extends AbstractTypeAdapter {
 
@@ -46,12 +46,12 @@ public final class Long256Adapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public boolean probe(DirectByteCharSequence text) {
-        return Numbers.extractLong256(text, text.length(), NOOP_LONG256_BUILDER);
+    public boolean probe(DirectUtf8Sequence text) {
+        return Numbers.extractLong256(text, NOOP_LONG256_BUILDER);
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
-        row.putLong256(column, SqlKeywords.isNullKeyword(value) ? null : value);
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
+        row.putLong256(column, SqlKeywords.isNullKeyword(value) ? null : value.asAsciiCharSequence());
     }
 }

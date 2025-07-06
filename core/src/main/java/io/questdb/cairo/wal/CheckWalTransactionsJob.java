@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,15 +24,24 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 public class CheckWalTransactionsJob extends SynchronizedJob {
+    private final long checkInterval;
     private final TableSequencerAPI.TableSequencerCallback checkNotifyOutstandingTxnInWalRef;
     private final CharSequence dbRoot;
     private final CairoEngine engine;
@@ -40,18 +49,24 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private final MillisecondClock millisecondClock;
     private final long spinLockTimeout;
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
+    // Empty list means that all tables should be checked.
     private final TxReader txReader;
     private long lastProcessedCount = 0;
+    private long lastRunMs;
+    private boolean notificationQueueIsFull = false;
     private Path threadLocalPath;
+
 
     public CheckWalTransactionsJob(CairoEngine engine) {
         this.engine = engine;
         this.ff = engine.getConfiguration().getFilesFacade();
         txReader = new TxReader(engine.getConfiguration().getFilesFacade());
-        dbRoot = engine.getConfiguration().getRoot();
+        dbRoot = engine.getConfiguration().getDbRoot();
         millisecondClock = engine.getConfiguration().getMillisecondClock();
         spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
-        checkNotifyOutstandingTxnInWalRef = (tableToken, txn, txn2) -> checkNotifyOutstandingTxnInWal(txn, txn2);
+        checkNotifyOutstandingTxnInWalRef = (tableId, token, txn) -> checkNotifyOutstandingTxnInWal(token, txn);
+        checkInterval = engine.getConfiguration().getSequencerCheckInterval();
+        lastRunMs = millisecondClock.getTicks();
     }
 
     public void checkMissingWalTransactions() {
@@ -59,9 +74,13 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, checkNotifyOutstandingTxnInWalRef);
     }
 
-    public void checkNotifyOutstandingTxnInWal(TableToken tableToken, long txn) {
+    public void checkNotifyOutstandingTxnInWal(@NotNull TableToken tableToken, long seqTxn) {
+        if (notificationQueueIsFull) {
+            return;
+        }
+
         if (
-                txn < 0 && TableUtils.exists(
+                seqTxn < 0 && TableUtils.exists(
                         ff,
                         threadLocalPath,
                         dbRoot,
@@ -69,20 +88,26 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                 ) == TableUtils.TABLE_EXISTS
         ) {
             // Dropped table
-            engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
+            notificationQueueIsFull = !engine.notifyWalTxnCommitted(tableToken);
         } else {
-            threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
-            if (ff.exists(threadLocalPath)) {
-                threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
-                try (TxReader txReader2 = txReader.ofRO(threadLocalPath, PartitionBy.NONE)) {
-                    TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
-                    if (txReader2.getSeqTxn() < txn) {
-                        engine.notifyWalTxnCommitted(tableToken, txn);
-                    }
+            if (engine.getTableSequencerAPI().isTxnTrackerInitialised(tableToken)) {
+                if (engine.getTableSequencerAPI().notifyOnCheck(tableToken, seqTxn)) {
+                    notificationQueueIsFull = !engine.notifyWalTxnCommitted(tableToken);
                 }
             } else {
-                // table is dropped, notify the JOB to delete the data
-                engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
+                LPSZ txnPath = threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
+                if (ff.exists(txnPath)) {
+                    try (TxReader txReader = this.txReader.ofRO(txnPath, PartitionBy.NONE)) {
+                        TableUtils.safeReadTxn(this.txReader, millisecondClock, spinLockTimeout);
+                        if (engine.getTableSequencerAPI().initTxnTracker(tableToken, txReader.getSeqTxn(), seqTxn)) {
+                            notificationQueueIsFull = !engine.notifyWalTxnCommitted(tableToken);
+                        }
+                    } catch (CairoException e) {
+                        if (!e.errnoFileCannotRead()) {
+                            throw e;
+                        } // race, table is dropped, ApplyWal2TableJob is already deleting the files
+                    }
+                } // else table is dropped, ApplyWal2TableJob already is deleting the files
             }
         }
     }
@@ -90,11 +115,31 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     @Override
     public boolean runSerially() {
         long unpublishedWalTxnCount = engine.getUnpublishedWalTxnCount();
-        if (unpublishedWalTxnCount == lastProcessedCount) {
+        if (unpublishedWalTxnCount == lastProcessedCount || notificationQueueIsFull) {
+            // when notification queue was full last run, re-evaluate tables after a timeout
+            final long t = millisecondClock.getTicks();
+            if (lastRunMs + checkInterval < t) {
+                lastRunMs = t;
+                notificationQueueIsFull = !republishNotificationsFromTrackers();
+            }
             return false;
         }
         checkMissingWalTransactions();
         lastProcessedCount = unpublishedWalTxnCount;
+        return !notificationQueueIsFull;
+    }
+
+    private boolean republishNotificationsFromTrackers() {
+        engine.getTableTokens(tableTokenBucket, false);
+        for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+            TableToken tableToken = tableTokenBucket.get(i);
+            SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+            if (!tracker.isSuspended() && tracker.getWriterTxn() < tracker.getSeqTxn()) {
+                if (!engine.notifyWalTxnCommitted(tableToken)) {
+                    return false;
+                }
+            }
+        }
         return true;
     }
 }

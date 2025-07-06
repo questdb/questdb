@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,11 +24,12 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.test.cutlass.line.tcp.load.TableData;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.test.cutlass.line.tcp.load.TableData;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -43,16 +44,15 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
     @Test
     public void testCommitIntervalBasedDefaultFractionZero() throws Exception {
-
         // rows based commit every 22 rows -> will commit 88 rows per table only -> test would timeout
-        configOverrideMaxUncommittedRows(22);
+        node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 22);
 
         // idle table commit after 5 mins inactivity -> test would timeout
         maintenanceInterval = 300_000_000;
         minIdleMsBeforeWriterRelease = 300_000_000;
 
         // time based commit every 0.5 seconds (default interval) -> should commit last 12 rows per table -> make test pass
-        configOverrideO3MinLag(1_000_000);
+        node1.setProperty(PropertyKey.CAIRO_O3_MIN_LAG, 1_000);
         commitIntervalFraction = 0.0;
         commitIntervalDefault = 500;
 
@@ -64,14 +64,14 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     @Test
     public void testCommitIntervalBasedDefaultLagZero() throws Exception {
         // rows based commit every 22 rows -> will commit 88 rows per table only -> test would timeout
-        configOverrideMaxUncommittedRows(22);
+        node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 22);
 
         // idle table commit after 5 mins inactivity -> test would timeout
         maintenanceInterval = 300_000_000;
         minIdleMsBeforeWriterRelease = 300_000_000;
 
         // time based commit every 0.5 seconds (default interval) -> should commit last 12 rows per table -> make test pass
-        configOverrideO3MinLag(0);
+        node1.setProperty(PropertyKey.CAIRO_O3_MIN_LAG, 0);
         commitIntervalFraction = 0.2;
         commitIntervalDefault = 500;
 
@@ -83,14 +83,14 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     @Test
     public void testCommitIntervalBasedFraction() throws Exception {
         // rows based commit every 110 rows -> will never happen, we ingest only 100 rows per table -> test would timeout
-        configOverrideMaxUncommittedRows(110);
+        node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 110);
 
         // idle table commit after 5 mins inactivity -> test would timeout
         maintenanceInterval = 300_000_000;
         minIdleMsBeforeWriterRelease = 300_000_000;
 
         // time based commit every 0.5 seconds (50% of 1 sec commit lag) -> should commit rows -> make test pass
-        configOverrideO3MinLag(1_000_000);
+        node1.setProperty(PropertyKey.CAIRO_O3_MIN_LAG, 1_000);
         commitIntervalFraction = 0.5;
         commitIntervalDefault = 300_000;
 
@@ -102,15 +102,14 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     @Ignore("TableWriter.getSeqTxn() has been removed")
     @Test
     public void testCommitIntervalBasedFractionConstantLowRate() throws Exception {
-
-        configOverrideMaxUncommittedRows(500_000);
+        node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
 
         // idle table commit after 5 mins inactivity -> test would timeout
         maintenanceInterval = 300_000_000;
         minIdleMsBeforeWriterRelease = 300_000_000;
 
         // time based commit every 0.2 seconds (20% of 1 sec commit lag) -> should commit rows -> make test pass
-        configOverrideO3MinLag(1_000_000);
+        node1.setProperty(PropertyKey.CAIRO_O3_MIN_LAG, 1_000);
         commitIntervalFraction = 0.2;
 
         initLoadParameters(10, 100, 1, 1, 10, false);
@@ -131,14 +130,15 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     public void testCommitNumOfRowsBased() throws Exception {
         // rows based commit every 10 rows -> will commit 10 times 10 rows per table -> make test pass
         // WAL data is split against multiple WAL writers, so WAL table have to commit every row
-        configOverrideMaxUncommittedRows(walEnabled ? 1 : 10);
+        int maxUncommittedRows = walEnabled ? 1 : 10;
+        node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, maxUncommittedRows);
 
         // idle table commit after 5 mins inactivity -> test would timeout
         maintenanceInterval = 300_000_000;
         minIdleMsBeforeWriterRelease = 300_000_000;
 
         // time based commit every 5 mins (default interval) -> test would timeout
-        configOverrideO3MinLag(0);
+        node1.setProperty(PropertyKey.CAIRO_O3_MIN_LAG, 0);
         commitIntervalFraction = 0.2;
         commitIntervalDefault = 300_000;
 
@@ -150,14 +150,14 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     @Test
     public void testCommitTableReleased() throws Exception {
         // rows based commit every 22 rows -> will commit 88 rows per table only -> test would timeout
-        configOverrideMaxUncommittedRows(22);
+        node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 22);
 
         // idle table commit after 0.5 seconds inactivity -> should commit last 12 rows per table -> make test pass
         maintenanceInterval = 200;
         minIdleMsBeforeWriterRelease = 500;
 
         // time based commit every 5 mins (default interval) -> test would timeout
-        configOverrideO3MinLag(0);
+        node1.setProperty(PropertyKey.CAIRO_O3_MIN_LAG, 0);
         commitIntervalFraction = 0.2;
         commitIntervalDefault = 300_000;
 

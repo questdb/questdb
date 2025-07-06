@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,9 +24,11 @@
 
 package io.questdb.metrics;
 
+import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 
-public class DoubleGaugeImpl implements Scrapable, DoubleGauge {
+public class DoubleGaugeImpl implements Target, DoubleGauge {
     private final CharSequence name;
     private volatile double value;
 
@@ -35,7 +37,7 @@ public class DoubleGaugeImpl implements Scrapable, DoubleGauge {
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         appendType(sink);
         appendMetricName(sink);
         PrometheusFormatUtils.appendSampleLineSuffix(sink, value);
@@ -47,14 +49,14 @@ public class DoubleGaugeImpl implements Scrapable, DoubleGauge {
         this.value = value;
     }
 
-    private void appendMetricName(CharSink sink) {
-        sink.put(PrometheusFormatUtils.METRIC_NAME_PREFIX);
+    private void appendMetricName(CharSink<?> sink) {
+        sink.putAscii(PrometheusFormatUtils.METRIC_NAME_PREFIX);
         sink.put(name);
     }
 
-    private void appendType(CharSink sink) {
-        sink.put(PrometheusFormatUtils.TYPE_PREFIX);
+    private void appendType(CharSink<?> sink) {
+        sink.putAscii(PrometheusFormatUtils.TYPE_PREFIX);
         sink.put(name);
-        sink.put(" gauge\n");
+        sink.putAscii(" gauge\n");
     }
 }

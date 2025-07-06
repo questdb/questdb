@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ public class DebugUtils {
     public static final Log LOG = LogFactory.getLog(DebugUtils.class);
 
     // For debugging purposes
-    public static boolean checkAscendingTimestamp(FilesFacade ff, long size, int fd) {
+    public static boolean checkAscendingTimestamp(FilesFacade ff, long size, long fd) {
         if (size > 0) {
             long buffer = TableUtils.mapAppendColumnBuffer(ff, fd, 0, size * Long.BYTES, false, MemoryTag.MMAP_DEFAULT);
             try {
@@ -55,6 +55,10 @@ public class DebugUtils {
         return true;
     }
 
+    public static boolean isSparseVarCol(long colRowCount, long auxMemAddr, long dataMemAddr, int colType) {
+        return ColumnType.getDriver(colType).isSparseDataVector(auxMemAddr, dataMemAddr, colRowCount);
+    }
+
     // Useful debugging method
     public static boolean reconcileColumnTops(int partitionsSlotSize, LongList openPartitionInfo, ColumnVersionReader columnVersionReader, TableReader reader) {
         int partitionCount = reader.getPartitionCount();
@@ -67,7 +71,7 @@ public class DebugUtils {
                     long columnTopRaw = columnVersionReader.getColumnTop(partitionTimestamp, c);
                     long columnTop = Math.min(columnTopRaw == -1 ? partitionRowCount : columnTopRaw, partitionRowCount);
                     if (columnTop != colTop) {
-                        LOG.criticalW().$("failed to reconcile column top [partition=").$ts(partitionTimestamp)
+                        LOG.critical().$("failed to reconcile column top [partition=").$ts(partitionTimestamp)
                                 .$(", column=").$(c)
                                 .$(", expected=").$(columnTop)
                                 .$(", actual=").$(colTop).$(']').
@@ -78,5 +82,41 @@ public class DebugUtils {
             }
         }
         return true;
+    }
+
+    static void assertO3IndexSorted(long indexAddr, long indexSize) {
+        long lastTs = Long.MIN_VALUE;
+        for (long i = 0; i < indexSize; i++) {
+            long ts = Unsafe.getUnsafe().getLong(indexAddr + 16 * i);
+            long rowId = Unsafe.getUnsafe().getLong(indexAddr + 16 * i + 8);
+            assert ts >= lastTs : String.format("ts %,d lastTs %,d rowId %,d", ts, lastTs, rowId);
+            lastTs = ts;
+        }
+    }
+
+    static void assertTimestampColumnSorted(long columnAddr, long columnSize) {
+        long lastTs = Long.MIN_VALUE;
+        for (long i = 0; i < columnSize; i++) {
+            long ts = Unsafe.getUnsafe().getLong(columnAddr + 8 * i);
+            assert ts >= lastTs : String.format("ts %,d lastTs %,d", ts, lastTs);
+            lastTs = ts;
+        }
+    }
+
+    static void logO3Index(long indexAddr, long indexSize, long tailLen) {
+        long start = Math.max(0, indexSize - tailLen);
+        for (long i = start; i < indexSize; i++) {
+            long ts = Unsafe.getUnsafe().getLong(indexAddr + 16 * i);
+            long rowId = Unsafe.getUnsafe().getLong(indexAddr + 16 * i + 8);
+            LOG.info().$("index [").$(i).$("] = ").$ts(ts).$(", ts=").$(ts).$(", rowId=").$(rowId).$();
+        }
+    }
+
+    static void logTimestampColumn(long colAddr, long colSize, long tailLen) {
+        long start = Math.max(0, colSize - tailLen);
+        for (long i = start; i < colSize; i++) {
+            long ts = Unsafe.getUnsafe().getLong(colAddr + 8 * i);
+            LOG.info().$("ts_col [").$(i).$("] = ").$ts(ts).$(", ts=").$(ts).$();
+        }
     }
 }

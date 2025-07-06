@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,11 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.HttpException;
+import io.questdb.cutlass.http.HttpHeaderParser;
+import io.questdb.cutlass.http.HttpMultipartContentParser;
+import io.questdb.cutlass.http.HttpMultipartContentProcessor;
+import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -32,7 +36,8 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -45,9 +50,9 @@ import java.util.concurrent.TimeUnit;
 
 public class HttpMultipartContentParserTest {
 
-    private final static TestHttpMultipartContentListener LISTENER = new TestHttpMultipartContentListener();
-    private final static ObjectPool<DirectByteCharSequence> pool = new ObjectPool<>(DirectByteCharSequence::new, 32);
-    private final static StringSink sink = new StringSink();
+    private static final TestHttpMultipartContentProcessor LISTENER = new TestHttpMultipartContentProcessor();
+    private static final ObjectPool<DirectUtf8String> pool = new ObjectPool<>(DirectUtf8String::new, 32);
+    private static final StringSink sink = new StringSink();
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -84,7 +89,7 @@ public class HttpMultipartContentParserTest {
                 try {
                     String boundary = "\r\n------WebKitFormBoundaryxFKYDBybTLu2rb8P";
                     long pBoundary = TestUtils.toMemory(boundary);
-                    DirectByteCharSequence boundaryCs = new DirectByteCharSequence().of(pBoundary, pBoundary + boundary.length());
+                    DirectUtf8String boundaryCs = new DirectUtf8String().of(pBoundary, pBoundary + boundary.length());
                     try {
                         for (int i = 0; i < len; i++) {
                             sink.clear();
@@ -117,7 +122,7 @@ public class HttpMultipartContentParserTest {
                 try {
                     String boundary = "\r\n------WebKitFormBoundaryxFKYDBybTLu2rb8P";
                     long pBoundary = TestUtils.toMemory(boundary);
-                    DirectByteCharSequence boundaryCs = new DirectByteCharSequence().of(pBoundary, pBoundary + boundary.length());
+                    DirectUtf8String boundaryCs = new DirectUtf8String().of(pBoundary, pBoundary + boundary.length());
                     try {
                         multipartContentParser.of(boundaryCs);
                         multipartContentParser.parse(p, p + len, LISTENER);
@@ -190,7 +195,7 @@ public class HttpMultipartContentParserTest {
                 try {
                     String boundary = "\r\n------WebKitFormBoundaryxFKYDBybTLu2rb8P";
                     long pBoundary = TestUtils.toMemory(boundary);
-                    DirectByteCharSequence boundaryCs = new DirectByteCharSequence().of(pBoundary, pBoundary + boundary.length());
+                    DirectUtf8String boundaryCs = new DirectUtf8String().of(pBoundary, pBoundary + boundary.length());
                     try {
                         for (int i = 0; i < len; i++) {
                             sink.clear();
@@ -223,7 +228,7 @@ public class HttpMultipartContentParserTest {
                 try {
                     String boundary = "\r\n------WebKitFormBoundaryxFKYDBybTLu2rb8P";
                     long pBoundary = TestUtils.toMemory(boundary);
-                    DirectByteCharSequence boundaryCs = new DirectByteCharSequence().of(pBoundary, pBoundary + boundary.length());
+                    DirectUtf8String boundaryCs = new DirectUtf8String().of(pBoundary, pBoundary + boundary.length());
                     try {
                         multipartContentParser.of(boundaryCs);
                         multipartContentParser.parse(p, p + len, LISTENER);
@@ -240,7 +245,7 @@ public class HttpMultipartContentParserTest {
         });
     }
 
-    private boolean parseWithRetry(TestHttpMultipartContentListener listener, HttpMultipartContentParser multipartContentParser, long breakPoint, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    private boolean parseWithRetry(TestHttpMultipartContentProcessor listener, HttpMultipartContentParser multipartContentParser, long breakPoint, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         boolean result;
         try {
             result = multipartContentParser.parse(breakPoint, hi, listener);
@@ -251,7 +256,7 @@ public class HttpMultipartContentParserTest {
     }
 
     private void testBreaksCsvImportAt(int breakAt, RuntimeException onChunkException) throws Exception {
-        TestHttpMultipartContentListener listener = new TestHttpMultipartContentListener(onChunkException);
+        TestHttpMultipartContentProcessor listener = new TestHttpMultipartContentProcessor(onChunkException);
         TestUtils.assertMemoryLeak(() -> {
             try (HttpMultipartContentParser multipartContentParser = new HttpMultipartContentParser(new HttpHeaderParser(1024, pool))) {
                 String boundaryToken = "------------------------27d997ca93d2689d";
@@ -273,7 +278,7 @@ public class HttpMultipartContentParserTest {
                 long p = TestUtils.toMemory(content);
                 try {
                     long pBoundary = TestUtils.toMemory(boundary);
-                    DirectByteCharSequence boundaryCs = new DirectByteCharSequence().of(pBoundary, pBoundary + boundary.length());
+                    DirectUtf8String boundaryCs = new DirectUtf8String().of(pBoundary, pBoundary + boundary.length());
                     try {
                         multipartContentParser.clear();
                         multipartContentParser.of(boundaryCs);
@@ -295,15 +300,15 @@ public class HttpMultipartContentParserTest {
         });
     }
 
-    private static class TestHttpMultipartContentListener implements HttpMultipartContentListener {
+    private static class TestHttpMultipartContentProcessor implements HttpMultipartContentProcessor {
         private final RuntimeException firstChunkException;
         private int onChunkCount;
 
-        public TestHttpMultipartContentListener() {
+        public TestHttpMultipartContentProcessor() {
             this(null);
         }
 
-        public TestHttpMultipartContentListener(RuntimeException firstChunkException) {
+        public TestHttpMultipartContentProcessor(RuntimeException firstChunkException) {
             this.firstChunkException = firstChunkException;
         }
 
@@ -320,14 +325,13 @@ public class HttpMultipartContentParserTest {
 
         @Override
         public void onPartBegin(HttpRequestHeader partHeader) {
-
-            final CharSequence name = partHeader.getContentDispositionName();
+            final DirectUtf8Sequence name = partHeader.getContentDispositionName();
             sink.put("Content-Disposition: ").put(partHeader.getContentDisposition());
             if (name != null) {
                 sink.put("; name=\"").put(name).put('"');
             }
 
-            final CharSequence fileName = partHeader.getContentDispositionFilename();
+            final DirectUtf8Sequence fileName = partHeader.getContentDispositionFilename();
             if (fileName != null) {
                 sink.put("; filename=\"").put(fileName).put('"');
             }
@@ -335,7 +339,7 @@ public class HttpMultipartContentParserTest {
             // terminate Content-Disposition
             sink.put("\r\n");
 
-            final CharSequence contentType = partHeader.getContentType();
+            final DirectUtf8Sequence contentType = partHeader.getContentType();
             if (contentType != null) {
                 sink.put("Content-Type: ").put(contentType).put("\r\n");
             }

@@ -1,0 +1,60 @@
+[package]
+name = "parquet2"
+version = "0.17.2"
+license = "Apache-2.0"
+description = "Safe implementation of parquet IO."
+authors = ["Jorge C. Leitao <jorgecarleitao@gmail.com", "Apache Arrow <dev@arrow.apache.org>"]
+keywords = [ "analytics", "parquet" ]
+homepage = "https://github.com/jorgecarleitao/parquet2"
+repository = "https://github.com/jorgecarleitao/parquet2"
+readme = "README.md"
+edition = "2021"
+
+[lib]
+name = "parquet2"
+bench = false
+
+[package.metadata.docs.rs]
+features = ["full"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+parquet-format-safe = "0.2"
+seq-macro = { version = "0.3", default-features = false }
+streaming-decompression = "0.1"
+
+async-stream = { version = "0.3.3", optional = true }
+futures = { version = "0.3", optional = true }
+
+snap = { version = "^1.1", optional = true }
+brotli = { version = "^3.3", optional = true }
+flate2 = { version = "^1.0", optional = true, default-features = false }
+lz4 = { version = "1.24", optional = true }
+zstd = { version = "^0.12", optional = true, default-features = false }
+lz4_flex = { version = "^0.9", optional = true }
+serde = { version = "^1.0", optional = true, features = ["derive"] }
+
+xxhash-rust = { version = "0.8", optional = true, features = ["xxh64"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
+criterion = "0.4"
+rand = "0.8"
+
+[features]
+default = ["snappy", "gzip", "lz4", "zstd", "brotli", "bloom_filter"]
+full = ["snappy", "gzip", "lz4", "zstd", "brotli", "bloom_filter", "async"]
+async = [ "async-stream", "futures", "parquet-format-safe/async" ]
+snappy = ["snap"]
+gzip = ["flate2/rust_backend"]
+gzip_zlib_ng = ["flate2/zlib-ng"]
+bloom_filter = ["xxhash-rust"]
+serde_types = ["serde"]
+
+[[bench]]
+name = "decode_bitpacking"
+harness = false
+
+[[bench]]
+name = "decode_rle"
+harness = false

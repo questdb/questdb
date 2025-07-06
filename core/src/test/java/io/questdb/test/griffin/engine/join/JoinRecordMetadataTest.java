@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.join;
 
-import io.questdb.griffin.engine.join.JoinRecordMetadata;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -41,14 +41,14 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
             metadata.add("a", "X", ColumnType.FLOAT, false, 0, false, null);
             Assert.fail();
         } catch (Exception e) {
-            TestUtils.assertContains(e.getMessage(), "Duplicate column [name=X], [alias=a]");
+            TestUtils.assertContains(e.getMessage(), "duplicate column [name=X, alias=a]");
         }
 
         try {
             metadata.add("A", "X", ColumnType.FLOAT, false, 0, false, null);
             Assert.fail();
         } catch (Exception e) {
-            TestUtils.assertContains(e.getMessage(), "Duplicate column [name=X], [alias=A]");
+            TestUtils.assertContains(e.getMessage(), "duplicate column [name=X, alias=A]");
         }
 
         Assert.assertEquals(0, metadata.getColumnIndexQuiet("x"));
@@ -71,10 +71,11 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
             metadata.add("b", "y", ColumnType.FLOAT, false, 0, false, null);
             Assert.fail();
         } catch (Exception e) {
-            TestUtils.assertContains(e.getMessage(), "Duplicate column [name=y], [alias=b]");
+            TestUtils.assertContains(e.getMessage(), "duplicate column [name=y, alias=b]");
         }
 
         metadata.add(null, "c.x", ColumnType.STRING, false, 0, false, null);
+        metadata.add(null, "c.vch", ColumnType.VARCHAR, false, 0, false, null);
 
         Assert.assertEquals(-1, metadata.getColumnIndexQuiet("x"));
         Assert.assertEquals(0, metadata.getColumnIndexQuiet("a.x"));
@@ -96,15 +97,19 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
 
         Assert.assertEquals(ColumnType.BINARY, metadata.getColumnType("b.y"));
         Assert.assertEquals(ColumnType.INT, metadata.getColumnType("a.x"));
+        Assert.assertEquals(ColumnType.VARCHAR, metadata.getColumnType("c.vch"));
 
+        String varcharType = ColumnType.nameOf(ColumnType.VARCHAR);
+        String stringType = ColumnType.nameOf(ColumnType.STRING);
         String expected = "a.x:INT\n" +
                 "a.y:DOUBLE\n" +
                 "a.m:DOUBLE\n" +
                 "b.x:DOUBLE\n" +
                 "b.y:BINARY\n" +
                 "b.z:FLOAT\n" +
-                "c.x:STRING\n" +
-                "z.m:STRING\n";
+                "c.x:" + stringType + "\n" +
+                "c.vch:" + varcharType + "\n" +
+                "z.m:" + stringType + "\n";
 
         StringSink sink = new StringSink();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,22 +40,17 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
     private int valueIndex;
 
     public MaxIntGroupByFunction(@NotNull Function arg) {
-        super();
         this.arg = arg;
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putInt(valueIndex, arg.getInt(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        int max = mapValue.getInt(valueIndex);
-        int next = arg.getInt(record);
-        if (next > max) {
-            mapValue.putInt(valueIndex, next);
-        }
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
+        mapValue.maxInt(valueIndex, arg.getInt(record));
     }
 
     @Override
@@ -74,14 +69,43 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
     }
 
     @Override
+    public int getSampleByFlags() {
+        return GroupByFunction.SAMPLE_BY_FILL_ALL;
+    }
+
+    @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.INT);
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        int srcMax = srcValue.getInt(valueIndex);
+        int destMax = destValue.getInt(valueIndex);
+        if (srcMax > destMax) {
+            destValue.putInt(valueIndex, srcMax);
+        }
     }
 
     @Override
@@ -91,6 +115,11 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putInt(valueIndex, Numbers.INT_NaN);
+        mapValue.putInt(valueIndex, Numbers.INT_NULL);
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

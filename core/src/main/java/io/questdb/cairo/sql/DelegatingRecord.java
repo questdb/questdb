@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,12 +24,20 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
 
 public class DelegatingRecord implements Record {
     protected Record base;
+
+    @Override
+    public ArrayView getArray(int col, int columnType) {
+        return base.getArray(col, columnType);
+    }
 
     @Override
     public BinarySequence getBin(int col) {
@@ -92,8 +100,18 @@ public class DelegatingRecord implements Record {
     }
 
     @Override
+    public int getIPv4(int col) {
+        return base.getIPv4(col);
+    }
+
+    @Override
     public int getInt(int col) {
         return base.getInt(col);
+    }
+
+    @Override
+    public Interval getInterval(int col) {
+        return base.getInterval(col);
     }
 
     @Override
@@ -102,7 +120,7 @@ public class DelegatingRecord implements Record {
     }
 
     @Override
-    public void getLong256(int col, CharSink sink) {
+    public void getLong256(int col, CharSink<?> sink) {
         base.getLong256(col, sink);
     }
 
@@ -127,13 +145,8 @@ public class DelegatingRecord implements Record {
     }
 
     @Override
-    public CharSequence getStr(int col) {
-        return base.getStr(col);
-    }
-
-    @Override
-    public void getStr(int col, CharSink sink) {
-        base.getStr(col, sink);
+    public CharSequence getStrA(int col) {
+        return base.getStrA(col);
     }
 
     @Override
@@ -147,8 +160,8 @@ public class DelegatingRecord implements Record {
     }
 
     @Override
-    public CharSequence getSym(int col) {
-        return base.getSym(col);
+    public CharSequence getSymA(int col) {
+        return base.getSymA(col);
     }
 
     @Override
@@ -159,6 +172,21 @@ public class DelegatingRecord implements Record {
     @Override
     public long getTimestamp(int col) {
         return base.getTimestamp(col);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(int col) {
+        return base.getVarcharA(col);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(int col) {
+        return base.getVarcharB(col);
+    }
+
+    @Override
+    public int getVarcharSize(int col) {
+        return base.getVarcharSize(col);
     }
 
     public void of(Record base) {

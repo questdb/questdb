@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -40,25 +42,22 @@ public class CastCharToShortFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CastCharToShortFunction(args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
-    public static class CastCharToShortFunction extends AbstractCastToShortFunction {
-        private final Function arg;
-
-        public CastCharToShortFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+    public static class Func extends AbstractCastToShortFunction {
+        public Func(Function arg) {
+            super(arg);
         }
 
         @Override
         public short getShort(Record rec) {
-            final byte v = (byte) (arg.getChar(rec) - '0');
-            return v > -1 && v < 10 ? v : 0;
+            char c = arg.getChar(rec);
+            final byte v = (byte) (c - '0');
+            if (v > -1 && v < 10) {
+                return v;
+            }
+            throw ImplicitCastException.inconvertibleValue(c, ColumnType.CHAR, ColumnType.SHORT);
         }
     }
 }

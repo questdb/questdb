@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,34 +29,23 @@ import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.std.ByteCharSequenceIntHashMap;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Utf8StringIntHashMap;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.str.ByteCharSequence;
-import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 
 import java.io.Closeable;
 
-import static io.questdb.std.Chars.utf8ToUtf16Unchecked;
-
-/**
- * Important note:
- * This cache is optimized for ASCII and UTF8 DirectByteCharSequence lookups. Lookups of UTF16
- * strings (j.l.String) with non-ASCII chars will not work correctly, so make sure to re-encode
- * the string in UTF8.
- */
-public class SymbolCache implements Closeable, DirectByteSymbolLookup {
+public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
     private final MicrosecondClock clock;
     private final SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl();
-    private final ByteCharSequenceIntHashMap symbolValueToKeyMap = new ByteCharSequenceIntHashMap(
+    private final Utf8StringIntHashMap symbolValueToKeyMap = new Utf8StringIntHashMap(
             256,
             0.5,
             SymbolTable.VALUE_NOT_FOUND
     );
     private final StringSink tempSink = new StringSink();
-    private final long waitUsBeforeReload;
+    private final long waitIntervalBeforeReload;
     private int columnIndex;
     private long lastSymbolReaderReloadTimestamp;
     private int symbolIndexInTxFile;
@@ -64,8 +53,12 @@ public class SymbolCache implements Closeable, DirectByteSymbolLookup {
     private TableWriterAPI writerAPI;
 
     public SymbolCache(LineTcpReceiverConfiguration configuration) {
-        this.clock = configuration.getMicrosecondClock();
-        this.waitUsBeforeReload = configuration.getSymbolCacheWaitUsBeforeReload();
+        this(configuration.getMicrosecondClock(), configuration.getSymbolCacheWaitBeforeReload());
+    }
+
+    public SymbolCache(MicrosecondClock microsecondClock, long waitIntervalBeforeReload) {
+        this.clock = microsecondClock;
+        this.waitIntervalBeforeReload = waitIntervalBeforeReload;
     }
 
     @Override
@@ -85,7 +78,7 @@ public class SymbolCache implements Closeable, DirectByteSymbolLookup {
     }
 
     @Override
-    public int keyOf(DirectByteCharSequence value) {
+    public int keyOf(DirectUtf8Sequence value) {
         final int index = symbolValueToKeyMap.keyIndex(value);
         if (index < 0) {
             return symbolValueToKeyMap.valueAt(index);
@@ -95,18 +88,18 @@ public class SymbolCache implements Closeable, DirectByteSymbolLookup {
         int symbolValueCount;
 
         if (
-                ticks - lastSymbolReaderReloadTimestamp > waitUsBeforeReload &&
+                ticks - lastSymbolReaderReloadTimestamp > waitIntervalBeforeReload &&
                         (symbolValueCount = readSymbolCount(symbolIndexInTxFile, true)) > symbolMapReader.getSymbolCount()
         ) {
             symbolMapReader.updateSymbolCount(symbolValueCount);
             lastSymbolReaderReloadTimestamp = ticks;
         }
 
-        utf8ToUtf16Unchecked(value, tempSink);
+        Utf8s.utf8ToUtf16Unchecked(value, tempSink);
         final int symbolKey = symbolMapReader.keyOf(tempSink);
 
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-            symbolValueToKeyMap.putAt(index, ByteCharSequence.newInstance(value), symbolKey);
+            symbolValueToKeyMap.putAt(index, Utf8String.newInstance(value), symbolKey);
         }
 
         return symbolKey;
@@ -125,7 +118,7 @@ public class SymbolCache implements Closeable, DirectByteSymbolLookup {
         this.writerAPI = writerAPI;
         this.columnIndex = columnIndex;
         this.symbolIndexInTxFile = symbolIndexInTxFile;
-        final int plen = path.length();
+        final int plen = path.size();
         this.txReader = txReader;
         int symCount = readSymbolCount(symbolIndexInTxFile, false);
         path.trimTo(plen);

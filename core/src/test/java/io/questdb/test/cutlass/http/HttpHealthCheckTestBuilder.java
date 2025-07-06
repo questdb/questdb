@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,8 +29,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.http.processors.QueryCache;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -39,7 +37,6 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
 import org.junit.rules.TemporaryFolder;
 
-import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -48,24 +45,18 @@ public class HttpHealthCheckTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpHealthCheckTestBuilder.class);
     private boolean injectUnhandledError;
-    private Metrics metrics;
     private boolean pessimisticHealthCheck = false;
     private TemporaryFolder temp;
 
     public void run(HttpClientCode code) throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
+            DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
                     .withBaseDir(baseDir)
                     .withPessimisticHealthCheck(pessimisticHealthCheck)
-                    .build();
-            if (metrics == null) {
-                metrics = Metrics.enabled();
-            }
-
-            QueryCache.configure(httpConfiguration, metrics);
-
-            WorkerPool workerPool = new TestWorkerPool(1, metrics);
+                    .build(cairoConfiguration);
+            WorkerPool workerPool = new TestWorkerPool(1, httpConfiguration.getMetrics());
 
             if (injectUnhandledError) {
                 final AtomicBoolean alreadyErrored = new AtomicBoolean();
@@ -77,16 +68,16 @@ public class HttpHealthCheckTestBuilder {
                 });
             }
 
-            DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
-                    HttpServer ignored = Services.createMinHttpServer(httpConfiguration, engine, workerPool, metrics)
+                    CairoEngine engine = new CairoEngine(cairoConfiguration);
+                    HttpServer ignored = Services.INSTANCE.createMinHttpServer(httpConfiguration, workerPool)
             ) {
                 workerPool.start(LOG);
 
+                final Metrics metrics = cairoConfiguration.getMetrics();
                 if (injectUnhandledError && metrics.isEnabled()) {
                     for (int i = 0; i < 40; i++) {
-                        if (metrics.health().unhandledErrorsCount() > 0) {
+                        if (metrics.healthMetrics().unhandledErrorsCount() > 0) {
                             break;
                         }
                         Os.sleep(50);
@@ -107,11 +98,6 @@ public class HttpHealthCheckTestBuilder {
         return this;
     }
 
-    public HttpHealthCheckTestBuilder withMetrics(Metrics metrics) {
-        this.metrics = metrics;
-        return this;
-    }
-
     public HttpHealthCheckTestBuilder withPessimisticHealthCheck(boolean pessimisticHealthCheck) {
         this.pessimisticHealthCheck = pessimisticHealthCheck;
         return this;
@@ -124,6 +110,6 @@ public class HttpHealthCheckTestBuilder {
 
     @FunctionalInterface
     public interface HttpClientCode {
-        void run(CairoEngine engine) throws InterruptedException, SqlException, BrokenBarrierException;
+        void run(CairoEngine engine);
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,11 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.Chars;
-import io.questdb.std.IntList;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 
 public class CastDoubleToStrFunctionFactory implements FunctionFactory {
@@ -46,53 +42,42 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        Function intFunc = args.getQuick(0);
-        if (intFunc.isConstant()) {
-            final StringSink sink = Misc.getThreadLocalBuilder();
-            sink.put(intFunc.getDouble(null), configuration.getDoubleToStrCastScale());
+        Function doubleFunc = args.getQuick(0);
+        if (doubleFunc.isConstant()) {
+            final StringSink sink = Misc.getThreadLocalSink();
+            sink.put(doubleFunc.getDouble(null));
             return new StrConstant(Chars.toString(sink));
         }
-        return new CastDoubleToStrFunction(args.getQuick(0), configuration.getDoubleToStrCastScale());
+        return new Func(args.getQuick(0));
     }
 
-    public static class CastDoubleToStrFunction extends AbstractCastToStrFunction {
-        private final int scale;
+    public static class Func extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
-        public CastDoubleToStrFunction(Function arg, int scale) {
+        public Func(Function arg) {
             super(arg);
-            this.scale = scale;
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             final double value = arg.getDouble(rec);
-            if (Double.isNaN(value)) {
-                return null;
+            if (Numbers.isFinite(value)) {
+                sinkA.clear();
+                sinkA.put(value);
+                return sinkA;
             }
-            sinkA.clear();
-            sinkA.put(value, scale);
-            return sinkA;
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            final double value = arg.getDouble(rec);
-            if (Double.isNaN(value)) {
-                return;
-            }
-            sink.put(value, scale);
+            return null;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
             final double value = arg.getDouble(rec);
-            if (Double.isNaN(value)) {
+            if (Numbers.isNull(value)) {
                 return null;
             }
             sinkB.clear();
-            sinkB.put(value, scale);
+            sinkB.put(value);
             return sinkB;
         }
     }

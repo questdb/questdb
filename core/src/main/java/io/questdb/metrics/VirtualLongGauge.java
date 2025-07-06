@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,19 +24,16 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.CharSink;
-
 /**
- * Read Only gauge used to expose various stats .
+ * Read-only gauge used to expose various stats.
  */
-public class VirtualLongGauge implements LongGauge {
+public class VirtualLongGauge extends AbstractLongGauge implements LongGauge {
 
-    private final CharSequence name;
     private final StatProvider provider;
 
     public VirtualLongGauge(CharSequence name, StatProvider statProvider) {
-        this.name = name;
-        this.provider = statProvider;
+        super(name);
+        provider = statProvider;
     }
 
     @Override
@@ -60,31 +57,8 @@ public class VirtualLongGauge implements LongGauge {
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
-        appendType(sink);
-        appendMetricName(sink);
-        PrometheusFormatUtils.appendSampleLineSuffix(sink, getValue());
-        PrometheusFormatUtils.appendNewLine(sink);
-    }
-
-    @Override
     public void setValue(long value) {
         // do nothing as this gauge is RO view of some stat
-    }
-
-    private void appendMetricName(CharSink sink) {
-        sink.put(PrometheusFormatUtils.METRIC_NAME_PREFIX);
-        sink.put(getName());
-    }
-
-    private void appendType(CharSink sink) {
-        sink.put(PrometheusFormatUtils.TYPE_PREFIX);
-        sink.put(getName());
-        sink.put(" gauge\n");
-    }
-
-    private CharSequence getName() {
-        return this.name;
     }
 
     @FunctionalInterface

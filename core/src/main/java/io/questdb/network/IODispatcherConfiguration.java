@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,8 @@
 
 package io.questdb.network;
 
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.LongGauge;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -32,11 +34,15 @@ public interface IODispatcherConfiguration {
     int BIAS_READ = 1;
     int BIAS_WRITE = 2;
 
+    Counter listenerStateChangeCounter();
+
     int getBindIPv4Address();
 
     int getBindPort();
 
     MillisecondClock getClock();
+
+    LongGauge getConnectionCountGauge();
 
     default String getDispatcherLogName() {
         return "IODispatcher";
@@ -48,6 +54,8 @@ public interface IODispatcherConfiguration {
         return Numbers.ceilPow2(getLimit());
     }
 
+    long getHeartbeatInterval();
+
     default boolean getHint() {
         return false;
     }
@@ -56,7 +64,9 @@ public interface IODispatcherConfiguration {
         return Numbers.ceilPow2(getLimit());
     }
 
-    int getInitialBias();
+    default int getInitialBias() {
+        return BIAS_READ;
+    }
 
     default int getInterestQueueCapacity() {
         return Numbers.ceilPow2(getLimit());
@@ -77,6 +87,12 @@ public interface IODispatcherConfiguration {
         return getLimit();
     }
 
+    // OS socket buffer size
+    int getNetRecvBufferSize();
+
+    // OS socket buffer size
+    int getNetSendBufferSize();
+
     NetworkFacade getNetworkFacade();
 
     default boolean getPeerNoLinger() {
@@ -85,15 +101,15 @@ public interface IODispatcherConfiguration {
 
     long getQueueTimeout();
 
-    int getRcvBufSize();
+    // user-land buffer size
+    int getRecvBufferSize();
 
     SelectFacade getSelectFacade();
 
-    int getSndBufSize();
+    // user-land buffer size
+    int getSendBufferSize();
 
     int getTestConnectionBufferSize();
 
     long getTimeout();
-
-    long getHeartbeatInterval();
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,9 @@ package io.questdb.jit;
 
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ThreadLocal;
+import io.questdb.std.Unsafe;
 
 import java.io.Closeable;
 
@@ -36,11 +38,21 @@ public class CompiledFilter implements Closeable {
 
     private long fnAddress;
 
-    public long call(long colsAddress, long colsSize, long varsAddress, long varsSize, long rowsAddress, long rowsSize, long rowsStartOffset) {
+    public long call(
+            long dataAddress,
+            long dataSize,
+            long varSizeAuxAddress,
+            long varsAddress,
+            long varsSize,
+            long rowsAddress,
+            long rowsSize,
+            long rowsStartOffset
+    ) {
         return FiltersCompiler.callFunction(
                 fnAddress,
-                colsAddress,
-                colsSize,
+                dataAddress,
+                dataSize,
+                varSizeAuxAddress,
                 varsAddress,
                 varsSize,
                 rowsAddress,
@@ -53,6 +65,7 @@ public class CompiledFilter implements Closeable {
     public void close() {
         if (fnAddress > 0) {
             FiltersCompiler.freeFunction(fnAddress);
+            Unsafe.recordMemAlloc(-1, MemoryTag.NATIVE_JIT);
             fnAddress = 0;
         }
     }
@@ -69,5 +82,6 @@ public class CompiledFilter implements Closeable {
                     .put("JIT compilation failed [errorCode").put(error.errorCode())
                     .put(", msg=").put(error.message()).put("]");
         }
+        Unsafe.recordMemAlloc(1, MemoryTag.NATIVE_JIT);
     }
 }

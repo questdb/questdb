@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -75,16 +75,16 @@ public class ObjListTest {
         Assert.assertEquals(list(), remove(list("a", "b", "c"), 4, 10));
     }
 
+    private static <T> ObjList<T> remove(ObjList<T> o, int from, int to) {
+        o.remove(from, to);
+        return o;
+    }
+
     private ObjList<String> list(String... values) {
         ObjList<String> result = new ObjList<>();
         for (String value : values) {
             result.add(value);
         }
         return result;
-    }
-
-    private static <T> ObjList<T> remove(ObjList<T> o, int from, int to) {
-        o.remove(from, to);
-        return o;
     }
 }

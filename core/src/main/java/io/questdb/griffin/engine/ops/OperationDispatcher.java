@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ import org.jetbrains.annotations.Nullable;
 
 public abstract class OperationDispatcher<T extends AbstractOperation> {
 
+    private static final String FORCE_OPERATION_APPLY_REASON = "Force Alter Operation";
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
     private final CairoEngine engine;
     private final WeakSelfReturningObjectPool<OperationFutureImpl> futurePool;
@@ -59,8 +60,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         operation.withContext(sqlExecutionContext);
         boolean isDone = false;
         final TableToken tableToken = operation.getTableToken();
-        assert tableToken != null;
-        try (TableWriterAPI writer = engine.getTableWriterAPI(tableToken, lockReason)) {
+        try (TableWriterAPI writer = !operation.isForceWalBypass() ? engine.getTableWriterAPI(tableToken, lockReason) : engine.getWriter(tableToken, FORCE_OPERATION_APPLY_REASON)) {
             final long result = apply(operation, writer);
             isDone = true;
             return doneFuture.of(result);

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,28 +24,42 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.DynamicUsernamePasswordMatcher;
+import io.questdb.ServerConfiguration;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cutlass.auth.Authenticator;
-import io.questdb.network.NetworkFacade;
+import io.questdb.cutlass.auth.SocketAuthenticator;
+import io.questdb.cutlass.auth.UsernamePasswordMatcher;
+import org.jetbrains.annotations.Nullable;
 
-public class DefaultPgWireAuthenticatorFactory implements PgWireAuthenticatorFactory {
-    public static final PgWireAuthenticatorFactory INSTANCE = new DefaultPgWireAuthenticatorFactory();
+public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthenticatorFactory {
+    public static final PgWireAuthenticatorFactory INSTANCE = new DefaultPgWireAuthenticatorFactory(null);
+    private final ServerConfiguration serverConfiguration;
+
+    public DefaultPgWireAuthenticatorFactory(@Nullable ServerConfiguration serverConfiguration) {
+        this.serverConfiguration = serverConfiguration;
+    }
 
     @Override
-    public Authenticator getPgWireAuthenticator(
-            NetworkFacade nf,
+    public SocketAuthenticator getPgWireAuthenticator(
             PGWireConfiguration configuration,
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
             CircuitBreakerRegistry registry,
             OptionsListener optionsListener
     ) {
+        // Normally, all authenticators instances share native buffers for static passwords as the buffers are allocated
+        // and owned by FactoryProviders.
+        // But the Default implementation does not use FactoryProviders at all. There is a single static field INSTANCE, see above.
+        // Thus, there is nothing what could own and close the buffers. So we allocate buffers for each authenticator
+        // and the authenticator will be responsible for closing them.
+        final UsernamePasswordMatcher matcher = new DynamicUsernamePasswordMatcher(serverConfiguration, configuration);
+
         return new CleartextPasswordPgWireAuthenticator(
-                nf,
                 configuration,
                 circuitBreaker,
                 registry,
                 optionsListener,
-                new StaticUsernamePasswordMatcher(configuration)
+                matcher,
+                true
         );
     }
 }

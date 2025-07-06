@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,11 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.BorrowableUtf8Sink;
+import org.jetbrains.annotations.NotNull;
 
-class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwoLabels {
-    static final NullCounter INSTANCE = new NullCounter();
+public class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwoLabels {
+    public static final NullCounter INSTANCE = new NullCounter();
 
     private NullCounter() {
     }
@@ -54,6 +55,10 @@ class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwoLabels 
     }
 
     @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
+    public void reset() {
+    }
+
+    @Override
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
     }
 }

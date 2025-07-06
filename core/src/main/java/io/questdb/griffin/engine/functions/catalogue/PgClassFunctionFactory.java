@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,15 +24,31 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.DelegatingRecord;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_CATALOG_OID;
@@ -104,11 +120,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CursorFunction(
-                new PgClassCursorFactory(
-                        METADATA
-                )
-        ) {
+        return new CursorFunction(new PgClassCursorFactory(METADATA)) {
             @Override
             public boolean isRuntimeConstant() {
                 return true;
@@ -117,15 +129,20 @@ public class PgClassFunctionFactory implements FunctionFactory {
     }
 
     private static class PgClassCursorFactory extends AbstractRecordCursorFactory {
-
         private final PgClassRecordCursor cursor;
-        private final Path path = new Path();
-        private final long tempMem;
+        private final Path path;
+        private long tempMem;
 
         public PgClassCursorFactory(RecordMetadata metadata) {
             super(metadata);
-            this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
-            this.cursor = new PgClassRecordCursor();
+            try {
+                this.path = new Path();
+                this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
+                this.cursor = new PgClassRecordCursor();
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
         }
 
         @Override
@@ -148,7 +165,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
         @Override
         protected void _close() {
             Misc.free(path);
-            Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
+            tempMem = Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
         }
     }
 
@@ -224,6 +241,11 @@ public class PgClassFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public long size() {
             return -1;
         }
@@ -279,7 +301,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 if (col == INDEX_RELNAME) {
                     // relname
                     return tableName;
@@ -289,20 +311,12 @@ public class PgClassFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStrB(int col) {
-                if (col == INDEX_RELNAME) {
-                    // relname
-                    return tableName;
-                }
-                return null;
+                return getStrA(col);
             }
 
             @Override
             public int getStrLen(int col) {
-                if (col == INDEX_RELNAME) {
-                    // relname
-                    return tableName.length();
-                }
-                return -1;
+                return TableUtils.lengthOf(getStrA(col));
             }
         }
 
@@ -349,7 +363,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 if (col == INDEX_RELNAME) {
                     // relname
                     return relNames[fixedRelPos];
@@ -359,16 +373,12 @@ public class PgClassFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStrB(int col) {
-                return getStr(col);
+                return getStrA(col);
             }
 
             @Override
             public int getStrLen(int col) {
-                if (col == INDEX_RELNAME) {
-                    // relname
-                    return relNames[fixedRelPos].length();
-                }
-                return -1;
+                return TableUtils.lengthOf(getStrA(col));
             }
         }
     }

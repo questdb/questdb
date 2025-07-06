@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -66,10 +66,15 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
             long valuePageSize,
             int valueMaxPages
     ) {
-        this.comparator = comparator;
-        this.mem = new MemoryPages(keyPageSize, keyMaxPages);
-        this.recordChain = new RecordChain(columnTypes, recordSink, valuePageSize, valueMaxPages);
-        this.recordChainRecord = this.recordChain.getRecordB();
+        try {
+            this.comparator = comparator;
+            this.mem = new MemoryPages(keyPageSize, keyMaxPages);
+            this.recordChain = new RecordChain(columnTypes, recordSink, valuePageSize, valueMaxPages);
+            this.recordChainRecord = this.recordChain.getRecordB();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -136,6 +141,10 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
     public void reopen() {
         recordChain.reopen();
         mem.reopen();
+    }
+
+    public long size() {
+        return recordChain.size();
     }
 
     private static byte colorOf(long blockAddress) {
@@ -311,21 +320,13 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
     }
 
     public class TreeCursor implements RecordCursor {
-        private RecordCursor base;
+        private RecordCursor baseCursor;
         private long current;
-        private boolean isOpen;
-
-        public TreeCursor() {
-            this.isOpen = true;
-        }
 
         @Override
         public void close() {
-            if (isOpen) {
-                isOpen = false;
-                Misc.free(base);
-                current = -1;
-            }
+            // base cursor's lifecycle is managed externally, so we don't close it here
+            current = -1;
         }
 
         @Override
@@ -340,7 +341,7 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return base.getSymbolTable(columnIndex);
+            return baseCursor.getSymbolTable(columnIndex);
         }
 
         @Override
@@ -360,7 +361,7 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
-            return base.newSymbolTable(columnIndex);
+            return baseCursor.newSymbolTable(columnIndex);
         }
 
         @Override
@@ -370,7 +371,13 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
 
         @Override
         public long size() {
-            return base.size();
+            return baseCursor.size();
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            // no state to preserve
+            return 0;
         }
 
         @Override
@@ -385,8 +392,7 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
         }
 
         private void of(RecordCursor base) {
-            isOpen = true;
-            this.base = base;
+            this.baseCursor = base;
             recordChain.setSymbolTableResolver(base);
             toTop();
         }

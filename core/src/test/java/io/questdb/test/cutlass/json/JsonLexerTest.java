@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,8 +27,15 @@ package io.questdb.test.cutlass.json;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
-import io.questdb.std.*;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
+import io.questdb.std.IntStack;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Mutable;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
+import io.questdb.test.ServerMainVectorGroupByTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
@@ -53,27 +60,6 @@ public class JsonLexerTest {
     }
 
     @Test
-    public void tesStringTooLong() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            String json = "{\"a\":1, \"b\": \"123456789012345678901234567890\"]}";
-            int len = json.length() - 6;
-            long address = TestUtils.toMemory(json);
-            try (JsonLexer lexer = new JsonLexer(4, 4)) {
-                try {
-                    lexer.parse(address, address + len, listener);
-                    lexer.parseLast();
-                    Assert.fail();
-                } catch (JsonException e) {
-                    TestUtils.assertEquals("String is too long", e.getFlyweightMessage());
-                    Assert.assertEquals(41, e.getPosition());
-                }
-            } finally {
-                Unsafe.free(address, json.length(), MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
     public void testArrayObjArray() throws Exception {
         assertThat("[{\"A\":[\"122\",\"133\"],\"x\":\"y\"},\"134\",\"abc\"]", "[\n" +
                 "{\"A\":[122, 133], \"x\": \"y\"}, 134  , \"abc\"\n" +
@@ -93,6 +79,45 @@ public class JsonLexerTest {
         } finally {
             Unsafe.free(address, len, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    @Test
+    public void testCacheDisabled() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String json = "{\"a\":1, \"b\": \"123456789012345678901234567890\"}";
+            int len = json.length();
+            long address = TestUtils.toMemory(json);
+
+            // JsonLexer cache is disabled
+            try (JsonLexer lexer = new JsonLexer(0, 0)) {
+                // passing the entire message in, no need for cache
+                lexer.parse(address, address + len, listener);
+                lexer.parseLast();
+                lexer.clear();
+
+                // cutting the message at string boundary, no need for cache
+                int subLen = "{\"a\":1, \"b\":".length();
+                lexer.parse(address, address + subLen, listener);
+                lexer.parse(address + subLen, address + len, listener);
+                lexer.parseLast();
+                lexer.clear();
+
+                // cutting the message in the middle of a string,
+                // would need cache, but it is disabled so an error expected
+                try {
+                    subLen = "{\"a\":1, \"b\": \"1234".length();
+                    lexer.parse(address, address + subLen, listener);
+                    lexer.parse(address + subLen, address + len, listener);
+                    lexer.parseLast();
+                    Assert.fail();
+                } catch (JsonException e) {
+                    TestUtils.assertEquals("JSON lexer cache is disabled", e.getFlyweightMessage());
+                    Assert.assertEquals(18, e.getPosition());
+                }
+            } finally {
+                Unsafe.free(address, json.length(), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @Test
@@ -229,7 +254,7 @@ public class JsonLexerTest {
                 p.of(path);
             }
             long l = Files.length(p.$());
-            int fd = TestFilesFacadeImpl.INSTANCE.openRO(p);
+            long fd = TestFilesFacadeImpl.INSTANCE.openRO(p.$());
             JsonParser listener = new NoOpParser();
             try {
                 long buf = Unsafe.malloc(l, MemoryTag.NATIVE_DEFAULT);
@@ -270,6 +295,27 @@ public class JsonLexerTest {
     @Test
     public void testSimpleJson() throws Exception {
         assertThat("{\"abc\":\"123\"}", "{\"abc\": \"123\"}");
+    }
+
+    @Test
+    public void testStringTooLong() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String json = "{\"a\":1, \"b\": \"123456789012345678901234567890\"]}";
+            int len = json.length() - 6;
+            long address = TestUtils.toMemory(json);
+            try (JsonLexer lexer = new JsonLexer(4, 4)) {
+                try {
+                    lexer.parse(address, address + len, listener);
+                    lexer.parseLast();
+                    Assert.fail();
+                } catch (JsonException e) {
+                    TestUtils.assertEquals("String is too long", e.getFlyweightMessage());
+                    Assert.assertEquals(41, e.getPosition());
+                }
+            } finally {
+                Unsafe.free(address, json.length(), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @Test
@@ -792,5 +838,10 @@ public class JsonLexerTest {
         @Override
         public void onEvent(int code, CharSequence tag, int position) {
         }
+    }
+
+    static {
+        // needed to prevent a false positive in memory leak detection
+        LogFactory.getLog(ServerMainVectorGroupByTest.class);
     }
 }

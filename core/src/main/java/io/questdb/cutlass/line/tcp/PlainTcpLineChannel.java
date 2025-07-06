@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ import io.questdb.network.NetworkFacade;
 
 public final class PlainTcpLineChannel implements LineChannel {
     private static final Log LOG = LogFactory.getLog(PlainTcpLineChannel.class);
-    private final int fd;
+    private final long fd;
     private final NetworkFacade nf;
     private final long sockaddr;
 
@@ -42,6 +42,7 @@ public final class PlainTcpLineChannel implements LineChannel {
         if (fd < 0) {
             throw new LineSenderException("could not allocate a file descriptor").errno(nf.errno());
         }
+        nf.configureKeepAlive(fd);
         this.sockaddr = nf.sockaddr(address, port);
         if (nf.connect(fd, sockaddr) != 0) {
             int errno = nf.errno();
@@ -61,6 +62,7 @@ public final class PlainTcpLineChannel implements LineChannel {
         if (fd < 0) {
             throw new LineSenderException("could not allocate a file descriptor").errno(nf.errno());
         }
+        nf.configureKeepAlive(fd);
         long addrInfo = nf.getAddrInfo(host, port);
         if (addrInfo == -1) {
             nf.close(fd, LOG);
@@ -93,7 +95,7 @@ public final class PlainTcpLineChannel implements LineChannel {
 
     @Override
     public int receive(long ptr, int len) {
-        return nf.recv(fd, ptr, len);
+        return nf.recvRaw(fd, ptr, len);
     }
 
     @Override
@@ -101,7 +103,7 @@ public final class PlainTcpLineChannel implements LineChannel {
         if (len > 0) {
             long o = 0;
             while (len > 0) {
-                int n = nf.send(fd, ptr + o, len);
+                int n = nf.sendRaw(fd, ptr + o, len);
                 if (n > 0) {
                     len -= n;
                     o += n;
@@ -116,6 +118,6 @@ public final class PlainTcpLineChannel implements LineChannel {
         int orgSndBufSz = nf.getSndBuf(fd);
         nf.setSndBuf(fd, sndBufferSize);
         int newSndBufSz = nf.getSndBuf(fd);
-        LOG.info().$("Send buffer size change from ").$(orgSndBufSz).$(" to ").$(newSndBufSz).$();
+        LOG.debug().$("Send buffer size change from ").$(orgSndBufSz).$(" to ").$(newSndBufSz).$();
     }
 }

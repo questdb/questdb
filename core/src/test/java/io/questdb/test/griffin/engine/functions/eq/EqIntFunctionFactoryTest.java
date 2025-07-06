@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,30 +25,30 @@
 package io.questdb.test.griffin.engine.functions.eq;
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory;
 import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class EqIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void testAll() throws SqlException {
-        call(10, 20).andAssert(false);
-        call(150, 150).andAssert(true);
-        call(Numbers.INT_NaN, 77).andAssert(false);
-        call(77, Numbers.INT_NaN).andAssert(false);
+    public void testAll() throws Exception {
+        assertMemoryLeak(() -> {
+            call(10, 20).andAssert(false);
+            call(150, 150).andAssert(true);
+            call(Numbers.INT_NULL, 77).andAssert(false);
+            call(77, Numbers.INT_NULL).andAssert(false);
+        });
     }
 
     @Test
-    public void testNullEqualsNull() throws SqlException {
-        call(Numbers.INT_NaN, Numbers.INT_NaN).andAssert(true);
+    public void testNullEqualsNull() throws Exception {
+        assertMemoryLeak(() -> call(Numbers.INT_NULL, Numbers.INT_NULL).andAssert(true));
     }
 
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new EqIntFunctionFactory();
     }
-
 }

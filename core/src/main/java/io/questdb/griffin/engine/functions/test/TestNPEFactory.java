@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,10 +27,13 @@ package io.questdb.griffin.engine.functions.test;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -43,13 +46,21 @@ public class TestNPEFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return NPEFunction.INSTANCE;
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        if (configuration.isDevModeEnabled()) {
+            return NPEFunction.INSTANCE;
+        }
+        return BooleanConstant.FALSE;
     }
 
     private static class NPEFunction extends BooleanFunction {
-
-        private final static NPEFunction INSTANCE = new NPEFunction();
+        private static final NPEFunction INSTANCE = new NPEFunction();
 
         @Override
         public boolean getBool(Record rec) {
@@ -57,7 +68,13 @@ public class TestNPEFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            executionContext.getSecurityContext().authorizeSystemAdmin();
+            super.init(symbolTableSource, executionContext);
+        }
+
+        @Override
+        public boolean isThreadSafe() {
             return true;
         }
 

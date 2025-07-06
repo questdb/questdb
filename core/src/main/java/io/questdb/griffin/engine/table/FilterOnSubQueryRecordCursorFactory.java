@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,8 +25,18 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -34,14 +44,13 @@ import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
-
+public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     private final int columnIndex;
-    private final IntList columnIndexes;
-    private final DataFrameRecordCursorWrapper cursor;
+    private final PageFrameRecordCursorWrapper cursor;
     private final ObjList<RowCursorFactory> cursorFactories;
     private final int[] cursorFactoriesIdx;
     private final IntObjHashMap<RowCursorFactory> factoriesA = new IntObjHashMap<>(64, 0.5, -5);
@@ -51,29 +60,37 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     private final RecordCursorFactory recordCursorFactory;
 
     public FilterOnSubQueryRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             @NotNull RecordCursorFactory recordCursorFactory,
             int columnIndex,
             @Nullable Function filter,
             @NotNull Record.CharSequenceFunction func,
-            @NotNull IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        super(metadata, dataFrameCursorFactory);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+
         this.recordCursorFactory = recordCursorFactory;
         this.filter = filter;
         this.func = func;
         cursorFactories = new ObjList<>();
         cursorFactoriesIdx = new int[]{0};
-        final DataFrameRecordCursorImpl dataFrameRecordCursor = new DataFrameRecordCursorImpl(
+        final PageFrameRecordCursorImpl pageFrameRecordCursor = new PageFrameRecordCursorImpl(
+                configuration,
+                metadata,
                 new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx),
                 false,
-                filter,
-                columnIndexes
+                filter
         );
-        cursor = new DataFrameRecordCursorWrapper(dataFrameRecordCursor);
+        cursor = new PageFrameRecordCursorWrapper(pageFrameRecordCursor);
         this.columnIndex = columnIndex;
-        this.columnIndexes = columnIndexes;
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return recordCursorFactory;
     }
 
     @Override
@@ -86,37 +103,47 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         sink.type("FilterOnSubQuery");
         sink.optAttr("filter", filter);
         sink.child(recordCursorFactory);
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
     @Override
     protected void _close() {
         super._close();
         Misc.free(filter);
+        Misc.free(cursor);
         recordCursorFactory.close();
         factoriesA.clear();
         factoriesB.clear();
     }
 
     @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
+    protected RecordCursor initRecordCursor(
+            PageFrameCursor frameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        cursor.of(dataFrameCursor, executionContext);
+        cursor.of(frameCursor, executionContext);
         return cursor;
     }
 
-    private class DataFrameRecordCursorWrapper implements RecordCursor {
-
-        private final DataFrameRecordCursor delegate;
+    private class PageFrameRecordCursorWrapper implements RecordCursor {
+        private final PageFrameRecordCursor delegate;
         private RecordCursor baseCursor;
         private IntObjHashMap<RowCursorFactory> factories;
         private IntObjHashMap<RowCursorFactory> targetFactories;
 
-        private DataFrameRecordCursorWrapper(DataFrameRecordCursor delegate) {
+        private PageFrameRecordCursorWrapper(PageFrameRecordCursor delegate) {
             this.delegate = delegate;
             this.factories = factoriesA;
+        }
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            if (baseCursor != null) {
+                buildFactories();
+                baseCursor = Misc.free(baseCursor);
+            }
+
+            delegate.calculateSize(circuitBreaker, counter);
         }
 
         @Override
@@ -159,7 +186,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
             return delegate.newSymbolTable(columnIndex);
         }
 
-        public void of(DataFrameCursor cursor, SqlExecutionContext executionContext) throws SqlException {
+        public void of(PageFrameCursor cursor, SqlExecutionContext executionContext) throws SqlException {
             if (baseCursor != null) {
                 baseCursor = Misc.free(baseCursor);
             }
@@ -178,6 +205,11 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         }
 
         @Override
+        public long preComputedStateSize() {
+            return baseCursor == null ? 1 : 0;
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             delegate.recordAt(record, atRowId);
         }
@@ -188,8 +220,13 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         }
 
         @Override
-        public boolean skipTo(long rowCount) {
-            return delegate.skipTo(rowCount);
+        public void skipRows(Counter rowCount) {
+            if (baseCursor != null) {
+                buildFactories();
+                baseCursor = Misc.free(baseCursor);
+            }
+
+            delegate.skipRows(rowCount);
         }
 
         @Override
@@ -198,10 +235,11 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         }
 
         private void buildFactories() {
-            final StaticSymbolTable symbolTable = delegate.getDataFrameCursor().getSymbolTable(columnIndex);
+            final StaticSymbolTable symbolTable = delegate.getPageFrameCursor().getSymbolTable(columnIndex);
             final Record record = baseCursor.getRecord();
+            StringSink sink = Misc.getThreadLocalSink();
             while (baseCursor.hasNext()) {
-                final CharSequence symbol = func.get(record, 0);
+                final CharSequence symbol = func.get(record, 0, sink);
                 int symbolKey = symbolTable.keyOf(symbol);
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                     final int targetIndex = targetFactories.keyIndex(symbolKey);
@@ -229,7 +267,6 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
                                         filter,
                                         false,
                                         BitmapIndexReader.DIR_FORWARD,
-                                        columnIndexes,
                                         null
                                 );
                             }

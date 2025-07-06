@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,9 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.rnd;
 
+import io.questdb.PropertyKey;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.rnd.RndSymbolFunctionFactory;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -198,8 +199,8 @@ public class RndSymbolFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testRndFunctionsMemoryConfiguration() {
-        configOverrideRndFunctionMemoryPageSize(1024);
-        configOverrideRndFunctionMemoryMaxPages(32);
+        node1.setProperty(PropertyKey.CAIRO_RND_MEMORY_PAGE_SIZE, 1024);
+        node1.setProperty(PropertyKey.CAIRO_RND_MEMORY_MAX_PAGES, 32);
 
         assertFailure("[18] breached memory limit set for rnd_symbol(iiii) [pageSize=1024, maxPages=32, memLimit=32768, requiredMem=78000]",
                 "select rnd_symbol(1000,30,33,0) as testCol from long_sequence(20)");

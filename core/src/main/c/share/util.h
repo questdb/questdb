@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -68,13 +68,20 @@
     #define MM_PREFETCH_NTA(address) _mm_prefetch((address), _MM_HINT_NTA)
 #endif
 
+#ifdef __APPLE__
+#define __JLONG_REINTERPRET_CAST__(type, var)  (type)var
+#else
+#define __JLONG_REINTERPRET_CAST__(type, var)  reinterpret_cast<type>(var)
+#endif
+
 constexpr jdouble D_MAX = std::numeric_limits<jdouble>::infinity();
 constexpr jdouble D_MIN = -std::numeric_limits<jdouble>::infinity();
-constexpr jint I_MAX = std::numeric_limits<jint>::max();
+constexpr jint S_MIN = std::numeric_limits<jshort>::min();
+constexpr jint S_MAX = std::numeric_limits<jshort>::max();
 constexpr jint I_MIN = std::numeric_limits<jint>::min();
+constexpr jint I_MAX = std::numeric_limits<jint>::max();
 constexpr jlong L_MIN = std::numeric_limits<jlong>::min();
 constexpr jlong L_MAX = std::numeric_limits<jlong>::max();
-constexpr uint64_t UL_MIN = std::numeric_limits<uint64_t>::min();
 constexpr uint64_t UL_MAX = std::numeric_limits<uint64_t>::max();
 constexpr jdouble D_NAN = std::numeric_limits<jdouble>::quiet_NaN();
 
@@ -89,12 +96,12 @@ inline uint32_t ceil_pow_2(uint32_t v) {
 }
 
 template<class T, class V>
-inline int64_t scroll_up(T data, int64_t high, V value) {
+inline int64_t scroll_up(T data, int64_t low, int64_t high, V value) {
     do {
-        if (high > 0) {
+        if (high > low) {
             high--;
         } else {
-            return 0;
+            return high;
         }
     } while (data[high] == value);
     return high + 1;
@@ -143,8 +150,9 @@ inline int64_t scan_down(T* data, V value, int64_t low, int64_t high) {
 // the "high" boundary is inclusive
 template<class T, class V>
 inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir) {
-    while (high - low > 65) {
-        const int64_t mid = (low + high) / 2;
+    int64_t diff;
+    while ((diff = high - low) > 65) {
+        const int64_t mid = low + diff / 2;
         const T midVal = data[mid];
 
         if (midVal < value) {
@@ -154,7 +162,7 @@ inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_
         } else {
             // In case of multiple equal values, find the first
             return scan_dir == -1 ?
-                   scroll_up(data, mid, midVal) :
+                   scroll_up(data, low, mid, midVal) :
                    scroll_down(data, mid, high, midVal);
         }
     }

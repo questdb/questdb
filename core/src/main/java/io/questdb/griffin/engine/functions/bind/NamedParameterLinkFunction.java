@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,18 +25,24 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
-public class NamedParameterLinkFunction implements ScalarFunction {
+public class NamedParameterLinkFunction implements Function {
     private final int type;
     private final String variableName;
     private Function base;
@@ -49,6 +55,11 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     @Override
     public void close() {
         base = Misc.free(base);
+    }
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        return getBase().getArray(rec);
     }
 
     @Override
@@ -112,8 +123,18 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public final int getIPv4(Record rec) {
+        return getBase().getIPv4(rec);
+    }
+
+    @Override
     public int getInt(Record rec) {
         return getBase().getInt(rec);
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -132,7 +153,7 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public void getLong256(Record rec, CharSink sink) {
+    public void getLong256(Record rec, CharSink<?> sink) {
         getBase().getLong256(rec, sink);
     }
 
@@ -157,13 +178,8 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return getBase().getStr(rec);
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-        getBase().getStr(rec, sink);
+    public CharSequence getStrA(Record rec) {
+        return getBase().getStrA(rec);
     }
 
     @Override
@@ -196,8 +212,19 @@ public class NamedParameterLinkFunction implements ScalarFunction {
         return type;
     }
 
-    public String getVariableName() {
-        return variableName;
+    @Override
+    public Utf8Sequence getVarcharA(Record rec) {
+        return getBase().getVarcharA(rec);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
+        return getBase().getVarcharB(rec);
+    }
+
+    @Override
+    public int getVarcharSize(Record rec) {
+        return getBase().getVarcharSize(rec);
     }
 
     @Override
@@ -211,16 +238,18 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        switch (type) {
-            case ColumnType.STRING:
-            case ColumnType.SYMBOL:
-            case ColumnType.LONG256:
-            case ColumnType.BINARY:
-                return false;
-            default:
-                return true;
-        }
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public boolean isThreadSafe() {
+        return true;
     }
 
     @Override

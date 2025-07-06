@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,9 +24,10 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.str.Sinkable;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.std.Sinkable;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -63,4 +64,11 @@ public class SqlExceptionTest extends AbstractCairoTest {
         sink.put((Sinkable) SqlException.$(123, "hello"));
         TestUtils.assertEquals("[123]: hello", sink);
     }
+
+    @Test
+    public void testUnsupportedCast() {
+        TestUtils.assertEquals("[10]: unsupported cast [column=columnName, from=SYMBOL, to=BINARY]",
+                SqlException.unsupportedCast(10, "columnName", ColumnType.SYMBOL, ColumnType.BINARY));
+    }
+
 }

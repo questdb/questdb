@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,15 +28,16 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RebuildColumnBase;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.str.Utf8String;
 
 public class CmdUtils {
     static void runColumnRebuild(RebuildColumnCommandArgs params, RebuildColumnBase ri) {
         final Log log = LogFactory.getLog("recover-var-index");
-        ri.of(params.tablePath);
+        ri.of(new Utf8String(params.tablePath));
         try {
             ri.reindex(params.partition, params.column);
         } catch (CairoException ex) {
-            log.error().$(ex.getFlyweightMessage()).$();
+            log.error().$safe(ex.getFlyweightMessage()).$();
         }
     }
 }

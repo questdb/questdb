@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -91,7 +91,7 @@ public class OooCppBenchmarkSetMemoryShuffle {
                 double timeout1 = runReshuffle64(iterations, i, index, src, dest);
                 double timeout2 = runReshuffle32(iterations, i, index, src, dest);
                 double timeout3 = runReshuffle16(iterations, i, index, src, dest);
-                System.out.println("" + i + ", " + timeout1 + ", " + timeout2 + ", " + timeout3);
+                System.out.println(i + ", " + timeout1 + ", " + timeout2 + ", " + timeout3);
             }
         } finally {
             Unsafe.free(index, BUFFER_MAX_SIZE * 2, MemoryTag.NATIVE_DEFAULT);

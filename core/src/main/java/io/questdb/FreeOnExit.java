@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,13 +34,6 @@ public class FreeOnExit implements QuietCloseable {
 
     private final ObjList<Closeable> list = new ObjList<>();
 
-    public <T extends Closeable> T register(T closeable) {
-        if (closeable != null) {
-            list.add(closeable);
-        }
-        return closeable;
-    }
-
     @Override
     public void close() {
         // free instances in reverse order to which we allocated them
@@ -48,5 +41,12 @@ public class FreeOnExit implements QuietCloseable {
             Misc.free(list.getQuick(i));
         }
         list.clear();
+    }
+
+    public <T extends Closeable> T register(T closeable) {
+        if (closeable != null) {
+            list.add(closeable);
+        }
+        return closeable;
     }
 }

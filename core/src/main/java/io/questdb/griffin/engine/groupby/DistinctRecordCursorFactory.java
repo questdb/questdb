@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,24 +24,47 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * This operator handles cases of selecting distinct values on projections, that
+ * include group-by and/or window functions. All other cases are handled by the parallel group-by rewrite.
+ * <p>
+ * This operator will also implement the limit, if it is present on the query model. The limit is implemented as
+ * an early exit when building the hash set of values. The edge cases of the early exit could be "limit 10,20".
+ * Here the early exit value is 20 but the actual "limit" is 10, as in return no more than 10 rows. For that reason
+ * the operator does not advertise that it follows "limit advice".
+ */
 public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private final RecordCursorFactory base;
     private final DistinctRecordCursor cursor;
+    private final Function limitHiFunction;
+    private final Function limitLoFunction;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink;
 
@@ -49,15 +72,24 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
             CairoConfiguration configuration,
             RecordCursorFactory base,
             @Transient @NotNull EntityColumnFilter columnFilter,
-            @Transient @NotNull BytecodeAssembler asm
+            @Transient @NotNull BytecodeAssembler asm,
+            Function limitLoFunction,
+            Function limitHiFunction
     ) {
         super(base.getMetadata());
-        final RecordMetadata metadata = base.getMetadata();
-        // sink will be storing record columns to map key
-        columnFilter.of(metadata.getColumnCount());
-        mapSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter, false);
         this.base = base;
-        cursor = new DistinctRecordCursor(configuration, metadata);
+        this.limitLoFunction = limitLoFunction;
+        this.limitHiFunction = limitHiFunction;
+        try {
+            final RecordMetadata metadata = base.getMetadata();
+            // sink will be storing record columns to map key
+            columnFilter.of(metadata.getColumnCount());
+            mapSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter);
+            cursor = new DistinctRecordCursor(configuration, metadata, limitLoFunction, limitHiFunction);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -72,20 +104,24 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
             cursor.of(baseCursor, mapSink, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
-            baseCursor.close();
+            cursor.close();
             throw e;
         }
     }
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return base.recordCursorSupportsRandomAccess();
+        return false;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Distinct");
         sink.attr("keys").val(getMetadata());
+        long earlyExit = computeEarlyExit(limitLoFunction, limitHiFunction);
+        if (earlyExit != Long.MAX_VALUE) {
+            sink.attr("earlyExit").val(earlyExit);
+        }
         sink.child(base);
     }
 
@@ -95,41 +131,76 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    protected void _close() {
-        base.close();
-        cursor.close();
+    public boolean usesIndex() {
+        return base.usesIndex();
     }
 
-    private static class DistinctRecordCursor implements RecordCursor {
+    private static long computeEarlyExit(Function limitLoFunction, Function limitHiFunction) {
+        long earlyExit = Long.MAX_VALUE;
+        long limitLo;
+        long limitHi;
+        if (limitLoFunction != null && (limitLo = limitLoFunction.getLong(null)) > 0) {
+            if (limitHiFunction != null) {
+                limitHi = limitHiFunction.getLong(null);
+                if (limitHi > 0) {
+                    earlyExit = limitHi;
+                }
+            } else {
+                earlyExit = limitLo;
+            }
+        }
+        return earlyExit;
+    }
+
+    @Override
+    protected void _close() {
+        Misc.free(base);
+        Misc.free(cursor);
+        Misc.free(limitLoFunction);
+        Misc.free(limitHiFunction);
+    }
+
+    private static class DistinctRecordCursor implements NoRandomAccessRecordCursor {
+        private final IntList columnIndex = new IntList();
         private final Map dataMap;
+        private final Function limitHiFunction;
+        private final Function limitLoFunction;
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private boolean isMapBuilt;
         private boolean isOpen;
-        private Record record;
+        private RecordCursor mapCursor;
+        private MapRecord recordA;
         private RecordSink recordSink;
 
-        public DistinctRecordCursor(CairoConfiguration configuration, RecordMetadata metadata) {
-            this.dataMap = MapFactory.createMap(configuration, metadata);
+        public DistinctRecordCursor(
+                CairoConfiguration configuration,
+                RecordMetadata metadata,
+                Function limitLoFunction,
+                Function limitHiFunction
+        ) {
             this.isOpen = true;
+            this.dataMap = MapFactory.createOrderedMap(configuration, metadata);
+            // entity column index because distinct SQL has the same metadata as the base SQL
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                columnIndex.add(i);
+            }
+            this.limitLoFunction = limitLoFunction;
+            this.limitHiFunction = limitHiFunction;
         }
 
         @Override
         public void close() {
             if (isOpen) {
                 isOpen = false;
-                Misc.free(baseCursor);
+                baseCursor = Misc.free(baseCursor);
                 Misc.free(dataMap);
             }
         }
 
         @Override
         public Record getRecord() {
-            return record;
-        }
-
-        @Override
-        public Record getRecordB() {
-            return baseCursor.getRecordB();
+            return recordA;
         }
 
         @Override
@@ -139,15 +210,8 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                MapKey key = dataMap.withKey();
-                recordSink.copy(record, key);
-                if (key.create()) {
-                    return true;
-                }
-            }
-            return false;
+            buildMap();
+            return mapCursor.hasNext();
         }
 
         @Override
@@ -156,30 +220,57 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         public void of(RecordCursor baseCursor, RecordSink recordSink, SqlExecutionCircuitBreaker circuitBreaker) {
+            this.baseCursor = baseCursor;
             if (!isOpen) {
                 isOpen = true;
                 dataMap.reopen();
             }
-            this.baseCursor = baseCursor;
+            this.isMapBuilt = false;
+            this.recordA = dataMap.getRecord();
+            this.recordA.setSymbolTableResolver(baseCursor, columnIndex);
             this.recordSink = recordSink;
-            record = baseCursor.getRecord();
             this.circuitBreaker = circuitBreaker;
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            baseCursor.recordAt(record, atRowId);
+        public long preComputedStateSize() {
+            return dataMap.size();
         }
 
         @Override
         public long size() {
-            return -1;
+            buildMap();
+            return dataMap.size();
         }
 
         @Override
         public void toTop() {
-            baseCursor.toTop();
-            dataMap.clear();
+            if (isMapBuilt && mapCursor != null) {
+                mapCursor.toTop();
+            }
+        }
+
+        private void buildMap() {
+            if (!isMapBuilt) {
+                buildMapSlow();
+            }
+        }
+
+        private void buildMapSlow() {
+            long earlyExit = computeEarlyExit(limitLoFunction, limitHiFunction);
+            Record record = baseCursor.getRecord();
+            while (baseCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                MapKey key = dataMap.withKey();
+                recordSink.copy(record, key);
+                if (key.create()) {
+                    if (earlyExit-- == 0) {
+                        break;
+                    }
+                }
+            }
+            mapCursor = dataMap.getCursor();
+            isMapBuilt = true;
         }
     }
 }

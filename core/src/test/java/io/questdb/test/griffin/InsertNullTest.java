@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,11 +29,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class InsertNullTest extends AbstractGriffinTest {
+public class InsertNullTest extends AbstractCairoTest {
 
     private static final int NULL_INSERTS = 3;
 
@@ -43,12 +43,12 @@ public class InsertNullTest extends AbstractGriffinTest {
             {"byte", "0"},
             {"short", "0"},
             {"char", ""},
-            {"int", "NaN"},
-            {"long", "NaN"},
+            {"int", "null"},
+            {"long", "null"},
             {"date", ""},
             {"timestamp", ""},
-            {"float", "NaN"},
-            {"double", "NaN"},
+            {"float", "null"},
+            {"double", "null"},
             {"string", ""},
             {"symbol", ""},
             {"long256", ""},
@@ -67,7 +67,7 @@ public class InsertNullTest extends AbstractGriffinTest {
             }
             try {
                 final String[] type = TYPES[i];
-                assertQuery13(
+                assertQuery(
                         "value\n",
                         "x",
                         String.format("create table x (value %s)", type[0]),
@@ -75,7 +75,8 @@ public class InsertNullTest extends AbstractGriffinTest {
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, true),
                         true,
-                        true
+                        true,
+                        false
                 );
             } finally {
                 tearDown();
@@ -87,7 +88,7 @@ public class InsertNullTest extends AbstractGriffinTest {
     public void testInsertNullFromSelectOnDesignatedColumnMustFail() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertQuery13(
+                assertQuery(
                         "sym\ty\n",
                         "xx",
                         "create table xx (sym symbol, y timestamp) timestamp(y)",
@@ -95,11 +96,12 @@ public class InsertNullTest extends AbstractGriffinTest {
                         "insert into xx select 'AA', null from long_sequence(1)",
                         "y\n",
                         true,
+                        false,
                         false
                 );
                 Assert.fail();
             } catch (CairoException expected) {
-                Assert.assertTrue(expected.getMessage().contains("timestamp before 1970-01-01 is not allowed"));
+                Assert.assertTrue(expected.getMessage().contains("designated timestamp column cannot be NULL"));
             }
         });
     }
@@ -108,7 +110,7 @@ public class InsertNullTest extends AbstractGriffinTest {
     public void testInsertNullFromValuesOnDesignatedColumnMustFail() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertQuery13(
+                assertQuery(
                         "sym\ty\n",
                         "xx",
                         "create table xx (sym symbol, y timestamp) timestamp(y)",
@@ -116,11 +118,12 @@ public class InsertNullTest extends AbstractGriffinTest {
                         "insert into xx values('AA', null)",
                         "y\n",
                         true,
+                        false,
                         false
                 );
                 Assert.fail();
             } catch (SqlException expected) {
-                Assert.assertEquals("[0] insert statement must populate timestamp", expected.getMessage());
+                Assert.assertEquals("[28] designated timestamp column cannot be NULL", expected.getMessage());
             }
         });
     }
@@ -133,7 +136,7 @@ public class InsertNullTest extends AbstractGriffinTest {
             }
             try {
                 final String[] type = TYPES[i];
-                assertQuery13(
+                assertQuery(
                         "value\n",
                         "x where value = null",
                         String.format("create table x (value %s)", type[0]),
@@ -141,7 +144,8 @@ public class InsertNullTest extends AbstractGriffinTest {
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, !isNotNullable(type[0])),
                         !isNotNullable(type[0]),
-                        type[0].equals("long256")
+                        false,
+                        false
                 );
             } finally {
                 tearDown();
@@ -157,15 +161,16 @@ public class InsertNullTest extends AbstractGriffinTest {
             }
             try {
                 final String[] type = TYPES[i];
-                assertQuery13(
+                assertQuery(
                         "value\n",
                         "x where value is not null",
                         String.format("create table x (value %s)", type[0]),
                         null,
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, isNotNullable(type[0])),
-                        !type[0].equals("long256"),
-                        isNotNullable(type[0])
+                        true,
+                        isNotNullable(type[0]),
+                        false
                 );
             } finally {
                 tearDown();
@@ -181,7 +186,7 @@ public class InsertNullTest extends AbstractGriffinTest {
             }
             try {
                 final String[] type = TYPES[i];
-                assertQuery13(
+                assertQuery(
                         "value\n",
                         "x where value is null",
                         String.format("create table x (value %s)", type[0]),
@@ -189,7 +194,8 @@ public class InsertNullTest extends AbstractGriffinTest {
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, !isNotNullable(type[0])),
                         !isNotNullable(type[0]),
-                        type[0].equals("long256")
+                        false,
+                        false
                 );
             } finally {
                 tearDown();
@@ -205,15 +211,16 @@ public class InsertNullTest extends AbstractGriffinTest {
             }
             try {
                 final String[] type = TYPES[i];
-                assertQuery13(
+                assertQuery(
                         "value\n",
                         "x where value != null",
                         String.format("create table x (value %s)", type[0]),
                         null,
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, isNotNullable(type[0])),
-                        !type[0].equals("long256"),
-                        isNotNullable(type[0])
+                        true,
+                        isNotNullable(type[0]),
+                        false
                 );
             } finally {
                 tearDown();
@@ -228,7 +235,7 @@ public class InsertNullTest extends AbstractGriffinTest {
     }
 
     static String expectedNullInserts(String header, String nullValue, int count, boolean expectsOutput) {
-        StringSink sb = Misc.getThreadLocalBuilder();
+        StringSink sb = Misc.getThreadLocalSink();
         sb.put(header);
         if (expectsOutput) {
             for (int i = 0; i < count; i++) {

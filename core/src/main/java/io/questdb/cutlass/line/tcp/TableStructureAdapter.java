@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,17 +24,21 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
-import static io.questdb.std.Chars.utf8ToUtf16;
-
-class TableStructureAdapter implements TableStructure {
+public class TableStructureAdapter implements TableStructure {
     private static final String DEFAULT_TIMESTAMP_FIELD = "timestamp";
     private static final ThreadLocal<StringSink> tempSink = new ThreadLocal<>(StringSink::new);
     private final CairoConfiguration cairoConfiguration;
@@ -42,13 +46,20 @@ class TableStructureAdapter implements TableStructure {
     private final int defaultPartitionBy;
     private final ObjList<LineTcpParser.ProtoEntity> entities = new ObjList<>();
     private final LowerCaseCharSequenceHashSet entityNamesUtf16 = new LowerCaseCharSequenceHashSet();
+    private final boolean walEnabledDefault;
     private CharSequence tableName;
     private int timestampIndex = -1;
 
-    public TableStructureAdapter(CairoConfiguration configuration, DefaultColumnTypes defaultColumnTypes, int defaultPartitionBy) {
+    public TableStructureAdapter(
+            CairoConfiguration configuration,
+            DefaultColumnTypes defaultColumnTypes,
+            int defaultPartitionBy,
+            boolean walEnabledDefault
+    ) {
         this.cairoConfiguration = configuration;
         this.defaultColumnTypes = defaultColumnTypes;
         this.defaultPartitionBy = defaultPartitionBy;
+        this.walEnabledDefault = walEnabledDefault;
     }
 
     @Override
@@ -70,12 +81,24 @@ class TableStructureAdapter implements TableStructure {
         throw CairoException.nonCritical().put("column name contains invalid characters [colName=").put(colName).put(']');
     }
 
+    public CharSequence getColumnNameNoValidation(int columnIndex) {
+        assert columnIndex < getColumnCount();
+        if (columnIndex == getTimestampIndex()) {
+            return DEFAULT_TIMESTAMP_FIELD;
+        }
+        return entities.get(columnIndex).getName().toString();
+    }
+
     @Override
     public int getColumnType(int columnIndex) {
         if (columnIndex == getTimestampIndex()) {
             return ColumnType.TIMESTAMP;
         }
-        return defaultColumnTypes.DEFAULT_COLUMN_TYPES[entities.get(columnIndex).getType()];
+        int columnType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entities.get(columnIndex).getType()];
+        if (columnType == ColumnType.ARRAY) {
+            columnType = entities.get(columnIndex).getArray().getType();
+        }
+        return columnType;
     }
 
     @Override
@@ -119,30 +142,29 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
+    public boolean isDedupKey(int columnIndex) {
+        return false;
+    }
+
+    @Override
     public boolean isIndexed(int columnIndex) {
         return false;
     }
 
     @Override
-    public boolean isSequential(int columnIndex) {
-        return false;
-    }
-
-    @Override
     public boolean isWalEnabled() {
-        return cairoConfiguration.getWalEnabledDefault() && PartitionBy.isPartitioned(getPartitionBy());
+        return walEnabledDefault && PartitionBy.isPartitioned(getPartitionBy());
     }
 
-    TableStructureAdapter of(CharSequence tableName, LineTcpParser parser) {
+    public TableStructureAdapter of(CharSequence tableName, LineTcpParser parser) {
         this.tableName = tableName;
         entityNamesUtf16.clear();
         entities.clear();
         timestampIndex = -1;
-        final boolean hasNonAsciiChars = parser.hasNonAsciiChars();
         for (int i = 0; i < parser.getEntityCount(); i++) {
             final LineTcpParser.ProtoEntity entity = parser.getEntity(i);
-            final DirectByteCharSequence colNameUtf8 = entity.getName();
-            final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8, tempSink.get(), hasNonAsciiChars);
+            final DirectUtf8Sequence colNameUtf8 = entity.getName();
+            final CharSequence colNameUtf16 = Utf8s.directUtf8ToUtf16(colNameUtf8, tempSink.get());
             int index = entityNamesUtf16.keyIndex(colNameUtf16);
             if (index > -1) {
                 entityNamesUtf16.addAt(index, colNameUtf16.toString());

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,15 +24,25 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Ignore;
 import org.junit.Test;
 
-public class OrderByExpressionTest extends AbstractGriffinTest {
+public class OrderByExpressionTest extends AbstractCairoTest {
+
+    @Test
+    public void testOrderByBinaryFails() throws Exception {
+        assertException(
+                "select b from (select rnd_bin(10, 20, 2) b from long_sequence(10)) order by b desc",
+                76,
+                "BINARY is not a supported type in ORDER BY clause"
+        );
+    }
 
     @Test
     public void testOrderByColumnInJoinedSubquery() throws Exception {
-        assertQuery("x\toth\n" +
+        assertQuery(
+                "x\toth\n" +
                         "1\t100\n" +
                         "1\t81\n" +
                         "1\t64\n",
@@ -48,7 +58,12 @@ public class OrderByExpressionTest extends AbstractGriffinTest {
                         "  )\n" +
                         ")\n" +
                         "order by x*2 asc\n" +
-                        "limit 3", null, null, true, false);
+                        "limit 3",
+                null,
+                null,
+                true,
+                true
+        );
     }
 
     // fails with duplicate column : column because alias created for 'x*x' clashes with one created for x+rnd_int(1,10,0)*0
@@ -56,7 +71,8 @@ public class OrderByExpressionTest extends AbstractGriffinTest {
     @Test
     @Ignore
     public void testOrderByExpressionInJoinedSubquery() throws Exception {
-        assertQuery("x\tcolumn\tcolumn1\n" +
+        assertQuery(
+                "x\tcolumn\tcolumn1\n" +
                         "1\t100\t50\n" +
                         "1\t81\t45\n" +
                         "1\t64\t40\n",
@@ -69,23 +85,35 @@ public class OrderByExpressionTest extends AbstractGriffinTest {
                         "    select x*x,5*x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 \n" +
                         ")\n" +
                         "order by x*2  asc\n" +
-                        "limit 3", null, null, true, true);
+                        "limit 3",
+                null,
+                null,
+                true,
+                true
+        );
     }
 
     @Test
     public void testOrderByExpressionInNestedQuery() throws Exception {
-        assertQuery("x\n6\n7\n8\n",
+        assertQuery(
+                "x\n6\n7\n8\n",
                 "select * from \n" +
                         "(\n" +
                         "  select x from long_sequence(10) order by x/2 desc limit 5 \n" +
                         ")\n" +
                         "order by x*2 asc\n" +
-                        "limit 3", null, null, true, true);
+                        "limit 3",
+                null,
+                null,
+                true,
+                true
+        );
     }
 
     @Test
     public void testOrderByExpressionWhenColumnHasAliasInJoinedSubquery() throws Exception {
-        assertQuery("x\text\n1\t100\n1\t81\n1\t64\n",
+        assertQuery(
+                "x\text\n1\t100\n1\t81\n1\t64\n",
                 "select * from \n" +
                         "(\n" +
                         "  select x from long_sequence(10) \n" +
@@ -95,43 +123,278 @@ public class OrderByExpressionTest extends AbstractGriffinTest {
                         "    select x*x as ext from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 \n" +
                         ")\n" +
                         "order by x*2 asc, ext desc\n" +
-                        "limit 3", null, null, true, false);
+                        "limit 3",
+                null,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOrderByExpressionWithDuplicatesMaintainsOriginalOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab as (select x x, x%2 y from long_sequence(10))");
+
+            assertQuery(
+                    "x\ty\n" +
+                            "1\t1\n" +
+                            "2\t0\n" +
+                            "3\t1\n" +
+                            "4\t0\n" +
+                            "5\t1\n" +
+                            "6\t0\n" +
+                            "7\t1\n" +
+                            "8\t0\n" +
+                            "9\t1\n" +
+                            "10\t0\n",
+                    "select * from tab order by x/x",
+                    null,
+                    true,
+                    true
+            );
+
+            assertQuery(
+                    "x\ty\n" +
+                            "2\t0\n" +
+                            "4\t0\n" +
+                            "6\t0\n" +
+                            "8\t0\n" +
+                            "10\t0\n" +
+                            "1\t1\n" +
+                            "3\t1\n" +
+                            "5\t1\n" +
+                            "7\t1\n" +
+                            "9\t1\n",
+                    "select * from tab order by y, x",
+                    null,
+                    true,
+                    true
+            );
+
+            assertQuery(
+                    "x\ty\n" +
+                            "2\t0\n" +
+                            "4\t0\n" +
+                            "6\t0\n" +
+                            "8\t0\n" +
+                            "10\t0\n" +
+                            "1\t1\n" +
+                            "3\t1\n" +
+                            "5\t1\n" +
+                            "7\t1\n" +
+                            "9\t1\n",
+                    "select * from (select t2.* from tab t1 cross join tab t2 limit 10) order by y",
+                    null,
+                    true,
+                    true
+            );
+
+            assertQuery(
+                    "x\ty\n" +
+                            "1\t1\n" +
+                            "2\t0\n" +
+                            "3\t1\n" +
+                            "4\t0\n" +
+                            "5\t1\n" +
+                            "6\t0\n" +
+                            "7\t1\n" +
+                            "8\t0\n" +
+                            "9\t1\n" +
+                            "10\t0\n",
+                    "select * from (select t2.* from tab t1 cross join tab t2 limit 10) order by x/x",
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testOrderByExpressionWithFunctionCallInNestedQuery() throws Exception {
-        assertQuery("x\n6\n7\n8\n",
+        assertQuery(
+                "x\n6\n7\n8\n",
                 "select * from \n" +
                         "(\n" +
                         "    select x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 \n" +
                         ")\n" +
                         "order by x*2 asc\n" +
-                        "limit 3", null, null, true, true);
+                        "limit 3",
+                null,
+                null,
+                true,
+                true
+        );
     }
 
     @Test
     public void testOrderByExpressionWithFunctionCallInWithClause() throws Exception {
-        assertQuery("x\n6\n7\n8\n",
+        assertQuery(
+                "x\n6\n7\n8\n",
                 "with q as (select x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 ) \n" +
                         "select * from q\n" +
                         "order by x*2 asc\n" +
-                        "limit 3", null, null, true, true);
+                        "limit 3",
+                null,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOrderByIntervalFails() throws Exception {
+        assertException(
+                "select i from (" +
+                        "  (select interval(100000,200000) i) " +
+                        "  union all " +
+                        "  (select interval(100000,200000) i) " +
+                        "  union all " +
+                        "  (select null::interval i)" +
+                        ") " +
+                        "order by i desc",
+                151,
+                "INTERVAL is not a supported type in ORDER BY clause"
+        );
+    }
+
+    @Test
+    public void testOrderByNumericColumnThatDoesExist() throws Exception {
+        assertQuery("5\n" +
+                        "123\n" +
+                        "456\n" +
+                        "789\n",
+                "SELECT * FROM (\n" +
+                        "  SELECT 456 AS \"5\"\n" +
+                        "  UNION ALL \n" +
+                        "  SELECT 789 AS \"5\"\n" +
+                        "  UNION ALL \n" +
+                        "  SELECT 123 AS \"5\"\n" +
+                        ")\n" +
+                        "ORDER BY 5",
+                null,
+                true,
+                true
+        );
+
+        assertQuery("5\n" +
+                        "123\n" +
+                        "456\n" +
+                        "789\n",
+                "SELECT * FROM (\n" +
+                        "  SELECT 456 AS \"5\"\n" +
+                        "  UNION ALL \n" +
+                        "  SELECT 789 AS \"5\"\n" +
+                        "  UNION ALL \n" +
+                        "  SELECT 123 AS \"5\"\n" +
+                        ")\n" +
+                        "ORDER BY 1",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOrderByNumericColumnThatDoesNotExist() throws Exception {
+        assertException("SELECT * FROM (\n" +
+                "  SELECT 456 AS \"5\"\n" +
+                "  UNION ALL \n" +
+                "  SELECT 789 AS \"5\"\n" +
+                "  UNION ALL \n" +
+                "  SELECT 123 AS \"5\"\n" +
+                ")\n" +
+                "ORDER BY 6", 113, "order column position is out of range [max=1]");
+    }
+
+    @Test
+    public void testOrderByTwoColumnsInJoin() throws Exception {
+        assertQuery(
+                "id\ts1\ts2\n" +
+                        "42\tfoo1\tbar1\n" +
+                        "42\tfoo1\tbar2\n" +
+                        "42\tfoo1\tbar2\n" +
+                        "42\tfoo1\tbar2\n" +
+                        "42\tfoo2\tbar1\n" +
+                        "42\tfoo2\tbar2\n" +
+                        "42\tfoo2\tbar3\n" +
+                        "42\tfoo2\tbar3\n" +
+                        "42\tfoo3\tbar2\n" +
+                        "42\tfoo3\tbar3\n",
+                "select * " +
+                        "from (" +
+                        "  select b.*" +
+                        "  from (select 42 id) a " +
+                        "  left join (x union all (select 0 id, 'foo0' s1, 'bar0')) b on a.id = b.id" +
+                        ")" +
+                        "order by s1, s2",
+                "create table x as (select 42 id, rnd_str('foo1','foo2','foo3') s1, rnd_str('bar1','bar2','bar3') s2 from long_sequence(10))",
+                null,
+                true,
+                false
+        );
     }
 
     @Test
     public void testOrderByTwoExpressions() throws Exception {
-        assertQuery("x\n10\n9\n8\n7\n6\n",
-                "select x from long_sequence(10) order by x/100, x*x desc  limit 5", null, null, true, true);
+        assertQuery(
+                "x\n10\n9\n8\n7\n6\n",
+                "select x from long_sequence(10) order by x/100, x*x desc  limit 5",
+                null,
+                null,
+                true,
+                true
+        );
     }
 
     @Test
     public void testOrderByTwoExpressionsInNestedQuery() throws Exception {
-        assertQuery("x\n6\n7\n8\n",
+        assertQuery(
+                "x\n6\n7\n8\n",
                 "select * from \n" +
                         "(\n" +
                         "  select x from long_sequence(10) order by x/2 desc, x*8 desc limit 5 \n" +
                         ")\n" +
                         "order by x*2 asc\n" +
-                        "limit 3", null, null, true, true);
+                        "limit 3",
+                null,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOrderByWithAlphanumericNamedColumn() throws Exception {
+        assertMemoryLeak(() -> assertSql("5_sum\n" +
+                "123\n" +
+                "456\n" +
+                "789\n", "SELECT * FROM (\n" +
+                "  SELECT 456 AS \"5_sum\"\n" +
+                "  UNION ALL \n" +
+                "  SELECT 789 AS \"5_sum\"\n" +
+                "  UNION ALL \n" +
+                "  SELECT 123 AS \"5_sum\"\n" +
+                ")\n" +
+                "ORDER BY \"5_sum\""));
+    }
+
+    @Test
+    public void testOrderByWithAmbiguousColumnOrdering() throws Exception {
+        assertQuery("5\t1\n" +
+                        "123\t999\n" +
+                        "456\t123\n" +
+                        "789\t456\n",
+                "SELECT * FROM (\n" +
+                        "  SELECT 456 AS \"5\", 123 AS \"1\"\n" +
+                        "  UNION ALL \n" +
+                        "  SELECT 789 AS \"5\",  456 AS \"1\"\n" +
+                        "  UNION ALL \n" +
+                        "  SELECT 123 AS \"5\",  999 AS \"1\"\n" +
+                        ")\n" +
+                        "ORDER BY 1",
+                null,
+                true,
+                true);
     }
 }

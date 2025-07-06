@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,10 +38,99 @@ namespace questdb::x86 {
         return {Mem(vars_ptr, 8 * idx, type_size), type, data_kind_t::kMemory};
     }
 
-    jit_value_t
-    read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &cols_ptr, const Gp &input_index) {
+    // Reads length of variable size column with header stored in data vector (string, binary).
+    jit_value_t read_mem_varsize(Compiler &c,
+                                 uint32_t header_size,
+                                 int32_t column_idx,
+                                 const Gp &data_ptr,
+                                 const Gp &varsize_aux_ptr,
+                                 const Gp &input_index) {
+        // Column has variable-size data with header stored in data vector.
+        // First, we load this and the next data vector offsets from the aux vector.
+        // When the offset difference is zero, it can indicate an empty  value (length 0)
+        // or a NULL (length -1). In the zero difference case, we have to load the header
+        // from the data vector. In the positive difference case, the difference is equal
+        // to the length, so there is no need to do an extra load.
+        Label l_nonzero = c.newLabel();
+        Gp offset = c.newInt64("offset");
+        Gp length = c.newInt64("length");
+        Gp varsize_aux_address = c.newInt64("varsize_aux_address");
+        Gp next_input_index = c.newInt64("next_input_index");
+        c.mov(next_input_index, input_index);
+        c.inc(next_input_index);
+        c.mov(varsize_aux_address, ptr(varsize_aux_ptr, 8 * column_idx, 8));
+        auto offset_shift = type_shift(data_type_t::i64);
+        auto offset_size = 1 << offset_shift;
+        c.mov(offset, ptr(varsize_aux_address, input_index, offset_shift, 0, offset_size));
+        c.mov(length, ptr(varsize_aux_address, next_input_index, offset_shift, 0, offset_size));
+        c.sub(length, offset);
+        c.sub(length, header_size);
+        // length now contains the length of the value. It can be zero for two reasons:
+        // empty value or NULL value.
+        c.jnz(l_nonzero);
+        // If it's zero, we have to load the actual header value, which can be 0 or -1.
         Gp column_address = c.newInt64("column_address");
-        c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
+        c.mov(column_address, ptr(data_ptr, 8 * column_idx, 8));
+        c.mov(length, ptr(column_address, offset, 0, 0, header_size));
+        c.bind(l_nonzero);
+        if (header_size == 4) {
+            return {length.r32(), data_type_t::i32, data_kind_t::kMemory};
+        }
+        return {length, data_type_t::i64, data_kind_t::kMemory};
+    }
+
+    // Reads length part of the varchar header for aux vector.
+    // This part is stored in the lowest bytes of the header
+    // (see VarcharTypeDriver to understand the format).
+    //
+    // Note: unlike read_mem_varsize this method doesn't return the length,
+    //       so it can only be used in NULL checks.
+    jit_value_t read_mem_varchar_header(Compiler &c,
+                                        int32_t column_idx,
+                                        const Gp &varsize_aux_ptr,
+                                        const Gp &input_index) {
+        Gp varsize_aux_address = c.newInt64("varsize_aux_address");
+        c.mov(varsize_aux_address, ptr(varsize_aux_ptr, 8 * column_idx, 8));
+
+        Gp header_offset = c.newInt64("header_offset");
+        c.mov(header_offset, input_index);
+        auto header_shift = type_shift(data_type_t::i128);
+        c.sal(header_offset, header_shift);
+
+        Gp header = c.newInt64("header");
+        c.mov(header, ptr(varsize_aux_address, header_offset, 0));
+
+        return {header, data_type_t::i64, data_kind_t::kMemory};
+    }
+
+    jit_value_t read_mem(
+            Compiler &c, data_type_t type, int32_t column_idx, const Gp &data_ptr,
+            const Gp &varsize_aux_ptr, const Gp &input_index
+    ) {
+        if (type == data_type_t::varchar_header) {
+            return read_mem_varchar_header(c, column_idx, varsize_aux_ptr, input_index);
+        }
+
+        uint32_t header_size;
+        switch (type) {
+            case data_type_t::string_header:
+                header_size = 4;
+                break;
+            case data_type_t::binary_header:
+                header_size = 8;
+                break;
+            default:
+                header_size = 0;
+        }
+        if (header_size != 0) {
+            return read_mem_varsize(c, header_size, column_idx, data_ptr, varsize_aux_ptr, input_index);
+        }
+
+        // Simple case: column has fixed-length data.
+
+        Gp column_address = c.newInt64("column_address");
+        c.mov(column_address, ptr(data_ptr, 8 * column_idx, 8));
+
         auto shift = type_shift(type);
         auto type_size = 1 << shift;
         if (type_size <= 8) {
@@ -108,9 +197,10 @@ namespace questdb::x86 {
                 return {imm(instr.ipayload.lo), type, data_kind_t::kConst};
             }
             case data_type_t::i128: {
-                return { c.newConst(ConstPool::kScopeLocal, &instr.ipayload, 16),
-                         type,
-                         data_kind_t::kMemory
+                return {
+                    c.newConst(ConstPool::kScopeLocal, &instr.ipayload, 16),
+                    type,
+                    data_kind_t::kMemory
                 };
             }
             case data_type_t::f32:
@@ -251,8 +341,11 @@ namespace questdb::x86 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
+            case data_type_t::string_header:
                 return {int32_eq(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
+            case data_type_t::binary_header:
+            case data_type_t::varchar_header:
                 return {int64_eq(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
             case data_type_t::i128:
                 return {int128_eq(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
@@ -272,8 +365,11 @@ namespace questdb::x86 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
+            case data_type_t::string_header:
                 return {int32_ne(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
+            case data_type_t::binary_header:
+            case data_type_t::varchar_header:
                 return {int64_ne(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
             case data_type_t::i128:
                 return {int128_ne(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
@@ -296,10 +392,26 @@ namespace questdb::x86 {
                 return {int32_gt(c, lhs.gp().r32(), rhs.gp().r32(), null_check), data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_gt(c, lhs.gp(), rhs.gp(), null_check), data_type_t::i32, dk};
-            case data_type_t::f32:
-                return {float_gt(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
-            case data_type_t::f64:
-                return {double_gt(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
+            case data_type_t::f32: {
+                Xmm l = c.newXmmSs("lhs_copy");
+                c.movss(l, lhs.xmm());
+                Xmm r = c.newXmmSs("rhs_copy");
+                c.movss(r, rhs.xmm());
+                return { bin_and(c,
+                    {float_ne_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk},
+                    {float_gt(c, l, r), data_type_t::i32, dk})
+                }; 
+            }
+            case data_type_t::f64: {
+                Xmm l = c.newXmmSd("lhs_copy");
+                c.movsd(l, lhs.xmm());
+                Xmm r = c.newXmmSd("rhs_copy");
+                c.movsd(r, rhs.xmm());
+                return { bin_and(c,
+                    {double_ne_epsilon(c, lhs.xmm(), rhs.xmm(), DOUBLE_EPSILON), data_type_t::i32, dk},
+                    {double_gt(c, l, r), data_type_t::i32, dk})
+                }; 
+            }
             default:
                 __builtin_unreachable();
         }
@@ -315,10 +427,26 @@ namespace questdb::x86 {
                 return {int32_ge(c, lhs.gp().r32(), rhs.gp().r32(), null_check), data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_ge(c, lhs.gp(), rhs.gp(), null_check), data_type_t::i32, dk};
-            case data_type_t::f32:
-                return {float_ge(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
-            case data_type_t::f64:
-                return {double_ge(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
+            case data_type_t::f32: {
+                Xmm l = c.newXmmSs("lhs_copy");
+                c.movss(l, lhs.xmm());
+                Xmm r = c.newXmmSs("rhs_copy");
+                c.movss(r, rhs.xmm());
+                return { bin_or(c,
+                    {float_eq_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk},
+                    {float_ge(c, l, r), data_type_t::i32, dk})
+                }; 
+            }
+            case data_type_t::f64: {
+                Xmm l = c.newXmmSd("lhs_copy");
+                c.movsd(l, lhs.xmm());
+                Xmm r = c.newXmmSd("rhs_copy");
+                c.movsd(r, rhs.xmm());
+                return { bin_or(c,
+                    {double_eq_epsilon(c, lhs.xmm(), rhs.xmm(), DOUBLE_EPSILON), data_type_t::i32, dk},
+                    {double_ge(c, l, r), data_type_t::i32, dk})
+                }; 
+            }
             default:
                 __builtin_unreachable();
         }
@@ -334,10 +462,26 @@ namespace questdb::x86 {
                 return {int32_lt(c, lhs.gp().r32(), rhs.gp().r32(), null_check), data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_lt(c, lhs.gp(), rhs.gp(), null_check), data_type_t::i32, dk};
-            case data_type_t::f32:
-                return {float_lt(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
-            case data_type_t::f64:
-                return {double_lt(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
+            case data_type_t::f32: {
+                Xmm l = c.newXmmSs("lhs_copy");
+                c.movss(l, lhs.xmm());
+                Xmm r = c.newXmmSs("rhs_copy");
+                c.movss(r, rhs.xmm());
+                return { bin_and(c,
+                    {float_ne_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk},
+                    {float_lt(c, l.xmm(), r.xmm()), data_type_t::i32, dk})
+                }; 
+            }
+            case data_type_t::f64: {
+                Xmm l = c.newXmmSd("lhs_copy");
+                c.movsd(l, lhs.xmm());
+                Xmm r = c.newXmmSd("rhs_copy");
+                c.movsd(r, rhs.xmm());
+                return { bin_and(c,
+                    {double_ne_epsilon(c, lhs.xmm(), rhs.xmm(), DOUBLE_EPSILON), data_type_t::i32, dk},
+                    {double_lt(c, l, r), data_type_t::i32, dk})
+                }; 
+            }
             default:
                 __builtin_unreachable();
         }
@@ -353,10 +497,26 @@ namespace questdb::x86 {
                 return {int32_le(c, lhs.gp().r32(), rhs.gp().r32(), null_check), data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_le(c, lhs.gp(), rhs.gp(), null_check), data_type_t::i32, dk};
-            case data_type_t::f32:
-                return {float_le(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
-            case data_type_t::f64:
-                return {double_le(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
+            case data_type_t::f32: {
+                Xmm l = c.newXmmSs("lhs_copy");
+                c.movss(l, lhs.xmm());
+                Xmm r = c.newXmmSs("rhs_copy");
+                c.movss(r, rhs.xmm());
+                return { bin_or(c,
+                    {float_eq_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk},
+                    {float_le(c, l, r), data_type_t::i32, dk})
+                }; 
+            }
+            case data_type_t::f64: {
+                Xmm l = c.newXmmSd("lhs_copy");
+                c.movsd(l, lhs.xmm());
+                Xmm r = c.newXmmSd("rhs_copy");
+                c.movsd(r, rhs.xmm());
+                return { bin_or(c,
+                    {double_eq_epsilon(c, lhs.xmm(), rhs.xmm(), DOUBLE_EPSILON), data_type_t::i32, dk},
+                    {double_le(c, l, r), data_type_t::i32, dk})
+                }; 
+            }
             default:
                 __builtin_unreachable();
         }
@@ -549,6 +709,9 @@ namespace questdb::x86 {
                 }
                 break;
             case data_type_t::i128:
+            case data_type_t::string_header:
+            case data_type_t::binary_header:
+            case data_type_t::varchar_header:
                 return std::make_pair(lhs, rhs);
             default:
                 __builtin_unreachable();
@@ -617,7 +780,8 @@ namespace questdb::x86 {
     void
     emit_code(Compiler &c, const instruction_t *istream, size_t size, ZoneStack<jit_value_t> &values,
               bool null_check,
-              const Gp &cols_ptr,
+              const Gp &data_ptr,
+              const Gp &varsize_aux_ptr,
               const Gp &vars_ptr,
               const Gp &input_index) {
 
@@ -637,7 +801,7 @@ namespace questdb::x86 {
                 case opcodes::Mem: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx  = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(read_mem(c, type, idx, cols_ptr, input_index));
+                    values.append(read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index));
                 }
                     break;
                 case opcodes::Imm:

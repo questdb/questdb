@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -65,6 +65,11 @@ public abstract class AbstractSampleByRecordCursorFactory extends AbstractRecord
     }
 
     @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
+    @Override
     protected void _close() {
         Misc.freeObjList(recordFunctions);
         Misc.free(base);
@@ -77,14 +82,21 @@ public abstract class AbstractSampleByRecordCursorFactory extends AbstractRecord
             RecordCursor baseCursor
     ) throws SqlException {
         try {
-            // init all record function for this cursor, in case functions require metadata and/or symbol tables
-            Function.init(recordFunctions, baseCursor, executionContext);
-            AbstractNoRecordSampleByCursor cursor = getRawCursor();
+            // init all record functions for this cursor, in case functions require metadata and/or symbol tables
+            Function.init(recordFunctions, baseCursor, executionContext, null);
+        } catch (Throwable th) {
+            Misc.free(baseCursor);
+            throw th;
+        }
+
+        AbstractNoRecordSampleByCursor cursor = null;
+        try {
+            cursor = getRawCursor();
             cursor.of(baseCursor, executionContext);
             return cursor;
-        } catch (Throwable ex) {
-            Misc.free(baseCursor);
-            throw ex;
+        } catch (Throwable th) {
+            Misc.free(cursor);
+            throw th;
         }
     }
 }

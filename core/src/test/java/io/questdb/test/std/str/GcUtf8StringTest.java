@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,9 +24,8 @@
 
 package io.questdb.test.std.str;
 
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.GcUtf8String;
+import io.questdb.std.str.Utf8Sequence;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -96,6 +95,76 @@ public class GcUtf8StringTest {
         Assert.assertEquals((byte) 0x9e, s5.byteAt(7));
     }
 
+    // String builder used to avoid string identity.
+    @SuppressWarnings({"StringEquality", "StringBufferReplaceableByString"})
+    @Test
+    public void testEquals() {
+        // Null test
+        final GcUtf8String s1 = new GcUtf8String("hi");
+        //noinspection ConstantValue,SimplifiableAssertion
+        Assert.assertFalse(s1.equals(null));
+
+        // Self test
+        // noinspection SimplifiableAssertion,EqualsWithItself
+        Assert.assertTrue(s1.equals(s1));
+
+        // Two obj equality
+        final StringBuilder sb = new StringBuilder();
+        sb.append('h');
+        sb.append('i');
+        final String src1 = sb.toString();
+        final boolean srcNotIdentical = s1.toString() != src1;
+        Assert.assertTrue(srcNotIdentical);
+        final GcUtf8String s2 = new GcUtf8String(src1);
+        Assert.assertEquals(s1, s2);
+
+        final String src2 = "hello";
+        final GcUtf8String s3 = new GcUtf8String(src2);
+        Assert.assertNotEquals(src2, s3);
+
+        // Test Utf8String vs Utf8String equality
+        final GcUtf8String s4 = new GcUtf8String(src2);
+        Assert.assertEquals(s3, s4);
+
+        Assert.assertNotEquals(new GcUtf8String("hellO"), s3);
+    }
+
+    @Test
+    public void testHashCode() {
+        final String src = "hello";
+        final GcUtf8String s1 = new GcUtf8String(src);
+        Assert.assertEquals(src.hashCode(), s1.hashCode());
+    }
+
+    @Test
+    public void testToString() {
+        final GcUtf8String s1 = new GcUtf8String("hello");
+        Assert.assertEquals("hello", s1.toString());
+
+        final String src = "abc";
+        final GcUtf8String s2 = new GcUtf8String(src);
+        @SuppressWarnings("StringEquality") final boolean identity = src == s2.toString();
+        Assert.assertTrue(identity);
+    }
+
+    @Test
+    public void testUtf8Native() {
+        final GcUtf8String s1 = new GcUtf8String("");
+        Assert.assertNotEquals(0, s1.ptr());
+        Assert.assertNotEquals(0, s1.lo());
+        Assert.assertNotEquals(0, s1.hi());
+        Assert.assertEquals(s1.lo(), s1.hi());
+
+        final GcUtf8String s2 = new GcUtf8String("hi");
+        Assert.assertEquals(2, s2.size());
+        Assert.assertNotEquals(0, s2.ptr());
+        Assert.assertNotEquals(0, s2.lo());
+        Assert.assertNotEquals(0, s2.hi());
+        Assert.assertEquals(s2.lo() + 2, s2.hi());
+        Assert.assertEquals((byte) 'h', s2.byteAt(0));
+        Assert.assertEquals((byte) 'i', s2.byteAt(1));
+    }
+
     @Test
     public void testUtf8Sequence() {
         final Utf8Sequence s1 = new GcUtf8String("");
@@ -108,73 +177,5 @@ public class GcUtf8StringTest {
         Assert.assertEquals('l', s2.byteAt(2));
         Assert.assertEquals('l', s2.byteAt(3));
         Assert.assertEquals('o', s2.byteAt(4));
-    }
-
-    @Test
-    public void testUtf8Native() {
-        final DirectUtf8Sequence s1 = new GcUtf8String("");
-        Assert.assertNotEquals(0, s1.ptr());
-        Assert.assertNotEquals(0, s1.lo());
-        Assert.assertNotEquals(0, s1.hi());
-        Assert.assertEquals(s1.lo(), s1.hi());
-
-        final DirectUtf8Sequence s2 = new GcUtf8String("hi");
-        Assert.assertEquals(2, s2.size());
-        Assert.assertNotEquals(0, s2.ptr());
-        Assert.assertNotEquals(0, s2.lo());
-        Assert.assertNotEquals(0, s2.hi());
-        Assert.assertEquals(s2.lo() + 2, s2.hi());
-        Assert.assertEquals((byte) 'h', s2.byteAt(0));
-        Assert.assertEquals((byte) 'i', s2.byteAt(1));
-    }
-
-    @Test
-    public void testToString() {
-        final GcUtf8String s1 = new GcUtf8String("hello");
-        Assert.assertEquals("hello", s1.toString());
-
-        final String src = "abc";
-        final GcUtf8String s2 = new GcUtf8String(src);
-        final boolean identity = src == s2.toString();
-        Assert.assertTrue(identity);
-    }
-
-    @Test
-    public void testHashCode() {
-        final String src = "hello";
-        final GcUtf8String s1 = new GcUtf8String(src);
-        Assert.assertEquals(src.hashCode(), s1.hashCode());
-    }
-
-    @Test
-    public void testEquals() {
-        // Null test
-        final GcUtf8String s1 = new GcUtf8String("hi");
-        final boolean nullIdentity = s1.equals(null);
-        Assert.assertFalse(nullIdentity);
-
-        // Self test
-        final boolean identity = s1.equals(s1);
-        Assert.assertTrue(identity);
-
-        // Two obj equality
-        final StringBuilder sb = new StringBuilder();  // String builder used to avoid string identity.
-        sb.append('h');
-        sb.append('i');
-        final String src1 = sb.toString();
-        final boolean srcNotIdentical = s1.toString() != src1;
-        Assert.assertTrue(srcNotIdentical);
-        final GcUtf8String s2 = new GcUtf8String(src1);
-        Assert.assertEquals(s1, s2);
-
-        final String src2 = "hello";
-        final GcUtf8String s3 = new GcUtf8String(src2);
-        Assert.assertNotEquals(s3, src2);
-
-        // Test Utf8String vs Utf8String equality
-        final GcUtf8String s4 = new GcUtf8String(src2);
-        Assert.assertEquals(s3, s4);
-
-        Assert.assertNotEquals(new GcUtf8String("hellO"), s3);
     }
 }

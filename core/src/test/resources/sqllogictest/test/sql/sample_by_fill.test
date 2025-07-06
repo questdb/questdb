@@ -1,0 +1,130 @@
+# name: test/sql/copy/parquet/parquet_1554.test
+# description: Unclear what went wrong here in the past, but its fixed, and let's make sure it never happens again
+# group: [parquet]
+
+require parquet
+
+query I
+select created, approx_percentile(latency, 0.9, 3) latency
+from parquet_scan('data/sql-testing/demo_telemetry_wal.parquet') timestamp(created)
+where
+  event = 105 -- event is fixed
+  and tableid = 10
+  and rowCount > 0
+sample by 1s
+fill(0)
+limit 10
+----
+2024-12-02 18:00:00 0.109985
+2024-12-02 18:00:01 0.237976
+2024-12-02 18:00:02 0.254028
+2024-12-02 18:00:03 0.232971
+2024-12-02 18:00:04 0.274109
+2024-12-02 18:00:05 0.167053
+2024-12-02 18:00:06 0.221985
+2024-12-02 18:00:07 0.101990
+2024-12-02 18:00:08 0.238892
+2024-12-02 18:00:09 0.125061
+
+query I
+select created, approx_percentile(latency, 0.9, 3) latency
+from parquet_scan('data/sql-testing/demo_telemetry_wal.parquet') timestamp(created)
+where
+  event = 105 -- event is fixed
+  and tableid = 10
+  and rowCount > 0
+sample by 1s from '2024-12-02T18:00:00.000000Z' TO '2024-12-02T18:00:06'
+fill(0);
+----
+2024-12-02 18:00:00 0.109985
+2024-12-02 18:00:01 0.237976
+2024-12-02 18:00:02 0.254028
+2024-12-02 18:00:03 0.232971
+2024-12-02 18:00:04 0.274109
+2024-12-02 18:00:05 0.167053
+
+query I
+select created, approx_percentile(latency, 0.9, 3) latency
+from parquet_scan('data/sql-testing/demo_telemetry_wal.parquet') timestamp(created)
+where
+  event = 105 -- event is fixed
+  and tableid = 10
+  and rowCount > 0
+  and created > '2024-12-02T17:59:55.000000Z'
+sample by 1s FROM '2024-12-02T18:00:00.000000Z' TO '2024-12-02T18:00:06'
+fill(0);
+----
+2024-12-02 18:00:00 0.109985
+2024-12-02 18:00:01 0.237976
+2024-12-02 18:00:02 0.254028
+2024-12-02 18:00:03 0.232971
+2024-12-02 18:00:04 0.274109
+2024-12-02 18:00:05 0.167053
+
+query I
+select created, approx_percentile(latency, 0.9, 3) latency
+from parquet_scan('data/sql-testing/demo_telemetry_wal.parquet') timestamp(created)
+where
+  event = 105 -- event is fixed
+  and tableid = 10
+  and rowCount > 0
+  and created > '2024-12-02T17:59:55.000000Z'
+sample by 1s FROM '2024-12-02T18:00:05.000000Z' TO '2024-12-02T18:00:06'
+fill(0);
+----
+2024-12-02 18:00:05 0.167053
+
+
+query I
+select created, approx_percentile(latency, 0.9, 3) latency
+from parquet_scan('data/sql-testing/demo_telemetry_wal.parquet') timestamp(created)
+where
+  event = 105 -- event is fixed
+  and tableid = 10
+  and rowCount > 0
+sample by 1y from '1969-01-01' TO '2024-12-02T18:00:06'
+fill(0)
+limit 5;
+----
+1969-01-01 00:00:00 0.000000
+1970-01-01 00:00:00 0.000000
+1971-01-01 00:00:00 0.000000
+1972-01-01 00:00:00 0.000000
+1973-01-01 00:00:00 0.000000
+
+
+statement ok
+create table demo_telemetry_wal_neg as (
+    select dateadd('y', -70, created) as created, latency, tableid, rowCount, walId, event
+    from parquet_scan('data/sql-testing/demo_telemetry_wal.parquet')
+);
+
+
+statement error
+select created, approx_percentile(latency, 0.9, 3) latency
+from demo_telemetry_wal_neg timestamp(created)
+sample by 1s
+fill(0)
+limit 10;
+----
+db error: ERROR: cannot FILL for the timestamps before 1970
+
+
+query I
+select created, approx_percentile(latency, 0.9, 3) latency
+from demo_telemetry_wal_neg timestamp(created)
+where
+  event = 105 -- event is fixed
+  and tableid = 10
+  and rowCount > 0
+sample by 1s from '2024-12-02T18:00:00.000000Z' TO '2024-12-02T18:00:06'
+fill(0);
+----
+2024-12-02 18:00:00 0.000000
+2024-12-02 18:00:01 0.000000
+2024-12-02 18:00:02 0.000000
+2024-12-02 18:00:03 0.000000
+2024-12-02 18:00:04 0.000000
+2024-12-02 18:00:05 0.000000
+
+

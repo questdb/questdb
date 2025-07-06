@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -125,16 +125,12 @@ public class FastFloatParserTest extends AbstractFastXParserTest {
                 //success
             }
         } else {
-            try {
-                assertEquals(d.title(), d.expectedFloatValue(), f.applyAsFloat(d), 0.001);
-            } catch (NumericException e) {
-                throw new NumberFormatException();
-            }
+            assertEquals(d.title(), d.expectedFloatValue(), f.applyAsFloat(d), 0.001);
         }
     }
 
     @FunctionalInterface
     public interface ToFloatFunction<T> {
-        float applyAsFloat(T value) throws NumericException;
+        float applyAsFloat(T value);
     }
 }

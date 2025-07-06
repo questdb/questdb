@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ class RndStrFunction extends StrFunction implements Function {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         if ((rnd.nextInt() % nullRate) == 1) {
             return null;
         }
@@ -54,7 +54,7 @@ class RndStrFunction extends StrFunction implements Function {
 
     @Override
     public CharSequence getStrB(Record rec) {
-        return getStr(rec);
+        return getStrA(rec);
     }
 
     @Override
@@ -63,7 +63,17 @@ class RndStrFunction extends StrFunction implements Function {
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
+    public boolean isRandom() {
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
-        sink.val("rnd_str(").val(lo).val(',').val(range + lo - 1).val(',').val(nullRate).val(')');
+        sink.val("rnd_str(").val(lo).val(',').val(range + lo - 1).val(',').val(nullRate - 1).val(')');
     }
 }

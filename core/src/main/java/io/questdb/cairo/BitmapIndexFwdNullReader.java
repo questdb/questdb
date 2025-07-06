@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,14 +30,13 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.str.Path;
 
 public class BitmapIndexFwdNullReader implements BitmapIndexReader {
-
     private final NullCursor cursor = new NullCursor();
 
     @Override
     public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
         final NullCursor cursor = getCursor(cachedInstance);
-        // Cursor only returns records when key is for the NULL value
-        cursor.max = key == 0 ? maxValue + 1 : 0;
+        // Cursor only returns records when key is for the NULL value.
+        cursor.maxValue = key == 0 ? maxValue - minValue + 1 : 0;
         cursor.value = 0;
         return cursor;
     }
@@ -96,12 +95,12 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     }
 
     private static class NullCursor implements RowCursor {
-        private long max;
+        private long maxValue;
         private long value;
 
         @Override
         public boolean hasNext() {
-            return value < max;
+            return value < maxValue;
         }
 
         @Override

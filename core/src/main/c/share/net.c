@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,6 +38,27 @@
 
 int set_int_sockopt(int fd, int level, int opt, int value) {
     return setsockopt(fd, level, opt, &value, sizeof(value));
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setKeepAlive0
+        (JNIEnv *e, jclass cl, jint fd, jint idle_sec) {
+    if (set_int_sockopt(fd, SOL_SOCKET, SO_KEEPALIVE, 1) < 0) {
+        return -1;
+    }
+    #if defined(__linux__) || defined(__FreeBSD__)
+        if (set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, idle_sec) < 0) {
+            return -1;
+        }
+        if (set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, idle_sec) < 0) {
+            return -1;
+        }
+    #endif
+    #ifdef __APPLE__
+        if (set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, idle_sec) < 0) {
+            return -1;
+        }
+    #endif
+    return fd;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_socketTcp0
@@ -218,7 +239,17 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureLinger
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_connect
         (JNIEnv *e, jclass cl, jint fd, jlong sockAddr) {
-    return connect((int) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
+    jboolean retry = 0;
+    int result;
+    do {
+        result = connect((int) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
+        retry |= result == -1 && errno == EINTR;
+    } while (result == -1 && errno == EINTR);
+
+    if (retry && errno == EISCONN) {
+        return 0;
+    }
+    return result;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setSndBuf

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,13 +25,14 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.cairo.sql.WriterOutOfDateException;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.InsertRowImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -59,14 +60,30 @@ public class InsertOperationImpl implements InsertOperation {
     }
 
     @Override
+    public void close() {
+        Misc.free(insertMethod);
+        Misc.freeObjList(insertRows);
+    }
+
+    @Override
     public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
+        SecurityContext securityContext = executionContext.getSecurityContext();
+        securityContext.authorizeInsert(tableToken);
+
         initContext(executionContext);
         if (insertMethod.writer == null) {
             final TableWriterAPI writer = writerSource.getTableWriterAPI(tableToken, "insert");
-            if (writer.getMetadataVersion() != metadataVersion
-                    || !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())) {
+            if (
+                // when metadata changes the compiled insert may no longer be valid, we have to
+                // recompile SQL text to ensure column indexes are correct
+                    writer.getMetadataVersion() != metadataVersion
+                            // when table names do not match, it means table was renamed (although our table token
+                            // remains valid). We should not allow user to insert into new table name because they
+                            // used "old" table name in SQL text
+                            || !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())
+            ) {
                 writer.close();
-                throw WriterOutOfDateException.INSTANCE;
+                throw TableReferenceOutOfDateException.of(tableToken.getTableName());
             }
             insertMethod.writer = writer;
         }
@@ -81,7 +98,7 @@ public class InsertOperationImpl implements InsertOperation {
     @Override
     public OperationFuture execute(SqlExecutionContext sqlExecutionContext) throws SqlException {
         try (InsertMethod insertMethod = createMethod(sqlExecutionContext)) {
-            insertMethod.execute();
+            insertMethod.execute(sqlExecutionContext);
             insertMethod.commit();
             return doneFuture;
         }
@@ -108,12 +125,17 @@ public class InsertOperationImpl implements InsertOperation {
         }
 
         @Override
-        public long execute() {
+        public long execute(SqlExecutionContext executionContext) {
             for (int i = 0, n = insertRows.size(); i < n; i++) {
                 InsertRowImpl row = insertRows.get(i);
                 row.append(writer);
             }
             return insertRows.size();
+        }
+
+        @Override
+        public TableWriterAPI getWriter() {
+            return writer;
         }
 
         @Override
@@ -125,15 +147,9 @@ public class InsertOperationImpl implements InsertOperation {
     }
 
     private class InsertOperationFuture extends DoneOperationFuture {
-
         @Override
         public long getAffectedRowsCount() {
             return insertRows.size();
-        }
-
-        @Override
-        public long getInstanceId() {
-            return -3L;
         }
     }
 }

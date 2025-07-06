@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,11 +24,14 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
+import io.questdb.std.str.Utf8Sequence;
 
 /**
  * Allows for setting the values of bind variables passed
@@ -56,6 +59,8 @@ public interface BindVariableService extends Mutable {
      */
     ObjList<CharSequence> getNamedVariables();
 
+    void setArray(int i, ArrayView ab) throws SqlException;
+
     /**
      * Set the type of bind variable by name as binary and provide a value
      *
@@ -74,7 +79,6 @@ public interface BindVariableService extends Mutable {
      *                      that is not compatible with Binary
      */
     void setBin(int index) throws SqlException;
-
 
     /**
      * Set type of bind variable by index as binary and provide a value
@@ -289,6 +293,32 @@ public interface BindVariableService extends Mutable {
      *                      that is not compatible with Byte
      */
     void setGeoHash(int index, int type) throws SqlException;
+
+    /**
+     * Set type of bind variable by index as ipv4 (int form) and provide a value
+     * Distinct from int because of different null values
+     *
+     * @param index numeric index of the bind variable
+     * @param value as integer
+     */
+    void setIPv4(int index, int value);
+
+    /**
+     * Set type of bind variable by index as ipv4 (CharSequence form) and provide a value
+     * Distinct from int because of different null values
+     *
+     * @param index numeric index of the bind variable
+     * @param value as CharSequence
+     */
+    void setIPv4(int index, CharSequence value);
+
+    /**
+     * Set type of bind variable by index as binary
+     * Distinct from int because of different null values
+     *
+     * @param index numeric index of the bind variable
+     */
+    void setIPv4(int index);
 
     /**
      * Set type of bind variable by name as integer and provide a value
@@ -508,4 +538,33 @@ public interface BindVariableService extends Mutable {
      * @throws SqlException is throw when variable has already been defined with type that is not compatible with UUID
      */
     void setUuid(CharSequence name, long lo, long hi) throws SqlException;
+
+    /**
+     * Set type of bind variable by index as varchar
+     *
+     * @param index numeric index of the bind variable
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with UTF8 encoded String
+     */
+    void setVarchar(int index) throws SqlException;
+
+    /**
+     * Set type of bind variable by index as varchar and provide a value
+     *
+     * @param index numeric index of the bind variable
+     * @param value as Utf8Sequence
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with UTF8 encoded String
+     */
+    void setVarchar(int index, @Transient Utf8Sequence value) throws SqlException;
+
+    /**
+     * Set type of bind variable by name as varchar and provide a value
+     *
+     * @param name  of the bind variable
+     * @param value as Utf8Sequence
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with UTF8 encoded String
+     */
+    void setVarchar(CharSequence name, Utf8Sequence value) throws SqlException;
 }

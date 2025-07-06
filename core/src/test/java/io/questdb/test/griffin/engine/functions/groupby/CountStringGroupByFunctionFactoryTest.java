@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,234 +24,262 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testConstant() throws Exception {
+        String expected = "a\tcount_distinct\n" +
+                "a\t1\n" +
+                "b\t1\n" +
+                "c\t1\n";
         assertQuery(
-                "a\tcount_distinct\n" +
-                        "a\t1\n" +
-                        "b\t1\n" +
-                        "c\t1\n",
-                "select a, count_distinct('42') from x",
+                expected,
+                "select a, count_distinct('42') from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
                 true,
                 true
         );
+        assertSql(expected, "select a, count(distinct '42') from x order by a");
     }
 
     @Test
     public void testExpression() throws Exception {
-        final String expected = "a\tcount_distinct\n" +
-                "a\t3\n" +
-                "b\t3\n" +
-                "c\t3\n";
-        assertQuery(
-                expected,
-                "select a, count_distinct(concat(s, s)) from x",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
-        // self-concatenation shouldn't affect the number of distinct values,
-        // so the result should stay the same
-        assertSql("select a, count_distinct(s) from x", expected);
+        assertMemoryLeak(() -> {
+            final String expected = "a\tcount_distinct\n" +
+                    "a\t3\n" +
+                    "b\t3\n" +
+                    "c\t3\n";
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select a, count_distinct(concat(s, s)) from x order by a",
+                    "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
+                    null,
+                    true,
+                    true
+            );
+            assertSql(expected, "select a, count(distinct concat(s, s)) from x order by a");
+            // self-concatenation shouldn't affect the number of distinct values,
+            // so the result should stay the same
+            assertSql(expected, "select a, count_distinct(s) from x order by a");
+            assertSql(expected, "select a, count(distinct s) from x order by a");
+        });
     }
 
     @Test
     public void testGroupKeyed() throws Exception {
+        String expected = "a\tcount_distinct\n" +
+                "a\t4\n" +
+                "b\t4\n" +
+                "c\t3\n" +
+                "d\t1\n" +
+                "e\t2\n" +
+                "f\t3\n";
         assertQuery(
-                "a\tcount_distinct\n" +
-                        "a\t4\n" +
-                        "b\t4\n" +
-                        "f\t3\n" +
-                        "c\t3\n" +
-                        "e\t2\n" +
-                        "d\t1\n",
-                "select a, count_distinct(s) from x",
+                expected,
+                "select a, count_distinct(s) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
                 true,
                 true
         );
+        assertSql(expected, "select a, count(distinct s) from x order by a");
     }
 
     @Test
     public void testGroupNotKeyed() throws Exception {
+        String expected = "count_distinct\n" +
+                "6\n";
         assertQuery(
-                "count_distinct\n" +
-                        "6\n",
+                expected,
                 "select count_distinct(s) from x",
                 "create table x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 null,
                 false,
                 true
         );
+        assertSql(expected, "select count(distinct s) from x");
     }
 
     @Test
     public void testGroupNotKeyedWithNulls() throws Exception {
+        String expected = "count_distinct\n" +
+                "4\n";
         assertQuery(
-                "count_distinct\n" +
-                        "4\n",
+                expected,
                 "select count_distinct(s) from x",
                 "create table x as (select * from (select rnd_symbol(null, 'xx2', '00s', '544', 'rraa', null) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 null,
                 false,
                 true
         );
+        assertSql(expected, "select count(distinct s) from x");
     }
 
     @Test
     public void testNullConstant() throws Exception {
+        String expected = "a\tcount_distinct\n" +
+                "a\t0\n" +
+                "b\t0\n" +
+                "c\t0\n";
         assertQuery(
-                "a\tcount_distinct\n" +
-                        "a\t0\n" +
-                        "b\t0\n" +
-                        "c\t0\n",
-                "select a, count_distinct(cast(null as STRING)) from x",
+                expected,
+                "select a, count_distinct(cast(null as STRING)) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
                 true,
                 true
         );
+        assertSql(expected, "select a, count(distinct cast(null as STRING)) from x order by a");
     }
 
     @Test
     public void testSampleFillLinear() throws Exception {
+        String expected = "ts\tcount_distinct\n" +
+                "1970-01-01T00:00:00.000000Z\t5\n" +
+                "1970-01-01T00:00:01.000000Z\t5\n" +
+                "1970-01-01T00:00:02.000000Z\t6\n" +
+                "1970-01-01T00:00:03.000000Z\t5\n" +
+                "1970-01-01T00:00:04.000000Z\t6\n" +
+                "1970-01-01T00:00:05.000000Z\t4\n" +
+                "1970-01-01T00:00:06.000000Z\t4\n" +
+                "1970-01-01T00:00:07.000000Z\t5\n" +
+                "1970-01-01T00:00:08.000000Z\t6\n" +
+                "1970-01-01T00:00:09.000000Z\t5\n";
         assertQuery(
-                "ts\tcount_distinct\n" +
-                        "1970-01-01T00:00:00.000000Z\t5\n" +
-                        "1970-01-01T00:00:01.000000Z\t5\n" +
-                        "1970-01-01T00:00:02.000000Z\t6\n" +
-                        "1970-01-01T00:00:03.000000Z\t5\n" +
-                        "1970-01-01T00:00:04.000000Z\t6\n" +
-                        "1970-01-01T00:00:05.000000Z\t4\n" +
-                        "1970-01-01T00:00:06.000000Z\t4\n" +
-                        "1970-01-01T00:00:07.000000Z\t5\n" +
-                        "1970-01-01T00:00:08.000000Z\t6\n" +
-                        "1970-01-01T00:00:09.000000Z\t5\n",
+                expected,
                 "select ts, count_distinct(s) from x sample by 1s fill(linear)",
                 "create table x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 true,
                 true
         );
+        assertSql(expected, "select ts, count(distinct s) from x sample by 1s fill(linear)");
     }
 
     @Test
     public void testSampleFillNone() throws Exception {
         assertMemoryLeak(() -> {
-            final String sql = "with x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(400000000, 300000) ts from long_sequence(100)) timestamp(ts))\n" +
+            String expected = "ts\tcount_distinct\n" +
+                    "1970-01-01T00:06:40.000000Z\t4\n" +
+                    "1970-01-01T00:06:42.000000Z\t4\n" +
+                    "1970-01-01T00:06:44.000000Z\t4\n" +
+                    "1970-01-01T00:06:46.000000Z\t6\n" +
+                    "1970-01-01T00:06:48.000000Z\t5\n" +
+                    "1970-01-01T00:06:50.000000Z\t4\n" +
+                    "1970-01-01T00:06:52.000000Z\t4\n" +
+                    "1970-01-01T00:06:54.000000Z\t4\n" +
+                    "1970-01-01T00:06:56.000000Z\t4\n" +
+                    "1970-01-01T00:06:58.000000Z\t4\n" +
+                    "1970-01-01T00:07:00.000000Z\t5\n" +
+                    "1970-01-01T00:07:02.000000Z\t3\n" +
+                    "1970-01-01T00:07:04.000000Z\t6\n" +
+                    "1970-01-01T00:07:06.000000Z\t5\n" +
+                    "1970-01-01T00:07:08.000000Z\t4\n";
+
+            final String sqlA = "with x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(400000000, 300000) ts from long_sequence(100)) timestamp(ts))\n" +
                     "select ts, count_distinct(s) from x sample by 2s";
-            assertSql(
-                    sql,
-                    "ts\tcount_distinct\n" +
-                            "1970-01-01T00:06:40.000000Z\t4\n" +
-                            "1970-01-01T00:06:42.000000Z\t4\n" +
-                            "1970-01-01T00:06:44.000000Z\t4\n" +
-                            "1970-01-01T00:06:46.000000Z\t6\n" +
-                            "1970-01-01T00:06:48.000000Z\t5\n" +
-                            "1970-01-01T00:06:50.000000Z\t4\n" +
-                            "1970-01-01T00:06:52.000000Z\t4\n" +
-                            "1970-01-01T00:06:54.000000Z\t4\n" +
-                            "1970-01-01T00:06:56.000000Z\t4\n" +
-                            "1970-01-01T00:06:58.000000Z\t4\n" +
-                            "1970-01-01T00:07:00.000000Z\t5\n" +
-                            "1970-01-01T00:07:02.000000Z\t3\n" +
-                            "1970-01-01T00:07:04.000000Z\t6\n" +
-                            "1970-01-01T00:07:06.000000Z\t5\n" +
-                            "1970-01-01T00:07:08.000000Z\t4\n"
-            );
+            Rnd rnd = sqlExecutionContext.getRandom();
+            long s0 = rnd.getSeed0();
+            long s1 = rnd.getSeed1();
+            assertSql(expected, sqlA);
+
+            rnd.reset(s0, s1);
+            final String sqlB = "with x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(400000000, 300000) ts from long_sequence(100)) timestamp(ts))\n" +
+                    "select ts, count(distinct s) from x sample by 2s";
+            assertSql(expected, sqlB);
         });
     }
 
     @Test
     public void testSampleFillValue() throws Exception {
+        String expected = "ts\tcount_distinct\n" +
+                "1970-01-01T00:00:00.000000Z\t5\n" +
+                "1970-01-01T00:00:01.000000Z\t5\n" +
+                "1970-01-01T00:00:02.000000Z\t6\n" +
+                "1970-01-01T00:00:03.000000Z\t5\n" +
+                "1970-01-01T00:00:04.000000Z\t6\n" +
+                "1970-01-01T00:00:05.000000Z\t4\n" +
+                "1970-01-01T00:00:06.000000Z\t4\n" +
+                "1970-01-01T00:00:07.000000Z\t5\n" +
+                "1970-01-01T00:00:08.000000Z\t6\n" +
+                "1970-01-01T00:00:09.000000Z\t5\n";
         assertQuery(
-                "ts\tcount_distinct\n" +
-                        "1970-01-01T00:00:00.000000Z\t5\n" +
-                        "1970-01-01T00:00:01.000000Z\t5\n" +
-                        "1970-01-01T00:00:02.000000Z\t6\n" +
-                        "1970-01-01T00:00:03.000000Z\t5\n" +
-                        "1970-01-01T00:00:04.000000Z\t6\n" +
-                        "1970-01-01T00:00:05.000000Z\t4\n" +
-                        "1970-01-01T00:00:06.000000Z\t4\n" +
-                        "1970-01-01T00:00:07.000000Z\t5\n" +
-                        "1970-01-01T00:00:08.000000Z\t6\n" +
-                        "1970-01-01T00:00:09.000000Z\t5\n",
+                expected,
                 "select ts, count_distinct(s) from x sample by 1s fill(99)",
                 "create table x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
-                false
+                true
         );
+        assertSql(expected, "select ts, count(distinct s) from x sample by 1s fill(99)");
     }
 
     @Test
     public void testSampleKeyed() throws Exception {
+        String expected = "a\tcount_distinct\tts\n" +
+                "a\t3\t1970-01-01T00:00:00.000000Z\n" +
+                "b\t2\t1970-01-01T00:00:00.000000Z\n" +
+                "f\t1\t1970-01-01T00:00:00.000000Z\n" +
+                "c\t1\t1970-01-01T00:00:00.000000Z\n" +
+                "e\t2\t1970-01-01T00:00:00.000000Z\n" +
+                "d\t1\t1970-01-01T00:00:00.000000Z\n" +
+                "b\t3\t1970-01-01T00:00:01.000000Z\n" +
+                "a\t2\t1970-01-01T00:00:01.000000Z\n" +
+                "d\t1\t1970-01-01T00:00:01.000000Z\n" +
+                "c\t2\t1970-01-01T00:00:01.000000Z\n" +
+                "f\t2\t1970-01-01T00:00:01.000000Z\n" +
+                "c\t2\t1970-01-01T00:00:02.000000Z\n" +
+                "b\t3\t1970-01-01T00:00:02.000000Z\n" +
+                "f\t3\t1970-01-01T00:00:02.000000Z\n" +
+                "e\t2\t1970-01-01T00:00:02.000000Z\n" +
+                "f\t3\t1970-01-01T00:00:03.000000Z\n" +
+                "a\t1\t1970-01-01T00:00:03.000000Z\n" +
+                "c\t2\t1970-01-01T00:00:03.000000Z\n" +
+                "e\t1\t1970-01-01T00:00:03.000000Z\n" +
+                "d\t1\t1970-01-01T00:00:03.000000Z\n" +
+                "b\t1\t1970-01-01T00:00:03.000000Z\n" +
+                "b\t3\t1970-01-01T00:00:04.000000Z\n" +
+                "a\t1\t1970-01-01T00:00:04.000000Z\n" +
+                "c\t3\t1970-01-01T00:00:04.000000Z\n" +
+                "f\t3\t1970-01-01T00:00:04.000000Z\n" +
+                "d\t3\t1970-01-01T00:00:05.000000Z\n" +
+                "b\t1\t1970-01-01T00:00:05.000000Z\n" +
+                "a\t2\t1970-01-01T00:00:05.000000Z\n" +
+                "c\t1\t1970-01-01T00:00:05.000000Z\n" +
+                "f\t2\t1970-01-01T00:00:05.000000Z\n" +
+                "c\t2\t1970-01-01T00:00:06.000000Z\n" +
+                "f\t4\t1970-01-01T00:00:06.000000Z\n" +
+                "b\t2\t1970-01-01T00:00:06.000000Z\n" +
+                "d\t1\t1970-01-01T00:00:06.000000Z\n" +
+                "a\t1\t1970-01-01T00:00:06.000000Z\n" +
+                "e\t1\t1970-01-01T00:00:07.000000Z\n" +
+                "c\t3\t1970-01-01T00:00:07.000000Z\n" +
+                "f\t1\t1970-01-01T00:00:07.000000Z\n" +
+                "d\t2\t1970-01-01T00:00:07.000000Z\n" +
+                "b\t2\t1970-01-01T00:00:07.000000Z\n" +
+                "d\t2\t1970-01-01T00:00:08.000000Z\n" +
+                "e\t2\t1970-01-01T00:00:08.000000Z\n" +
+                "a\t2\t1970-01-01T00:00:08.000000Z\n" +
+                "b\t1\t1970-01-01T00:00:08.000000Z\n" +
+                "c\t1\t1970-01-01T00:00:08.000000Z\n" +
+                "f\t1\t1970-01-01T00:00:08.000000Z\n" +
+                "c\t2\t1970-01-01T00:00:09.000000Z\n" +
+                "b\t2\t1970-01-01T00:00:09.000000Z\n" +
+                "d\t2\t1970-01-01T00:00:09.000000Z\n" +
+                "e\t1\t1970-01-01T00:00:09.000000Z\n" +
+                "a\t1\t1970-01-01T00:00:09.000000Z\n" +
+                "f\t1\t1970-01-01T00:00:09.000000Z\n";
         assertQuery(
-                "a\tcount_distinct\tts\n" +
-                        "a\t3\t1970-01-01T00:00:00.000000Z\n" +
-                        "b\t2\t1970-01-01T00:00:00.000000Z\n" +
-                        "f\t1\t1970-01-01T00:00:00.000000Z\n" +
-                        "c\t1\t1970-01-01T00:00:00.000000Z\n" +
-                        "e\t2\t1970-01-01T00:00:00.000000Z\n" +
-                        "d\t1\t1970-01-01T00:00:00.000000Z\n" +
-                        "b\t3\t1970-01-01T00:00:01.000000Z\n" +
-                        "a\t2\t1970-01-01T00:00:01.000000Z\n" +
-                        "d\t1\t1970-01-01T00:00:01.000000Z\n" +
-                        "c\t2\t1970-01-01T00:00:01.000000Z\n" +
-                        "f\t2\t1970-01-01T00:00:01.000000Z\n" +
-                        "c\t2\t1970-01-01T00:00:02.000000Z\n" +
-                        "b\t3\t1970-01-01T00:00:02.000000Z\n" +
-                        "f\t3\t1970-01-01T00:00:02.000000Z\n" +
-                        "e\t2\t1970-01-01T00:00:02.000000Z\n" +
-                        "f\t3\t1970-01-01T00:00:03.000000Z\n" +
-                        "a\t1\t1970-01-01T00:00:03.000000Z\n" +
-                        "c\t2\t1970-01-01T00:00:03.000000Z\n" +
-                        "e\t1\t1970-01-01T00:00:03.000000Z\n" +
-                        "d\t1\t1970-01-01T00:00:03.000000Z\n" +
-                        "b\t1\t1970-01-01T00:00:03.000000Z\n" +
-                        "b\t3\t1970-01-01T00:00:04.000000Z\n" +
-                        "a\t1\t1970-01-01T00:00:04.000000Z\n" +
-                        "c\t3\t1970-01-01T00:00:04.000000Z\n" +
-                        "f\t3\t1970-01-01T00:00:04.000000Z\n" +
-                        "d\t3\t1970-01-01T00:00:05.000000Z\n" +
-                        "b\t1\t1970-01-01T00:00:05.000000Z\n" +
-                        "a\t2\t1970-01-01T00:00:05.000000Z\n" +
-                        "c\t1\t1970-01-01T00:00:05.000000Z\n" +
-                        "f\t2\t1970-01-01T00:00:05.000000Z\n" +
-                        "c\t2\t1970-01-01T00:00:06.000000Z\n" +
-                        "f\t4\t1970-01-01T00:00:06.000000Z\n" +
-                        "b\t2\t1970-01-01T00:00:06.000000Z\n" +
-                        "d\t1\t1970-01-01T00:00:06.000000Z\n" +
-                        "a\t1\t1970-01-01T00:00:06.000000Z\n" +
-                        "e\t1\t1970-01-01T00:00:07.000000Z\n" +
-                        "c\t3\t1970-01-01T00:00:07.000000Z\n" +
-                        "f\t1\t1970-01-01T00:00:07.000000Z\n" +
-                        "d\t2\t1970-01-01T00:00:07.000000Z\n" +
-                        "b\t2\t1970-01-01T00:00:07.000000Z\n" +
-                        "d\t2\t1970-01-01T00:00:08.000000Z\n" +
-                        "e\t2\t1970-01-01T00:00:08.000000Z\n" +
-                        "a\t2\t1970-01-01T00:00:08.000000Z\n" +
-                        "b\t1\t1970-01-01T00:00:08.000000Z\n" +
-                        "c\t1\t1970-01-01T00:00:08.000000Z\n" +
-                        "f\t1\t1970-01-01T00:00:08.000000Z\n" +
-                        "c\t2\t1970-01-01T00:00:09.000000Z\n" +
-                        "b\t2\t1970-01-01T00:00:09.000000Z\n" +
-                        "d\t2\t1970-01-01T00:00:09.000000Z\n" +
-                        "e\t1\t1970-01-01T00:00:09.000000Z\n" +
-                        "a\t1\t1970-01-01T00:00:09.000000Z\n" +
-                        "f\t1\t1970-01-01T00:00:09.000000Z\n",
-                "select a, count_distinct(s), ts from x sample by 1s",
+                expected,
+                "select a, count_distinct(s), ts from x sample by 1s ALIGN TO FIRST OBSERVATION",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 false
         );
+        assertSql(expected, "select a, count(distinct s), ts from x sample by 1s ALIGN TO FIRST OBSERVATION");
     }
 }

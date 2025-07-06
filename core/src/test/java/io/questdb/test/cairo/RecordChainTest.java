@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,11 +25,14 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.*;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.tools.TestUtils;
@@ -43,11 +46,11 @@ public class RecordChainTest extends AbstractCairoTest {
 
     @Test
     public void testClear() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             CreateTableTestUtils.createTestTable(10000, new Rnd(), new TestRecord.ArrayBinarySequence());
-            try (TableReader reader = newTableReader(configuration, "x")) {
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
                 entityColumnFilter.of(reader.getColumnCount());
-                RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
+                RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter);
                 try (RecordChain chain = new RecordChain(reader.getMetadata(), recordSink, SIZE_4M, Integer.MAX_VALUE)) {
                     Assert.assertFalse(chain.hasNext());
                     populateChain(chain, reader);
@@ -63,15 +66,17 @@ public class RecordChainTest extends AbstractCairoTest {
 
     @Test
     public void testPseudoRandomAccess() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             int N = 10000;
             CreateTableTestUtils.createTestTable(N, new Rnd(), new TestRecord.ArrayBinarySequence());
-            try (TableReader reader = newTableReader(configuration, "x")) {
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
-                RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
+                RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter);
                 try (RecordChain chain = new RecordChain(reader.getMetadata(), recordSink, SIZE_4M, Integer.MAX_VALUE)) {
                     LongList rows = new LongList();
-                    RecordCursor cursor = reader.getCursor();
                     Record cursorRecord = cursor.getRecord();
 
                     chain.setSymbolTableResolver(cursor);
@@ -128,12 +133,7 @@ public class RecordChainTest extends AbstractCairoTest {
             filter.add(-2);
             filter.add(3);
 
-            RecordSink sink = RecordSinkFactory.getInstance(
-                    asm,
-                    metadata,
-                    filter,
-                    false
-            );
+            RecordSink sink = RecordSinkFactory.getInstance(asm, metadata, filter);
 
             long[] cols = new long[metadata.getColumnCount()];
 
@@ -145,7 +145,7 @@ public class RecordChainTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public boolean isReadThreadSafe() {
+                public boolean isThreadSafe() {
                     return true;
                 }
             });
@@ -158,7 +158,7 @@ public class RecordChainTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public boolean isReadThreadSafe() {
+                public boolean isThreadSafe() {
                     return true;
                 }
             });
@@ -182,7 +182,7 @@ public class RecordChainTest extends AbstractCairoTest {
                 chain.toTop();
                 final Record r = chain.getRecord();
                 while (chain.hasNext()) {
-                    printer.print(r, metadata, AbstractCairoTest.sink);
+                    TestUtils.println(r, metadata, AbstractCairoTest.sink);
                 }
 
                 String expected = "100\t55\t200\n" +
@@ -195,13 +195,13 @@ public class RecordChainTest extends AbstractCairoTest {
 
     @Test
     public void testWriteAndRead() throws Exception {
-        TestUtils.assertMemoryLeak(
+        assertMemoryLeak(
                 () -> {
                     final int N = 10000 * 2;
                     CreateTableTestUtils.createTestTable(N, new Rnd(), new TestRecord.ArrayBinarySequence());
-                    try (TableReader reader = newTableReader(configuration, "x")) {
+                    try (TableReader reader = newOffPoolReader(configuration, "x")) {
                         entityColumnFilter.of(reader.getMetadata().getColumnCount());
-                        RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
+                        RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter);
 
                         try (RecordChain chain = new RecordChain(reader.getMetadata(), recordSink, 4 * 1024 * 1024L, Integer.MAX_VALUE)) {
                             populateChain(chain, reader);
@@ -214,12 +214,13 @@ public class RecordChainTest extends AbstractCairoTest {
     }
 
     private static void populateChain(RecordChain chain, TableReader reader) {
-        RecordCursor cursor = reader.getCursor();
-        final Record record = cursor.getRecord();
-        chain.setSymbolTableResolver(cursor);
-        long o = -1L;
-        while (cursor.hasNext()) {
-            o = chain.put(record, o);
+        try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
+            final Record record = cursor.getRecord();
+            chain.setSymbolTableResolver(cursor);
+            long o = -1L;
+            while (cursor.hasNext()) {
+                o = chain.put(record, o);
+            }
         }
     }
 
@@ -227,16 +228,17 @@ public class RecordChainTest extends AbstractCairoTest {
         long count = 0L;
         chain.toTop();
         Record chainRecord = chain.getRecord();
-        RecordCursor cursor = reader.getCursor();
-        Record readerRecord = cursor.getRecord();
-        chain.setSymbolTableResolver(cursor);
+        try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
+            Record readerRecord = cursor.getRecord();
+            chain.setSymbolTableResolver(cursor);
 
-        while (chain.hasNext()) {
-            Assert.assertTrue(cursor.hasNext());
-            assertSame(readerRecord, chainRecord, reader.getMetadata());
-            count++;
+            while (chain.hasNext()) {
+                Assert.assertTrue(cursor.hasNext());
+                assertSame(readerRecord, chainRecord, reader.getMetadata());
+                count++;
+            }
+            Assert.assertEquals(expectedCount, count);
         }
-        Assert.assertEquals(expectedCount, count);
     }
 
     private void assertSame(Record expected, Record actual, RecordMetadata metadata) {
@@ -244,6 +246,9 @@ public class RecordChainTest extends AbstractCairoTest {
             switch (ColumnType.tagOf(metadata.getColumnType(i))) {
                 case ColumnType.INT:
                     Assert.assertEquals(expected.getInt(i), actual.getInt(i));
+                    break;
+                case ColumnType.IPv4:
+                    Assert.assertEquals(expected.getIPv4(i), actual.getIPv4(i));
                     break;
                 case ColumnType.DOUBLE:
                     Assert.assertEquals(expected.getDouble(i), actual.getDouble(i), 0.000000001D);
@@ -267,14 +272,14 @@ public class RecordChainTest extends AbstractCairoTest {
                     Assert.assertEquals(expected.getShort(i), actual.getShort(i));
                     break;
                 case ColumnType.SYMBOL:
-                    TestUtils.assertEquals(expected.getSym(i), actual.getSym(i));
+                    TestUtils.assertEquals(expected.getSymA(i), actual.getSymA(i));
                     break;
                 case ColumnType.FLOAT:
                     Assert.assertEquals(expected.getFloat(i), actual.getFloat(i), 0.00000001f);
                     break;
                 case ColumnType.STRING:
-                    CharSequence e = expected.getStr(i);
-                    CharSequence cs1 = actual.getStr(i);
+                    CharSequence e = expected.getStrA(i);
+                    CharSequence cs1 = actual.getStrA(i);
                     CharSequence cs2 = actual.getStrB(i);
                     TestUtils.assertEquals(e, cs1);
                     Assert.assertFalse(cs1 != null && cs1 == cs2);
@@ -283,6 +288,23 @@ public class RecordChainTest extends AbstractCairoTest {
                         Assert.assertEquals(TableUtils.NULL_LEN, actual.getStrLen(i));
                     } else {
                         Assert.assertEquals(cs1.length(), actual.getStrLen(i));
+                    }
+                    break;
+                case ColumnType.VARCHAR:
+                    Utf8Sequence us = expected.getVarcharA(i);
+                    Utf8Sequence us1 = actual.getVarcharA(i);
+                    Utf8Sequence us2 = actual.getVarcharB(i);
+                    TestUtils.assertEquals(us, us1);
+                    Assert.assertFalse(us1 != null && us1 == us2);
+                    TestUtils.assertEquals(us, us2);
+                    if (us1 == null) {
+                        Assert.assertEquals(TableUtils.NULL_LEN, actual.getVarcharSize(i));
+                    } else {
+                        Assert.assertEquals(us1.size(), actual.getVarcharSize(i));
+                    }
+                    if (us != null && us1 != null && us2 != null) {
+                        Assert.assertEquals(us.isAscii(), us1.isAscii());
+                        Assert.assertEquals(us.isAscii(), us2.isAscii());
                     }
                     break;
                 case ColumnType.BINARY:
@@ -294,26 +316,24 @@ public class RecordChainTest extends AbstractCairoTest {
                     break;
                 default:
                     throw CairoException.critical(0).put("Record chain does not support: ").put(ColumnType.nameOf(metadata.getColumnType(i)));
-
             }
         }
     }
 
     private void testChainReuseWithClearFunction(ClearFunc clear) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 10000;
             Rnd rnd = new Rnd();
 
-            // in a spirit of using only what's available in this package
+            // in the spirit of using only what's available in this package
             // we create temporary table the hard way
 
             CreateTableTestUtils.createTestTable(N, rnd, new TestRecord.ArrayBinarySequence());
-            try (TableReader reader = newTableReader(configuration, "x")) {
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
 
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
-                RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
+                RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter);
                 try (RecordChain chain = new RecordChain(reader.getMetadata(), recordSink, 4 * 1024 * 1024L, Integer.MAX_VALUE)) {
-
                     populateChain(chain, reader);
                     assertChain(chain, N, reader);
 

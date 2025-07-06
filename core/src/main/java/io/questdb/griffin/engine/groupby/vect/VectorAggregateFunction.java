@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,28 +35,24 @@ public interface VectorAggregateFunction extends Function, Mutable {
      * Non-keyed aggregation that doesn't use rosti.
      * Used either for truly non-keyed aggregation or when key is null in page frame due to column tops.
      *
-     * @param address        address
-     * @param addressSize    address size
-     * @param columnSizeHint column size hint
-     * @param workerId       worker id
+     * @param address       address
+     * @param frameRowCount row count int the frame; this is provided to "count" functions
+     * @param workerId      worker id
      */
-    void aggregate(long address, long addressSize, int columnSizeHint, int workerId);
+    void aggregate(long address, long frameRowCount, int workerId);
 
 
     /**
      * Keyed aggregation that uses rosti.
-     * If valueAddress == 0 it means that value page frame is 'empty' (due to column tops) and contains null values
+     * If valueAddress == 0 it means that value page frame is 'empty' (due to column tops) and contains null values,
      * so only keys should be processed.
      *
-     * @param pRosti           pointer to rosti
-     * @param keyAddress       key address
-     * @param valueAddress     value address
-     * @param valueAddressSize value address size
-     * @param columnSizeShr    column size
-     * @param workerId         worker id
+     * @param pRosti       pointer to rosti
+     * @param keyAddress   key address
+     * @param valueAddress value address
      * @return true if processing went fine and false if it failed on memory allocation
      */
-    boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId);
+    boolean aggregate(long pRosti, long keyAddress, long valueAddress, long frameRowCount);
 
     int getColumnIndex();
 

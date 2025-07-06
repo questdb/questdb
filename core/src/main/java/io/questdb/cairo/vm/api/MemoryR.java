@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,15 +24,17 @@
 
 package io.questdb.cairo.vm.api;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8SplitString;
 
 import java.io.Closeable;
 
-//readable 
+// readable
 public interface MemoryR extends Closeable {
 
     long addressOf(long offset);
@@ -41,6 +43,8 @@ public interface MemoryR extends Closeable {
     void close();
 
     void extend(long size);
+
+    ArrayView getArray(long offset);
 
     BinarySequence getBin(long offset);
 
@@ -52,24 +56,24 @@ public interface MemoryR extends Closeable {
 
     char getChar(long offset);
 
+    default DirectUtf8Sequence getDirectVarchar(long offset, int size, boolean ascii) {
+        throw new UnsupportedOperationException();
+    }
+
     double getDouble(long offset);
 
     float getFloat(long offset);
+
+    int getIPv4(long offset);
 
     int getInt(long offset);
 
     long getLong(long offset);
 
-    void getLong256(long offset, CharSink sink);
+    void getLong256(long offset, CharSink<?> sink);
 
     default void getLong256(long offset, Long256Acceptor sink) {
-        long addr = addressOf(offset + Long.BYTES * 4);
-        sink.setAll(
-                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4),
-                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3),
-                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2),
-                Unsafe.getUnsafe().getLong(addr - Long.BYTES)
-        );
+        sink.fromAddress(addressOf(offset + Long.BYTES * 4) - Long.BYTES * 4);
     }
 
     Long256 getLong256A(long offset);
@@ -84,9 +88,17 @@ public interface MemoryR extends Closeable {
 
     short getShort(long offset);
 
-    CharSequence getStr(long offset);
+    default Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, long dataLim, int size, boolean ascii) {
+        throw new UnsupportedOperationException();
+    }
 
-    CharSequence getStr2(long offset);
+    default Utf8SplitString getSplitVarcharB(long auxLo, long dataLo, long dataLim, int size, boolean ascii) {
+        throw new UnsupportedOperationException();
+    }
+
+    CharSequence getStrA(long offset);
+
+    CharSequence getStrB(long offset);
 
     int getStrLen(long offset);
 

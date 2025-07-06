@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,18 +25,25 @@
 package io.questdb.tasks;
 
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.CountDownLatchSPI;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.QuietCloseable;
 
-public class LatestByTask {
+public class LatestByTask implements QuietCloseable, Mutable {
+    // We're using page frame memory only and do single scan, hence cache size of 1.
+    private final PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool(1);
     private long argsAddress;
     private ExecutionCircuitBreaker circuitBreaker;
     private CountDownLatchSPI doneLatch;
-    private int hashLength;
-    private long hashesAddress;
+    private int frameIndex;
+    private int hashColumnIndex;
+    private int hashColumnType;
     private long keyBaseAddress;
     private long keysMemorySize;
-    private int partitionIndex;
     private long prefixesAddress;
     private long prefixesCount;
     private long rowHi;
@@ -46,7 +53,18 @@ public class LatestByTask {
     private int valueBlockCapacity;
     private long valuesMemorySize;
 
+    @Override
+    public void clear() {
+        frameMemoryPool.clear();
+    }
+
+    @Override
+    public void close() {
+        Misc.free(frameMemoryPool);
+    }
+
     public void of(
+            PageFrameAddressCache addressCache,
             long keyBaseAddress,
             long keysMemorySize,
             long valueBaseAddress,
@@ -55,15 +73,16 @@ public class LatestByTask {
             long unIndexedNullCount,
             long rowHi,
             long rowLo,
-            int partitionIndex,
+            int frameIndex,
             int valueBlockCapacity,
-            long hashesAddress,
-            int hashLength,
+            int hashColumnIndex,
+            int hashColumnType,
             long prefixesAddress,
             long prefixesCount,
             CountDownLatchSPI doneLatch,
             ExecutionCircuitBreaker circuitBreaker
     ) {
+        this.frameMemoryPool.of(addressCache);
         this.keyBaseAddress = keyBaseAddress;
         this.keysMemorySize = keysMemorySize;
         this.valueBaseAddress = valueBaseAddress;
@@ -72,10 +91,10 @@ public class LatestByTask {
         this.unIndexedNullCount = unIndexedNullCount;
         this.rowHi = rowHi;
         this.rowLo = rowLo;
-        this.partitionIndex = partitionIndex;
+        this.frameIndex = frameIndex;
         this.valueBlockCapacity = valueBlockCapacity;
-        this.hashesAddress = hashesAddress;
-        this.hashLength = hashLength;
+        this.hashColumnIndex = hashColumnIndex;
+        this.hashColumnType = hashColumnType;
         this.prefixesAddress = prefixesAddress;
         this.prefixesCount = prefixesCount;
         this.doneLatch = doneLatch;
@@ -83,26 +102,30 @@ public class LatestByTask {
     }
 
     public boolean run() {
-        if (!circuitBreaker.checkIfTripped()) {
-            GeoHashNative.latestByAndFilterPrefix(
-                    keyBaseAddress,
-                    keysMemorySize,
-                    valueBaseAddress,
-                    valuesMemorySize,
-                    argsAddress,
-                    unIndexedNullCount,
-                    rowHi,
-                    rowLo,
-                    partitionIndex,
-                    valueBlockCapacity,
-                    hashesAddress,
-                    hashLength,
-                    prefixesAddress,
-                    prefixesCount
-            );
+        try {
+            if (!circuitBreaker.checkIfTripped()) {
+                GeoHashNative.latestByAndFilterPrefix(
+                        frameMemoryPool,
+                        keyBaseAddress,
+                        keysMemorySize,
+                        valueBaseAddress,
+                        valuesMemorySize,
+                        argsAddress,
+                        unIndexedNullCount,
+                        rowHi,
+                        rowLo,
+                        frameIndex,
+                        valueBlockCapacity,
+                        hashColumnIndex,
+                        hashColumnType,
+                        prefixesAddress,
+                        prefixesCount
+                );
+            }
+            doneLatch.countDown();
+            return true;
+        } finally {
+            frameMemoryPool.close();
         }
-
-        doneLatch.countDown();
-        return true;
     }
 }

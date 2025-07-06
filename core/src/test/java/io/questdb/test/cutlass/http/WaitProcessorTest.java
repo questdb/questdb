@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,15 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.HttpException;
+import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.HttpRequestProcessorSelector;
+import io.questdb.cutlass.http.RescheduleContext;
+import io.questdb.cutlass.http.Retry;
+import io.questdb.cutlass.http.RetryAttemptAttributes;
+import io.questdb.cutlass.http.WaitProcessor;
+import io.questdb.cutlass.http.WaitProcessorConfiguration;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -133,7 +141,6 @@ public class WaitProcessorTest {
 
             @Override
             public void close() {
-
             }
 
             @Override
@@ -142,7 +149,7 @@ public class WaitProcessorTest {
             }
 
             @Override
-            public HttpRequestProcessor select(CharSequence url) {
+            public HttpRequestProcessor select(HttpRequestHeader header) {
                 return null;
             }
         };
@@ -175,7 +182,7 @@ public class WaitProcessorTest {
             public long getMaxWaitCapMs() {
                 return 1000;
             }
-        });
+        }, null);
     }
 
     @NotNull

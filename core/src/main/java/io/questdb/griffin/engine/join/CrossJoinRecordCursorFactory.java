@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,34 +24,35 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
-//This plan is actually filter-less Nested Loop  
-public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
+// This exec plan is filter-less Nested Loop
+public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final CrossJoinRecordCursor cursor;
-    private final RecordCursorFactory masterFactory;
-    private final RecordCursorFactory slaveFactory;
 
     public CrossJoinRecordCursorFactory(
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             int columnSplit
-
     ) {
-        super(metadata);
-        this.masterFactory = masterFactory;
-        this.slaveFactory = slaveFactory;
+        super(metadata, null, masterFactory, slaveFactory);
         this.cursor = new CrossJoinRecordCursor(columnSplit);
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -60,7 +61,7 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         RecordCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getCursor(executionContext);
-            cursor.of(masterCursor, slaveCursor);
+            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable ex) {
             Misc.free(masterCursor);
@@ -93,19 +94,71 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
+        Misc.freeIfCloseable(getMetadata());
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
     }
 
     private static class CrossJoinRecordCursor extends AbstractJoinCursor {
         private final JoinRecord record;
+        private final RecordCursor.Counter tmpCounter;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isMasterHasNextPending;
+        private boolean isMasterSizeCalculated;
+        private boolean isSlavePartialSizeCalculated;
+        private boolean isSlaveReset;
+        private boolean isSlaveSizeCalculated;
         private boolean masterHasNext;
+        private long masterSize;
+        private long slavePartialSize;
+        private long slaveSize;
 
         public CrossJoinRecordCursor(int columnSplit) {
             super(columnSplit);
             this.record = new JoinRecord(columnSplit);
+            tmpCounter = new Counter();
+        }
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
+            if (!isMasterHasNextPending && !masterHasNext) {
+                return;
+            }
+
+            if (!isSlavePartialSizeCalculated) {
+                slaveCursor.calculateSize(circuitBreaker, tmpCounter);
+                slavePartialSize = tmpCounter.get();
+                isSlavePartialSizeCalculated = true;
+                tmpCounter.clear();
+            }
+            if (!isMasterSizeCalculated) {
+                masterCursor.calculateSize(circuitBreaker, tmpCounter);
+                masterSize = tmpCounter.get();
+                isMasterSizeCalculated = true;
+                tmpCounter.clear();
+            }
+
+            if (masterSize == 0) {
+                if (!isMasterHasNextPending) {
+                    counter.add(slavePartialSize);
+                }
+            } else {
+                if (!isSlaveSizeCalculated) {
+                    if (!isSlaveReset) {
+                        slaveCursor.toTop();
+                        isSlaveReset = true;
+                    }
+                    slaveCursor.calculateSize(circuitBreaker, tmpCounter);
+                    slaveSize = tmpCounter.get();
+                    isSlaveSizeCalculated = true;
+                }
+
+                long size = masterSize * slaveSize;
+                if (!isMasterHasNextPending) {
+                    size += slavePartialSize; // slave cursor was in the middle of the data set
+                }
+                counter.add(size);
+            }
         }
 
         @Override
@@ -130,8 +183,14 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
 
                 slaveCursor.toTop();
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                 isMasterHasNextPending = true;
             }
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
         }
 
         @Override
@@ -142,7 +201,47 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 return -1;
             }
             final long result = sizeA * sizeB;
-            return result < sizeA ? Long.MAX_VALUE : result;
+            return result < sizeA && sizeB > 0 ? Long.MAX_VALUE : result;
+        }
+
+        @Override
+        public void skipRows(Counter rowCount) throws DataUnavailableException {
+            if (rowCount.get() == 0) {
+                return;
+            }
+
+            if (!isSlaveSizeCalculated) {
+                slaveCursor.calculateSize(this.circuitBreaker, tmpCounter);
+                slaveSize = tmpCounter.get();
+                isSlaveSizeCalculated = true;
+                tmpCounter.clear();
+            }
+
+            if (slaveSize == 0) {
+                return;
+            }
+
+            long masterToSkip = rowCount.get() / slaveSize;
+            tmpCounter.set(masterToSkip);
+            try {
+                masterCursor.skipRows(tmpCounter);
+                masterHasNext = masterCursor.hasNext();
+                isMasterHasNextPending = false;
+            } finally {
+                // in case of DataUnavailableException
+                long diff = (masterToSkip - tmpCounter.get()) * slaveSize;
+                rowCount.dec(diff);
+            }
+
+            if (!masterHasNext) {
+                return;
+            }
+
+            if (!isSlaveReset) {
+                slaveCursor.toTop();
+                isSlaveReset = true;
+            }
+            slaveCursor.skipRows(rowCount);
         }
 
         @Override
@@ -150,13 +249,32 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             masterCursor.toTop();
             slaveCursor.toTop();
             isMasterHasNextPending = true;
+
+            isSlavePartialSizeCalculated = false;
+            isSlaveReset = false;
+            isSlaveSizeCalculated = false;
+            isMasterSizeCalculated = false;
+            tmpCounter.clear();
+            masterSize = 0;
+            slaveSize = 0;
+            slavePartialSize = 0;
         }
 
-        void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
             isMasterHasNextPending = true;
+            this.circuitBreaker = circuitBreaker;
+
+            isSlavePartialSizeCalculated = false;
+            isSlaveReset = false;
+            isSlaveSizeCalculated = false;
+            isMasterSizeCalculated = false;
+            tmpCounter.clear();
+            masterSize = 0;
+            slaveSize = 0;
+            slavePartialSize = 0;
         }
     }
 }

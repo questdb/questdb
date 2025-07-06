@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,40 +25,41 @@
 package io.questdb.test.griffin;
 
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.AbstractGriffinTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 // Runs some tests from CopyTest, but without mangling private table names
-public class CopyNoMangleTest extends AbstractGriffinTest {
+public class CopyNoMangleTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         inputRoot = TestUtils.getCsvRoot();
         inputWorkRoot = TestUtils.unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
         AbstractCairoTest.setUpStatic();
-        configOverrideMangleTableDirNames(false);
-
         node1.initGriffin(circuitBreaker);
-        compiler = node1.getSqlCompiler();
         bindVariableService = node1.getBindVariableService();
         sqlExecutionContext = node1.getSqlExecutionContext();
     }
 
     @Test
     public void testWhenWorkIsTheSameAsDataDirThenParallelCopyThrowsException() throws Exception {
+        configOverrideMangleTableDirNames(false);
         String inputWorkRootTmp = inputWorkRoot;
         inputWorkRoot = temp.getRoot().getAbsolutePath();
 
-        CopyTest.CopyRunnable stmt = () -> CopyTest.runAndFetchCopyID("copy dbRoot from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
-                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT partition by day; ", sqlExecutionContext);
+        CopyTest.CopyRunnable stmt = () -> CopyTest.runAndFetchCopyID(
+                "copy dbRoot from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT partition by day; ",
+                sqlExecutionContext
+        );
 
-        CopyTest.CopyRunnable test = () -> assertQuery("message\ncould not remove import work directory because it points to one of main directories\n",
+        CopyTest.CopyRunnable test = () -> assertQueryNoLeakCheck(
+                "message\ncould not remove import work directory because it points to one of main directories\n",
                 "select left(message, 83) message from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,
                 true,
-                false
+                true
         );
 
         CopyTest.testCopy(stmt, test);

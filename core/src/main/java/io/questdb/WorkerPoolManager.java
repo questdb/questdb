@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,29 +26,32 @@ package io.questdb;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.HealthMetrics;
+import io.questdb.metrics.Target;
+import io.questdb.mp.Worker;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public abstract class WorkerPoolManager {
+public abstract class WorkerPoolManager implements Target {
 
     private static final Log LOG = LogFactory.getLog(WorkerPoolManager.class);
+    protected final WorkerPool sharedPool;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final CharSequenceObjHashMap<WorkerPool> dedicatedPools = new CharSequenceObjHashMap<>(4);
     private final AtomicBoolean running = new AtomicBoolean();
-    private final WorkerPool sharedPool;
 
-    public WorkerPoolManager(ServerConfiguration config, HealthMetrics metrics) {
-        sharedPool = new WorkerPool(config.getWorkerPoolConfiguration(), metrics);
+    public WorkerPoolManager(ServerConfiguration config) {
+        sharedPool = new WorkerPool(config.getWorkerPoolConfiguration());
         configureSharedPool(sharedPool); // abstract method giving callers the chance to assign jobs
+        config.getMetrics().addScrapable(this);
     }
 
-    public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull HealthMetrics metrics, @NotNull Requester requester) {
+    public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
         if (running.get() || closed.get()) {
             throw new IllegalStateException("can only get instance before start");
         }
@@ -63,12 +66,13 @@ public abstract class WorkerPoolManager {
         String poolName = config.getPoolName();
         WorkerPool pool = dedicatedPools.get(poolName);
         if (pool == null) {
-            pool = new WorkerPool(config, metrics);
+            pool = new WorkerPool(config);
             dedicatedPools.put(poolName, pool);
         }
         LOG.info().$("new DEDICATED pool [name=").$(poolName)
                 .$(", requester=").$(requester)
                 .$(", workers=").$(pool.getWorkerCount())
+                .$(", priority=").$(config.workerPoolPriority())
                 .I$();
         return pool;
     }
@@ -103,6 +107,16 @@ public abstract class WorkerPoolManager {
         closed.set(true);
     }
 
+    @Override
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
+        long now = Worker.CLOCK_MICROS.getTicks();
+        sharedPool.updateWorkerMetrics(now);
+        ObjList<CharSequence> poolNames = dedicatedPools.keys();
+        for (int i = 0, limit = poolNames.size(); i < limit; i++) {
+            dedicatedPools.get(poolNames.getQuick(i)).updateWorkerMetrics(now);
+        }
+    }
+
     public void start(Log sharedPoolLog) {
         if (running.compareAndSet(false, true)) {
             sharedPool.start(sharedPoolLog);
@@ -135,7 +149,8 @@ public abstract class WorkerPoolManager {
         LINE_TCP_IO("line-tcp-io"),
         LINE_TCP_WRITER("line-tcp-writer"),
         OTHER("other"),
-        WAL_APPLY("wal-apply");
+        WAL_APPLY("wal-apply"),
+        MAT_VIEW_REFRESH("mat-view-refresh");
 
         private final String requester;
 
