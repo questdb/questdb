@@ -172,6 +172,22 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         private boolean isDataMapBuilt;
         private boolean isOpen;
         private long rowId;
+@Override
+public void close() {
+    if (isOpen) {
+        isOpen = false;
+        Misc.free(dataMap);
+        Misc.free(allocator);
+        Misc.clearObjList(groupByFunctions);
+
+        // ✅ Add this to call cursorClosed() on each function
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).cursorClosed();
+        }
+
+        super.close();
+    }
+}
 
         public GroupByRecordCursor(
                 CairoConfiguration configuration,
