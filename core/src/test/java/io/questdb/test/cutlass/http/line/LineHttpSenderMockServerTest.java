@@ -68,7 +68,8 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     private static final CharSequence QUESTDB_VERSION = new BuildInformationHolder().getSwVersion();
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
+        super.setUp();
         // Setup method for test initialization
         // Individual tests will handle server startup and readiness checks
     }
