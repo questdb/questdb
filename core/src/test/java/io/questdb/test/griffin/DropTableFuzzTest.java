@@ -170,4 +170,12 @@ public class DropTableFuzzTest extends AbstractCairoTest {
         }
         return result.toString();
     }
+    @Test
+public void testDropTableIfExistsWithMixedCaseTableName() throws Exception {
+    assertMemoryLeak(() -> {
+        execute("CREATE TABLE tango (ts TIMESTAMP)");
+        execute("DROP TABLE IF EXISTS TANGO");  // Should not throw an error
+    });
+}
+
 }
