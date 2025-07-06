@@ -1,0 +1,118 @@
+import java.util.List;
+import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
+
+public class GroupByCursorDemo {
+
+    // ============ Function interface & JsonExtractFunction =============
+
+    interface Function {
+        void cursorClosed();
+    }
+
+    static class JsonExtractFunction implements Function {
+        private byte[] buffer;
+        private static final AtomicInteger buffersAllocated = new AtomicInteger(0);
+
+        public JsonExtractFunction() {
+            buffer = new byte[1024 * 1024]; // 1 MB buffer
+            buffersAllocated.incrementAndGet();
+            System.out.println("Allocated buffer. Total buffers: " + buffersAllocated.get());
+        }
+
+        @Override
+        public void cursorClosed() {
+            if (buffer != null) {
+                buffer = null;
+                buffersAllocated.decrementAndGet();
+                System.out.println("Freed buffer. Total buffers: " + buffersAllocated.get());
+            }
+        }
+
+        public static int getAllocatedBuffers() {
+            return buffersAllocated.get();
+        }
+    }
+
+    // ============== RecordCursor & Factory ==================
+
+    interface RecordCursor {
+        boolean hasNext();
+        void close();
+    }
+
+    interface RecordCursorFactory {
+        RecordCursor getCursor();
+        void close();
+    }
+
+    static class GroupByRecordCursorFactory implements RecordCursorFactory {
+
+        private final List<Function> functions;
+
+        public GroupByRecordCursorFactory(List<Function> functions) {
+            this.functions = functions;
+        }
+
+        @Override
+        public RecordCursor getCursor() {
+            return new GroupByRecordCursor(functions);
+        }
+
+        @Override
+        public void close() {
+            // optional: cleanup at factory level if needed
+        }
+
+        private static class GroupByRecordCursor implements RecordCursor {
+            private final List<Function> functions;
+            private boolean consumed = false;
+
+            public GroupByRecordCursor(List<Function> functions) {
+                this.functions = functions;
+            }
+
+            @Override
+            public boolean hasNext() {
+                if (!consumed) {
+                    consumed = true;
+                    return true;
+                }
+                return false;
+            }
+
+            @Override
+            public void close() {
+                for (Function f : functions) {
+                    f.cursorClosed();
+                }
+            }
+        }
+    }
+
+    // ==================== Main demo =======================
+
+    public static void main(String[] args) {
+        System.out.println("Starting GROUP BY cursor test...");
+
+        JsonExtractFunction jsonFunc1 = new JsonExtractFunction();
+        JsonExtractFunction jsonFunc2 = new JsonExtractFunction();
+
+        GroupByRecordCursorFactory factory = new GroupByRecordCursorFactory(
+            Arrays.asList(jsonFunc1, jsonFunc2)
+        );
+
+        RecordCursor cursor = factory.getCursor();
+
+        while (cursor.hasNext()) {
+            System.out.println("Processing record...");
+        }
+
+        // This is where memory is properly freed
+        cursor.close();
+
+        System.out.println("Final allocated buffers: " + JsonExtractFunction.getAllocatedBuffers());
+    }
+}
+
+
