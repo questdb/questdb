@@ -1,36 +1,38 @@
 <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  ~     ___                  _   ____  ____
+  ~     ___                  _   ____  ____ 
   ~    / _ \ _   _  ___  ___| |_|  _ \| __ )
-  ~   | | | | | | |/ _ \/ __| __| | | |  _ \
+  ~   | | | | | | |/ _ \/ __| __| | | |  _ \ 
   ~   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
-  ~    \__\_\\__,_|\___||___/\__|____/|____/
-  ~
-  ~  Copyright (c) 2014-2019 Appsicle
-  ~  Copyright (c) 2019-2024 QuestDB
-  ~
-  ~  Licensed under the Apache License, Version 2.0 (the "License");
-  ~  you may not use this file except in compliance with the License.
-  ~  You may obtain a copy of the License at
-  ~
-  ~  http://www.apache.org/licenses/LICENSE-2.0
-  ~
-  ~  Unless required by applicable law or agreed to in writing, software
-  ~  distributed under the License is distributed on an "AS IS" BASIS,
-  ~  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  ~  See the License for the specific language governing permissions and
-  ~  limitations under the License.
-  ~
-  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+  ~    \__\_\\__,_|\___||___/\__|____/|____/ 
+  ~                                        
+  ~   QuestDB - High-performance time series database 
+  ~   https://github.com/questdb/questdb
+  ~ 
+  ~   Copyright (c) 2014-2019 Appsicle
+  ~   Copyright (c) 2019-2024 QuestDB
+  ~ 
+  ~   Licensed under the Apache License, Version 2.0
+  ~   http://www.apache.org/licenses/LICENSE-2.0
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <!-- ===================== -->
+    <!-- 🚀 Project Metadata -->
+    <!-- ===================== -->
     <modelVersion>4.0.0</modelVersion>
-
-    <version>8.3.4-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb-parent</artifactId>
+    <version>8.3.4-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>QuestDB</name>
 
+    <!-- =============================== -->
+    <!-- 🔗 Source Code Management (SCM) -->
+    <!-- =============================== -->
     <scm>
         <connection>scm:git:https://github.com/questdb/questdb.git</connection>
         <developerConnection>scm:git:https://github.com/questdb/questdb.git</developerConnection>
@@ -38,8 +40,13 @@
         <tag>HEAD</tag>
     </scm>
 
+    <!-- ========================= -->
+    <!-- ⚙️ Build Configuration -->
+    <!-- ========================= -->
     <build>
         <plugins>
+
+            <!-- 🛑 Skip Artifact Deployment -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-deploy-plugin</artifactId>
@@ -48,6 +55,8 @@
                     <skip>true</skip>
                 </configuration>
             </plugin>
+
+            <!-- 📊 JaCoCo Code Coverage -->
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
@@ -68,6 +77,8 @@
                     </execution>
                 </executions>
             </plugin>
+
+            <!-- 🚀 Maven Release Plugin -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-release-plugin</artifactId>
@@ -78,8 +89,13 @@
                     <releaseProfiles>build-web-console,maven-central-release</releaseProfiles>
                 </configuration>
             </plugin>
+
         </plugins>
     </build>
+
+    <!-- ================= -->
+    <!-- 📦 Modules List -->
+    <!-- ================= -->
     <modules>
         <module>core</module>
         <module>benchmarks</module>
@@ -87,4 +103,5 @@
         <module>examples</module>
         <module>compat</module>
     </modules>
+
 </project>
