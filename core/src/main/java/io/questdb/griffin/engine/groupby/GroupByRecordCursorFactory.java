@@ -201,15 +201,22 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void close() {
-            if (isOpen) {
-                isOpen = false;
-                Misc.free(dataMap);
-                Misc.free(allocator);
-                Misc.clearObjList(groupByFunctions);
-                super.close();
-            }
-        }
+	public void close() {
+    	     if (isOpen) {
+        	isOpen = false;
+        	for (int i = 0, n = recordFunctions.size(); i < n; i++) {
+            		recordFunctions.getQuick(i).cursorClosed();
+        	}
+
+    		Misc.free(dataMap);
+        	Misc.free(allocator);
+        	Misc.clearObjList(groupByFunctions);
+
+        
+        	super.close();
+   	    }
+	}
+
 
         @Override
         public boolean hasNext() {
