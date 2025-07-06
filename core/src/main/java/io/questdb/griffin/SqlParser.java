@@ -4063,7 +4063,7 @@ public class SqlParser {
     }
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
-        final CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
+        final CharSequence tok = tok(lexer, "'create', 'rename', 'declare' or 'select'");
 
         if (isExplainKeyword(tok)) {
             int format = parseExplainOptions(lexer, tok);
@@ -4100,6 +4100,10 @@ public class SqlParser {
 
         if (isWithKeyword(tok)) {
             return parseWith(lexer, sqlParserCallback, null);
+        }
+
+        if (isDeclareKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "Syntax error: DECLARE/@var := syntax is not supported");
         }
 
         if (isFromKeyword(tok)) {
