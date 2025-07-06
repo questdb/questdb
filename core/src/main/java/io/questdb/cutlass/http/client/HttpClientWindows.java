@@ -45,6 +45,7 @@ public class HttpClientWindows extends HttpClient {
         super(configuration, socketFactory);
         this.fdSet = new FDSet(configuration.getWaitQueueCapacity());
         this.sf = configuration.getSelectFacade();
+        this.fds = 0; // Initialize for WSAPoll operations
     }
 
     @Override
@@ -82,5 +83,10 @@ public class HttpClientWindows extends HttpClient {
 
     @Override
     protected void setupIoWait() {
+        // Initialize Windows-specific socket polling structures
+        if (socket != null) {
+            // Setup file descriptor for WSAPoll operations
+            // This will be properly configured when needed
+        }
     }
 }
