@@ -27,21 +27,8 @@ package org.questdb;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.vm.api.MemoryA;
-import org.openjdk.jmh.annotations.Benchmark;
-import org.openjdk.jmh.annotations.BenchmarkMode;
-import org.openjdk.jmh.annotations.Level;
-import org.openjdk.jmh.annotations.Mode;
-import org.openjdk.jmh.annotations.OutputTimeUnit;
-import org.openjdk.jmh.annotations.Param;
-import org.openjdk.jmh.annotations.Scope;
-import org.openjdk.jmh.annotations.Setup;
-import org.openjdk.jmh.annotations.State;
-import org.openjdk.jmh.annotations.TearDown;
+import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
-import org.openjdk.jmh.runner.Runner;
-import org.openjdk.jmh.runner.RunnerException;
-import org.openjdk.jmh.runner.options.Options;
-import org.openjdk.jmh.runner.options.OptionsBuilder;
 
 import java.util.concurrent.TimeUnit;
 
@@ -49,19 +36,25 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class ArrayBinarySearchBenchmark {
+
     @Param({"50", "100", "10000", "1000000"})
     public int size;
 
     DirectArray array;
 
-    public static void main(String[] args) throws RunnerException {
-        Options opt = new OptionsBuilder()
-                .include(ArrayBinarySearchBenchmark.class.getSimpleName())
-                .warmupIterations(1)
-                .measurementIterations(2)
-                .forks(1)
-                .build();
-        new Runner(opt).run();
+    @Setup(Level.Trial)
+    public void setup() {
+        array = new DirectArray();
+        array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+        array.setDimLen(0, size);
+        array.applyShape();
+
+        MemoryA mem = array.startMemoryA();
+
+        for (int i = 0; i < size; i++) {
+            // Correct alignment: i * 8 bytes per double
+            mem.putDouble(i * Double.BYTES);
+        }
     }
 
     @Benchmark
@@ -70,13 +63,8 @@ public class ArrayBinarySearchBenchmark {
     }
 
     @Benchmark
-    public void searchExistingEnd(Blackhole bh) {
-        bh.consume(array.binarySearchDoubleValue1DArray((size - 1) * 3.0, true));
-    }
-
-    @Benchmark
-    public void searchExistingMiddle(Blackhole bh) {
-        bh.consume(array.binarySearchDoubleValue1DArray(size / 2 * 3.0, true));
+    public void sumDouble(Blackhole bh) {
+        bh.consume(array.flatView().sumDouble(0, size));
     }
 
     @Benchmark
@@ -85,25 +73,19 @@ public class ArrayBinarySearchBenchmark {
     }
 
     @Benchmark
-    public void searchMissingValue(Blackhole bh) {
-        bh.consume(array.binarySearchDoubleValue1DArray(10.0, true));
-    }
-
-    @Setup(Level.Trial)
-    public void setup() {
-        array = new DirectArray();
-        array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
-        array.setDimLen(0, size);
-        array.applyShape();
-        MemoryA mem = array.startMemoryA();
-        for (int i = 0; i < size; i++) {
-            mem.putDouble(i * 3);
-        }
+    public void searchExistingMiddle(Blackhole bh) {
+        bh.consume(array.binarySearchDoubleValue1DArray((size / 2) * 3.0, true));
     }
 
     @Benchmark
-    public void sumDouble(Blackhole bh) {
-        bh.consume(array.flatView().sumDouble(0, size));
+    public void searchExistingEnd(Blackhole bh) {
+        bh.consume(array.binarySearchDoubleValue1DArray((size - 1) * 3.0, true));
+    }
+
+    @Benchmark
+    public void searchMissingValue(Blackhole bh) {
+        // Choose a value that definitely doesn't exist
+        bh.consume(array.binarySearchDoubleValue1DArray(-100.0, true));
     }
 
     @TearDown(Level.Trial)
