@@ -26,6 +26,25 @@ package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import static io.questdb.cairo.ColumnType.BINARY;
+import static io.questdb.cairo.ColumnType.BOOLEAN;
+import static io.questdb.cairo.ColumnType.BYTE;
+import static io.questdb.cairo.ColumnType.CHAR;
+import static io.questdb.cairo.ColumnType.DATE;
+import static io.questdb.cairo.ColumnType.DOUBLE;
+import static io.questdb.cairo.ColumnType.FLOAT;
+import static io.questdb.cairo.ColumnType.INT;
+import static io.questdb.cairo.ColumnType.IPv4;
+import static io.questdb.cairo.ColumnType.LONG;
+import static io.questdb.cairo.ColumnType.LONG256;
+import static io.questdb.cairo.ColumnType.NULL;
+import static io.questdb.cairo.ColumnType.SHORT;
+import static io.questdb.cairo.ColumnType.STRING;
+import static io.questdb.cairo.ColumnType.SYMBOL;
+import static io.questdb.cairo.ColumnType.TIMESTAMP;
+import static io.questdb.cairo.ColumnType.UUID;
+import static io.questdb.cairo.ColumnType.VARCHAR;
+import static io.questdb.cairo.ColumnType.nameOf;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -43,8 +62,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
-
-import static io.questdb.cairo.ColumnType.*;
 
 public class ConcatFunctionFactory implements FunctionFactory {
     private static final ObjList<TypeAdapter> adapterReferences = new ObjList<>();
@@ -79,9 +96,23 @@ public class ConcatFunctionFactory implements FunctionFactory {
         if (allConst) {
             return new ConstConcatFunction(new ObjList<>(args), argPositions);
         }
+        
         final IntList positions = new IntList();
         positions.addAll(argPositions);
-        return new ConcatFunction(new ObjList<>(args), positions);
+        
+        // Use loop-unrolled variants for common cases (2-5 arguments)
+        switch (n) {
+            case 2:
+                return new ConcatFunction2(new ObjList<>(args), positions);
+            case 3:
+                return new ConcatFunction3(new ObjList<>(args), positions);
+            case 4:
+                return new ConcatFunction4(new ObjList<>(args), positions);
+            case 5:
+                return new ConcatFunction5(new ObjList<>(args), positions);
+            default:
+                return new ConcatFunction(new ObjList<>(args), positions);
+        }
     }
 
     private static void populateAdapters(ObjList<TypeAdapter> adapters, ObjList<Function> functions, IntList argPositions) throws SqlException {
@@ -257,6 +288,223 @@ public class ConcatFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrB(Record rec) {
             return sink;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("concat(").val(functions).val(')');
+        }
+    }
+
+    // Loop-unrolled CONCAT implementations for performance optimization
+    private static class ConcatFunction2 extends StrFunction implements MultiArgFunction {
+        private final ObjList<TypeAdapter> adapters;
+        private final IntList argPositions;
+        private final ObjList<Function> functions;
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public ConcatFunction2(ObjList<Function> functions, IntList argPositions) {
+            this.functions = functions;
+            this.argPositions = argPositions;
+            this.adapters = new ObjList<>(2);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return functions;
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            sinkA.clear();
+            adapters.getQuick(0).sink(sinkA, functions.getQuick(0), rec);
+            adapters.getQuick(1).sink(sinkA, functions.getQuick(1), rec);
+            return sinkA;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            sinkB.clear();
+            adapters.getQuick(0).sink(sinkB, functions.getQuick(0), rec);
+            adapters.getQuick(1).sink(sinkB, functions.getQuick(1), rec);
+            return sinkB;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            MultiArgFunction.super.init(symbolTableSource, executionContext);
+            populateAdapters(adapters, functions, argPositions);
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("concat(").val(functions).val(')');
+        }
+    }
+
+    private static class ConcatFunction3 extends StrFunction implements MultiArgFunction {
+        private final ObjList<TypeAdapter> adapters;
+        private final IntList argPositions;
+        private final ObjList<Function> functions;
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public ConcatFunction3(ObjList<Function> functions, IntList argPositions) {
+            this.functions = functions;
+            this.argPositions = argPositions;
+            this.adapters = new ObjList<>(3);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return functions;
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            sinkA.clear();
+            adapters.getQuick(0).sink(sinkA, functions.getQuick(0), rec);
+            adapters.getQuick(1).sink(sinkA, functions.getQuick(1), rec);
+            adapters.getQuick(2).sink(sinkA, functions.getQuick(2), rec);
+            return sinkA;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            sinkB.clear();
+            adapters.getQuick(0).sink(sinkB, functions.getQuick(0), rec);
+            adapters.getQuick(1).sink(sinkB, functions.getQuick(1), rec);
+            adapters.getQuick(2).sink(sinkB, functions.getQuick(2), rec);
+            return sinkB;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            MultiArgFunction.super.init(symbolTableSource, executionContext);
+            populateAdapters(adapters, functions, argPositions);
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("concat(").val(functions).val(')');
+        }
+    }
+
+    private static class ConcatFunction4 extends StrFunction implements MultiArgFunction {
+        private final ObjList<TypeAdapter> adapters;
+        private final IntList argPositions;
+        private final ObjList<Function> functions;
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public ConcatFunction4(ObjList<Function> functions, IntList argPositions) {
+            this.functions = functions;
+            this.argPositions = argPositions;
+            this.adapters = new ObjList<>(4);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return functions;
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            sinkA.clear();
+            adapters.getQuick(0).sink(sinkA, functions.getQuick(0), rec);
+            adapters.getQuick(1).sink(sinkA, functions.getQuick(1), rec);
+            adapters.getQuick(2).sink(sinkA, functions.getQuick(2), rec);
+            adapters.getQuick(3).sink(sinkA, functions.getQuick(3), rec);
+            return sinkA;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            sinkB.clear();
+            adapters.getQuick(0).sink(sinkB, functions.getQuick(0), rec);
+            adapters.getQuick(1).sink(sinkB, functions.getQuick(1), rec);
+            adapters.getQuick(2).sink(sinkB, functions.getQuick(2), rec);
+            adapters.getQuick(3).sink(sinkB, functions.getQuick(3), rec);
+            return sinkB;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            MultiArgFunction.super.init(symbolTableSource, executionContext);
+            populateAdapters(adapters, functions, argPositions);
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("concat(").val(functions).val(')');
+        }
+    }
+
+    private static class ConcatFunction5 extends StrFunction implements MultiArgFunction {
+        private final ObjList<TypeAdapter> adapters;
+        private final IntList argPositions;
+        private final ObjList<Function> functions;
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public ConcatFunction5(ObjList<Function> functions, IntList argPositions) {
+            this.functions = functions;
+            this.argPositions = argPositions;
+            this.adapters = new ObjList<>(5);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return functions;
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            sinkA.clear();
+            adapters.getQuick(0).sink(sinkA, functions.getQuick(0), rec);
+            adapters.getQuick(1).sink(sinkA, functions.getQuick(1), rec);
+            adapters.getQuick(2).sink(sinkA, functions.getQuick(2), rec);
+            adapters.getQuick(3).sink(sinkA, functions.getQuick(3), rec);
+            adapters.getQuick(4).sink(sinkA, functions.getQuick(4), rec);
+            return sinkA;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            sinkB.clear();
+            adapters.getQuick(0).sink(sinkB, functions.getQuick(0), rec);
+            adapters.getQuick(1).sink(sinkB, functions.getQuick(1), rec);
+            adapters.getQuick(2).sink(sinkB, functions.getQuick(2), rec);
+            adapters.getQuick(3).sink(sinkB, functions.getQuick(3), rec);
+            adapters.getQuick(4).sink(sinkB, functions.getQuick(4), rec);
+            return sinkB;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            MultiArgFunction.super.init(symbolTableSource, executionContext);
+            populateAdapters(adapters, functions, argPositions);
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Override

@@ -25,6 +25,25 @@
 package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.CairoConfiguration;
+import static io.questdb.cairo.ColumnType.BOOLEAN;
+import static io.questdb.cairo.ColumnType.BYTE;
+import static io.questdb.cairo.ColumnType.CHAR;
+import static io.questdb.cairo.ColumnType.DATE;
+import static io.questdb.cairo.ColumnType.DOUBLE;
+import static io.questdb.cairo.ColumnType.FLOAT;
+import static io.questdb.cairo.ColumnType.INT;
+import static io.questdb.cairo.ColumnType.IPv4;
+import static io.questdb.cairo.ColumnType.LONG;
+import static io.questdb.cairo.ColumnType.LONG256;
+import static io.questdb.cairo.ColumnType.SHORT;
+import static io.questdb.cairo.ColumnType.STRING;
+import static io.questdb.cairo.ColumnType.SYMBOL;
+import static io.questdb.cairo.ColumnType.TIMESTAMP;
+import static io.questdb.cairo.ColumnType.UUID;
+import static io.questdb.cairo.ColumnType.VARCHAR;
+import static io.questdb.cairo.ColumnType.isSymbol;
+import static io.questdb.cairo.ColumnType.nameOf;
+import static io.questdb.cairo.ColumnType.tagOf;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -51,8 +70,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
-
-import static io.questdb.cairo.ColumnType.*;
 
 public class CoalesceFunctionFactory implements FunctionFactory {
 
@@ -96,21 +113,87 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
         switch (tagOf(returnType)) {
             case DOUBLE:
-                return argsSize == 2 ? new TwoDoubleCoalesceFunction(args) : new DoubleCoalesceFunction(args, argsSize);
+                switch (argsSize) {
+                    case 2:
+                        return new TwoDoubleCoalesceFunction(args);
+                    case 3:
+                        return new ThreeDoubleCoalesceFunction(args);
+                    case 4:
+                        return new FourDoubleCoalesceFunction(args);
+                    case 5:
+                        return new FiveDoubleCoalesceFunction(args);
+                    default:
+                        return new DoubleCoalesceFunction(args, argsSize);
+                }
             case DATE:
-                return argsSize == 2 ? new TwoDateCoalesceFunction(args) : new DateCoalesceFunction(args, argsSize);
+                switch (argsSize) {
+                    case 2:
+                        return new TwoDateCoalesceFunction(args);
+                    case 3:
+                        return new ThreeDateCoalesceFunction(args);
+                    case 4:
+                        return new FourDateCoalesceFunction(args);
+                    case 5:
+                        return new FiveDateCoalesceFunction(args);
+                    default:
+                        return new DateCoalesceFunction(args, argsSize);
+                }
             case TIMESTAMP:
-                return argsSize == 2 ? new TwoTimestampCoalesceFunction(args) : new TimestampCoalesceFunction(args);
+                switch (argsSize) {
+                    case 2:
+                        return new TwoTimestampCoalesceFunction(args);
+                    case 3:
+                        return new ThreeTimestampCoalesceFunction(args);
+                    case 4:
+                        return new FourTimestampCoalesceFunction(args);
+                    case 5:
+                        return new FiveTimestampCoalesceFunction(args);
+                    default:
+                        return new TimestampCoalesceFunction(args);
+                }
             case LONG:
-                return argsSize == 2 ? new TwoLongCoalesceFunction(args) : new LongCoalesceFunction(args, argsSize);
+                switch (argsSize) {
+                    case 2:
+                        return new TwoLongCoalesceFunction(args);
+                    case 3:
+                        return new ThreeLongCoalesceFunction(args);
+                    case 4:
+                        return new FourLongCoalesceFunction(args);
+                    case 5:
+                        return new FiveLongCoalesceFunction(args);
+                    default:
+                        return new LongCoalesceFunction(args, argsSize);
+                }
             case LONG256:
                 return argsSize == 2 ? new TwoLong256CoalesceFunction(args) : new Long256CoalesceFunction(args);
             case INT:
-                return argsSize == 2 ? new TwoIntCoalesceFunction(args) : new IntCoalesceFunction(args, argsSize);
+                switch (argsSize) {
+                    case 2:
+                        return new TwoIntCoalesceFunction(args);
+                    case 3:
+                        return new ThreeIntCoalesceFunction(args);
+                    case 4:
+                        return new FourIntCoalesceFunction(args);
+                    case 5:
+                        return new FiveIntCoalesceFunction(args);
+                    default:
+                        return new IntCoalesceFunction(args, argsSize);
+                }
             case IPv4:
                 return argsSize == 2 ? new TwoIPv4CoalesceFunction(args) : new IPv4CoalesceFunction(args, argsSize);
             case FLOAT:
-                return argsSize == 2 ? new TwoFloatCoalesceFunction(args) : new FloatCoalesceFunction(args, argsSize);
+                switch (argsSize) {
+                    case 2:
+                        return new TwoFloatCoalesceFunction(args);
+                    case 3:
+                        return new ThreeFloatCoalesceFunction(args);
+                    case 4:
+                        return new FourFloatCoalesceFunction(args);
+                    case 5:
+                        return new FiveFloatCoalesceFunction(args);
+                    default:
+                        return new FloatCoalesceFunction(args, argsSize);
+                }
             case STRING:
             case SYMBOL:
                 if (argsSize == 2) {
@@ -993,6 +1076,666 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 }
             }
             return null;
+        }
+    }
+
+    // Loop-unrolled implementations for 3-5 arguments to optimize performance
+    
+    // Three-argument Double coalesce
+    private static class ThreeDoubleCoalesceFunction extends DoubleFunction implements MultiArgCoalesceFunction {
+        private final Function arg0, arg1, arg2;
+
+        public ThreeDoubleCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 3;
+            this.arg0 = args.getQuick(0);
+            this.arg1 = args.getQuick(1);
+            this.arg2 = args.getQuick(2);
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            double value = arg0.getDouble(rec);
+            if (value == value) return value;  // Not NaN
+            
+            value = arg1.getDouble(rec);
+            if (value == value) return value;  // Not NaN
+            
+            return arg2.getDouble(rec);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            final ObjList<Function> args = new ObjList<>(3);
+            args.add(arg0);
+            args.add(arg1);
+            args.add(arg2);
+            return args;
+        }
+    }
+
+    // Four-argument Double coalesce
+    private static class FourDoubleCoalesceFunction extends DoubleFunction implements MultiArgCoalesceFunction {
+        private final Function arg0, arg1, arg2, arg3;
+
+        public FourDoubleCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 4;
+            this.arg0 = args.getQuick(0);
+            this.arg1 = args.getQuick(1);
+            this.arg2 = args.getQuick(2);
+            this.arg3 = args.getQuick(3);
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            double value = arg0.getDouble(rec);
+            if (value == value) return value;  // Not NaN
+            
+            value = arg1.getDouble(rec);
+            if (value == value) return value;  // Not NaN
+            
+            value = arg2.getDouble(rec);
+            if (value == value) return value;  // Not NaN
+            
+            return arg3.getDouble(rec);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            final ObjList<Function> args = new ObjList<>(4);
+            args.add(arg0);
+            args.add(arg1);
+            args.add(arg2);
+            args.add(arg3);
+            return args;
+        }
+    }
+
+    // Five-argument Double coalesce
+    private static class FiveDoubleCoalesceFunction extends DoubleFunction implements MultiArgCoalesceFunction {
+        private final Function arg0, arg1, arg2, arg3, arg4;
+
+        public FiveDoubleCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 5;
+            this.arg0 = args.getQuick(0);
+            this.arg1 = args.getQuick(1);
+            this.arg2 = args.getQuick(2);
+            this.arg3 = args.getQuick(3);
+            this.arg4 = args.getQuick(4);
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            double value = arg0.getDouble(rec);
+            if (value == value) return value;  // Not NaN
+            
+            value = arg1.getDouble(rec);
+            if (value == value) return value;  // Not NaN
+            
+            value = arg2.getDouble(rec);
+            if (value == value) return value;  // Not NaN
+            
+            value = arg3.getDouble(rec);
+            if (value == value) return value;  // Not NaN
+            
+            return arg4.getDouble(rec);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            final ObjList<Function> args = new ObjList<>(5);
+            args.add(arg0);
+            args.add(arg1);
+            args.add(arg2);
+            args.add(arg3);
+            args.add(arg4);
+            return args;
+        }
+    }
+
+    // Three-argument Long coalesce
+    private static class ThreeLongCoalesceFunction extends LongFunction implements MultiArgCoalesceFunction {
+        private final Function arg0, arg1, arg2;
+
+        public ThreeLongCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 3;
+            this.arg0 = args.getQuick(0);
+            this.arg1 = args.getQuick(1);
+            this.arg2 = args.getQuick(2);
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            long value = arg0.getLong(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            value = arg1.getLong(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            return arg2.getLong(rec);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            final ObjList<Function> args = new ObjList<>(3);
+            args.add(arg0);
+            args.add(arg1);
+            args.add(arg2);
+            return args;
+        }
+    }
+
+    // Four-argument Long coalesce
+    private static class FourLongCoalesceFunction extends LongFunction implements MultiArgCoalesceFunction {
+        private final Function arg0, arg1, arg2, arg3;
+
+        public FourLongCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 4;
+            this.arg0 = args.getQuick(0);
+            this.arg1 = args.getQuick(1);
+            this.arg2 = args.getQuick(2);
+            this.arg3 = args.getQuick(3);
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            long value = arg0.getLong(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            value = arg1.getLong(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            value = arg2.getLong(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            return arg3.getLong(rec);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            final ObjList<Function> args = new ObjList<>(4);
+            args.add(arg0);
+            args.add(arg1);
+            args.add(arg2);
+            args.add(arg3);
+            return args;
+        }
+    }
+
+    // Five-argument Long coalesce
+    private static class FiveLongCoalesceFunction extends LongFunction implements MultiArgCoalesceFunction {
+        private final Function arg0, arg1, arg2, arg3, arg4;
+
+        public FiveLongCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 5;
+            this.arg0 = args.getQuick(0);
+            this.arg1 = args.getQuick(1);
+            this.arg2 = args.getQuick(2);
+            this.arg3 = args.getQuick(3);
+            this.arg4 = args.getQuick(4);
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            long value = arg0.getLong(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            value = arg1.getLong(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            value = arg2.getLong(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            value = arg3.getLong(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            return arg4.getLong(rec);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            final ObjList<Function> args = new ObjList<>(5);
+            args.add(arg0);
+            args.add(arg1);
+            args.add(arg2);
+            args.add(arg3);
+            args.add(arg4);
+            return args;
+        }
+    }
+
+    // Date coalesce functions
+    private static class ThreeDateCoalesceFunction extends DateFunction implements MultiArgCoalesceFunction {
+        private final Function arg0, arg1, arg2;
+
+        public ThreeDateCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 3;
+            this.arg0 = args.getQuick(0);
+            this.arg1 = args.getQuick(1);
+            this.arg2 = args.getQuick(2);
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            long value = arg0.getDate(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            value = arg1.getDate(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            return arg2.getDate(rec);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            final ObjList<Function> args = new ObjList<>(3);
+            args.add(arg0);
+            args.add(arg1);
+            args.add(arg2);
+            return args;
+        }
+    }
+
+    private static class FourDateCoalesceFunction extends DateFunction implements MultiArgCoalesceFunction {
+        private final Function arg0, arg1, arg2, arg3;
+
+        public FourDateCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 4;
+            this.arg0 = args.getQuick(0);
+            this.arg1 = args.getQuick(1);
+            this.arg2 = args.getQuick(2);
+            this.arg3 = args.getQuick(3);
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            long value = arg0.getDate(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            value = arg1.getDate(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            value = arg2.getDate(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            return arg3.getDate(rec);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            final ObjList<Function> args = new ObjList<>(4);
+            args.add(arg0);
+            args.add(arg1);
+            args.add(arg2);
+            args.add(arg3);
+            return args;
+        }
+    }
+
+    private static class FiveDateCoalesceFunction extends DateFunction implements MultiArgCoalesceFunction {
+        private final Function arg0, arg1, arg2, arg3, arg4;
+
+        public FiveDateCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 5;
+            this.arg0 = args.getQuick(0);
+            this.arg1 = args.getQuick(1);
+            this.arg2 = args.getQuick(2);
+            this.arg3 = args.getQuick(3);
+            this.arg4 = args.getQuick(4);
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            long value = arg0.getDate(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            value = arg1.getDate(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            value = arg2.getDate(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            value = arg3.getDate(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            return arg4.getDate(rec);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            final ObjList<Function> args = new ObjList<>(5);
+            args.add(arg0);
+            args.add(arg1);
+            args.add(arg2);
+            args.add(arg3);
+            args.add(arg4);
+            return args;
+        }
+    }
+
+    // Timestamp coalesce functions
+    private static class ThreeTimestampCoalesceFunction extends TimestampFunction implements MultiArgCoalesceFunction {
+        private final Function arg0, arg1, arg2;
+
+        public ThreeTimestampCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 3;
+            this.arg0 = args.getQuick(0);
+            this.arg1 = args.getQuick(1);
+            this.arg2 = args.getQuick(2);
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            long value = arg0.getTimestamp(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            value = arg1.getTimestamp(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            return arg2.getTimestamp(rec);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            final ObjList<Function> args = new ObjList<>(3);
+            args.add(arg0);
+            args.add(arg1);
+            args.add(arg2);
+            return args;
+        }
+    }
+
+    private static class FourTimestampCoalesceFunction extends TimestampFunction implements MultiArgCoalesceFunction {
+        private final Function arg0, arg1, arg2, arg3;
+
+        public FourTimestampCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 4;
+            this.arg0 = args.getQuick(0);
+            this.arg1 = args.getQuick(1);
+            this.arg2 = args.getQuick(2);
+            this.arg3 = args.getQuick(3);
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            long value = arg0.getTimestamp(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            value = arg1.getTimestamp(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            value = arg2.getTimestamp(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            return arg3.getTimestamp(rec);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            final ObjList<Function> args = new ObjList<>(4);
+            args.add(arg0);
+            args.add(arg1);
+            args.add(arg2);
+            args.add(arg3);
+            return args;
+        }
+    }
+
+    private static class FiveTimestampCoalesceFunction extends TimestampFunction implements MultiArgCoalesceFunction {
+        private final Function arg0, arg1, arg2, arg3, arg4;
+
+        public FiveTimestampCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 5;
+            this.arg0 = args.getQuick(0);
+            this.arg1 = args.getQuick(1);
+            this.arg2 = args.getQuick(2);
+            this.arg3 = args.getQuick(3);
+            this.arg4 = args.getQuick(4);
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            long value = arg0.getTimestamp(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            value = arg1.getTimestamp(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            value = arg2.getTimestamp(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            value = arg3.getTimestamp(rec);
+            if (value != Numbers.LONG_NULL) return value;
+            
+            return arg4.getTimestamp(rec);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            final ObjList<Function> args = new ObjList<>(5);
+            args.add(arg0);
+            args.add(arg1);
+            args.add(arg2);
+            args.add(arg3);
+            args.add(arg4);
+            return args;
+        }
+    }
+
+    // Int coalesce functions
+    private static class ThreeIntCoalesceFunction extends IntFunction implements MultiArgCoalesceFunction {
+        private final Function arg0, arg1, arg2;
+
+        public ThreeIntCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 3;
+            this.arg0 = args.getQuick(0);
+            this.arg1 = args.getQuick(1);
+            this.arg2 = args.getQuick(2);
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            int value = arg0.getInt(rec);
+            if (value != Numbers.INT_NULL) return value;
+            
+            value = arg1.getInt(rec);
+            if (value != Numbers.INT_NULL) return value;
+            
+            return arg2.getInt(rec);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            final ObjList<Function> args = new ObjList<>(3);
+            args.add(arg0);
+            args.add(arg1);
+            args.add(arg2);
+            return args;
+        }
+    }
+
+    private static class FourIntCoalesceFunction extends IntFunction implements MultiArgCoalesceFunction {
+        private final Function arg0, arg1, arg2, arg3;
+
+        public FourIntCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 4;
+            this.arg0 = args.getQuick(0);
+            this.arg1 = args.getQuick(1);
+            this.arg2 = args.getQuick(2);
+            this.arg3 = args.getQuick(3);
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            int value = arg0.getInt(rec);
+            if (value != Numbers.INT_NULL) return value;
+            
+            value = arg1.getInt(rec);
+            if (value != Numbers.INT_NULL) return value;
+            
+            value = arg2.getInt(rec);
+            if (value != Numbers.INT_NULL) return value;
+            
+            return arg3.getInt(rec);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            final ObjList<Function> args = new ObjList<>(4);
+            args.add(arg0);
+            args.add(arg1);
+            args.add(arg2);
+            args.add(arg3);
+            return args;
+        }
+    }
+
+    private static class FiveIntCoalesceFunction extends IntFunction implements MultiArgCoalesceFunction {
+        private final Function arg0, arg1, arg2, arg3, arg4;
+
+        public FiveIntCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 5;
+            this.arg0 = args.getQuick(0);
+            this.arg1 = args.getQuick(1);
+            this.arg2 = args.getQuick(2);
+            this.arg3 = args.getQuick(3);
+            this.arg4 = args.getQuick(4);
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            int value = arg0.getInt(rec);
+            if (value != Numbers.INT_NULL) return value;
+            
+            value = arg1.getInt(rec);
+            if (value != Numbers.INT_NULL) return value;
+            
+            value = arg2.getInt(rec);
+            if (value != Numbers.INT_NULL) return value;
+            
+            value = arg3.getInt(rec);
+            if (value != Numbers.INT_NULL) return value;
+            
+            return arg4.getInt(rec);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            final ObjList<Function> args = new ObjList<>(5);
+            args.add(arg0);
+            args.add(arg1);
+            args.add(arg2);
+            args.add(arg3);
+            args.add(arg4);
+            return args;
+        }
+    }
+
+    // Float coalesce functions
+    private static class ThreeFloatCoalesceFunction extends FloatFunction implements MultiArgCoalesceFunction {
+        private final Function arg0, arg1, arg2;
+
+        public ThreeFloatCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 3;
+            this.arg0 = args.getQuick(0);
+            this.arg1 = args.getQuick(1);
+            this.arg2 = args.getQuick(2);
+        }
+
+        @Override
+        public float getFloat(Record rec) {
+            float value = arg0.getFloat(rec);
+            if (value == value) return value;  // Not NaN
+            
+            value = arg1.getFloat(rec);
+            if (value == value) return value;  // Not NaN
+            
+            return arg2.getFloat(rec);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            final ObjList<Function> args = new ObjList<>(3);
+            args.add(arg0);
+            args.add(arg1);
+            args.add(arg2);
+            return args;
+        }
+    }
+
+    private static class FourFloatCoalesceFunction extends FloatFunction implements MultiArgCoalesceFunction {
+        private final Function arg0, arg1, arg2, arg3;
+
+        public FourFloatCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 4;
+            this.arg0 = args.getQuick(0);
+            this.arg1 = args.getQuick(1);
+            this.arg2 = args.getQuick(2);
+            this.arg3 = args.getQuick(3);
+        }
+
+        @Override
+        public float getFloat(Record rec) {
+            float value = arg0.getFloat(rec);
+            if (value == value) return value;  // Not NaN
+            
+            value = arg1.getFloat(rec);
+            if (value == value) return value;  // Not NaN
+            
+            value = arg2.getFloat(rec);
+            if (value == value) return value;  // Not NaN
+            
+            return arg3.getFloat(rec);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            final ObjList<Function> args = new ObjList<>(4);
+            args.add(arg0);
+            args.add(arg1);
+            args.add(arg2);
+            args.add(arg3);
+            return args;
+        }
+    }
+
+    private static class FiveFloatCoalesceFunction extends FloatFunction implements MultiArgCoalesceFunction {
+        private final Function arg0, arg1, arg2, arg3, arg4;
+
+        public FiveFloatCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 5;
+            this.arg0 = args.getQuick(0);
+            this.arg1 = args.getQuick(1);
+            this.arg2 = args.getQuick(2);
+            this.arg3 = args.getQuick(3);
+            this.arg4 = args.getQuick(4);
+        }
+
+        @Override
+        public float getFloat(Record rec) {
+            float value = arg0.getFloat(rec);
+            if (value == value) return value;  // Not NaN
+            
+            value = arg1.getFloat(rec);
+            if (value == value) return value;  // Not NaN
+            
+            value = arg2.getFloat(rec);
+            if (value == value) return value;  // Not NaN
+            
+            value = arg3.getFloat(rec);
+            if (value == value) return value;  // Not NaN
+            
+            return arg4.getFloat(rec);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            final ObjList<Function> args = new ObjList<>(5);
+            args.add(arg0);
+            args.add(arg1);
+            args.add(arg2);
+            args.add(arg3);
+            args.add(arg4);
+            return args;
         }
     }
 }
