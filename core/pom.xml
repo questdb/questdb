@@ -22,8 +22,9 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns="http://maven.apache.org/POM/4.0.0"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <name>QuestDB</name>
     <description>QuestDB is high performance SQL time series database</description>
@@ -201,7 +202,8 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.3</version>
                 <configuration>
-                    <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory"/>
+                    <forkNode
+                        implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory" />
                     <useModulePath>true</useModulePath>
                     <moduleResolution>true</moduleResolution>
                     <includes>
@@ -422,7 +424,8 @@
                                     <executable>${java.home}/bin/jlink</executable>
                                     <arguments>
                                         <argument>--module-path</argument>
-                                        <argument>${project.build.directory}/questdb-${project.version}.jar</argument>
+                                        <argument>
+                                            ${project.build.directory}/questdb-${project.version}.jar</argument>
                                         <argument>--add-modules</argument>
                                         <argument>io.questdb,jdk.crypto.ec,java.management</argument>
                                         <argument>--output</argument>
@@ -540,6 +543,25 @@
             </properties>
         </profile>
         <profile>
+            <id>platform-linux-x86-64-musl</id>
+            <activation>
+                <os>
+                    <family>unix</family>
+                    <arch>amd64</arch>
+                </os>
+                <property>
+                    <name>env.musl</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <properties>
+                <archive.name>${project.version}-rt-linux-x86-64-musl</archive.name>
+                <runtime.name>questdb-${project.version}-rt-linux-x86-64-musl</runtime.name>
+                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
+                <jemalloc.so>linux-x86-64-musl/libjemalloc.so</jemalloc.so>
+            </properties>
+        </profile>
+        <profile>
             <id>platform-freebsd-x86-64</id>
             <activation>
                 <os>
@@ -566,6 +588,25 @@
                 <runtime.name>questdb-${project.version}-rt-linux-aarch64</runtime.name>
                 <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
                 <jemalloc.so>linux-aarch64/libjemalloc.so</jemalloc.so>
+            </properties>
+        </profile>
+        <profile>
+            <id>platform-linux-aarch64-musl</id>
+            <activation>
+                <os>
+                    <family>unix</family>
+                    <arch>aarch64</arch>
+                </os>
+                <property>
+                    <name>env.musl</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <properties>
+                <archive.name>${project.version}-rt-linux-aarch64-musl</archive.name>
+                <runtime.name>questdb-${project.version}-rt-linux-aarch64-musl</runtime.name>
+                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
+                <jemalloc.so>linux-aarch64-musl/libjemalloc.so</jemalloc.so>
             </properties>
         </profile>
         <profile>
