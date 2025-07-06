@@ -128,6 +128,19 @@ public interface FunctionFactory {
         return ColumnType.STRING;
     }
 
+    /**
+     * This method should return true when the function signature specifies two parameters
+     * of different types, but we want to accept them in the opposite order as well.
+     * <p>
+     * Example: {@code array + scalar}, where we also want to support {@code scalar + array}.
+     * <p>
+     * When this returns true, a function signature with the opposite parameter order will
+     * be automatically generated.
+     */
+    default boolean shouldSwapArgs() {
+        return false;
+    }
+
     default boolean supportImplicitCastCharToStr() {
         return true;
     }

@@ -297,6 +297,11 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public void toTop() {
             super.toTop();
             slaveRecordFilter.toTop();

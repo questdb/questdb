@@ -70,7 +70,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static io.questdb.test.tools.TestUtils.*;
 
 public class ServerMainForeignTableTest extends AbstractBootstrapTest {
-    private static final String TABLE_START_CONTENT = "min\tmax\tcount\n" +
+    private static final String TABLE_START_CONTENT = "min(ts)\tmax(ts)\tcount()\n" +
             "2023-01-01T00:00:00.950399Z\t2023-01-01T23:59:59.822691Z\t90909\n" +
             "2023-01-02T00:00:00.773090Z\t2023-01-02T23:59:59.645382Z\t90909\n" +
             "2023-01-03T00:00:00.595781Z\t2023-01-03T23:59:59.468073Z\t90909\n" +

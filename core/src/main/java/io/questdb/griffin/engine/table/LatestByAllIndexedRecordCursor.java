@@ -114,6 +114,11 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return isTreeMapBuilt ? 1 : 0;
+    }
+
+    @Override
     public long size() {
         return isTreeMapBuilt ? aLimit - indexShift : -1;
     }

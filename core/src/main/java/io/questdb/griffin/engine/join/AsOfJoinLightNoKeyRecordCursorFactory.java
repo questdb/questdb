@@ -161,6 +161,11 @@ public class AsOfJoinLightNoKeyRecordCursorFactory extends AbstractJoinRecordCur
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public long size() {
             return masterCursor.size();
         }

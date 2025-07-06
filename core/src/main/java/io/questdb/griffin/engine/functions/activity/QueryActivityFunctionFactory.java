@@ -118,6 +118,11 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public long size() throws DataUnavailableException {
             return -1;
         }

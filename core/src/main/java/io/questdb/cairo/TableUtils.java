@@ -735,13 +735,14 @@ public final class TableUtils {
             case ColumnType.SHORT:
                 return 0L;
             case ColumnType.SYMBOL:
-                return Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, 0);
+                return Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, SymbolTable.VALUE_IS_NULL);
             case ColumnType.FLOAT:
-                return Float.floatToIntBits(Float.NaN);
+                return Numbers.encodeLowHighInts(Float.floatToIntBits(Float.NaN), Float.floatToIntBits(Float.NaN));
             case ColumnType.DOUBLE:
                 return Double.doubleToLongBits(Double.NaN);
-            case ColumnType.LONG256:
             case ColumnType.INT:
+                return Numbers.encodeLowHighInts(Numbers.INT_NULL, Numbers.INT_NULL);
+            case ColumnType.LONG256:
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
@@ -763,6 +764,8 @@ public final class TableUtils {
                 return NULL_LEN;
             case ColumnType.STRING:
                 return Numbers.encodeLowHighInts(NULL_LEN, NULL_LEN);
+            case ColumnType.ARRAY:
+                return NULL_LEN;
             default:
                 assert false : "Invalid column type: " + columnType;
                 return 0;

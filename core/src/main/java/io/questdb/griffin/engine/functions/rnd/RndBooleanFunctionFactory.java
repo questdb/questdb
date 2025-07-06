@@ -70,6 +70,16 @@ public class RndBooleanFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isRandom() {
+            return true;
+        }
+
+        @Override
+        public boolean shouldMemoize() {
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(SIGNATURE);
         }

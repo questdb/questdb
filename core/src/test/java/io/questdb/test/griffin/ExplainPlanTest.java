@@ -39,10 +39,10 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
+import io.questdb.griffin.engine.functions.ArgSwappingFunctionFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
-import io.questdb.griffin.engine.functions.SwappingArgsFunctionFactory;
 import io.questdb.griffin.engine.functions.array.ArrayCreateFunctionFactory;
 import io.questdb.griffin.engine.functions.array.DoubleArrayAccessFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InCharFunctionFactory;
@@ -721,7 +721,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertPlanNoLeakCheck(
                 "select rnd_float()::double ",
                 "VirtualRecord\n" +
-                        "  functions: [rnd_float()::double]\n" +
+                        "  functions: [memoize(rnd_float()::double)]\n" +
                         "    long_sequence count: 1\n"
         ));
     }
@@ -1606,7 +1606,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "where d < 100.0d and ts > dateadd('d', 1, now()  );",
                 "Update table: a\n" +
                         "    VirtualRecord\n" +
-                        "      functions: [20,d+rnd_double()]\n" +
+                        "      functions: [20,memoize(d+rnd_double())]\n" +
                         "        Async Filter workers: 1\n" +
                         "          filter: d<100.0 [pre-touch]\n" +
                         "            PageFrame\n" +
@@ -9370,7 +9370,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertPlanNoLeakCheck(
                 "select rnd_boolean()",
                 "VirtualRecord\n" +
-                        "  functions: [rnd_boolean()]\n" +
+                        "  functions: [memoize(rnd_boolean())]\n" +
                         "    long_sequence count: 1\n"
         ));
     }
@@ -10216,7 +10216,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = rnd_long() ",
                 "Async Filter workers: 1\n" +
-                        "  filter: l=rnd_long() [pre-touch]\n" +
+                        "  filter: memoize(l=rnd_long()) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -11748,13 +11748,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
         if (factory instanceof EqSymTimestampFunctionFactory) {
             return true;
         }
-        if (factory instanceof SwappingArgsFunctionFactory) {
-            return ((SwappingArgsFunctionFactory) factory).getDelegate() instanceof EqSymTimestampFunctionFactory;
+        if (factory instanceof ArgSwappingFunctionFactory) {
+            return ((ArgSwappingFunctionFactory) factory).getDelegate() instanceof EqSymTimestampFunctionFactory;
         }
 
         if (factory instanceof NegatingFunctionFactory) {
-            if (((NegatingFunctionFactory) factory).getDelegate() instanceof SwappingArgsFunctionFactory) {
-                return ((SwappingArgsFunctionFactory) ((NegatingFunctionFactory) factory).getDelegate()).getDelegate() instanceof EqSymTimestampFunctionFactory;
+            if (((NegatingFunctionFactory) factory).getDelegate() instanceof ArgSwappingFunctionFactory) {
+                return ((ArgSwappingFunctionFactory) ((NegatingFunctionFactory) factory).getDelegate()).getDelegate() instanceof EqSymTimestampFunctionFactory;
             }
             return ((NegatingFunctionFactory) factory).getDelegate() instanceof EqSymTimestampFunctionFactory;
         }
@@ -11763,8 +11763,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     private static boolean isIPv4StrFactory(FunctionFactory factory) {
-        if (factory instanceof SwappingArgsFunctionFactory) {
-            return isIPv4StrFactory(((SwappingArgsFunctionFactory) factory).getDelegate());
+        if (factory instanceof ArgSwappingFunctionFactory) {
+            return isIPv4StrFactory(((ArgSwappingFunctionFactory) factory).getDelegate());
         }
         if (factory instanceof NegatingFunctionFactory) {
             return isIPv4StrFactory(((NegatingFunctionFactory) factory).getDelegate());
@@ -11776,8 +11776,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     private static boolean isLong256StrFactory(FunctionFactory factory) {
-        if (factory instanceof SwappingArgsFunctionFactory) {
-            return isLong256StrFactory(((SwappingArgsFunctionFactory) factory).getDelegate());
+        if (factory instanceof ArgSwappingFunctionFactory) {
+            return isLong256StrFactory(((ArgSwappingFunctionFactory) factory).getDelegate());
         }
         if (factory instanceof NegatingFunctionFactory) {
             return isLong256StrFactory(((NegatingFunctionFactory) factory).getDelegate());

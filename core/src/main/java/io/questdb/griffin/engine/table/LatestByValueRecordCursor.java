@@ -75,6 +75,11 @@ class LatestByValueRecordCursor extends AbstractLatestByValueRecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return isFindPending ? 1 : 0;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.type("Row backward scan");
         sink.attr("symbolFilter").putColumnName(columnIndex).val('=').val(symbolKey);
