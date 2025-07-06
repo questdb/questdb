@@ -22,7 +22,7 @@ jobs:
         # macos-14 = ARM M1
         # macos-13 = x64
         # if you change OS definitions then you need to change conditions in cache-save steps below
-        os: [ macos-14, macos-13 ]
+        os: [macos-14, macos-13]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -72,8 +72,7 @@ jobs:
     # manylinux2014 is a container with new-ish compilers and tools, but old glibc - 2.17
     # 2.17 is old enough to be compatible with most Linux distributions out there
     container:
-      image:
-        quay.io/pypa/manylinux2014_x86_64
+      image: quay.io/pypa/manylinux2014_x86_64
       volumes:
         - /node20217:/node20217
         - /node20217:/__e/node20
@@ -136,6 +135,46 @@ jobs:
             core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
             core/src/main/bin/linux-x86-64/libjemalloc.so
           key: nativelibs-linux-${{ github.sha }}
+  build-all-linux-x86-64-musl:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:3.22
+    steps:
+      - name: Install dependencies
+        run: |
+          apk add cmake g++ linux-headers nasm git make openjdk17-jdk nodejs autoconf tar
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build jemalloc
+        # We compile jemalloc apart from the main to avoid issues with _GNU_SOURCE and TLS.
+        run: |
+          cd ./core/src/main/c/share/jemalloc
+          ./autogen.sh
+          ./configure CFLAGS="-ftls-model=global-dynamic -fPIC" CXXFLAGS="-ftls-model=global-dynamic -fPIC" --with-pic --disable-initial-exec-tls
+          # We need to build jemalloc twice, once for static included in libquestdb.so and once for shared libjemalloc.so to be used globally by QuestDB.
+          make build_lib_static -j$(nproc)
+          ./configure
+          make build_lib_shared -j$(nproc)
+          mkdir -p ../../../bin/linux-x86-64-musl/
+          cp lib/libjemalloc.so ../../../bin/linux-x86-64-musl/
+      - name: Generate Makefiles
+        run: |
+          cd ./core
+          cmake -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-x86_64-musl.cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+      - name: Build linux-x86-64-musl CXX Library
+        run: |
+          cd core
+          cmake --build cmake-build-release -j$(nproc) --config Release
+          mkdir -p src/main/resources/io/questdb/bin/linux-x86-64-musl/
+          cp target/classes/io/questdb/bin-local/libquestdb.so src/main/resources/io/questdb/bin/linux-x86-64-musl/
+      - name: Save linux-x86-64-musl Libraries to Cache
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/linux-x86-64-musl/libquestdb.so
+            core/src/main/bin/linux-x86-64-musl/libjemalloc.so
+          key: nativelibs-linux-musl-${{ github.sha }}
   build-all-linux-aarch64:
     runs-on: ubuntu-22.04-arm
     container:
@@ -176,6 +215,46 @@ jobs:
             core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
             core/src/main/bin/linux-aarch64/libjemalloc.so
           key: nativelibs-armlinux-${{ github.sha }}
+  build-all-linux-aarch64-musl:
+    runs-on: ubuntu-22.04-arm
+    container:
+      image: alpine:3.22
+    steps:
+      - name: Install dependencies
+        run: |
+          apk add cmake g++ linux-headers nasm git make openjdk17-jdk nodejs autoconf tar
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build jemalloc
+        # We compile jemalloc apart from the main to avoid issues with _GNU_SOURCE and TLS.
+        run: |
+          cd ./core/src/main/c/share/jemalloc
+          ./autogen.sh
+          ./configure CFLAGS="-ftls-model=global-dynamic -fPIC" CXXFLAGS="-ftls-model=global-dynamic -fPIC" --with-pic --disable-initial-exec-tls
+          # We need to build jemalloc twice, once for static included in libquestdb.so and once for shared libjemalloc.so to be used globally by QuestDB.
+          make build_lib_static -j$(nproc)
+          ./configure
+          make build_lib_shared -j$(nproc)
+          mkdir -p ../../bin/linux-aarch64-musl/
+          cp lib/libjemalloc.a ../../bin/linux-aarch64-musl/
+      - name: Generate Makefiles
+        run: |
+          cd ./core
+          cmake -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-aarch64-musl.cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+      - name: Build linux-aarch64-musl CXX Library
+        run: |
+          cd core
+          cmake --build cmake-build-release -j$(nproc) --config Release
+          mkdir -p src/main/resources/io/questdb/bin/linux-aarch64-musl/
+          cp target/classes/io/questdb/bin-local/libquestdb.so src/main/resources/io/questdb/bin/linux-aarch64-musl/
+      - name: Save linux-aarch64-musl Libraries to Cache
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/linux-aarch64-musl/libquestdb.so
+            core/src/main/bin/linux-aarch64-musl/libjemalloc.so
+          key: nativelibs-linux-aarch64-musl-${{ github.sha }}
   build-cxx-windows:
     runs-on: ubuntu-24.04
     steps:
@@ -222,7 +301,15 @@ jobs:
             core/src/main/resources/io/questdb/bin/windows-x86-64/libquestdb.dll
           key: nativelibs-windows-${{ github.sha }}
   collect-commit-and-push:
-    needs: [ build-all-macos,build-cxx-windows, build-all-linux-x86-64, build-all-linux-aarch64 ]
+    needs:
+      [
+        build-all-macos,
+        build-cxx-windows,
+        build-all-linux-x86-64,
+        build-all-linux-x86-64-musl,
+        build-all-linux-aarch64,
+        build-all-linux-aarch64-musl,
+      ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -253,6 +340,13 @@ jobs:
             core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
             core/src/main/bin/linux-x86-64/libjemalloc.so
           key: nativelibs-linux-${{ github.sha }}
+      - name: Restore linux-x86-64-musl Libraries from Cache
+        uses: actions/cache/restore@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/linux-x86-64-musl/libquestdb.so
+            core/src/main/bin/linux-x86-64-musl/libjemalloc.so
+          key: nativelibs-linux-musl-${{ github.sha }}
       - name: Restore linux-aarch64 Libraries from Cache
         uses: actions/cache/restore@v3
         with:
@@ -260,6 +354,13 @@ jobs:
             core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
             core/src/main/bin/linux-aarch64/libjemalloc.so
           key: nativelibs-armlinux-${{ github.sha }}
+      - name: Restore linux-aarch64-musl Libraries from Cache
+        uses: actions/cache/restore@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/linux-aarch64-musl/libquestdb.so
+            core/src/main/bin/linux-aarch64-musl/libjemalloc.so
+          key: nativelibs-armlinux-musl-${{ github.sha }}
       - name: Restore Windows CXX Library from Cache
         uses: actions/cache/restore@v3
         with:
@@ -279,10 +380,14 @@ jobs:
           git add core/src/main/bin/darwin-x86-64/libjemalloc.dylib
           git add core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
           git add core/src/main/bin/linux-x86-64/libjemalloc.so
+          git add core/src/main/resources/io/questdb/bin/linux-x86-64-musl/libquestdb.so
+          git add core/src/main/bin/linux-x86-64-musl/libjemalloc.so
           git add core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
           git add core/src/main/bin/linux-aarch64/libjemalloc.so
+          git add core/src/main/resources/io/questdb/bin/linux-aarch64-musl/libquestdb.so
+          git add core/src/main/bin/linux-aarch64-musl/libjemalloc.so
           git add core/src/main/resources/io/questdb/bin/windows-x86-64/libquestdb.dll
-          
+
           git commit -m "Rebuild CXX libraries"
       - name: Check git status after
         run: |
