@@ -206,6 +206,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 isOpen = false;
                 Misc.free(dataMap);
                 Misc.free(allocator);
+                // Notify functions that their associated cursor has been closed
+                for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                    groupByFunctions.getQuick(i).cursorClosed();
+                }
                 Misc.clearObjList(groupByFunctions);
                 super.close();
             }

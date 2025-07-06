@@ -316,6 +316,10 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 recordKeyMap.close();
                 dataMap.close();
                 allocator.close();
+                // Notify functions that their associated cursor has been closed
+                for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                    groupByFunctions.getQuick(i).cursorClosed();
+                }
                 Misc.clearObjList(groupByFunctions);
                 super.close();
             }

@@ -101,6 +101,10 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     public void close() {
         if (isOpen) {
             isOpen = false;
+            // Notify functions that their associated cursor has been closed
+            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                groupByFunctions.getQuick(i).cursorClosed();
+            }
             Misc.clearObjList(groupByFunctions);
             mapCursor = Misc.free(mapCursor);
 

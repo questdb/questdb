@@ -41,6 +41,8 @@ public abstract class VirtualFunctionSkewedSymbolRecordCursor extends AbstractVi
     public void close() {
         managedCursor = Misc.free(managedCursor);
         baseCursor = null;
+        // Call parent close() to ensure functions.cursorClosed() is called
+        super.close();
     }
 
     public void of(RecordCursor managedCursor, RecordCursor baseCursor) {

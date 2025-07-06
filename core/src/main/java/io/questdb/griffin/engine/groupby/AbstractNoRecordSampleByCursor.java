@@ -92,6 +92,10 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     public void close() {
         baseCursor = Misc.free(baseCursor);
         Misc.free(allocator);
+        // Notify functions that their associated cursor has been closed
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            groupByFunctions.getQuick(i).cursorClosed();
+        }
         Misc.clearObjList(groupByFunctions);
         circuitBreaker = null;
     }
