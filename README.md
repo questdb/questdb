@@ -134,34 +134,61 @@ As always, we encourage you to run your own benchmarks.
   <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
 </div>
 
-## Get started
+## 🚀 Get Started
+
+Welcome to QuestDB — the fastest open-source time-series database.
+
+You can get started in minutes using Docker, Homebrew, or our fully managed Cloud service.
+
+---
+
+### 🟦 Option 1: Run Locally with Docker
 
 Use [Docker](https://www.docker.com/) to start quickly:
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
-```
-
-Or macOS users can use Homebrew:
-
-```bash
+🍎 Option 2: Install on macOS via Homebrew
+bash
+Copy
+Edit
 brew install questdb
 brew services start questdb
-```
+You can also manually control the service:
 
-```bash
+bash
+Copy
+Edit
 questdb start
 questdb stop
-```
+☁️ Option 3: Use QuestDB Cloud (Recommended)
+No installation needed. Start free in seconds:
 
-Alternatively, to kickoff the full onboarding journey, start with our concise
-[quick start guide](https://questdb.io/docs/quick-start/).
+➡️ Sign up for QuestDB Cloud
 
-### First-party ingestion clients
+Once your instance is ready:
 
-QuestDB clients for ingesting data via the InfluxDB Line Protocol:
+Access the Web Console
 
-- [Python](https://questdb.io/docs/clients/ingest-python/)
+Copy connection details (HTTP endpoint, ILP port, SQL port)
+
+Start ingesting and querying data!
+
+📘 Full guide: Cloud Quick Start
+
+🔌 Connect to QuestDB
+Interact with QuestDB and your data via the following interfaces:
+
+Interface	Port	Description
+Web Console	9000	SQL editor, CSV importer
+InfluxDB Line Protocol	9009	High-speed ingestion
+PostgreSQL Wire Protocol	8812	Compatible with PostgreSQL-based clients and tools
+REST API	9000	Execute SQL, import CSVs, interact via HTTP or curl
+
+📥 First-Party Ingestion Clients
+Official QuestDB clients for ingesting data using InfluxDB Line Protocol:
+
+[Python](https://questdb.io/docs/clients/ingest-python/)
 - [.NET](https://questdb.io/docs/clients/ingest-dotnet/)
 - [C/C++](https://questdb.io/docs/clients/ingest-c-and-cpp/)
 - [Go](https://questdb.io/docs/clients/ingest-go/)
@@ -169,22 +196,25 @@ QuestDB clients for ingesting data via the InfluxDB Line Protocol:
 - [NodeJS](https://questdb.io/docs/clients/ingest-node/)
 - [Rust](https://questdb.io/docs/clients/ingest-rust/)
 
-### Connect to QuestDB
+🔍 Query Your Data
+After ingesting, you can query data from:
 
-Interact with QuestDB and your data via the following interfaces:
+Web Console (recommended for first-time users)
 
-- [Web Console](https://questdb.io/docs/web-console/) for an interactive SQL
-  editor and CSV import on port `9000`
-- [InfluxDB Line Protocol](https://questdb.io/docs/reference/api/ilp/overview/)
-  for streaming ingestion on port `9000`
-- [PostgreSQL Wire Protocol](https://questdb.io/docs/reference/api/postgres/)
-  for programmatic queries on port `8812`
-- [REST API](https://questdb.io/docs/reference/api/rest/) for CSV import and
-  cURL on port `9000`
+REST API (/exec endpoint)
 
-### Popular third-party tools
+PostgreSQL-compatible clients
 
-Popular tools that integrate with QuestDB include:
+Grafana or Superset for dashboards
+
+📘 Example:
+
+sql
+Copy
+Edit
+SELECT * FROM sensor_data WHERE ts > dateadd('h', -1, now()) ORDER BY ts DESC;
+⚡ Popular Third-Party Integrations
+QuestDB works seamlessly with:
 
 - [Apache Kafka](https://questdb.io/docs/third-party-tools/kafka/)
 - [Grafana](https://questdb.io/docs/third-party-tools/grafana/)
