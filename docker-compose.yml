@@ -1,0 +1,45 @@
+# ========================
+# docker-compose.yml
+# ========================
+version: '3.8'
+
+services:
+  questdb:
+    image: questdb/questdb:7.3.5
+    container_name: questdb
+    ports:
+      - "9000:9000"     # Web UI
+      - "8812:8812"     # PostgreSQL wire protocol
+      - "9009:9009"     # InfluxDB line protocol
+    volumes:
+      - questdb-data:/root/.questdb
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+    restart: always
+
+volumes:
+  questdb-data:
+
+# ========================
+# /etc/security/limits.conf
+# (Add at the bottom of file)
+# ========================
+* soft nofile 1048576
+* hard nofile 1048576
+
+# ========================
+# /etc/sysctl.conf
+# (Add at the bottom of file)
+# ========================
+fs.file-max=2097152
+vm.max_map_count=1048576
+
+# ========================
+# Reload system settings
+# Run these commands:
+# ========================
+sudo sysctl -p
+ulimit -n 1048576    # Optional check
+sudo reboot          # Ensure all changes apply
