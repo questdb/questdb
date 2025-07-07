@@ -516,7 +516,6 @@ public class MatViewTest extends AbstractCairoTest {
                             "select sym, last(price) as price, ts from base_price sample by 1h" +
                             ") partition by day"
             );
-
             execute(
                     "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
                             ",('gbpusd', 1.323, '2024-09-10T12:02')" +
@@ -583,7 +582,6 @@ public class MatViewTest extends AbstractCairoTest {
                             "select sym, last(price) as price, ts from base_price sample by 1h" +
                             ") partition by day"
             );
-
             execute(
                     "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
                             ",('gbpusd', 1.323, '2024-09-10T12:02')" +
