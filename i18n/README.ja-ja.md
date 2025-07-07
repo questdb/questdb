@@ -20,20 +20,9 @@
 
 # QuestDB
 
-QuestDB は、アプリケーション向けの高性能なオープンソース SQL データベースです。
-金融サービス、IoT、機械学習、DevOps、可観測性。 それが含まれています
-PostgreSQL ワイヤ プロトコルのエンドポイント、高スループットのスキーマに依存しない
-InfluxDB Line Protocol を使用した取り込み、およびクエリ用の REST API、バルク
-輸入、および輸出。
+QuestDB は、金融サービス、IoT、機械学習、DevOps、観測可能性などの現代的なアプリケーション向けに設計された高性能のオープンソース SQL データベースです。PostgreSQL のワイヤプロトコル、InfluxDB Line Protocol を介したスキーマレスの高スループットの取り込み、クエリ、バルクインポート、およびエクスポートのための REST API をサポートしています。
 
-QuestDB は、時間指向言語のネイティブ拡張を使用して ANSI SQL を実装します
-特徴。 これらの拡張機能により、複数のデータを簡単に関連付けることができます
-リレーショナル結合と時系列結合を使用したソース。 QuestDB は高い成果を上げています
-列指向のストレージ モデル、大規模並列化ベクトルによるパフォーマンス
-実行、SIMD 命令、およびさまざまな低レイテンシ技術。 全体
-コードベースは Java と C++ でゼロから構築されており、依存関係はありません。
-ガベージ コレクションから 100% 解放されます。
-
+QuestDB は、時系列データのためのネイティブ拡張機能を備えた ANSI SQL を実装しています。これらの拡張機能は、リレーショナルジョインと時系列ジョインを通じて複数のデータソースを結合するプロセスを簡素化します。QuestDB は、カラム指向のストレージモデル、大規模な並列ベクトル化実行、SIMD 命令、およびさまざまな低遅延技術を使用して、高いパフォーマンスを提供します。コードベース全体は、Java と C++でゼロから構築されており、外部依存関係はなく、ガーベジコレクションも行われません。
 
 <div align="center">
   <a href="https://demo.questdb.io">
@@ -90,7 +79,6 @@ questdb stop  // To stop questdb
 [時系列ベンチマーク スイート](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
 AMD Ryzen 3970X で 6 ワーカーの「cpu-only」ユース ケースを使用した結果:
 
-
 <div align="center">
   <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
 <!--     <img  src=".github/tsbs-results.png"/> -->
@@ -98,13 +86,11 @@ AMD Ryzen 3970X で 6 ワーカーの「cpu-only」ユース ケースを使用�
   </a>
 </div>
 
-
-
 次の表は、1 つのサーバーで実行された 10 億行のクエリ実行時間を示しています。
 利用可能な 96 個のスレッドのうち 16 個を使用する `c5.metal` インスタンス:
 
-| クエリ                                                          | ランタイム      |
-|--------------------------------------------------------------|------------|
+| クエリ                                                       | ランタイム |
+| ------------------------------------------------------------ | ---------- |
 | `SELECT sum(double) FROM 1bn`                                | 0.061 secs |
 | `SELECT tag, sum(double) FROM 1bn`                           | 0.179 secs |
 | `SELECT tag, sum(double) FROM 1bn WHERE timestamp in '2019'` | 0.05 secs  |
@@ -113,8 +99,8 @@ AMD Ryzen 3970X で 6 ワーカーの「cpu-only」ユース ケースを使用�
 
 ### 📚 ドキュメントを読む
 
-- [QuestDB ドキュメント:](https://questdb.io/docs/introduction/) 方法を理解する
-  QuestDB を実行および構成します。
+- [QuestDB ドキュメント:](https://questdb.io/docs/introduction/) QuestDB を実行し、
+  構成する方法を理解する。
 - [チュートリアル:](https://questdb.io/tutorial/) QuestDB で何ができるかを学ぶ
   一歩一歩。
 - [製品ロードマップ:](https://github.com/questdb/questdb/projects) チェックアウト
@@ -122,8 +108,8 @@ AMD Ryzen 3970X で 6 ワーカーの「cpu-only」ユース ケースを使用�
 
 ### ❓ 支持を得ます
 
-- [Community Slack:](https://slack.questdb.io) 技術的な議論に参加し、質問してください
-  質問して、他のユーザーに会いましょう！
+- [Community Slack:](https://slack.questdb.io) 技術的な議論に参加し、質問をし、
+  他のユーザーとつながりましょう！
 - [GitHub の問題:](https://github.com/questdb/questdb/issues) バグを報告するか、
   QuestDB の問題。
 - [GitHub ディスカッション:](https://github.com/questdb/questdb/discussions) 提案
@@ -159,7 +145,6 @@ AMD Ryzen 3970X で 6 ワーカーの「cpu-only」ユース ケースを使用�
 
 貢献してくれた次の素晴らしい人々に感謝します
 QuestDB: ([絵文字キー](https://allcontributors.org/docs/en/emoji-key)):
-
 
 <!-- ALL-CONTRIBUTORS-LIST:START - このセクションを削除または変更しないでください -->
 <!-- prettier-ignore-start -->
@@ -317,8 +302,3 @@ QuestDB: ([絵文字キー](https://allcontributors.org/docs/en/emoji-key)):
 このプロジェクトは、
 [すべての貢献者](https://github.com/all-contributors/all-contributors)
 仕様。 あらゆる種類の貢献を歓迎します!
- 
-
-
-
-
