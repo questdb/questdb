@@ -442,3 +442,4 @@ This project adheres to the
 specification. Contributions of any kind are welcome!
 
 🛠️ Contribution by Vikas Yadav for the QuestDB Contributor Program!
+
