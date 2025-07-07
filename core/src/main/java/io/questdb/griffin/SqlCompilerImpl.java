@@ -598,13 +598,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             CharSequence str = record.getStrA(cursorTimestampIndex);
-            long timestamp;
-            if (str != null) {
-                // If the string is null, we insert a null timestamp
-                timestamp = SqlUtil.implicitCastStrAsTimestamp(str);
-            } else {
-                timestamp = Numbers.LONG_NULL;
-            }
+            long timestamp = SqlUtil.implicitCastStrAsTimestamp(str);
+
             // It's allowed to insert ISO formatted string to timestamp column
             TableWriter.Row row = writer.newRow(timestamp);
             copier.copy(record, row);
