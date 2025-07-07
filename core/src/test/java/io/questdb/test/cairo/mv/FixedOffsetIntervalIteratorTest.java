@@ -128,6 +128,106 @@ public class FixedOffsetIntervalIteratorTest extends AbstractIntervalIteratorTes
     }
 
     @Test
+    public void testIntervalSingle() throws Exception {
+        final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
+        final LongList intervals = new LongList();
+
+        final long minTs = 0;
+        final long maxTs = 3 * Timestamps.DAY_MICROS - 1;
+
+        // match
+        intervals.add(minTs, maxTs);
+        iterator.of(sampler, 0, intervals, minTs, maxTs, 1);
+        for (int i = 0; i < 3; i++) {
+            Assert.assertTrue(iterator.next());
+            Assert.assertEquals(i * Timestamps.DAY_MICROS, iterator.getTimestampLo());
+            Assert.assertEquals((i + 1) * Timestamps.DAY_MICROS, iterator.getTimestampHi());
+        }
+        Assert.assertFalse(iterator.next());
+
+        // to the left
+        intervals.clear();
+        intervals.add(-2L, -1L);
+        iterator.of(sampler, 0, intervals, minTs, maxTs, 1);
+        Assert.assertFalse(iterator.next());
+
+        // to the left with intersection
+        intervals.clear();
+        intervals.add(-2L, 0L);
+        iterator.of(sampler, 0, intervals, minTs, maxTs, 1);
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(0, iterator.getTimestampLo());
+        Assert.assertEquals(Timestamps.DAY_MICROS, iterator.getTimestampHi());
+        Assert.assertFalse(iterator.next());
+
+        // to the right
+        intervals.clear();
+        intervals.add(maxTs + 1, maxTs + 2);
+        iterator.of(sampler, 0, intervals, minTs, maxTs, 1);
+        Assert.assertFalse(iterator.next());
+
+        // to the right with intersection
+        intervals.clear();
+        intervals.add(maxTs, maxTs + 2);
+        iterator.of(sampler, 0, intervals, minTs, maxTs, 1);
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(2 * Timestamps.DAY_MICROS, iterator.getTimestampLo());
+        Assert.assertEquals(3 * Timestamps.DAY_MICROS, iterator.getTimestampHi());
+        Assert.assertFalse(iterator.next());
+
+        // middle
+        intervals.clear();
+        intervals.add(Timestamps.DAY_MICROS + 1, 2 * Timestamps.DAY_MICROS - 1);
+        iterator.of(sampler, 0, intervals, minTs, maxTs, 1);
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(Timestamps.DAY_MICROS, iterator.getTimestampLo());
+        Assert.assertEquals(2 * Timestamps.DAY_MICROS, iterator.getTimestampHi());
+        Assert.assertFalse(iterator.next());
+    }
+
+    @Test
+    public void testIntervalsEmpty() throws Exception {
+        final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
+        iterator.of(
+                sampler,
+                0,
+                new LongList(),
+                0,
+                7 * Timestamps.DAY_MICROS - 1,
+                1
+        );
+
+        Assert.assertEquals(0, iterator.getMinTimestamp());
+        Assert.assertEquals(7 * Timestamps.DAY_MICROS, iterator.getMaxTimestamp());
+
+        Assert.assertFalse(iterator.next());
+    }
+
+    @Test
+    public void testIntervalsToTop() throws Exception {
+        final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
+        final LongList intervals = new LongList();
+
+        intervals.add(0, Timestamps.DAY_MICROS - 1);
+        iterator.of(sampler, 0, intervals, 0, 3 * Timestamps.DAY_MICROS - 1, 1);
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(0, iterator.getTimestampLo());
+        Assert.assertEquals(Timestamps.DAY_MICROS, iterator.getTimestampHi());
+        Assert.assertFalse(iterator.next());
+
+        iterator.toTop(1);
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(0, iterator.getTimestampLo());
+        Assert.assertEquals(Timestamps.DAY_MICROS, iterator.getTimestampHi());
+        Assert.assertFalse(iterator.next());
+    }
+
+    @Test
     public void testSmoke() throws SqlException {
         final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
@@ -151,112 +251,12 @@ public class FixedOffsetIntervalIteratorTest extends AbstractIntervalIteratorTes
         Assert.assertFalse(iterator.next());
     }
 
-    @Test
-    public void testTxnIntervalSingle() throws Exception {
-        final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
-        final LongList txnIntervals = new LongList();
-
-        final long minTs = 0;
-        final long maxTs = 3 * Timestamps.DAY_MICROS - 1;
-
-        // match
-        txnIntervals.add(minTs, maxTs);
-        iterator.of(sampler, 0, txnIntervals, minTs, maxTs, 1);
-        for (int i = 0; i < 3; i++) {
-            Assert.assertTrue(iterator.next());
-            Assert.assertEquals(i * Timestamps.DAY_MICROS, iterator.getTimestampLo());
-            Assert.assertEquals((i + 1) * Timestamps.DAY_MICROS, iterator.getTimestampHi());
-        }
-        Assert.assertFalse(iterator.next());
-
-        // to the left
-        txnIntervals.clear();
-        txnIntervals.add(-2L, -1L);
-        iterator.of(sampler, 0, txnIntervals, minTs, maxTs, 1);
-        Assert.assertFalse(iterator.next());
-
-        // to the left with intersection
-        txnIntervals.clear();
-        txnIntervals.add(-2L, 0L);
-        iterator.of(sampler, 0, txnIntervals, minTs, maxTs, 1);
-        Assert.assertTrue(iterator.next());
-        Assert.assertEquals(0, iterator.getTimestampLo());
-        Assert.assertEquals(Timestamps.DAY_MICROS, iterator.getTimestampHi());
-        Assert.assertFalse(iterator.next());
-
-        // to the right
-        txnIntervals.clear();
-        txnIntervals.add(maxTs + 1, maxTs + 2);
-        iterator.of(sampler, 0, txnIntervals, minTs, maxTs, 1);
-        Assert.assertFalse(iterator.next());
-
-        // to the right with intersection
-        txnIntervals.clear();
-        txnIntervals.add(maxTs, maxTs + 2);
-        iterator.of(sampler, 0, txnIntervals, minTs, maxTs, 1);
-        Assert.assertTrue(iterator.next());
-        Assert.assertEquals(2 * Timestamps.DAY_MICROS, iterator.getTimestampLo());
-        Assert.assertEquals(3 * Timestamps.DAY_MICROS, iterator.getTimestampHi());
-        Assert.assertFalse(iterator.next());
-
-        // middle
-        txnIntervals.clear();
-        txnIntervals.add(Timestamps.DAY_MICROS + 1, 2 * Timestamps.DAY_MICROS - 1);
-        iterator.of(sampler, 0, txnIntervals, minTs, maxTs, 1);
-        Assert.assertTrue(iterator.next());
-        Assert.assertEquals(Timestamps.DAY_MICROS, iterator.getTimestampLo());
-        Assert.assertEquals(2 * Timestamps.DAY_MICROS, iterator.getTimestampHi());
-        Assert.assertFalse(iterator.next());
-    }
-
-    @Test
-    public void testTxnIntervalToTop() throws Exception {
-        final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
-        final LongList txnIntervals = new LongList();
-
-        txnIntervals.add(0, Timestamps.DAY_MICROS - 1);
-        iterator.of(sampler, 0, txnIntervals, 0, 3 * Timestamps.DAY_MICROS - 1, 1);
-
-        Assert.assertTrue(iterator.next());
-        Assert.assertEquals(0, iterator.getTimestampLo());
-        Assert.assertEquals(Timestamps.DAY_MICROS, iterator.getTimestampHi());
-        Assert.assertFalse(iterator.next());
-
-        iterator.toTop(1);
-
-        Assert.assertTrue(iterator.next());
-        Assert.assertEquals(0, iterator.getTimestampLo());
-        Assert.assertEquals(Timestamps.DAY_MICROS, iterator.getTimestampHi());
-        Assert.assertFalse(iterator.next());
-    }
-
-    @Test
-    public void testTxnIntervalsEmpty() throws Exception {
-        final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
-        iterator.of(
-                sampler,
-                0,
-                new LongList(),
-                0,
-                7 * Timestamps.DAY_MICROS - 1,
-                1
-        );
-
-        Assert.assertEquals(0, iterator.getMinTimestamp());
-        Assert.assertEquals(7 * Timestamps.DAY_MICROS, iterator.getMaxTimestamp());
-
-        Assert.assertFalse(iterator.next());
-    }
-
     @Override
     protected SampleByIntervalIterator createIterator(
             TimestampSampler sampler,
             @Nullable TimeZoneRules ignored,
             long offset,
-            @Nullable LongList txnIntervals,
+            @Nullable LongList intervals,
             long minTs,
             long maxTs,
             int step
@@ -264,7 +264,7 @@ public class FixedOffsetIntervalIteratorTest extends AbstractIntervalIteratorTes
         return new FixedOffsetIntervalIterator().of(
                 sampler,
                 offset,
-                txnIntervals,
+                intervals,
                 minTs,
                 maxTs,
                 step

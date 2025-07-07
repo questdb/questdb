@@ -61,6 +61,10 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
 
     void enqueueRangeRefresh(TableToken matViewToken, long rangeFrom, long rangeTo);
 
+    // Used to cache WAL txn intervals for manual and timer mat views.
+    // That's to let WalPurgeJob make progress.
+    void enqueueUpdateRefreshIntervals(TableToken matViewToken);
+
     @Nullable
     MatViewState getViewState(TableToken matViewToken);
 

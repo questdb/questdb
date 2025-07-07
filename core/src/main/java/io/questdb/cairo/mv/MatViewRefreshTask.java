@@ -34,6 +34,7 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
     public static final int INVALIDATE = 3;
     public static final int RANGE_REFRESH = 2;
     public static final int UNDEFINED = -1;
+    public static final int UPDATE_REFRESH_INTERVALS = 4;
     public TableToken baseTableToken;
     public String invalidationReason;
     public TableToken matViewToken;
