@@ -1,0 +1,105 @@
+1. Audit All Cursor Implementations
+
+Review all classes implementing RecordCursor and RecordCursorFactory to identify where Function.cursorClosed() is not being invoked, especially:
+
+GroupByRecordCursor
+
+HashJoinRecordCursor
+
+FilterRecordCursor
+
+UnionRecordCursor
+
+Any cursor used in parallel or multi-threaded execution (e.g., ParallelGroupByRecordCursor)
+
+
+
+---
+
+2. Update Cursor Close Logic
+
+Modify the close() method of each relevant RecordCursor implementation to:
+
+Loop through all Function instances (used in expressions, filters, groupings, etc.)
+
+Call function.cursorClosed() for each one if it hasn’t already been closed.
+
+
+Example Patch (Conceptual):
+
+@Override
+public void close() {
+    if (!closed) {
+        for (Function function : functions) {
+            function.cursorClosed();
+        }
+        closed = true;
+    }
+}
+
+
+---
+
+3. Track Cursor Ownership in Factories
+
+In RecordCursorFactory, ensure:
+
+Each Function used is tracked (possibly via a List<Function>)
+
+On close() of the factory, also trigger cursorClosed() as a fallback if not already done.
+
+
+
+---
+
+4. Handle Function Cloning in Parallel Execution
+
+In parallel operations:
+
+When cloning a function (e.g., via Function.newInstance()), ensure the clone also properly receives a cursorClosed() call when its cursor ends.
+
+
+
+---
+
+5. Add Unit & Fuzz Tests
+
+Create regression tests to verify:
+
+cursorClosed() is always called for functions in all cursor scenarios.
+
+Use mocks (or custom Function subclass) that sets a flag when cursorClosed() is invoked.
+
+
+Example Test Snippet:
+
+AtomicBoolean closedCalled = new AtomicBoolean(false);
+
+Function mockFunction = new Function() {
+    @Override
+    public void cursorClosed() {
+        closedCalled.set(true);
+    }
+};
+
+// Assert that closedCalled is true after cursor is closed
+
+
+---
+
+6. Memory Leak Guard Enhancement
+
+Enhance memory leak guards in tests to detect delayed releases, especially in parallel and batch scenarios.
+
+
+---
+
+🛠 Fix Benefits
+
+Prevents silent memory leaks (e.g., 1 MB per json_extract() call)
+
+Increases reliability of parallel execution
+
+Ensures consistent and predictable lifecycle handling
+
+Helps future developers using memory-heavy UDFs
