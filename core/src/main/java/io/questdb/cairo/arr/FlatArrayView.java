@@ -177,17 +177,21 @@ public interface FlatArrayView {
 
     /**
      * Computes the average of the block of elements in this flat array.
+     * Uses Kahan summation.
      *
      * @param offset the starting offset of the block (in elements)
      * @param length the number of elements in the block
      */
     default double sumDouble(int offset, int length) {
-        //TODO: the naive summing algo doesn't compensate for accumulated error
         double sum = 0d;
+        double compensation = 0d;
         for (int i = offset, n = offset + length; i < n; i++) {
             double v = getDoubleAtAbsIndex(i);
-            if (!Double.isNaN(v)) {
-                sum += v;
+            if (!Numbers.isNull(v)) {
+                final double y = v - compensation;
+                final double t = sum + y;
+                compensation = t - sum - y;
+                sum = t;
             }
         }
         return sum;
