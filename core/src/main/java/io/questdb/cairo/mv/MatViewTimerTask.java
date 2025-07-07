@@ -62,7 +62,7 @@ public class MatViewTimerTask implements ValueHolder<MatViewTimerTask> {
         return this;
     }
 
-    public MatViewTimerTask ofDrop(TableToken matViewToken) {
+    public MatViewTimerTask ofRemove(TableToken matViewToken) {
         this.matViewToken = matViewToken;
         this.operation = REMOVE;
         return this;
