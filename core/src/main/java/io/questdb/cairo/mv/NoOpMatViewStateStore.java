@@ -50,10 +50,6 @@ public class NoOpMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
-    public void enqueueCacheTxnIntervals(TableToken matViewToken) {
-    }
-
-    @Override
     public void enqueueFullRefresh(TableToken matViewToken) {
     }
 
@@ -71,6 +67,10 @@ public class NoOpMatViewStateStore implements MatViewStateStore {
 
     @Override
     public void enqueueRangeRefresh(TableToken matViewToken, long rangeFrom, long rangeTo) {
+    }
+
+    @Override
+    public void enqueueUpdateRefreshIntervals(TableToken matViewToken) {
     }
 
     @Override

@@ -549,8 +549,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.mat.view.insert.as.select.batch.size\tQDB_CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE\t1000000\tdefault\tfalse\ttrue\n" +
                                     "cairo.mat.view.rows.per.query.estimate\tQDB_CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE\t1000000\tdefault\tfalse\ttrue\n" +
                                     "cairo.mat.view.parallel.sql.enabled\tQDB_CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
-                                    "cairo.mat.view.txn.intervals.cache.capacity\tQDB_CAIRO_MAT_VIEW_TXN_INTERVALS_CACHE_CAPACITY\t100\tdefault\tfalse\ttrue\n" +
-                                    "cairo.mat.view.txn.intervals.cache.timer.interval\tQDB_CAIRO_MAT_VIEW_TXN_INTERVALS_CACHE_TIMER_INTERVAL\t15000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.mat.view.max.refresh.intervals\tQDB_CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS\t100\tdefault\tfalse\ttrue\n" +
+                                    "cairo.mat.view.refresh.intervals.update.interval\tQDB_CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_INTERVAL\t15000\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.nap.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.affinity\tQDB_MAT_VIEW_REFRESH_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.sleep.timeout\tQDB_MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
@@ -672,7 +672,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.pipeline.capacity\tQDB_PG_PIPELINE_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
                                     "query.within.latest.by.optimisation.enabled\tQDB_QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.preferences.string.pool.capacity\tQDB_CAIRO_PREFERENCES_STRING_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
-                                    "http.settings.readonly\tQDB_HTTP_SETTINGS_READONLY\tfalse\tdefault\tfalse\tfalse\n"
+                                    "http.settings.readonly\tQDB_HTTP_SETTINGS_READONLY\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.column.alias.expression.enabled\tQDB_CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.column.alias.generated.max.size\tQDB_CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE\t64\tdefault\tfalse\tfalse\n"
                     )
                             .split("\n");
 

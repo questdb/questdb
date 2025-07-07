@@ -52,7 +52,6 @@ import java.util.Collection;
 
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
-import static io.questdb.test.tools.TestUtils.drainWalQueue;
 
 @RunWith(Parameterized.class)
 public class O3SplitPartitionTest extends AbstractO3Test {

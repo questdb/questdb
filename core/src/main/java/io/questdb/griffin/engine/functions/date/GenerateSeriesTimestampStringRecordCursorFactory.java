@@ -200,6 +200,11 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             if (supportsRandomAccess()) {
                 long micros = adjustStride();

@@ -178,8 +178,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE("cairo.mat.view.insert.as.select.batch.size"),
     CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE("cairo.mat.view.rows.per.query.estimate"),
     CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED("cairo.mat.view.parallel.sql.enabled"),
-    CAIRO_MAT_VIEW_TXN_INTERVALS_CACHE_CAPACITY("cairo.mat.view.txn.intervals.cache.capacity"),
-    CAIRO_MAT_VIEW_TXN_INTERVALS_CACHE_TIMER_INTERVAL("cairo.mat.view.txn.intervals.cache.timer.interval"),
+    CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS("cairo.mat.view.max.refresh.intervals"),
+    CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_INTERVAL("cairo.mat.view.refresh.intervals.update.interval"),
     CAIRO_ATTACH_PARTITION_SUFFIX("cairo.attach.partition.suffix"),
     CAIRO_ATTACH_PARTITION_COPY("cairo.attach.partition.copy"),
     CAIRO_COMMIT_LATENCY("cairo.commit.latency"),
@@ -561,7 +561,9 @@ public enum PropertyKey implements ConfigPropertyKey {
     MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT("mat.view.refresh.worker.sleep.timeout"),
     MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD("mat.view.refresh.worker.yield.threshold"),
     CAIRO_TXN_SCOREBOARD_FORMAT("cairo.txn.scoreboard.format"),
-    DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY("debug.wal.apply.block.failure.no.retry", false, true);
+    DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY("debug.wal.apply.block.failure.no.retry", false, true),
+    CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED("cairo.sql.column.alias.expression.enabled"),
+    CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE("cairo.sql.column.alias.generated.max.size");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

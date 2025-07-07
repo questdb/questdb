@@ -691,6 +691,38 @@ public class SqlParser {
         throw SqlException.$((lexer.lastTokenPosition()), "'zone' expected");
     }
 
+    private void generateColumnAlias(GenericLexer lexer, QueryColumn qc, boolean hasFrom) throws SqlException {
+        CharSequence token = qc.getAst().token;
+        if (qc.getAst().isWildcard() && !hasFrom) {
+            throw err(lexer, null, "'from' expected");
+        }
+
+        CharSequence alias;
+        if (configuration.isColumnAliasExpressionEnabled()) {
+            CharacterStoreEntry entry = characterStore.newEntry();
+            qc.getAst().toSink(entry);
+            alias = SqlUtil.createExprColumnAlias(
+                    characterStore,
+                    entry.toImmutable(),
+                    aliasMap,
+                    configuration.getColumnAliasGeneratedMaxSize(),
+                    qc.getAst().type != ExpressionNode.LITERAL
+            );
+        } else {
+            if (qc.getAst().type == ExpressionNode.CONSTANT && Chars.indexOfLastUnquoted(token, '.') != -1) {
+                alias = createConstColumnAlias(aliasMap);
+            } else {
+                CharSequence tokenAlias = qc.getAst().token;
+                if (qc.isWindowColumn() && ((WindowColumn) qc).isIgnoreNulls()) {
+                    tokenAlias += "_ignore_nulls";
+                }
+                alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
+            }
+        }
+        qc.setAlias(alias);
+        aliasMap.put(alias, qc);
+    }
+
     private @Nullable CreateTableColumnModel getCreateTableColumnModel(CharSequence columnName) {
         return createTableOperationBuilder.getColumnModel(columnName);
     }
@@ -3046,7 +3078,7 @@ public class SqlParser {
                                     if (framingMode == WindowColumn.FRAMING_RANGE) {
                                         long timeUnit = parseTimeUnit(lexer);
                                         if (timeUnit != -1) {
-                                            winCol.setRowsLoExprTimeUnit(timeUnit, lexer.lastTokenPosition());
+                                            winCol.setRowsLoExprTimeUnit(timeUnit);
                                         }
                                     }
 
@@ -3090,7 +3122,7 @@ public class SqlParser {
                                         if (framingMode == WindowColumn.FRAMING_RANGE) {
                                             long timeUnit = parseTimeUnit(lexer);
                                             if (timeUnit != -1) {
-                                                winCol.setRowsHiExprTimeUnit(timeUnit, lexer.lastTokenPosition());
+                                                winCol.setRowsHiExprTimeUnit(timeUnit);
                                             }
                                         }
 
@@ -3130,7 +3162,7 @@ public class SqlParser {
                                     if (framingMode == WindowColumn.FRAMING_RANGE) {
                                         long timeUnit = parseTimeUnit(lexer);
                                         if (timeUnit != -1) {
-                                            winCol.setRowsLoExprTimeUnit(timeUnit, lexer.lastTokenPosition());
+                                            winCol.setRowsLoExprTimeUnit(timeUnit);
                                         }
                                     }
                                     tok = tok(lexer, "'preceding'");
@@ -3201,11 +3233,13 @@ public class SqlParser {
                         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                         CharSequence aliasTok = GenericLexer.immutableOf(tok);
                         validateIdentifier(lexer, aliasTok);
-                        alias = unquote(aliasTok);
+                        boolean unquoting = Chars.indexOf(aliasTok, '.') == -1;
+                        alias = unquoting ? unquote(aliasTok) : aliasTok;
                     } else {
                         validateIdentifier(lexer, tok);
                         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-                        alias = GenericLexer.immutableOf(unquote(tok));
+                        boolean unquoting = Chars.indexOf(tok, '.') == -1;
+                        alias = GenericLexer.immutableOf(unquoting ? unquote(tok) : tok);
                     }
 
                     if (col.getAst().isWildcard()) {
@@ -3261,23 +3295,7 @@ public class SqlParser {
             for (int i = 0, n = accumulatedColumns.size(); i < n; i++) {
                 QueryColumn qc = accumulatedColumns.getQuick(i);
                 if (qc.getAlias() == null) {
-                    CharSequence token = qc.getAst().token;
-                    if (qc.getAst().isWildcard() && !hasFrom) {
-                        throw err(lexer, null, "'from' expected");
-                    }
-                    CharSequence alias;
-
-                    if (qc.getAst().type == ExpressionNode.CONSTANT && Chars.indexOfLastUnquoted(token, '.') != -1) {
-                        alias = createConstColumnAlias(aliasMap);
-                    } else {
-                        CharSequence tokenAlias = qc.getAst().token;
-                        if (qc.isWindowColumn() && ((WindowColumn) qc).isIgnoreNulls()) {
-                            tokenAlias += "_ignore_nulls";
-                        }
-                        alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
-                    }
-                    qc.setAlias(alias);
-                    aliasMap.put(alias, qc);
+                    generateColumnAlias(lexer, qc, hasFrom);
                 }
                 model.addBottomUpColumn(accumulatedColumnPositions.getQuick(i), qc, false);
             }
