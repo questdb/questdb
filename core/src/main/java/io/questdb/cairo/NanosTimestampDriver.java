@@ -380,7 +380,8 @@ public class NanosTimestampDriver implements TimestampDriver {
                 return Nanos::addSeconds;
             case 'm':
                 return Nanos::addMinutes;
-            case 'h':
+            case 'H':
+            case 'h': // compatibility with sample by syntax
                 return Nanos::addHours;
             case 'd':
                 return Nanos::addDays;

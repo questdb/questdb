@@ -60,7 +60,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
-import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
+import static io.questdb.test.cairo.mv.MatViewTest.parseFloorPartialTimestamp;
 import static io.questdb.test.tools.TestUtils.assertContains;
 
 

@@ -51,6 +51,8 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.test.cairo.mv.MatViewTest.parseFloorPartialTimestamp;
+
 public class MatViewFuzzTest extends AbstractFuzzTest {
     private static final int SPIN_LOCK_TIMEOUT = 100_000_000;
 
@@ -476,7 +478,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                     startBarrier.await();
                     for (int i = 0; i < iterations; i++) {
-                        executionContext.setNowAndFixClock(testClock.micros.get());
+                        executionContext.setNowAndFixClock(testClock.micros.get(), ColumnType.TIMESTAMP_MICRO);
                         execute(
                                 "insert into base_price values ('gbpusd', 41, dateadd('m', -1, now()))," +
                                         "('gbpusd', 42, now())," +

@@ -147,7 +147,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
         iterator.of(
                 sampler,
-                Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "UTC"),
+                Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "UTC"),
                 0,
                 new LongList(),
                 0,
@@ -165,7 +165,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     public void testIntervalsSingle() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
-        final TimeZoneRules tzRules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "UTC");
+        final TimeZoneRules tzRules = Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "UTC");
         final LongList intervals = new LongList();
 
         final long minTs = 0;
@@ -225,7 +225,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     public void testIntervalsToTop() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
-        final TimeZoneRules tzRules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "UTC");
+        final TimeZoneRules tzRules = Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "UTC");
         final LongList intervals = new LongList();
 
         intervals.add(0, Timestamps.DAY_MICROS - 1);

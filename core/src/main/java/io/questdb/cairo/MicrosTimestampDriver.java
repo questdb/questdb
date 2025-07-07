@@ -377,7 +377,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 return Timestamps::addSeconds;
             case 'm':
                 return Timestamps::addMinutes;
-            case 'h':
+            case 'H':
+            case 'h': // compatibility with sample by syntax
                 return Timestamps::addHours;
             case 'd':
                 return Timestamps::addDays;
