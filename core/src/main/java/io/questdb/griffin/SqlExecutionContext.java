@@ -103,6 +103,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean getCloneSymbolTables();
 
+    int getIntervalFunctionType();
+
     int getJitMode();
 
     default @NotNull MessageBus getMessageBus() {
@@ -228,6 +230,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     // Used to disable column pre-touch without affecting the explain plan
     void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride);
+
+    void setIntervalFunctionType(int intervalType);
 
     void setJitMode(int jitMode);
 

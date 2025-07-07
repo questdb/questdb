@@ -100,6 +100,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public int getIntervalFunctionType() {
+        return ColumnType.INTERVAL_TIMESTAMP_MICRO;
+    }
+
+    @Override
     public int getJitMode() {
         return 0;
     }
@@ -237,6 +242,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride) {
+    }
+
+    @Override
+    public void setIntervalFunctionType(int intervalFunctionType) {
     }
 
     @Override

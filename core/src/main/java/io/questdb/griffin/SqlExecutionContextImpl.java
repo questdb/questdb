@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.Telemetry;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SecurityContext;
@@ -69,6 +70,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean columnPreTouchEnabled = true;
     private boolean columnPreTouchEnabledOverride = true;
     private boolean containsSecret;
+    private int intervalFunctionType;
     private int jitMode;
     private Clock microClock;
     private long now;
@@ -109,6 +111,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         telemetry = cairoEngine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoOp;
         nowTimestampType = cairoConfiguration.getDefaultTimestampType();
+        intervalFunctionType = ColumnType.getIntervalType(nowTimestampType);
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.simpleCircuitBreaker = new AtomicBooleanCircuitBreaker(cairoConfiguration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
@@ -201,6 +204,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public boolean getCloneSymbolTables() {
         return cloneSymbolTables;
+    }
+
+    @Override
+    public int getIntervalFunctionType() {
+        return intervalFunctionType;
     }
 
     @Override
@@ -362,6 +370,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride) {
         this.columnPreTouchEnabledOverride = columnPreTouchEnabledOverride;
+    }
+
+    @Override
+    public void setIntervalFunctionType(int intervalType) {
+        this.intervalFunctionType = intervalType;
     }
 
     @Override

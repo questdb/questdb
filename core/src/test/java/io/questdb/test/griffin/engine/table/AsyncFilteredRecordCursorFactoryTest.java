@@ -1163,6 +1163,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public int getIntervalFunctionType() {
+            return sqlExecutionContext.getIntervalFunctionType();
+        }
+
+        @Override
         public int getJitMode() {
             return sqlExecutionContext.getJitMode();
         }
@@ -1310,6 +1315,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride) {
             sqlExecutionContext.setColumnPreTouchEnabledOverride(columnPreTouchEnabledOverride);
+        }
+
+        @Override
+        public void setIntervalFunctionType(int intervalType) {
+            sqlExecutionContext.setIntervalFunctionType(intervalType);
         }
 
         @Override
