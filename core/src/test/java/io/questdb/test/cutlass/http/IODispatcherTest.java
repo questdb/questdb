@@ -67,6 +67,7 @@ import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.QueryRegistry;
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -233,6 +234,7 @@ public class IODispatcherTest extends AbstractTest {
     @Before
     public void setUp() {
         super.setUp();
+        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
         SharedRandom.RANDOM.set(new Rnd());
         testHttpClient.setKeepConnection(false);
         Metrics.ENABLED.clear();
@@ -852,16 +854,16 @@ public class IODispatcherTest extends AbstractTest {
                         "\r\n" +
                         "54\r\n" +
                         "\"sym\"\t\"num\"\r\n" +
-                        "\"c\"\t4\r\n" +
-                        "\"a\"\t9\r\n" +
-                        "\"a\"\t10\r\n" +
-                        "\"a\"\t0\r\n" +
-                        "\"b\"\t3\r\n" +
                         "\"c\"\t9\r\n" +
+                        "\"b\"\t5\r\n" +
+                        "\"a\"\t0\r\n" +
+                        "\"a\"\t0\r\n" +
                         "\"a\"\t5\r\n" +
-                        "\"a\"\t6\r\n" +
-                        "\"c\"\t2\r\n" +
-                        "\"c\"\t0\r\n" +
+                        "\"a\"\t7\r\n" +
+                        "\"a\"\t4\r\n" +
+                        "\"a\"\t8\r\n" +
+                        "\"a\"\t2\r\n" +
+                        "\"c\"\t10\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n"
@@ -4290,19 +4292,19 @@ public class IODispatcherTest extends AbstractTest {
         final String[][] requests = {
                 {
                         "xyz where sym = 'UDEYY'",
-                        "{\"query\":\"xyz where sym = 'UDEYY'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"UDEYY\",0.5522494170511608],[\"UDEYY\",0.49428905119584543],[\"UDEYY\",0.6551335839796312],[\"UDEYY\",0.9540069089049732],[\"UDEYY\",0.24008362859107102]],\"count\":5}"
+                        "{\"query\":\"xyz where sym = 'UDEYY'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"UDEYY\",0.15786635599554755],[\"UDEYY\",0.8445258177211064],[\"UDEYY\",0.5778947915182423]],\"count\":3}"
                 },
                 {
                         "xyz where sym = 'QEHBH'",
-                        "{\"query\":\"xyz where sym = 'QEHBH'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"QEHBH\",0.42281342727402726],[\"QEHBH\",0.931192737286751],[\"QEHBH\",0.92050039469858],[\"QEHBH\",0.9644183832564398],[\"QEHBH\",0.8164182592467494]],\"count\":5}"
+                        "{\"query\":\"xyz where sym = 'QEHBH'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"QEHBH\",0.4022810626779558],[\"QEHBH\",0.9038068796506872],[\"QEHBH\",0.05048190020054388],[\"QEHBH\",0.4149517697653501],[\"QEHBH\",0.44804689668613573]],\"count\":5}"
                 },
                 {
                         "xyz where sym = 'SXUXI'",
-                        "{\"query\":\"xyz where sym = 'SXUXI'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"SXUXI\",0.8912587536603974]],\"count\":1}"
+                        "{\"query\":\"xyz where sym = 'SXUXI'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"SXUXI\",0.6761934857077543],[\"SXUXI\",0.38642336707855873],[\"SXUXI\",0.48558682958070665]],\"count\":3}"
                 },
                 {
                         "xyz where sym = 'VTJWC'",
-                        "{\"query\":\"xyz where sym = 'VTJWC'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"VTJWC\",0.03167026265669903]],\"count\":1}"
+                        "{\"query\":\"xyz where sym = 'VTJWC'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"VTJWC\",0.3435685332942956],[\"VTJWC\",0.8258367614088108],[\"VTJWC\",0.437176959518218],[\"VTJWC\",0.7176053468281931]],\"count\":4}"
                 }
         };
         new HttpQueryTestBuilder()
