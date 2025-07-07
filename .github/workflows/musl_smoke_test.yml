@@ -48,9 +48,10 @@ jobs:
         run: apk add --no-cache curl git tar gzip xz nodejs openjdk11-jdk maven bash
       - name: Clone repo manually
         run: |
-          git clone --depth=1 \
-            --branch "$GITHUB_REF_NAME" \
-            "https://github.com/${{ github.repository }}.git" .
+          git init
+          git remote add origin https://github.com/${{ github.repository }}.git
+          git fetch --depth 1 origin ${{ github.sha }}
+          git checkout FETCH_HEAD
       - name: Build distribution
         run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl 'core'
       - name: Unpack distribution
