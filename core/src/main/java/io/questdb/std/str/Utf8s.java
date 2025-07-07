@@ -322,6 +322,19 @@ public final class Utf8s {
         return true;
     }
 
+    public static boolean equalsAscii(@NotNull CharSequence asciiSeq, long rLo, long rHi) {
+        int rLen = (int)(rHi - rLo);
+        if (rLen != asciiSeq.length()) {
+            return false;
+        }
+        for (int i = 0; i < rLen; i++) {
+            if (asciiSeq.charAt(i) != (char) Unsafe.getUnsafe().getByte(rLo + i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static boolean equalsAscii(@NotNull CharSequence lAsciiSeq, @NotNull Utf8Sequence rSeq, int rLo, int rHi) {
         int ll = lAsciiSeq.length();
         if (ll != rHi - rLo) {
