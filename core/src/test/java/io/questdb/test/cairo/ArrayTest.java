@@ -374,6 +374,13 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayCumSumKahan() throws Exception {
+        assertSqlWithTypes("array_cum_sum\n" +
+                        "[10000.0,10003.14159,10005.85987]:DOUBLE[]\n",
+                "SELECT array_cum_sum(array[10000d, 3.14159, 2.71828]);");
+    }
+
+    @Test
     public void testArrayDivScalarValue() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[][])");

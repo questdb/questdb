@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
@@ -57,6 +58,7 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
     private static class Func extends ArrayFunction implements DoubleUnaryArrayAccessor, UnaryFunction {
         private final DirectArray array;
         private final Function arrayArg;
+        protected double compensation = 0d;
         private double currentSum;
         private MemoryA memory;
 
@@ -69,8 +71,11 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
         @Override
         public void applyToElement(ArrayView view, int index) {
             double v = view.getDouble(index);
-            if (!Double.isNaN(v)) {
-                currentSum += v;
+            if (!Numbers.isNull(v)) {
+                final double y = v - compensation;
+                final double t = currentSum + y;
+                compensation = t - currentSum - y;
+                currentSum = t;
             }
             memory.putDouble(currentSum);
         }
@@ -80,8 +85,11 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
             FlatArrayView flatView = view.flatView();
             for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
                 double v = flatView.getDoubleAtAbsIndex(i);
-                if (!Double.isNaN(v)) {
-                    currentSum += v;
+                if (!Numbers.isNull(v)) {
+                    final double y = v - compensation;
+                    final double t = currentSum + y;
+                    compensation = t - currentSum - y;
+                    currentSum = t;
                 }
                 memory.putDouble(currentSum);
             }
@@ -111,6 +119,7 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
             }
 
             currentSum = 0d;
+            compensation = 0d;
             array.setType(getType());
             array.setDimLen(0, arr.getCardinality());
             array.applyShape();
