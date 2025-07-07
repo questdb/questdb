@@ -126,7 +126,6 @@ public class TableSequencerAPI implements QuietCloseable {
 
             // Exclude locked entries.
             // Use includeDropped argument to decide whether to include dropped tables.
-            String publicTableName = tableToken.getTableName();
             boolean isDropped = includeDropped && engine.isTableDropped(tableToken);
             if (engine.isWalTable(tableToken) && !isDropped) {
                 long lastTxn;
