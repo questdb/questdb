@@ -152,7 +152,17 @@ public class LineHttpTudCache implements QuietCloseable {
     ) throws TableCreateException {
         int key = tableUpdateDetails.keyIndex(parser.getMeasurementName());
         if (key < 0) {
-            return tableUpdateDetails.valueAt(key);
+            WalTableUpdateDetails tud = tableUpdateDetails.valueAt(key);
+            // Check if table was recreated
+            if (tud != null && tud.getTableToken() != engine.getTableTokenIfExists(tud.getTableToken().getTableName())) {
+                tud.setIsDropped();
+                tableUpdateDetails.remove(parser.getMeasurementName());
+                tud = null;
+                key = tableUpdateDetails.keyIndex(parser.getMeasurementName());
+            }
+            if (tud != null) {
+                return tud;
+            }
         }
 
         tableNameUtf16.clear();

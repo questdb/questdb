@@ -426,6 +426,10 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
+    public CairoEngine getEngine() {
+        return engine;
+    }
+
     public class ThreadLocalDetails implements Closeable {
         static final int COLUMN_NOT_FOUND = -1;
         static final int DUPLICATED_COLUMN = -2;

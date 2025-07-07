@@ -79,6 +79,12 @@ public class LineWalAppender {
             LineTcpParser parser,
             TableUpdateDetails tud
     ) throws CommitFailedException {
+        // Check table exists before writing
+        if (tud.getTableToken() != tud.getEngine().getTableTokenIfExists(tud.getTableToken().getTableName())) {
+            tud.setIsDropped();
+            throw CommitFailedException.instance(CairoException.nonCritical().put("Table was dropped"), true);
+        }
+
         while (!tud.isDropped()) {
             try {
                 appendToWal0(securityContext, parser, tud);
