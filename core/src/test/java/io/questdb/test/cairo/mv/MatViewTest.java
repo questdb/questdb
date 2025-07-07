@@ -528,9 +528,24 @@ public class MatViewTest extends AbstractCairoTest {
                     "materialized view name expected"
             );
             assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h set refresh every 1h",
-                    45,
-                    "materialized view must be of timer refresh type"
+                    "alter materialized view price_1h set refresh every foobar",
+                    51,
+                    "Invalid unit: foobar"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h set refresh every 42h foobar",
+                    55,
+                    "unexpected token [foobar]"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h set refresh immediate foobar",
+                    55,
+                    "unexpected token [foobar]"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h set refresh manual foobar",
+                    52,
+                    "unexpected token [foobar]"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h_t set refresh",
@@ -568,9 +583,94 @@ public class MatViewTest extends AbstractCairoTest {
                     "invalid START timestamp value"
             );
             assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh every 3d foobar",
+                    56,
+                    "unexpected token [foobar]"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh every 3d start '2020-09-10T20:00:00.000000Z' time zone 'foobar'",
+                    102,
+                    "invalid timezone: foobar"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh every 3d start '2020-09-10T20:00:00.000000Z' time zone 'Europe/London' foobar",
+                    118,
+                    "unexpected token [foobar]"
+            );
+            assertExceptionNoLeakCheck(
                     "alter materialized view price_1h_t set refresh every 1M start '2020-09-10T20:00:00.000000Z' barbaz",
                     92,
                     "unexpected token [barbaz]"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period foobar",
+                    54,
+                    "'(' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh manual period length",
+                    61,
+                    "'(' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh every 2h period (start)",
+                    64,
+                    "'length' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period( length",
+                    61,
+                    "LENGTH interval expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period( length 30m",
+                    65,
+                    "'time zone' or 'delay' or ')' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period ( length 1d ) foobar",
+                    68,
+                    "unexpected token [foobar]"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period ( length 2h time foobar )",
+                    71,
+                    "'zone' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period(length 30m time zone)",
+                    74,
+                    "TIME ZONE name expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (length 1h time zone 'foobar')",
+                    75,
+                    "invalid timezone: foobar"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (length 1h time zone delay)",
+                    75,
+                    "TIME ZONE name expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (length 1h time zone 'Europe/Sofia' delay foobar)",
+                    96,
+                    "Invalid unit: foobar"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (length 1h time zone 'Europe/Sofia' delay 2h)",
+                    96,
+                    "delay cannot be equal to or greater than length"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (length 1h time zone 'Europe/Sofia' delay 30m foobar",
+                    100,
+                    "')' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (length 25h delay 2h)",
+                    62,
+                    "maximum supported length interval is 24 hours: 25h"
             );
 
             assertQueryNoLeakCheck(
@@ -632,23 +732,14 @@ public class MatViewTest extends AbstractCairoTest {
                     null
             );
 
-            // start timestamp is not allowed to be changed on period mat views
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h set refresh every 1m start '" + start + "';",
-                    54,
-                    "changing start timestamp is not allowed on period materialized views"
-            );
-
-            // this time the DDL should succeed
-            execute("alter materialized view price_1h set refresh every 15m;");
+            execute("alter materialized view price_1h set refresh every 15m period (length 1d);");
             drainWalQueue();
             final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
             Assert.assertNotNull(viewToken);
             final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
             Assert.assertEquals(15, viewDefinition.getTimerInterval());
             Assert.assertEquals('m', viewDefinition.getTimerUnit());
-            // start should stay as is
-            Assert.assertEquals(parseFloorPartialTimestamp(start), viewDefinition.getTimerStart());
+            Assert.assertEquals(parseFloorPartialTimestamp("1999-01-01T00:00:00.000000Z"), viewDefinition.getTimerStart());
 
             // the inserted rows are still in the future, just like the period start
             currentMicros = parseFloorPartialTimestamp("1999-12-30T00:00:00.000000Z");
@@ -685,7 +776,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\trefresh_base_table_txn\tbase_table_txn\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\n" +
-                            "price_1h\ttimer\tbase_price\t2024-12-31T00:00:00.000000Z\t2024-12-31T00:00:00.000000Z\tvalid\t1\t1\t1\tDAY\t0\t\t\t2020-12-12T00:00:00.000000Z\t15\tMINUTE\n",
+                            "price_1h\ttimer\tbase_price\t2024-12-31T00:00:00.000000Z\t2024-12-31T00:00:00.000000Z\tvalid\t1\t1\t1\tDAY\t0\t\t\t1999-01-01T00:00:00.000000Z\t15\tMINUTE\n",
                     matViewsSql,
                     null
             );

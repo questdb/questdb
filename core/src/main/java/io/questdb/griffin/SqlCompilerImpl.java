@@ -1680,10 +1680,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         char delayUnit = 0;
 
                         if (isImmediateKeyword(tok)) {
-                            tok = expectToken(lexer, "'period' or 'as'");
+                            tok = expectToken(lexer, "'period'");
                         } else if (isManualKeyword(tok)) {
                             refreshType = MatViewDefinition.REFRESH_TYPE_MANUAL;
-                            tok = expectToken(lexer, "'period' or 'as'");
+                            tok = expectToken(lexer, "'period'");
                         } else if (isEveryKeyword(tok)) {
                             tok = expectToken(lexer, "interval");
                             every = Timestamps.getStrideMultiple(tok);
@@ -1735,35 +1735,38 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             final long now = configuration.getMicrosecondClock().getTicks();
                             final long nowLocal = tzRules != null ? now + tzRules.getOffset(now) : now;
                             start = periodSampler.round(nowLocal);
-                        } else if (!isAsKeyword(tok)) {
-                            // REFRESH EVERY <interval> [START '<datetime>' [TIME ZONE '<timezone>']]
-                            if (refreshType != MatViewDefinition.REFRESH_TYPE_TIMER) {
-                                throw SqlException.$(lexer.lastTokenPosition(), "'as' expected");
-                            }
-                            // Use the current time as the start timestamp if it wasn't specified.
-                            start = configuration.getMicrosecondClock().getTicks();
+
+                            tok = SqlUtil.fetchNext(lexer);
+                        } else if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
                             if (isStartKeyword(tok)) {
+                                // REFRESH EVERY <interval> [START '<datetime>' [TIME ZONE '<timezone>']]
                                 tok = expectToken(lexer, "START timestamp");
                                 try {
                                     start = IntervalUtils.parseFloorPartialTimestamp(unquote(tok));
                                 } catch (NumericException e) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                                 }
-                                tok = expectToken(lexer, "'time zone' or 'as'");
+                                tok = expectToken(lexer, "'time zone'");
 
                                 if (isTimeKeyword(tok)) {
                                     expectKeyword(lexer, "zone");
                                     tok = expectToken(lexer, "TIME ZONE name");
                                     tz = unquote(tok).toString();
+                                    // validate time zone
+                                    try {
+                                        Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, tz);
+                                    } catch (NumericException e) {
+                                        throw SqlException.position(lexer.lastTokenPosition()).put("invalid timezone: ").put(tz);
+                                    }
+                                    tok = SqlUtil.fetchNext(lexer);
                                 }
+                            } else {
+                                // REFRESH EVERY <interval> AS
+                                // Don't forget to set timer params.
+                                start = configuration.getMicrosecondClock().getTicks();
                             }
-                        } else if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
-                            // REFRESH EVERY <interval> AS
-                            // Don't forget to set timer params.
-                            start = configuration.getMicrosecondClock().getTicks();
                         }
 
-                        tok = SqlUtil.fetchNext(lexer);
                         if (tok != null && !isSemicolon(tok)) {
                             throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
                         }
