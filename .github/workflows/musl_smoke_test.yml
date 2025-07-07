@@ -62,6 +62,7 @@ jobs:
           JAVA_HOME=/usr/lib/jvm/default-jvm ./questdb-*bin/questdb.sh start
       - name: Query database with curl
         run: |
+          cat ~/.questdb/log/*
           curl -G --data-urlencode \
               "query=SELECT * FROM long_sequence(1)" \
               http://localhost:9000/exp
