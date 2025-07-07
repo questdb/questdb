@@ -2800,6 +2800,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             tok = SqlUtil.fetchNext(lexer);
         }
 
+        // Check for optional IF EXISTS clause
+        boolean ifExists = false;
+        if (tok != null && isIfKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || !isExistsKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "EXISTS expected");
+            }
+            ifExists = true;
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
         if (tok != null && isWithKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "table name expected");
         }
@@ -2814,7 +2825,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (Chars.isQuoted(tok)) {
                     tok = GenericLexer.unquote(tok);
                 }
-                final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+                
+                // Check table existence - use ifExists logic
+                final TableToken tableToken;
+                if (ifExists) {
+                    tableToken = executionContext.getTableTokenIfExists(tok);
+                    if (tableToken == null) {
+                        // Table doesn't exist, but IF EXISTS is specified, so skip silently
+                        tok = SqlUtil.fetchNext(lexer);
+                        if (tok == null || Chars.equals(tok, ';') || isKeepKeyword(tok)) {
+                            break;
+                        }
+                        if (!Chars.equalsNc(tok, ',')) {
+                            throw SqlException.$(lexer.getPosition(), "',' or 'keep' expected");
+                        }
+                        tok = SqlUtil.fetchNext(lexer);
+                        if (tok != null && isKeepKeyword(tok)) {
+                            throw SqlException.$(lexer.getPosition(), "table name expected");
+                        }
+                        continue;
+                    }
+                } else {
+                    tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+                }
+                
                 checkMatViewModification(tableToken);
                 executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
                 try {
