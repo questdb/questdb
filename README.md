@@ -440,3 +440,5 @@ QuestDB [emoji key](https://allcontributors.org/docs/en/emoji-key):
 This project adheres to the
 [all-contributors](https://github.com/all-contributors/all-contributors)
 specification. Contributions of any kind are welcome!
+
+🛠️ Contribution by Vikas Yadav for the QuestDB Contributor Program!
