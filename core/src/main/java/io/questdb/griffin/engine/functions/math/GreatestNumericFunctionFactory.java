@@ -65,6 +65,7 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final IntHashSet counters = tlSet.get();
+        counters.clear();
         final int argCount;
         if (args == null || (argCount = args.size()) == 0) {
             throw SqlException.$(position, "at least one argument is required by GREATEST(V)");

@@ -1225,7 +1225,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                         " rnd_boolean() t," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_varchar(5,64,2) v" +
-                        " from long_sequence(10)" +
+                        " from long_sequence(1000)" +
                         "), index(ik) timestamp (timestamp) " +
                         (partitioned ? "PARTITION BY DAY " : "PARTITION BY NONE ") +
                         (walEnabled ? "WAL" : (partitioned ? "BYPASS WAL" : ""))
