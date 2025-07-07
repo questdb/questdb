@@ -35,15 +35,13 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
-import static io.questdb.PropertyKey.*;
+import static io.questdb.PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT;
 import static org.junit.Assert.assertNull;
 
 public class MatViewTelemetryTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
-        setProperty(DEV_MODE_ENABLED, "true");
-        setProperty(MAT_VIEW_DEBUG_ENABLED, "true");
         setProperty(CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
         super.setUp();
     }
@@ -204,7 +202,8 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 assertSql(
                         "sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
                                 "1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z\n" +
-                                "2\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z\n",
+                                "2\t\t\n" +
+                                "3\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z\n",
                         "select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')"
                 );
 

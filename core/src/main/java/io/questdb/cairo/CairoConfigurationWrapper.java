@@ -142,6 +142,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getColumnAliasGeneratedMaxSize() {
+        return getDelegate().getColumnAliasGeneratedMaxSize();
+    }
+
+    @Override
     public int getColumnIndexerQueueCapacity() {
         return getDelegate().getColumnIndexerQueueCapacity();
     }
@@ -442,6 +447,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewMaxRefreshIntervals() {
+        return getDelegate().getMatViewMaxRefreshIntervals();
+    }
+
+    @Override
     public int getMatViewMaxRefreshRetries() {
         return getDelegate().getMatViewMaxRefreshRetries();
     }
@@ -449,6 +459,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getMatViewMinRefreshInterval() {
         return getDelegate().getMatViewMinRefreshInterval();
+    }
+
+    @Override
+    public long getMatViewRefreshIntervalsUpdatePeriod() {
+        return getDelegate().getMatViewRefreshIntervalsUpdatePeriod();
     }
 
     @Override
@@ -1207,6 +1222,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isColumnAliasExpressionEnabled() {
+        return getDelegate().isColumnAliasExpressionEnabled();
+    }
+
+    @Override
     public boolean isDevModeEnabled() {
         return getDelegate().isDevModeEnabled();
     }
@@ -1219,11 +1239,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isIOURingEnabled() {
         return getDelegate().isIOURingEnabled();
-    }
-
-    @Override
-    public boolean isMatViewDebugEnabled() {
-        return getDelegate().isMatViewDebugEnabled();
     }
 
     @Override
@@ -1352,16 +1367,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean useWithinLatestByOptimisation() {
         return getDelegate().useWithinLatestByOptimisation();
-    }
-
-    @Override
-    public boolean isColumnAliasExpressionEnabled() {
-        return getDelegate().isColumnAliasExpressionEnabled();
-    }
-
-    @Override
-    public int getColumnAliasGeneratedMaxSize() {
-        return getDelegate().getColumnAliasGeneratedMaxSize();
     }
 
     protected CairoConfiguration getDelegate() {

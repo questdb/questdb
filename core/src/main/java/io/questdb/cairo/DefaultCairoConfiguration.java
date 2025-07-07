@@ -485,6 +485,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewRefreshIntervalsUpdatePeriod() {
+        return 15_000;
+    }
+
+    @Override
     public long getMatViewRefreshOomRetryTimeout() {
         return 200;
     }
@@ -492,6 +497,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getMatViewRowsPerQueryEstimate() {
         return 10_000_000;
+    }
+
+    @Override
+    public int getMatViewMaxRefreshIntervals() {
+        return 100;
     }
 
     @Override
@@ -1244,11 +1254,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isIOURingEnabled() {
         return true;
-    }
-
-    @Override
-    public boolean isMatViewDebugEnabled() {
-        return false;
     }
 
     @Override

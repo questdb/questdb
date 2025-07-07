@@ -65,33 +65,33 @@ public class MatViewGraph implements Mutable {
     }
 
     public boolean addView(MatViewDefinition viewDefinition) {
-        final TableToken matViewToken = viewDefinition.getMatViewToken();
-        final MatViewDefinition prevDefinition = definitionsByTableDirName.putIfAbsent(matViewToken.getDirName(), viewDefinition);
+        final TableToken viewToken = viewDefinition.getMatViewToken();
+        final MatViewDefinition prevDefinition = definitionsByTableDirName.putIfAbsent(viewToken.getDirName(), viewDefinition);
         // WAL table directories are unique, so we don't expect previous value
         if (prevDefinition != null) {
             return false;
         }
 
         synchronized (this) {
-            if (hasDependencyLoop(viewDefinition.getBaseTableName(), matViewToken)) {
+            if (hasDependencyLoop(viewDefinition.getBaseTableName(), viewToken)) {
                 throw CairoException.critical(0)
-                        .put("circular dependency detected for materialized view [view=").put(matViewToken.getTableName())
+                        .put("circular dependency detected for materialized view [view=").put(viewToken.getTableName())
                         .put(", baseTable=").put(viewDefinition.getBaseTableName())
                         .put(']');
             }
             final MatViewDependencyList list = getOrCreateDependentViews(viewDefinition.getBaseTableName());
             final ObjList<TableToken> matViews = list.lockForWrite();
             try {
-                matViews.add(matViewToken);
+                matViews.add(viewToken);
             } finally {
                 list.unlockAfterWrite();
             }
         }
-        // Publish a timer task for any non-manually refreshed mat view.
-        // We need a dedicated timer in two cases: timer and period refresh.
-        if (viewDefinition.getRefreshType() != MatViewDefinition.REFRESH_TYPE_MANUAL) {
+        // Publish a timer creation task.
+        // We need timer(s) in all cases, but immediate non-period view.
+        if (viewDefinition.getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE || viewDefinition.getPeriodLength() > 0) {
             final MatViewTimerTask timerTask = tlTimerTask.get();
-            timerTaskQueue.enqueue(timerTask.ofAdd(matViewToken));
+            timerTaskQueue.enqueue(timerTask.ofAdd(viewToken));
         }
         return true;
     }
@@ -146,8 +146,8 @@ public class MatViewGraph implements Mutable {
         }
     }
 
-    public void removeView(TableToken matViewToken) {
-        final MatViewDefinition viewDefinition = definitionsByTableDirName.remove(matViewToken.getDirName());
+    public void removeView(TableToken viewToken) {
+        final MatViewDefinition viewDefinition = definitionsByTableDirName.remove(viewToken.getDirName());
         if (viewDefinition != null) {
             final CharSequence baseTableName = viewDefinition.getBaseTableName();
             final MatViewDependencyList dependentViews = dependentViewsByTableName.get(baseTableName);
@@ -156,7 +156,7 @@ public class MatViewGraph implements Mutable {
                 try {
                     for (int i = 0, n = matViews.size(); i < n; i++) {
                         final TableToken matView = matViews.get(i);
-                        if (matView.equals(matViewToken)) {
+                        if (matView.equals(viewToken)) {
                             matViews.remove(i);
                             break;
                         }
@@ -165,10 +165,9 @@ public class MatViewGraph implements Mutable {
                     dependentViews.unlockAfterWrite();
                 }
             }
-            if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_TIMER) {
-                final MatViewTimerTask timerTask = tlTimerTask.get();
-                timerTaskQueue.enqueue(timerTask.ofDrop(matViewToken));
-            }
+            // Make sure to remove all timers associated with the mat view.
+            final MatViewTimerTask timerTask = tlTimerTask.get();
+            timerTaskQueue.enqueue(timerTask.ofRemove(viewToken));
         }
     }
 

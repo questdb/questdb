@@ -129,6 +129,14 @@ public interface CairoConfiguration {
     @NotNull
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
+    /**
+     * Maximum size for a generated alias, the column will be truncated if it's longer than that. Note
+     * that this flag only works if isColumnAliasExpressionEnabled is enabled.
+     *
+     * @return the maximum size of a generated alias.
+     */
+    int getColumnAliasGeneratedMaxSize();
+
     int getColumnIndexerQueueCapacity();
 
     int getColumnPurgeQueueCapacity();
@@ -274,9 +282,13 @@ public interface CairoConfiguration {
 
     long getMatViewInsertAsSelectBatchSize();
 
+    int getMatViewMaxRefreshIntervals();
+
     int getMatViewMaxRefreshRetries();
 
     long getMatViewMinRefreshInterval();
+
+    long getMatViewRefreshIntervalsUpdatePeriod();
 
     long getMatViewRefreshOomRetryTimeout();
 
@@ -666,13 +678,18 @@ public interface CairoConfiguration {
      */
     boolean isCheckpointRecoveryEnabled();
 
+    /**
+     * This is a flag to enable/disable the generation of column alias based on the expression passed as a query.
+     *
+     * @return true if SqlParser should return the expression normalized instead of the default behavior.
+     */
+    boolean isColumnAliasExpressionEnabled();
+
     boolean isDevModeEnabled();
 
     boolean isGroupByPresizeEnabled();
 
     boolean isIOURingEnabled();
-
-    boolean isMatViewDebugEnabled();
 
     boolean isMatViewEnabled();
 
@@ -753,19 +770,4 @@ public interface CairoConfiguration {
     boolean useFastAsOfJoin();
 
     boolean useWithinLatestByOptimisation();
-
-    /**
-     * This is a flag to enable/disable the generation of column alias based on the expression passed as a query.
-     *
-     * @return true if SqlParser should return the expression normalized instead of the default behavior.
-     */
-    boolean isColumnAliasExpressionEnabled();
-
-    /**
-     * Maximum size for a generated alias, the column will be truncated if it's longer than that. Note
-     * that this flag only works if isColumnAliasExpressionEnabled is enabled.
-     *
-     * @return the maximum size of a generated alias.
-     */
-    int getColumnAliasGeneratedMaxSize();
 }
