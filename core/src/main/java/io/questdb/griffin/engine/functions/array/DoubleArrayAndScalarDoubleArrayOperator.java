@@ -40,7 +40,7 @@ abstract class DoubleArrayAndScalarDoubleArrayOperator extends ArrayFunction imp
     private final DirectArray array;
     private final String name;
     protected MemoryA memory;
-    protected long scalarValue;
+    protected double scalarValue;
 
     public DoubleArrayAndScalarDoubleArrayOperator(String name, Function arrayArg, Function scalarArg, CairoConfiguration configuration) {
         this.name = name;
@@ -68,7 +68,7 @@ abstract class DoubleArrayAndScalarDoubleArrayOperator extends ArrayFunction imp
             return array;
         }
 
-        scalarValue = scalarArg.getLong(rec);
+        scalarValue = scalarArg.getDouble(rec);
         array.setType(getType());
         array.copyShapeFrom(arr);
         array.applyShape();
