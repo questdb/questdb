@@ -323,7 +323,7 @@ public final class Utf8s {
     }
 
     public static boolean equalsAscii(@NotNull CharSequence asciiSeq, long rLo, long rHi) {
-        int rLen = (int)(rHi - rLo);
+        int rLen = (int) (rHi - rLo);
         if (rLen != asciiSeq.length()) {
             return false;
         }

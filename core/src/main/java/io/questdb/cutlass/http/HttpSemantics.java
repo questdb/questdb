@@ -24,47 +24,12 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.std.Chars;
 import io.questdb.std.Unsafe;
 
 public class HttpSemantics {
     /**
-     * Check whether c is a <a href="https://www.rfc-editor.org/rfc/rfc9110.html#section-5.6.2">token</a>.
-     * @param c the character to check
-     * @return true if c is a token
-     */
-    public static boolean isToken(char c) {
-        return c > 32 && c < 127 && !isDelimiter(c);
-    }
-
-    /**
-     * Swallow <a href="https://www.rfc-editor.org/rfc/rfc9110.html#section-5.6.2">token</a>.
-     * @param lo the ptr to start swallowing from.
-     * @param hi the last ptr to check.
-     * @return the address of the first character that isn't a token.
-     */
-    public static long swallowTokens(long lo, long hi) {
-        while (lo < hi && isToken((char) Unsafe.getUnsafe().getByte(lo))) {
-            lo++;
-        }
-        return lo;
-    }
-
-    /**
-     * Swallow optional whitespaces.
-     * @param lo the ptr to start swallowing from.
-     * @param hi the last ptr to check.
-     * @return the address of the first character that isn't a whitespace.
-     */
-    public static long swallowOWS(long lo, long hi) {
-        while (lo < hi && (char) Unsafe.getUnsafe().getByte(lo) == ' ') {
-            lo++;
-        }
-        return lo;
-    }
-
-    /**
      * Check whether c is a <a href="https://www.rfc-editor.org/rfc/rfc9110.html#section-5.6.2-3">delimiter</a>.
+     *
      * @param c the character to check
      * @return true if c is a delimiter
      */
@@ -94,7 +59,18 @@ public class HttpSemantics {
     }
 
     /**
+     * Check whether c is a <a href="https://www.rfc-editor.org/rfc/rfc9110.html#section-5.6.2">token</a>.
+     *
+     * @param c the character to check
+     * @return true if c is a token
+     */
+    public static boolean isToken(char c) {
+        return c > 32 && c < 127 && !isDelimiter(c);
+    }
+
+    /**
      * Swallow the next character if it's a delimiter.
+     *
      * @param lo the ptr to start swallowing from.
      * @param hi the last ptr to check.
      * @return the address of the next character if c is a delimiter.
@@ -102,6 +78,34 @@ public class HttpSemantics {
     public static long swallowNextDelimiter(long lo, long hi) {
         if (lo < hi && isDelimiter((char) Unsafe.getUnsafe().getByte(lo))) {
             return lo + 1;
+        }
+        return lo;
+    }
+
+    /**
+     * Swallow optional whitespaces.
+     *
+     * @param lo the ptr to start swallowing from.
+     * @param hi the last ptr to check.
+     * @return the address of the first character that isn't a whitespace.
+     */
+    public static long swallowOWS(long lo, long hi) {
+        while (lo < hi && (char) Unsafe.getUnsafe().getByte(lo) == ' ') {
+            lo++;
+        }
+        return lo;
+    }
+
+    /**
+     * Swallow <a href="https://www.rfc-editor.org/rfc/rfc9110.html#section-5.6.2">token</a>.
+     *
+     * @param lo the ptr to start swallowing from.
+     * @param hi the last ptr to check.
+     * @return the address of the first character that isn't a token.
+     */
+    public static long swallowTokens(long lo, long hi) {
+        while (lo < hi && isToken((char) Unsafe.getUnsafe().getByte(lo))) {
+            lo++;
         }
         return lo;
     }
