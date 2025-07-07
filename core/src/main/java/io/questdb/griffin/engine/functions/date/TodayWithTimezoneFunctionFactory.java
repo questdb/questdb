@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -56,9 +55,9 @@ public class TodayWithTimezoneFunctionFactory implements FunctionFactory {
     ) {
         final Function tzFunc = args.getQuick(0);
         if (tzFunc.isConstant() || tzFunc.isRuntimeConstant()) {
-            return new RuntimeConstFunc(ColumnType.INTERVAL_TIMESTAMP_MICRO, tzFunc);
+            return new RuntimeConstFunc(sqlExecutionContext.getIntervalFunctionType(), tzFunc);
         }
-        return new Func(ColumnType.INTERVAL_TIMESTAMP_MICRO, tzFunc);
+        return new Func(sqlExecutionContext.getIntervalFunctionType(), tzFunc);
     }
 
     private static class Func extends AbstractDayIntervalWithTimezoneFunction {
@@ -76,7 +75,7 @@ public class TodayWithTimezoneFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            now = executionContext.getNow();
+            now = timestampDriver.from(executionContext.getNow(), executionContext.getNowTimestampType());
         }
 
         @Override
@@ -99,7 +98,8 @@ public class TodayWithTimezoneFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            calculateInterval(executionContext.getNow(), tzFunc.getStrA(null));
+            calculateInterval(timestampDriver.from(executionContext.getNow(), executionContext.getNowTimestampType()),
+                    tzFunc.getStrA(null));
         }
 
         @Override

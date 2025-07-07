@@ -1103,6 +1103,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long toUTC(long localTimestamp, TimeZoneRules zoneRules) {
+        return Timestamps.toUTC(localTimestamp, zoneRules);
+    }
+
+    @Override
     public long toUTC(long localTimestamp, DateLocale locale, CharSequence timezone) throws NumericException {
         return Timestamps.toUTC(localTimestamp, locale, timezone);
     }

@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -49,7 +48,7 @@ public class YesterdayFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(ColumnType.INTERVAL_TIMESTAMP_MICRO);
+        return new Func(sqlExecutionContext.getIntervalFunctionType());
     }
 
     private static class Func extends AbstractDayIntervalFunction {

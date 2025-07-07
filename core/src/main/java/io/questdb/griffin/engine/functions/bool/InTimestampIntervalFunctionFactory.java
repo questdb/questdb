@@ -29,8 +29,10 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
@@ -58,16 +60,16 @@ public class InTimestampIntervalFunctionFactory implements FunctionFactory {
     }
 
     public static class Func extends NegatableBooleanFunction implements BinaryFunction {
-        private final int intervalType;
         private final Function left;
+        private final int leftTimestampType;
         private final Function right;
         private final TimestampDriver timestampDriver;
 
         public Func(Function left, Function right, CairoConfiguration configuration) {
             this.left = left;
             this.right = right;
-            timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(left.getType(), configuration));
-            intervalType = right.getType();
+            leftTimestampType = ColumnType.getTimestampType(left.getType(), configuration);
+            timestampDriver = ColumnType.getTimestampDriver(leftTimestampType);
         }
 
         @Override
@@ -80,7 +82,8 @@ public class InTimestampIntervalFunctionFactory implements FunctionFactory {
             if (Interval.NULL.equals(interval)) {
                 return negated;
             }
-            return negated != timestampDriver.inInterval(ts, intervalType, interval);
+
+            return negated != timestampDriver.inInterval(ts, right.getType(), interval);
         }
 
         @Override
@@ -91,6 +94,18 @@ public class InTimestampIntervalFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            getLeft().init(symbolTableSource, executionContext);
+            int oldIntervalType = executionContext.getIntervalFunctionType();
+            try {
+                executionContext.setIntervalFunctionType(ColumnType.getIntervalType(leftTimestampType));
+                getRight().init(symbolTableSource, executionContext);
+            } finally {
+                executionContext.setIntervalFunctionType(oldIntervalType);
+            }
         }
 
         @Override

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.date;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
@@ -34,7 +35,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.Dates;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
@@ -55,6 +55,8 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         UnaryFunction.super.init(symbolTableSource, executionContext);
+        intervalType = executionContext.getIntervalFunctionType();
+        this.timestampDriver = ColumnType.getTimestampDriverByIntervalType(intervalType);
     }
 
     @Override
@@ -76,7 +78,6 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
         if (tz == null) {
             // no timezone, default to UTC
             final long start = timestampDriver.dayStart(now, shiftFromToday());
-            ;
             final long end = timestampDriver.dayEnd(start);
             return interval.of(start, end);
         }
@@ -85,7 +86,7 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
             final long l = Dates.parseOffset(tz);
             if (l != Long.MIN_VALUE) {
                 // the timezone is in numeric offset format
-                final long offset = Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS;
+                final long offset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
                 final long nowWithTz = now + offset;
                 final long startWithTz = timestampDriver.dayStart(nowWithTz, shiftFromToday());
                 final long endWithTz = timestampDriver.dayEnd(startWithTz);
@@ -102,7 +103,7 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
             // calculate date start and end with tz
             long startWithTz = timestampDriver.dayStart(nowWithTz, shiftFromToday());
             long endWithTz = timestampDriver.dayEnd(startWithTz);
-            return interval.of(Timestamps.toUTC(startWithTz, tzRules), Timestamps.toUTC(endWithTz, tzRules));
+            return interval.of(timestampDriver.toUTC(startWithTz, tzRules), timestampDriver.toUTC(endWithTz, tzRules));
         } catch (NumericException e) {
             return interval.of(Interval.NULL.getLo(), Interval.NULL.getHi());
         }

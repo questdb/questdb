@@ -247,6 +247,8 @@ public interface TimestampDriver {
 
     long toTimezone(long utcTimestamp, DateLocale locale, CharSequence timezone) throws NumericException;
 
+    long toUTC(long localTimestamp, TimeZoneRules zoneRules);
+
     long toUTC(long localTimestamp, DateLocale locale, CharSequence timezone) throws NumericException;
 
     void validateBounds(long timestamp);

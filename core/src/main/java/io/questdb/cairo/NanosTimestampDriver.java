@@ -1090,6 +1090,11 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long toUTC(long localTimestamp, TimeZoneRules zoneRules) {
+        return Nanos.toUTC(localTimestamp, zoneRules);
+    }
+
+    @Override
     public long toUTC(long localTimestamp, DateLocale locale, CharSequence timezone) throws NumericException {
         return Nanos.toUTC(localTimestamp, locale, timezone);
     }

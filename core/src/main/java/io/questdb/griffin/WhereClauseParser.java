@@ -650,142 +650,148 @@ public final class WhereClauseParser implements Mutable {
         if (!isTimestamp(col)) {
             return false;
         }
-
-        if (in.paramCount == 2) {
-            ExpressionNode inArg = in.rhs;
-            if (inArg.type == ExpressionNode.CONSTANT) {
-                // Single value ts in '2010-01-01' - treat string literal as an interval, not single Timestamp point
-                if (isNullKeyword(inArg.token)) {
-                    if (!isNegated) {
-                        model.intersectIntervals(Numbers.LONG_NULL, Numbers.LONG_NULL);
-                    } else {
-                        model.subtractIntervals(Numbers.LONG_NULL, Numbers.LONG_NULL);
-                    }
-                } else {
-                    if (!isNegated) {
-                        model.intersectIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
-                    } else {
-                        model.subtractIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
-                    }
-                }
-                in.intrinsicValue = IntrinsicModel.TRUE;
-                return true;
-            } else if (isFunc(inArg)) {
-                // Single value ts in $1 - treat string literal as an interval, not single Timestamp point
-                final Function func = functionParser.parseFunction(inArg, metadata, executionContext);
-                try {
-                    if (checkFunctionCanBeStrInterval(executionContext, func)) {
-                        if (func.isConstant()) {
-                            CharSequence funcVal = func.getStrA(null);
-                            if (!isNegated) {
-                                model.intersectIntervals(funcVal, 0, funcVal.length(), inArg.position);
-                            } else {
-                                model.subtractIntervals(funcVal, 0, funcVal.length(), inArg.position);
-                            }
-                            Misc.free(func);
-                        } else if (func.isRuntimeConstant()) {
-                            if (!isNegated) {
-                                model.intersectRuntimeIntervals(func);
-                            } else {
-                                model.subtractRuntimeIntervals(func);
-                            }
+        int oldIntervalFuncType = executionContext.getIntervalFunctionType();
+        try {
+            executionContext.setIntervalFunctionType(ColumnType.getIntervalType(timestampDriver.getColumnType()));
+            if (in.paramCount == 2) {
+                ExpressionNode inArg = in.rhs;
+                if (inArg.type == ExpressionNode.CONSTANT) {
+                    // Single value ts in '2010-01-01' - treat string literal as an interval, not single Timestamp point
+                    if (isNullKeyword(inArg.token)) {
+                        if (!isNegated) {
+                            model.intersectIntervals(Numbers.LONG_NULL, Numbers.LONG_NULL);
                         } else {
-                            Misc.free(func);
-                            return false;
+                            model.subtractIntervals(Numbers.LONG_NULL, Numbers.LONG_NULL);
                         }
-                        in.intrinsicValue = IntrinsicModel.TRUE;
-                        return true;
-                    } else if (checkFunctionCanBeInterval(func)) {
-                        if (func.isRuntimeConstant()) {
-                            if (!isNegated) {
-                                model.intersectRuntimeIntervals(func);
+                    } else {
+                        if (!isNegated) {
+                            model.intersectIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
+                        } else {
+                            model.subtractIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
+                        }
+                    }
+                    in.intrinsicValue = IntrinsicModel.TRUE;
+                    return true;
+                } else if (isFunc(inArg)) {
+                    // Single value ts in $1 - treat string literal as an interval, not single Timestamp point
+                    final Function func = functionParser.parseFunction(inArg, metadata, executionContext);
+                    try {
+                        if (checkFunctionCanBeStrInterval(executionContext, func)) {
+                            if (func.isConstant()) {
+                                CharSequence funcVal = func.getStrA(null);
+                                if (!isNegated) {
+                                    model.intersectIntervals(funcVal, 0, funcVal.length(), inArg.position);
+                                } else {
+                                    model.subtractIntervals(funcVal, 0, funcVal.length(), inArg.position);
+                                }
+                                Misc.free(func);
+                            } else if (func.isRuntimeConstant()) {
+                                if (!isNegated) {
+                                    model.intersectRuntimeIntervals(func);
+                                } else {
+                                    model.subtractRuntimeIntervals(func);
+                                }
                             } else {
-                                model.subtractRuntimeIntervals(func);
+                                Misc.free(func);
+                                return false;
                             }
                             in.intrinsicValue = IntrinsicModel.TRUE;
                             return true;
-                        }
-                        Misc.free(func);
-                        return false;
-                    } else {
-                        checkFunctionCanBeTimestamp(metadata, executionContext, func, inArg.position);
-                        // This is IN (TIMESTAMP) one value which is timestamp and not a STRING
-                        // This is same as equals
-                        return analyzeTimestampEqualsFunction(timestampDriver, model, in, func, inArg.position);
-                    }
-                } catch (Throwable th) {
-                    Misc.free(func);
-                    throw th;
-                }
-            }
-        } else {
-            // Multiple values treat as multiple Timestamp points
-            // Only possible to translate if it's the only timestamp restriction atm
-            // NOT IN can be translated in any case as series of subtractions
-            if (!model.hasIntervalFilters() || isNegated) {
-                int n = in.args.size() - 1;
-                Function timestampFunc = null;
-                boolean moreThanOneTimestampFunc = false;
-                for (int i = 0; i < n; i++) {
-                    ExpressionNode inListItem = in.args.getQuick(i);
-                    if (inListItem.type != ExpressionNode.CONSTANT) {
-                        if (inListItem.type != ExpressionNode.FUNCTION) {
-                            Misc.free(timestampFunc);
-                            return false;
-                        }
-                        final Function func = functionParser.parseFunction(inListItem, metadata, executionContext);
-                        if (!func.isConstant() || !checkFunctionCanBeStrInterval(executionContext, func)) {
-                            Misc.free(func);
-                            Misc.free(timestampFunc);
-                            return false;
-                        }
-                        if (timestampFunc != null) {
-                            Misc.free(func);
-                            moreThanOneTimestampFunc = true;
-                        } else {
-                            timestampFunc = func;
-                        }
-                    }
-                }
-
-                // If there is more than one ts function, we parse them once again,
-                // so timestampFunc won't be used.
-                if (moreThanOneTimestampFunc) {
-                    timestampFunc = Misc.free(timestampFunc);
-                }
-
-                for (int i = 0; i < n; i++) {
-                    ExpressionNode inListItem = in.args.getQuick(i);
-                    long ts;
-                    if (inListItem.type == ExpressionNode.CONSTANT) {
-                        ts = parseTokenAsTimestamp(timestampDriver, inListItem);
-                    } else {
-                        final Function func = moreThanOneTimestampFunc ? functionParser.parseFunction(inListItem, metadata, executionContext) : timestampFunc;
-                        try {
-                            ts = getTimestampFromConstFunction(timestampDriver, func, inListItem.position, false);
-                            if (moreThanOneTimestampFunc) {
-                                Misc.free(func);
+                        } else if (checkFunctionCanBeInterval(func)) {
+                            if (func.isRuntimeConstant()) {
+                                if (!isNegated) {
+                                    model.intersectRuntimeIntervals(func);
+                                } else {
+                                    model.subtractRuntimeIntervals(func);
+                                }
+                                in.intrinsicValue = IntrinsicModel.TRUE;
+                                return true;
                             }
-                        } catch (Throwable th) {
                             Misc.free(func);
-                            throw th;
-                        }
-                    }
-                    if (!isNegated) {
-                        if (i == 0) {
-                            model.intersectIntervals(ts, ts);
+                            return false;
                         } else {
-                            model.unionIntervals(ts, ts);
+                            checkFunctionCanBeTimestamp(metadata, executionContext, func, inArg.position);
+                            // This is IN (TIMESTAMP) one value which is timestamp and not a STRING
+                            // This is same as equals
+                            return analyzeTimestampEqualsFunction(timestampDriver, model, in, func, inArg.position);
                         }
-                    } else {
-                        model.subtractIntervals(ts, ts);
+                    } catch (Throwable th) {
+                        Misc.free(func);
+                        throw th;
                     }
                 }
-                in.intrinsicValue = IntrinsicModel.TRUE;
-                Misc.free(timestampFunc);
-                return true;
+            } else {
+                // Multiple values treat as multiple Timestamp points
+                // Only possible to translate if it's the only timestamp restriction atm
+                // NOT IN can be translated in any case as series of subtractions
+                if (!model.hasIntervalFilters() || isNegated) {
+                    int n = in.args.size() - 1;
+                    Function timestampFunc = null;
+                    boolean moreThanOneTimestampFunc = false;
+                    for (int i = 0; i < n; i++) {
+                        ExpressionNode inListItem = in.args.getQuick(i);
+                        if (inListItem.type != ExpressionNode.CONSTANT) {
+                            if (inListItem.type != ExpressionNode.FUNCTION) {
+                                Misc.free(timestampFunc);
+                                return false;
+                            }
+                            final Function func = functionParser.parseFunction(inListItem, metadata, executionContext);
+                            if (!func.isConstant() || !checkFunctionCanBeStrInterval(executionContext, func)) {
+                                Misc.free(func);
+                                Misc.free(timestampFunc);
+                                return false;
+                            }
+                            if (timestampFunc != null) {
+                                Misc.free(func);
+                                moreThanOneTimestampFunc = true;
+                            } else {
+                                timestampFunc = func;
+                            }
+                        }
+                    }
+
+                    // If there is more than one ts function, we parse them once again,
+                    // so timestampFunc won't be used.
+                    if (moreThanOneTimestampFunc) {
+                        timestampFunc = Misc.free(timestampFunc);
+                    }
+
+                    for (int i = 0; i < n; i++) {
+                        ExpressionNode inListItem = in.args.getQuick(i);
+                        long ts;
+                        if (inListItem.type == ExpressionNode.CONSTANT) {
+                            ts = parseTokenAsTimestamp(timestampDriver, inListItem);
+                        } else {
+                            final Function func = moreThanOneTimestampFunc ? functionParser.parseFunction(inListItem, metadata, executionContext) : timestampFunc;
+                            try {
+                                ts = getTimestampFromConstFunction(timestampDriver, func, inListItem.position, false);
+                                if (moreThanOneTimestampFunc) {
+                                    Misc.free(func);
+                                }
+                            } catch (Throwable th) {
+                                Misc.free(func);
+                                throw th;
+                            }
+                        }
+                        if (!isNegated) {
+                            if (i == 0) {
+                                model.intersectIntervals(ts, ts);
+                            } else {
+                                model.unionIntervals(ts, ts);
+                            }
+                        } else {
+                            model.subtractIntervals(ts, ts);
+                        }
+                    }
+                    in.intrinsicValue = IntrinsicModel.TRUE;
+                    Misc.free(timestampFunc);
+                    return true;
+                }
             }
+        } finally {
+            executionContext.setIntervalFunctionType(oldIntervalFuncType);
         }
+
         return false;
     }
 

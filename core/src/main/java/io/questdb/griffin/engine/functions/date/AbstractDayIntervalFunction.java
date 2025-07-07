@@ -37,11 +37,10 @@ import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractDayIntervalFunction extends IntervalFunction implements FunctionExtension {
     protected final Interval interval = new Interval();
-    protected final TimestampDriver timestampDriver;
+    protected TimestampDriver timestampDriver;
 
     protected AbstractDayIntervalFunction(int intervalType) {
         super(intervalType);
-        timestampDriver = ColumnType.getTimestampDriverByIntervalType(intervalType);
     }
 
     @Override
@@ -81,7 +80,9 @@ public abstract class AbstractDayIntervalFunction extends IntervalFunction imple
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        final long now = executionContext.getNow();
+        intervalType = executionContext.getIntervalFunctionType();
+        timestampDriver = ColumnType.getTimestampDriverByIntervalType(intervalType);
+        final long now = timestampDriver.from(executionContext.getNow(), executionContext.getNowTimestampType());
         final long start = timestampDriver.dayStart(now, shiftFromToday());
         final long end = timestampDriver.dayEnd(start);
         interval.of(start, end);

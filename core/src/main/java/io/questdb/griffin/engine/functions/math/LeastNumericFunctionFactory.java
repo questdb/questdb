@@ -192,11 +192,16 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            long value = args.getQuick(0).getLong(rec);
-            for (int i = 1; i < n; i++) {
-                value = Math.min(value, args.getQuick(i).getLong(rec));
+            long value = Long.MAX_VALUE;
+            boolean foundValidValue = false;
+            for (int i = 0; i < n; i++) {
+                final long v = args.getQuick(i).getLong(rec);
+                if (v != Numbers.LONG_NULL) {
+                    foundValidValue = true;
+                    value = Math.min(value, v);
+                }
             }
-            return value;
+            return foundValidValue ? value : Numbers.LONG_NULL;
         }
 
         @Override
