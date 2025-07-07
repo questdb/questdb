@@ -204,7 +204,7 @@ public class MatViewTimerJob extends SynchronizedJob {
             throw CairoException.critical(0).put("invalid interval: ").put(intervalMs);
         }
         final Timer periodTimer = new Timer(
-                Timer.TXN_INTERVALS_CACHE_TYPE,
+                Timer.UPDATE_REFRESH_INTERVALS_TYPE,
                 viewToken,
                 sampler,
                 null,
@@ -253,7 +253,7 @@ public class MatViewTimerJob extends SynchronizedJob {
                             // range hi boundary is inclusive
                             matViewStateStore.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, timer.getPeriodHi() - 1);
                             break;
-                        case Timer.TXN_INTERVALS_CACHE_TYPE:
+                        case Timer.UPDATE_REFRESH_INTERVALS_TYPE:
                             // Enqueue WAL txn intervals caching only if the base table had new transactions
                             // since the last caching.
                             final long refreshIntervalsSeq = state.getRefreshIntervalsSeq();
@@ -332,7 +332,7 @@ public class MatViewTimerJob extends SynchronizedJob {
     private static class Timer {
         private static final byte INCREMENTAL_REFRESH_TYPE = 0;
         private static final byte PERIOD_REFRESH_TYPE = 1;
-        private static final byte TXN_INTERVALS_CACHE_TYPE = 2;
+        private static final byte UPDATE_REFRESH_INTERVALS_TYPE = 2;
         private final long delay; // used in period timers
         private final TableToken matViewToken;
         private final TimestampSampler sampler;
@@ -362,7 +362,7 @@ public class MatViewTimerJob extends SynchronizedJob {
             final long nowLocal = toLocal(now, tzRules);
             switch (type) {
                 case INCREMENTAL_REFRESH_TYPE:
-                case TXN_INTERVALS_CACHE_TYPE:
+                case UPDATE_REFRESH_INTERVALS_TYPE:
                     // It's fine if the timer triggers immediately.
                     deadlineLocal = nowLocal > start ? sampler.nextTimestamp(sampler.round(nowLocal - 1)) : start;
                     break;
