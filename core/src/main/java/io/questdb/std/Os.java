@@ -30,11 +30,15 @@ import io.questdb.std.ex.KerberosException;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.lang.management.ManagementFactory;
+import java.nio.file.Paths;
+import java.util.List;
 import java.util.concurrent.locks.LockSupport;
 
 public final class Os {
@@ -259,11 +263,6 @@ public final class Os {
 
     private static native int setCurrentThreadAffinity0(int cpu);
 
-    private static boolean isMusl() {
-        return new File("/lib/libc.musl-x86_64.so.1").exists() ||
-                new File("/lib/libc.musl-aarch64.so.1").exists();
-    }
-
     static {
         if ("aarch64".equals(System.getProperty("os.arch"))) {
             arch = ARCH_AARCH64;
@@ -297,7 +296,7 @@ public final class Os {
                 throw new Error("Unsupported OS: " + osName);
             }
 
-            final boolean isMusl = type == LINUX && isMusl();
+            final boolean isMusl = type == LINUX && LibcDetector.detectLibc() == LibcDetector.LibcType.MUSL;
 
             String prdLibRoot = "/io/questdb/bin/" + name + '-' + archName + (isMusl ? "-musl" : "") + '/';
             String devCXXLibRoot = "/io/questdb/bin-local/";
