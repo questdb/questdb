@@ -48,6 +48,7 @@ jobs:
         run: apk add --no-cache curl git tar gzip xz nodejs openjdk11-jdk maven bash
       - name: Clone repo manually
         run: |
+          git config --global --add safe.directory /__w/questdb/questdb
           git init
           git remote add origin https://github.com/${{ github.repository }}.git
           git fetch --depth 1 origin ${{ github.sha }}
