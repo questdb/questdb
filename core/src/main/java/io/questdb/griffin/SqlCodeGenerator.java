@@ -103,6 +103,7 @@ import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastTimestampToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastTimestampToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastTimestampToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastUuidToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastUuidToVarcharFunctionFactory;
@@ -1696,7 +1697,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastDateToTimestampFunctionFactory.CastDateToTimestampFunction(DateColumn.newInstance(i), toType));
                                 break;
                             case ColumnType.TIMESTAMP:
-                                castFunctions.add(TimestampColumn.newInstance(i, fromType));
+                                if (fromType == toType) {
+                                    castFunctions.add(TimestampColumn.newInstance(i, fromType));
+                                } else {
+                                    castFunctions.add(new CastTimestampToTimestampFunctionFactory.CastTimestampToTimestampFunction(TimestampColumn.newInstance(i, fromType), fromType, toType));
+                                }
                                 break;
                             default:
                                 throw SqlException.unsupportedCast(
@@ -2109,7 +2114,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastDateToVarcharFunctionFactory.Func(DateColumn.newInstance(i)));
                                 break;
                             case ColumnType.TIMESTAMP:
-                                castFunctions.add(new CastTimestampToVarcharFunctionFactory.Func(TimestampColumn.newInstance(i, fromType)));
+                                castFunctions.add(new CastTimestampToVarcharFunctionFactory.Func(TimestampColumn.newInstance(i, fromType), fromType));
                                 break;
                             case ColumnType.FLOAT:
                                 castFunctions.add(new CastFloatToVarcharFunctionFactory.Func(
@@ -3856,7 +3861,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         entityColumnFilter,
                         groupByFunctionPositions,
                         timestampIndex,
-                        metadata.getColumnType(timestampIndex),
+                        baseMetadata.getColumnType(timestampIndex),
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -3939,7 +3944,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             groupByFunctions,
                             outerProjectionFunctions,
                             timestampIndex,
-                            metadata.getColumnType(timestampIndex),
+                            baseMetadata.getColumnType(timestampIndex),
                             valueTypes.getColumnCount(),
                             timezoneNameFunc,
                             timezoneNameFuncPos,
@@ -3966,7 +3971,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         groupByFunctions,
                         outerProjectionFunctions,
                         timestampIndex,
-                        metadata.getColumnType(timestampIndex),
+                        baseMetadata.getColumnType(timestampIndex),
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -3991,7 +3996,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             outerProjectionFunctions,
                             valueTypes.getColumnCount(),
                             timestampIndex,
-                            metadata.getColumnType(timestampIndex),
+                            baseMetadata.getColumnType(timestampIndex),
                             timezoneNameFunc,
                             timezoneNameFuncPos,
                             offsetFunc,
@@ -4017,7 +4022,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         keyTypes,
                         valueTypes,
                         timestampIndex,
-                        metadata.getColumnType(timestampIndex),
+                        baseMetadata.getColumnType(timestampIndex),
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -4042,7 +4047,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             recordFunctionPositions,
                             valueTypes.getColumnCount(),
                             timestampIndex,
-                            metadata.getColumnType(timestampIndex),
+                            baseMetadata.getColumnType(timestampIndex),
                             timezoneNameFunc,
                             timezoneNameFuncPos,
                             offsetFunc,
@@ -4069,7 +4074,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         outerProjectionFunctions,
                         recordFunctionPositions,
                         timestampIndex,
-                        metadata.getColumnType(timestampIndex),
+                        baseMetadata.getColumnType(timestampIndex),
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -4096,7 +4101,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         recordFunctionPositions,
                         valueTypes.getColumnCount(),
                         timestampIndex,
-                        metadata.getColumnType(timestampIndex),
+                        baseMetadata.getColumnType(timestampIndex),
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -4124,7 +4129,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     outerProjectionFunctions,
                     recordFunctionPositions,
                     timestampIndex,
-                    metadata.getColumnType(timestampIndex),
+                    baseMetadata.getColumnType(timestampIndex),
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,

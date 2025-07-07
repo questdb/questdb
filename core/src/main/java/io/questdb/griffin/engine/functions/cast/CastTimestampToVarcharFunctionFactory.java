@@ -25,7 +25,8 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -62,15 +63,17 @@ public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
             sink.put(func.getTimestamp(null));
             return new VarcharConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        return new Func(args.getQuick(0), ColumnType.getTimestampType(args.getQuick(0).getType(), configuration));
     }
 
     public static class Func extends AbstractCastToVarcharFunction {
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
+        private final TimestampDriver timestampDriver;
 
-        public Func(Function arg) {
+        public Func(Function arg, int timestampType) {
             super(arg);
+            timestampDriver = ColumnType.getTimestampDriver(timestampType);
         }
 
         @Override
@@ -89,7 +92,7 @@ public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
                 return null;
             }
             sink.clear();
-            MicrosTimestampDriver.INSTANCE.append(sink, value);
+            timestampDriver.append(sink, value);
             return sink;
         }
     }

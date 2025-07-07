@@ -53,7 +53,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        int timestampType = ColumnType.getTimestampType(argPositions.getQuick(0), configuration);
+        int timestampType = ColumnType.getTimestampType(args.getQuick(0).getType(), configuration);
         if (args.getQuick(0).isConstant()) {
             final long start = args.getQuick(0).getTimestamp(null);
             if (start == Numbers.LONG_NULL) {
@@ -78,11 +78,6 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean shouldMemoize() {
-            return true;
-        }
-
-        @Override
         public long getTimestamp(Record rec) {
             final long result = next;
             next += longIncrement.getLong(rec);
@@ -97,6 +92,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean shouldMemoize() {
             return true;
         }
 

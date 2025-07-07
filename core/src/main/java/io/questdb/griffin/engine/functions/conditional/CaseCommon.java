@@ -112,7 +112,7 @@ public class CaseCommon {
 
     @NotNull
     private static CaseFunctionConstructor getCaseFunctionConstructor(int position, int returnType) throws SqlException {
-        final CaseFunctionConstructor constructor = constructors.getQuick(returnType);
+        final CaseFunctionConstructor constructor = constructors.getQuick(tagOf(returnType));
         if (constructor == null) {
             throw SqlException.$(position, "unsupported CASE value type '").put(nameOf(returnType)).put('\'');
         }
@@ -136,7 +136,7 @@ public class CaseCommon {
             return new ArrayCaseFunction(returnType, picker, args);
         }
 
-        return getCaseFunctionConstructor(position, returnType).getInstance(position, picker, args);
+        return getCaseFunctionConstructor(position, returnType).getInstance(position, picker, args, returnType);
     }
 
     static {
@@ -257,7 +257,7 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(TIMESTAMP_MICRO, TIMESTAMP_MICRO), TIMESTAMP_MICRO);
         typeEscalationMap.put(Numbers.encodeLowHighInts(TIMESTAMP_NANO, TIMESTAMP_NANO), TIMESTAMP_NANO);
         typeEscalationMap.put(Numbers.encodeLowHighInts(TIMESTAMP_MICRO, TIMESTAMP_NANO), TIMESTAMP_NANO);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(TIMESTAMP_NANO, TIMESTAMP_MICRO), TIMESTAMP_MICRO);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(TIMESTAMP_NANO, TIMESTAMP_MICRO), TIMESTAMP_NANO);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(STRING, STRING), STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(STRING, SYMBOL), STRING);
@@ -290,26 +290,25 @@ public class CaseCommon {
 
     static {
         constructors.set(UNDEFINED, NULL + 1, null);
-        constructors.extendAndSet(STRING, (position, picker, args) -> new StrCaseFunction(picker, args));
-        constructors.extendAndSet(INT, (position, picker, args) -> new IntCaseFunction(picker, args));
-        constructors.extendAndSet(LONG, (position, picker, args) -> new LongCaseFunction(picker, args));
-        constructors.extendAndSet(BYTE, (position, picker, args) -> new ByteCaseFunction(picker, args));
-        constructors.extendAndSet(BOOLEAN, (position, picker, args) -> new BooleanCaseFunction(picker, args));
-        constructors.extendAndSet(SHORT, (position, picker, args) -> new ShortCaseFunction(picker, args));
-        constructors.extendAndSet(CHAR, (position, picker, args) -> new CharCaseFunction(picker, args));
-        constructors.extendAndSet(FLOAT, (position, picker, args) -> new FloatCaseFunction(picker, args));
-        constructors.extendAndSet(DOUBLE, (position, picker, args) -> new DoubleCaseFunction(picker, args));
-        constructors.extendAndSet(LONG256, (position, picker, args) -> new Long256CaseFunction(picker, args));
-        constructors.extendAndSet(SYMBOL, (position, picker, args) -> new StrCaseFunction(picker, args));
-        constructors.extendAndSet(DATE, (position, picker, args) -> new DateCaseFunction(picker, args));
-        constructors.extendAndSet(TIMESTAMP_MICRO, (position, picker, args) -> new TimestampCaseFunction(picker, args, TIMESTAMP_MICRO));
-        constructors.extendAndSet(TIMESTAMP_NANO, (position, picker, args) -> new TimestampCaseFunction(picker, args, TIMESTAMP_NANO));
-        constructors.extendAndSet(BINARY, (position, picker, args) -> new BinCaseFunction(picker, args));
-        constructors.extendAndSet(LONG128, (position, picker, args) -> new Long128CaseFunction(picker, args));
-        constructors.extendAndSet(UUID, (position, picker, args) -> new UuidCaseFunction(picker, args));
-        constructors.extendAndSet(IPv4, (position, picker, args) -> new IPv4CaseFunction(picker, args));
-        constructors.extendAndSet(VARCHAR, (position, picker, args) -> new VarcharCaseFunction(picker, args));
-        constructors.extendAndSet(NULL, (position, picker, args) -> new NullCaseFunction(args));
+        constructors.extendAndSet(STRING, (position, picker, args, returnType) -> new StrCaseFunction(picker, args));
+        constructors.extendAndSet(INT, (position, picker, args, returnType) -> new IntCaseFunction(picker, args));
+        constructors.extendAndSet(LONG, (position, picker, args, returnType) -> new LongCaseFunction(picker, args));
+        constructors.extendAndSet(BYTE, (position, picker, args, returnType) -> new ByteCaseFunction(picker, args));
+        constructors.extendAndSet(BOOLEAN, (position, picker, args, returnType) -> new BooleanCaseFunction(picker, args));
+        constructors.extendAndSet(SHORT, (position, picker, args, returnType) -> new ShortCaseFunction(picker, args));
+        constructors.extendAndSet(CHAR, (position, picker, args, returnType) -> new CharCaseFunction(picker, args));
+        constructors.extendAndSet(FLOAT, (position, picker, args, returnType) -> new FloatCaseFunction(picker, args));
+        constructors.extendAndSet(DOUBLE, (position, picker, args, returnType) -> new DoubleCaseFunction(picker, args));
+        constructors.extendAndSet(LONG256, (position, picker, args, returnType) -> new Long256CaseFunction(picker, args));
+        constructors.extendAndSet(SYMBOL, (position, picker, args, returnType) -> new StrCaseFunction(picker, args));
+        constructors.extendAndSet(DATE, (position, picker, args, returnType) -> new DateCaseFunction(picker, args));
+        constructors.extendAndSet(TIMESTAMP, (position, picker, args, returnType) -> new TimestampCaseFunction(picker, args, returnType));
+        constructors.extendAndSet(BINARY, (position, picker, args, returnType) -> new BinCaseFunction(picker, args));
+        constructors.extendAndSet(LONG128, (position, picker, args, returnType) -> new Long128CaseFunction(picker, args));
+        constructors.extendAndSet(UUID, (position, picker, args, returnType) -> new UuidCaseFunction(picker, args));
+        constructors.extendAndSet(IPv4, (position, picker, args, returnType) -> new IPv4CaseFunction(picker, args));
+        constructors.extendAndSet(VARCHAR, (position, picker, args, returnType) -> new VarcharCaseFunction(picker, args));
+        constructors.extendAndSet(NULL, (position, picker, args, returnType) -> new NullCaseFunction(args));
         constructors.setPos(NULL + 1);
     }
 }

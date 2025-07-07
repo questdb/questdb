@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -32,26 +33,35 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class CastTimestampToDateFunctionFactory implements FunctionFactory {
+public class CastTimestampToTimestampFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "cast(Nm)";
+        return "cast(Nn)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+        Function var = args.getQuick(0);
+        int leftTimestampType = args.getQuick(0).getType();
+        int rightTimestampType = args.getQuick(1).getType();
+        if (!ColumnType.isTimestamp(leftTimestampType) || leftTimestampType == rightTimestampType) {
+            return new CastLongToTimestampFunctionFactory.CastLongToTimestampFunction(args.getQuick(0), rightTimestampType);
+        }
+
+        return new CastTimestampToTimestampFunction(var, leftTimestampType, rightTimestampType);
     }
 
-    private static class Func extends AbstractCastToDateFunction {
+    public static class CastTimestampToTimestampFunction extends AbstractCastToTimestampFunction {
+        private final int leftTimestampType;
 
-        public Func(Function arg) {
-            super(arg);
+        public CastTimestampToTimestampFunction(Function arg, int leftTimestamp, int rightTimestampType) {
+            super(arg, rightTimestampType);
+            this.leftTimestampType = leftTimestamp;
         }
 
         @Override
-        public long getDate(Record rec) {
-            return arg.getDate(rec);
+        public long getTimestamp(Record rec) {
+            return timestampDriver.from(arg.getLong(rec), leftTimestampType);
         }
     }
 }

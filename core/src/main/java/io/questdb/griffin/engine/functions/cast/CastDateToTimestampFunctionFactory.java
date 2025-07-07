@@ -52,7 +52,7 @@ public class CastDateToTimestampFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             final long value = arg.getDate(rec);
-            return timestampDriver.toDate(value);
+            return timestampDriver.fromDate(value);
         }
     }
 }

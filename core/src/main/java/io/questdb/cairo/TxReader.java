@@ -381,6 +381,10 @@ public class TxReader implements Closeable, Mutable {
         return symbolCountSnapshot.get(i);
     }
 
+    public int getTimestampType() {
+        return timestampType;
+    }
+
     public long getTransientRowCount() {
         return transientRowCount;
     }

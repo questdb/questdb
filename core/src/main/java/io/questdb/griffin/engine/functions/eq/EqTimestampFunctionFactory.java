@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -52,11 +54,18 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0), args.getQuick(1));
+        int leftType = args.getQuick(0).getType();
+        int rightType = args.getQuick(1).getType();
+        if (leftType == rightType || !ColumnType.isTimestamp(leftType) || !ColumnType.isTimestamp(rightType)) {
+            return new Func(args.getQuick(0), args.getQuick(1));
+        } else if (leftType < rightType) {
+            return new LeftConvertFunc(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampDriver(leftType), rightType);
+        } else {
+            return new RightConvertFunc(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampDriver(rightType), leftType);
+        }
     }
 
     private static class Func extends AbstractEqBinaryFunction {
-
         public Func(Function left, Function right) {
             super(left, right);
         }
@@ -64,6 +73,38 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated != (left.getTimestamp(rec) == right.getTimestamp(rec));
+        }
+    }
+
+    private static class LeftConvertFunc extends AbstractEqBinaryFunction {
+        protected TimestampDriver leftDriver;
+        protected int toTimestampType;
+
+        public LeftConvertFunc(Function left, Function right, TimestampDriver leftDriver, int toTimestampType) {
+            super(left, right);
+            this.leftDriver = leftDriver;
+            this.toTimestampType = toTimestampType;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (leftDriver.from(left.getTimestamp(rec), toTimestampType) == right.getTimestamp(rec));
+        }
+    }
+
+    private static class RightConvertFunc extends AbstractEqBinaryFunction {
+        protected TimestampDriver rightDriver;
+        protected int toTimestampType;
+
+        public RightConvertFunc(Function left, Function right, TimestampDriver rightDriver, int toTimestampType) {
+            super(left, right);
+            this.rightDriver = rightDriver;
+            this.toTimestampType = toTimestampType;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (left.getTimestamp(rec) == rightDriver.from(right.getTimestamp(rec), toTimestampType));
         }
     }
 }

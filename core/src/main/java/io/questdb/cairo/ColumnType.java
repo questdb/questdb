@@ -391,7 +391,8 @@ public final class ColumnType {
             case LONG:
             case BOOLEAN:
             case BYTE:
-            case TIMESTAMP:
+            case TIMESTAMP_MICRO:
+            case TIMESTAMP_NANO:
             case DATE:
             case DOUBLE:
             case CHAR:

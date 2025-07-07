@@ -318,14 +318,8 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public long fromDate(long date) {
-        if (date == Numbers.LONG_NULL) {
-            return Numbers.LONG_NULL;
-        }
-        try {
-            return Math.multiplyExact(date, 1000_000L);
-        } catch (ArithmeticException e) {
-            throw ImplicitCastException.inconvertibleValue(date, ColumnType.DATE, ColumnType.TIMESTAMP_NANO);
-        }
+        return date == Numbers.LONG_NULL ? Numbers.LONG_NULL : date * 1000_000L;
+
     }
 
     @Override

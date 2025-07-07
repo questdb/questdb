@@ -787,8 +787,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     @Test
     public void testFixedSizeColumnEquivalentToCast() throws Exception {
-        final String[] types = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "TIMESTAMP", "BOOLEAN", "DATE"};
-        final char[] col_names = {'l', 'f', 'i', 'j', 'e', 'd', 'k', 't', 'g'};
+        final String[] types = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "TIMESTAMP", "TIMESTAMP_NS", "BOOLEAN", "DATE"};
+        final char[] col_names = {'l', 'f', 'i', 'j', 'e', 'd', 'k', 'n', 't', 'g'};
 
         testFixedToFixedConversions(types, col_names);
     }
@@ -1220,11 +1220,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                         " rnd_symbol(4,4,4,2) ik," +
                         " case WHEN x % 10 = 0 THEN NULL WHEN x % 10 = 1 THEN 0 ELSE rnd_long() END j," +
                         " case WHEN x % 10 = 0 THEN NULL WHEN x % 10 = 1 THEN CAST('1970-01-01' AS TIMESTAMP) ELSE timestamp_sequence(0, 1000000000) END k," +
+                        " case WHEN x % 10 = 0 THEN NULL WHEN x % 10 = 1 THEN CAST('1970-01-01' AS TIMESTAMP_NS) ELSE timestamp_sequence(0, 1000000000) END n," +
                         " rnd_byte(2,50) l," +
                         " rnd_boolean() t," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_varchar(5,64,2) v" +
-                        " from long_sequence(1000)" +
+                        " from long_sequence(10)" +
                         "), index(ik) timestamp (timestamp) " +
                         (partitioned ? "PARTITION BY DAY " : "PARTITION BY NONE ") +
                         (walEnabled ? "WAL" : (partitioned ? "BYPASS WAL" : ""))
