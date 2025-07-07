@@ -62,14 +62,10 @@ jobs:
           JAVA_HOME=/usr/lib/jvm/default-jvm ./questdb-*bin/questdb.sh start
       - name: Query database with curl
         run: |
-          cat ~/.questdb/log/*
           curl -G --data-urlencode \
               "query=SELECT * FROM long_sequence(1)" \
               http://localhost:9000/exp
-      - name: Upload logs
+      - name: Print logs
         if: failure() # Only upload logs if the job failed
-        uses: actions/upload-artifact@v4
-        with:
-          path: ~/.questdb/log/*
-          name: logs
-          retention-days: 5
+        run: |
+          cat ~/.questdb/log/*
