@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshSqlExecutionContext;
 import io.questdb.cairo.mv.MatViewState;
@@ -45,6 +46,8 @@ import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -461,7 +464,47 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAlterRefreshTimer() throws Exception {
+    public void testAlterRefreshParamsToImmediate() throws Exception {
+        testAlterRefreshParamsToTarget(
+                "immediate",
+                new TestRefreshParams()
+                        .ofDeferred()
+                        .ofImmediate()
+        );
+    }
+
+    @Test
+    public void testAlterRefreshParamsToManual() throws Exception {
+        testAlterRefreshParamsToTarget(
+                "manual",
+                new TestRefreshParams()
+                        .ofDeferred()
+                        .ofManual()
+        );
+    }
+
+    @Test
+    public void testAlterRefreshParamsToPeriod() throws Exception {
+        testAlterRefreshParamsToTarget(
+                "immediate period(length 12h time zone 'Europe/London' delay 1h)",
+                new TestRefreshParams()
+                        .ofDeferred()
+                        .ofPeriod()
+        );
+    }
+
+    @Test
+    public void testAlterRefreshParamsToTimer() throws Exception {
+        testAlterRefreshParamsToTarget(
+                "every 42m start '1970-01-01T00:00:00.000000Z' time zone 'Europe/Sofia'",
+                new TestRefreshParams()
+                        .ofDeferred()
+                        .ofTimer()
+        );
+    }
+
+    @Test
+    public void testAlterRefreshTimer1() throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
@@ -492,13 +535,14 @@ public class MatViewTest extends AbstractCairoTest {
                     "sym\tprice\tts\n",
                     "price_1h order by sym"
             );
+            final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "view_status, refresh_base_table_txn, base_table_txn, " +
+                    "timer_time_zone, timer_start, timer_interval, timer_interval_unit " +
+                    "from materialized_views";
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\n" +
                             "price_1h\ttimer\tbase_price\t\t\tvalid\t-1\t1\t\t2999-12-12T12:00:00.000000Z\t1\tHOUR\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_status, refresh_base_table_txn, base_table_txn, " +
-                            "timer_time_zone, timer_start, timer_interval, timer_interval_unit " +
-                            "from materialized_views",
+                    matViewsSql,
                     null
             );
 
@@ -513,10 +557,74 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\n" +
                             "price_1h\ttimer\tbase_price\t1999-01-01T01:02:01.842574Z\t1999-01-01T01:02:01.842574Z\tvalid\t1\t1\t\t1999-01-01T01:01:01.842574Z\t1\tMINUTE\n",
-                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                            "view_status, refresh_base_table_txn, base_table_txn, " +
-                            "timer_time_zone, timer_start, timer_interval, timer_interval_unit " +
-                            "from materialized_views",
+                    matViewsSql,
+                    null
+            );
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterRefreshTimer2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh manual deferred as (" +
+                            "select sym, last(price) as price, ts from base_price sample by 1h" +
+                            ") partition by day"
+            );
+
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+
+            // no refresh should happen as the view is manual
+            final String start = "1999-01-01T01:01:01.842574Z";
+            currentMicros = parseFloorPartialTimestamp(start);
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n",
+                    "price_1h order by sym"
+            );
+            final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                    "view_status, refresh_base_table_txn, base_table_txn, " +
+                    "timer_time_zone, timer_start, timer_interval, timer_interval_unit " +
+                    "from materialized_views";
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\n" +
+                            "price_1h\tmanual\tbase_price\t\t\tvalid\t-1\t1\t\t\t0\t\n",
+                    matViewsSql,
+                    null
+            );
+
+            // the view should refresh after we change the timer schedule
+            execute("alter materialized view price_1h set refresh every 1m start '" + start + "';");
+            drainQueues();
+            // we need timers to tick
+            currentMicros += Timestamps.MINUTE_MICROS;
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\trefresh_base_table_txn\tbase_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\n" +
+                            "price_1h\ttimer\tbase_price\t1999-01-01T01:02:01.842574Z\t1999-01-01T01:02:01.842574Z\tvalid\t1\t1\t\t1999-01-01T01:01:01.842574Z\t1\tMINUTE\n",
+                    matViewsSql,
                     null
             );
             assertQueryNoLeakCheck(
@@ -5573,6 +5681,75 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
+    private void testAlterRefreshParamsToTarget(String targetRefreshType, TestRefreshParams targetRefreshParams) throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2020-12-12T00:00:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n",
+                    "price_1h order by sym"
+            );
+
+            execute("alter materialized view price_1h set refresh " + targetRefreshType);
+            drainWalQueue();
+
+            execute("refresh materialized view price_1h incremental;");
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2020-12-12T12:01')" +
+                            ",('gbpusd', 1.323, '2020-12-12T13:02')" +
+                            ",('jpyusd', 103.21, '2020-12-12T12:02')" +
+                            ",('jpyusd', 1.321, '2020-12-12T13:02')"
+            );
+            currentMicros += 2 * Timestamps.DAY_MICROS;
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.32\t2020-12-12T12:00:00.000000Z\n" +
+                            "gbpusd\t1.323\t2020-12-12T13:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2020-12-12T12:00:00.000000Z\n" +
+                            "jpyusd\t1.321\t2020-12-12T13:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+            assertQueryNoLeakCheck(
+                    "view_name\tview_status\n" +
+                            "price_1h\tvalid\n",
+                    "select view_name, view_status from materialized_views",
+                    null
+            );
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
+            Assert.assertNotNull(viewDefinition);
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(viewState);
+            Assert.assertSame(viewDefinition, viewState.getViewDefinition());
+
+            Assert.assertEquals(targetRefreshParams.refreshType, viewDefinition.getRefreshType());
+            Assert.assertEquals(targetRefreshParams.deferred, viewDefinition.isDeferred());
+            Assert.assertEquals(targetRefreshParams.periodDelay, viewDefinition.getPeriodDelay());
+            Assert.assertEquals(targetRefreshParams.periodDelayUnit, viewDefinition.getPeriodDelayUnit());
+            Assert.assertEquals(targetRefreshParams.periodLength, viewDefinition.getPeriodLength());
+            Assert.assertEquals(targetRefreshParams.periodLengthUnit, viewDefinition.getPeriodLengthUnit());
+            Assert.assertEquals(targetRefreshParams.timerInterval, viewDefinition.getTimerInterval());
+            Assert.assertEquals(targetRefreshParams.timerUnit, viewDefinition.getTimerUnit());
+            Assert.assertEquals(targetRefreshParams.timerStart, viewDefinition.getTimerStart());
+            Assert.assertEquals(targetRefreshParams.timerTimeZone, viewDefinition.getTimerTimeZone());
+        });
+    }
+
     private void testBaseTableInvalidateOnOperation(String operationSql, String invalidationReason) throws Exception {
         testBaseTableInvalidateOnOperation(null, operationSql, invalidationReason);
     }
@@ -6133,8 +6310,43 @@ public class MatViewTest extends AbstractCairoTest {
         char periodLengthUnit;
         int refreshType;
         int timerInterval;
-        long timerStart;
+        long timerStart = Numbers.LONG_NULL;
         String timerTimeZone;
         char timerUnit;
+
+        TestRefreshParams ofDeferred() {
+            deferred = true;
+            return this;
+        }
+
+        TestRefreshParams ofImmediate() {
+            refreshType = MatViewDefinition.REFRESH_TYPE_IMMEDIATE;
+            return this;
+        }
+
+        TestRefreshParams ofManual() {
+            refreshType = MatViewDefinition.REFRESH_TYPE_MANUAL;
+            return this;
+        }
+
+        TestRefreshParams ofPeriod() throws NumericException {
+            refreshType = MatViewDefinition.REFRESH_TYPE_IMMEDIATE;
+            this.periodLength = 12;
+            this.periodLengthUnit = 'h';
+            this.periodDelay = 1;
+            this.periodDelayUnit = 'h';
+            this.timerStart = parseFloorPartialTimestamp("2020-12-12T00:00:00.000000Z");
+            this.timerTimeZone = "Europe/London";
+            return this;
+        }
+
+        TestRefreshParams ofTimer() {
+            refreshType = MatViewDefinition.REFRESH_TYPE_TIMER;
+            this.timerInterval = 42;
+            this.timerUnit = 'm';
+            this.timerStart = 0;
+            this.timerTimeZone = "Europe/Sofia";
+            return this;
+        }
     }
 }

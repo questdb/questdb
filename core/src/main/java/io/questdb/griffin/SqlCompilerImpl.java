@@ -1680,20 +1680,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         char delayUnit = 0;
 
                         if (isImmediateKeyword(tok)) {
-                            tok = expectToken(lexer, "'period'");
+                            tok = SqlUtil.fetchNext(lexer);
                         } else if (isManualKeyword(tok)) {
                             refreshType = MatViewDefinition.REFRESH_TYPE_MANUAL;
-                            tok = expectToken(lexer, "'period'");
+                            tok = SqlUtil.fetchNext(lexer);
                         } else if (isEveryKeyword(tok)) {
                             tok = expectToken(lexer, "interval");
                             every = Timestamps.getStrideMultiple(tok);
                             everyUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
                             SqlParser.validateMatViewEveryUnit(everyUnit, lexer.lastTokenPosition());
                             refreshType = MatViewDefinition.REFRESH_TYPE_TIMER;
-                            tok = expectToken(lexer, "'start' or 'period'");
+                            tok = SqlUtil.fetchNext(lexer);
                         }
 
-                        if (isPeriodKeyword(tok)) {
+                        if (tok != null && isPeriodKeyword(tok)) {
                             // REFRESH ... PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
                             expectKeyword(lexer, "(");
                             expectKeyword(lexer, "length");
@@ -1738,7 +1738,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                             tok = SqlUtil.fetchNext(lexer);
                         } else if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
-                            if (isStartKeyword(tok)) {
+                            if (tok != null && isStartKeyword(tok)) {
                                 // REFRESH EVERY <interval> [START '<datetime>' [TIME ZONE '<timezone>']]
                                 tok = expectToken(lexer, "START timestamp");
                                 try {
