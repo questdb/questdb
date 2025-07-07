@@ -479,13 +479,9 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     for (int i = 0; i < iterations; i++) {
                         executionContext.setNowAndFixClock(testClock.micros.get());
                         execute(
-                                "insert into base_price values ('gbpusd', 1317, dateadd('m', -3, now()))," +
-                                        "('gbpusd', 1318, dateadd('m', -2, now()))," +
-                                        "('gbpusd', 1319, dateadd('m', -1, now()))," +
-                                        "('gbpusd', 1320, now())," +
-                                        "('gbpusd', 1321, dateadd('m', 1, now()))," +
-                                        "('gbpusd', 1322, dateadd('m', 2, now()))," +
-                                        "('gbpusd', 1323, dateadd('m', 3, now()))",
+                                "insert into base_price values ('gbpusd', 41, dateadd('m', -1, now()))," +
+                                        "('gbpusd', 42, now())," +
+                                        "('gbpusd', 43, dateadd('m', 1, now()))",
                                 executionContext
                         );
                         drainWalQueue();
