@@ -1407,8 +1407,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private @Nullable TableToken verifyBaseTableToken(@NotNull MatViewDefinition viewDefinition, @NotNull MatViewState viewState, @NotNull WalWriter walWriter) {
-        final TableToken baseTableToken;
         final String baseTableName = viewDefinition.getBaseTableName();
+        final TableToken baseTableToken;
         try {
             baseTableToken = engine.verifyTableName(baseTableName);
         } catch (CairoException e) {

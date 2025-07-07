@@ -196,7 +196,7 @@ public class MatViewTimerJob extends SynchronizedJob {
 
     private void createUpdateRefreshIntervalsTimer(@NotNull MatViewDefinition viewDefinition, long now) {
         final TableToken viewToken = viewDefinition.getMatViewToken();
-        final long intervalMs = configuration.getMatViewRefreshIntervalsUpdateInterval();
+        final long intervalMs = configuration.getMatViewRefreshIntervalsUpdatePeriod();
         final TimestampSampler sampler;
         try {
             sampler = TimestampSamplerFactory.getInstance(intervalMs, 'T', -1);

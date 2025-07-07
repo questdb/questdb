@@ -171,6 +171,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getColumnAliasGeneratedMaxSize() {
+        return 64;
+    }
+
+    @Override
     public int getColumnIndexerQueueCapacity() {
         return 1024;
     }
@@ -474,6 +479,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewMaxRefreshIntervals() {
+        return 100;
+    }
+
+    @Override
     public int getMatViewMaxRefreshRetries() {
         return 10;
     }
@@ -484,7 +494,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getMatViewRefreshIntervalsUpdateInterval() {
+    public long getMatViewRefreshIntervalsUpdatePeriod() {
         return 15_000;
     }
 
@@ -496,11 +506,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getMatViewRowsPerQueryEstimate() {
         return 10_000_000;
-    }
-
-    @Override
-    public int getMatViewMaxRefreshIntervals() {
-        return 100;
     }
 
     @Override
@@ -1241,6 +1246,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isColumnAliasExpressionEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isDevModeEnabled() {
         return false;
     }
@@ -1373,15 +1383,5 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean useWithinLatestByOptimisation() {
         return false;
-    }
-
-    @Override
-    public boolean isColumnAliasExpressionEnabled() {
-        return true;
-    }
-
-    @Override
-    public int getColumnAliasGeneratedMaxSize() {
-        return 64;
     }
 }
