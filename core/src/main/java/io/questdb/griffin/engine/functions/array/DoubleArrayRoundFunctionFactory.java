@@ -29,45 +29,53 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-public class DoubleArrayAddScalarFunctionFactory implements FunctionFactory {
-    private static final String OPERATOR_NAME = "+";
+public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return OPERATOR_NAME + "(D[]D)";
+        return "round(D[]I)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new Func(args.getQuick(0), args.getQuick(1), configuration);
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        final Function arg = args.getQuick(0);
+        final Function scale = args.getQuick(1);
+        return new Func(arg, scale, configuration);
     }
 
-    @Override
-    public boolean shouldSwapArgs() {
-        return true;
-    }
-
-    private static class Func extends DoubleArrayAndScalarDoubleArrayOperator {
-
+    private static class Func extends DoubleArrayAndScalarIntArrayOperator {
         public Func(Function arrayArg, Function scalarArg, CairoConfiguration configuration) {
-            super(OPERATOR_NAME, arrayArg, scalarArg, configuration);
+            super("round", arrayArg, scalarArg, configuration);
         }
 
         @Override
         public void applyToElement(ArrayView view, int index) {
-            memory.putDouble(scalarValue + view.getDouble(index));
+            memory.putDouble(roundNc(view.getDouble(index), scalarValue));
         }
 
         @Override
         public void applyToEntireVanillaArray(ArrayView view) {
             FlatArrayView flatView = view.flatView();
             for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
-                memory.putDouble(flatView.getDoubleAtAbsIndex(i) + scalarValue);
+                memory.putDouble(roundNc(flatView.getDoubleAtAbsIndex(i), scalarValue));
+            }
+        }
+
+        private double roundNc(double d, int i) {
+            if (Numbers.isNull(d) || Numbers.INT_NULL == i) {
+                return Double.NaN;
+            }
+
+            try {
+                return Numbers.roundHalfUp(d, i);
+            } catch (NumericException ignore) {
+                return Double.NaN;
             }
         }
     }
