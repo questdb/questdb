@@ -693,13 +693,13 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private void setMatViewRefresh(MetadataService svc) {
         final int refreshType = (int) extraInfo.get(0);
-        final int timerInterval = (int) extraInfo.get(2);
-        final char timerUnit = (char) extraInfo.get(3);
-        final long timerStart = extraInfo.get(4);
-        final int periodLength = (int) extraInfo.get(5);
-        final char periodLengthUnit = (char) extraInfo.get(6);
-        final int periodDelay = (int) extraInfo.get(7);
-        final char periodDelayUnit = (char) extraInfo.get(8);
+        final int timerInterval = (int) extraInfo.get(1);
+        final char timerUnit = (char) extraInfo.get(2);
+        final long timerStart = extraInfo.get(3);
+        final int periodLength = (int) extraInfo.get(4);
+        final char periodLengthUnit = (char) extraInfo.get(5);
+        final int periodDelay = (int) extraInfo.get(6);
+        final char periodDelayUnit = (char) extraInfo.get(7);
         final CharSequence timerTimeZone = activeExtraStrInfo.getStrA(0);
 
         svc.setMatViewRefresh(
