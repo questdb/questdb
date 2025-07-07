@@ -598,8 +598,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             CharSequence str = record.getStrA(cursorTimestampIndex);
+            long timestamp;
+            if (str != null) {
+                // If the string is null, we insert a null timestamp
+                timestamp = SqlUtil.implicitCastStrAsTimestamp(str);
+            } else {
+                timestamp = Numbers.LONG_NULL;
+            }
             // It's allowed to insert ISO formatted string to timestamp column
-            TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, -1, ColumnType.STRING, ColumnType.TIMESTAMP));
+            TableWriter.Row row = writer.newRow(timestamp);
             copier.copy(record, row);
             row.append();
             if (++rowCount >= commitTarget) {
@@ -629,7 +636,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             Utf8Sequence varchar = record.getVarcharA(cursorTimestampIndex);
             long timestamp;
             if (varchar != null) {
-                timestamp = SqlUtil.parseFloorPartialTimestamp(varchar.asAsciiCharSequence(), -1, ColumnType.STRING, ColumnType.TIMESTAMP);
+                timestamp = SqlUtil.implicitCastStrAsTimestamp(varchar.asAsciiCharSequence());
             } else {
                 timestamp = Numbers.LONG_NULL;
             }
@@ -3655,9 +3662,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                 if (virtualColumnType != tableColumnType && !isIPv4UpdateCast(virtualColumnType, tableColumnType)) {
                     if (!ColumnType.isSymbolOrString(tableColumnType) || !ColumnType.isAssignableFrom(virtualColumnType, ColumnType.STRING)) {
-                        // get column position
-                        ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
-                        throw SqlException.inconvertibleTypes(setRhs.position, virtualColumnType, "", tableColumnType, updateColumnName);
+                        if (tableColumnType != ColumnType.VARCHAR || !ColumnType.isAssignableFrom(virtualColumnType, ColumnType.VARCHAR)) {
+                            // get column position
+                            ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
+                            throw SqlException.inconvertibleTypes(setRhs.position, virtualColumnType, "", tableColumnType, updateColumnName);
+                        }
                     }
                 }
             }
