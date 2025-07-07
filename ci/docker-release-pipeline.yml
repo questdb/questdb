@@ -2,9 +2,9 @@ trigger:
   branches:
     exclude:
       - "*"
-  tags:
-    include:
-      - '*.*.*'
+  # tags:
+  #   include:
+  #     - '*.*.*'
 
 pr: none
 
