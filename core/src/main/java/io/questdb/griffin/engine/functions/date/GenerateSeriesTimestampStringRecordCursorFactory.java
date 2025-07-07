@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.date;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -39,59 +40,24 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.Timestamps;
-import org.jetbrains.annotations.Nullable;
 
 
 public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGenerateSeriesRecordCursorFactory {
-    public static final TimestampAddFunctionFactory.LongAddIntFunction ADD_DAYS_FUNCTION = Timestamps::addDays;
-    public static final TimestampAddFunctionFactory.LongAddIntFunction ADD_HOURS_FUNCTION = Timestamps::addHours;
-    public static final TimestampAddFunctionFactory.LongAddIntFunction ADD_MICROS_FUNCTION = Timestamps::addMicros;
-    public static final TimestampAddFunctionFactory.LongAddIntFunction ADD_MILLIS_FUNCTION = Timestamps::addMillis;
-    public static final TimestampAddFunctionFactory.LongAddIntFunction ADD_MINUTES_FUNCTION = Timestamps::addMinutes;
-    public static final TimestampAddFunctionFactory.LongAddIntFunction ADD_MONTHS_FUNCTION = Timestamps::addMonths;
-    public static final TimestampAddFunctionFactory.LongAddIntFunction ADD_SECONDS_FUNCTION = Timestamps::addSeconds;
-    public static final TimestampAddFunctionFactory.LongAddIntFunction ADD_WEEKS_FUNCTION = Timestamps::addWeeks;
-    public static final TimestampAddFunctionFactory.LongAddIntFunction ADD_YEARS_FUNCTION = Timestamps::addYears;
-
-    private static final RecordMetadata METADATA;
+    private static final RecordMetadata METADATA_MICROS;
+    private static final RecordMetadata METADATA_NANOS;
     private static final io.questdb.std.ThreadLocal<GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod> tlSampleByUnit = new ThreadLocal<>(GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod::new);
+    private final TimestampDriver timestampDriver;
     private GenerateSeriesTimestampStringRecordCursor cursor;
 
-    public GenerateSeriesTimestampStringRecordCursorFactory(Function startFunc, Function endFunc, Function stepFunc, IntList argPositions) throws SqlException {
-        super(METADATA, startFunc, endFunc, stepFunc, argPositions);
-    }
-
-    public static @Nullable TimestampAddFunctionFactory.LongAddIntFunction lookupAddFunction(char period) {
-        switch (period) {
-            case 'u': // compatibility with dateadd syntax
-            case 'U':
-                return ADD_MICROS_FUNCTION;
-            case 'T':
-                return ADD_MILLIS_FUNCTION;
-            case 's':
-                return ADD_SECONDS_FUNCTION;
-            case 'm':
-                return ADD_MINUTES_FUNCTION;
-            case 'H':
-            case 'h': // compatibility with sample by syntax
-                return ADD_HOURS_FUNCTION;
-            case 'd':
-                return ADD_DAYS_FUNCTION;
-            case 'w':
-                return ADD_WEEKS_FUNCTION;
-            case 'M':
-                return ADD_MONTHS_FUNCTION;
-            case 'y':
-                return ADD_YEARS_FUNCTION;
-            default:
-                return null;
-        }
+    public GenerateSeriesTimestampStringRecordCursorFactory(int timestampType, Function startFunc, Function endFunc, Function stepFunc, IntList argPositions) throws SqlException {
+        super(getMetadata(timestampType), startFunc, endFunc, stepFunc, argPositions);
+        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (cursor == null) {
-            cursor = new GenerateSeriesTimestampStringRecordCursor(startFunc, endFunc, stepFunc);
+            cursor = new GenerateSeriesTimestampStringRecordCursor(timestampDriver, startFunc, endFunc, stepFunc);
         }
         cursor.of(executionContext, stepPosition);
         return cursor;
@@ -114,17 +80,30 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
         }
     }
 
+    static RecordMetadata getMetadata(int timestampType) {
+        switch (timestampType) {
+            case ColumnType.TIMESTAMP_MICRO:
+                return METADATA_MICROS;
+            case ColumnType.TIMESTAMP_NANO:
+                return METADATA_NANOS;
+            default:
+                return null;
+        }
+    }
+
     private static class GenerateSeriesTimestampStringRecordCursor extends AbstractGenerateSeriesRecordCursor {
         private final GenerateSeriesTimestampStringRecord recordA = new GenerateSeriesTimestampStringRecord();
         private final GenerateSeriesTimestampStringRecord recordB = new GenerateSeriesTimestampStringRecord();
+        private final TimestampDriver timestampDriver;
         public int stride;
-        private TimestampAddFunctionFactory.LongAddIntFunction adder;
+        private TimestampDriver.TimestampAddMethod adder;
         private long end;
         private long start;
         private char unit;
 
-        public GenerateSeriesTimestampStringRecordCursor(Function startFunc, Function endFunc, Function stepFunc) {
+        public GenerateSeriesTimestampStringRecordCursor(TimestampDriver driver, Function startFunc, Function endFunc, Function stepFunc) {
             super(startFunc, endFunc, stepFunc);
+            this.timestampDriver = driver;
         }
 
         public static void throwInvalidPeriod(CharSequence stepStr, int stepPosition) throws SqlException {
@@ -165,8 +144,8 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
 
         public void of(SqlExecutionContext executionContext, int stepPosition) throws SqlException {
             super.of(executionContext);
-            this.start = startFunc.getTimestamp(null);
-            this.end = endFunc.getTimestamp(null);
+            this.start = timestampDriver.from(startFunc.getTimestamp(null), startFunc.getType());
+            this.end = timestampDriver.from(endFunc.getTimestamp(null), endFunc.getType());
 
             final CharSequence stepStr = stepFunc.getStrA(null);
 
@@ -174,7 +153,7 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
 
             sbu.parse(stepStr, stepPosition);
 
-            this.adder = lookupAddFunction(sbu.unit);
+            this.adder = timestampDriver.getAddMethod(sbu.unit);
 
             if (this.adder == null) {
                 throwInvalidPeriod(stepStr, stepPosition);
@@ -303,6 +282,8 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
 
             public static boolean isPotentiallyValidUnit(char c) {
                 switch (c) {
+                    case 'n':
+                        // nanos
                     case 'u':  // compatibility
                     case 'U':
                         // micros
@@ -403,13 +384,17 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
                 curr = value;
             }
         }
-
     }
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(0, new TableColumnMetadata("generate_series", ColumnType.TIMESTAMP));
+        metadata.add(0, new TableColumnMetadata("generate_series", ColumnType.TIMESTAMP_MICRO));
         metadata.setTimestampIndex(0);
-        METADATA = metadata;
+        METADATA_MICROS = metadata;
+
+        final GenericRecordMetadata metadata1 = new GenericRecordMetadata();
+        metadata1.add(0, new TableColumnMetadata("generate_series", ColumnType.TIMESTAMP_NANO));
+        metadata1.setTimestampIndex(0);
+        METADATA_NANOS = metadata1;
     }
 }

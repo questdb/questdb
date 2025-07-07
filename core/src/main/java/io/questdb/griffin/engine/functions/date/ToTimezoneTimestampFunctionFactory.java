@@ -43,7 +43,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
 
@@ -170,7 +169,7 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
             final long timestampValue = timestampFunc.getTimestamp(rec);
             try {
                 final CharSequence tz = timezoneFunc.getStrA(rec);
-                return tz != null ? Timestamps.toTimezone(timestampValue, DateLocaleFactory.EN_LOCALE, tz) : timestampValue;
+                return tz != null ? timestampDriver.toTimezone(timestampValue, DateLocaleFactory.EN_LOCALE, tz) : timestampValue;
             } catch (NumericException e) {
                 return timestampValue;
             }
@@ -236,7 +235,7 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
                     throw SqlException.$(timezonePos, "invalid timezone: ").put(tz);
                 }
             } else {
-                tzOffset = Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS;
+                tzOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
                 tzRules = null;
             }
         }

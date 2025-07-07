@@ -109,6 +109,10 @@ public final class Nanos {
         return toNanos(_y, _m, _d) + getTimeNanos(nanos) + (nanos < 0 ? 1 : 0);
     }
 
+    public static long addNanos(long nanos, int moreNanos) {
+        return nanos + moreNanos;
+    }
+
     public static long addPeriod(long nanos, char type, int period) {
         switch (type) {
             case 'u':
@@ -184,6 +188,10 @@ public final class Nanos {
         return yearNanos(y, l)
                 + monthOfYearNanos(m, l)
                 + (CommonUtils.getDaysPerMonth(m, l)) * DAY_NANOS;
+    }
+
+    public static long ceilMR(long nanos) {
+        return floorMR(nanos) + MICRO_NANOS;
     }
 
     public static long ceilMS(long nanos) {
@@ -346,6 +354,14 @@ public final class Nanos {
         return yearNanos(y, l) + (mm > 0 ? monthOfYearNanos(mm, l) : 0);
     }
 
+    public static long floorMR(long nanos, int stride) {
+        return nanos - nanos % (stride * MICRO_NANOS);
+    }
+
+    public static long floorMR(long nanos) {
+        return floorMR(nanos, 1);
+    }
+
     public static long floorMS(long nanos, int stride, long offsetNanos) {
         long result = nanos - ((nanos - offsetNanos) % (stride * MILLI_NANOS));
         return Math.min(result, nanos);
@@ -373,6 +389,18 @@ public final class Nanos {
         int millenniumFirstYear = (((year + 999) / 1000) * 1000) - 999;
         boolean leapYear = isLeapYear(millenniumFirstYear);
         return yearNanos(millenniumFirstYear, leapYear);
+    }
+
+    public static long floorNS(long nanos) {
+        return nanos;
+    }
+
+    public static long floorNS(long nanos, int stride) {
+        return nanos - nanos % stride;
+    }
+
+    public static long floorNS(long nanos, int stride, long offset) {
+        return nanos - ((nanos - offset) % stride);
     }
 
     /**

@@ -121,6 +121,10 @@ public final class Timestamps {
         return toMicros(_y, _m, _d) + getTimeMicros(micros) + (micros < 0 ? 1 : 0);
     }
 
+    public static long addNanos(long micros, int nanos) {
+        return micros + nanos / 1000L;
+    }
+
     public static long addPeriod(long lo, char type, int period) {
         switch (type) {
             case 'u':
@@ -196,6 +200,10 @@ public final class Timestamps {
         return yearMicros(y, l)
                 + monthOfYearMicros(m, l)
                 + (CommonUtils.getDaysPerMonth(m, l)) * DAY_MICROS;
+    }
+
+    public static long ceilMR(long micros) {
+        return micros;
     }
 
     public static long ceilMS(long micros) {
@@ -384,6 +392,20 @@ public final class Timestamps {
         int millenniumFirstYear = (((year + 999) / 1000) * 1000) - 999;
         boolean leapYear = CommonUtils.isLeapYear(millenniumFirstYear);
         return yearMicros(millenniumFirstYear, leapYear);
+    }
+
+    public static long floorNS(long micros) {
+        return micros;
+    }
+
+    public static long floorNS(long micros, int stride) {
+        long nanos = micros * MICRO_NANOS;
+        return (nanos - (nanos % stride)) / MICRO_NANOS;
+    }
+
+    public static long floorNS(long micros, int stride, long offset) {
+        long nanos = micros * MICRO_NANOS;
+        return (nanos - ((nanos - offset) % stride)) / MICRO_NANOS;
     }
 
     /**

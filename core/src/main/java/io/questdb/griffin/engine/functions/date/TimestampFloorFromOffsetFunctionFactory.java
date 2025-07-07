@@ -67,6 +67,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
     private static final long MIN_GAP_SECONDS = MIN_GAP_MINUTES * 60;
     private static final long MIN_GAP_MILLIS = MIN_GAP_SECONDS * 1000;
     private static final long MIN_GAP_MICROS = MIN_GAP_MILLIS * 1000;
+    private static final long MIN_GAP_NANOS = MIN_GAP_MICROS * 1000;
 
     @Override
     public String getSignature() {
@@ -197,6 +198,8 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
                 return MIN_GAP_MILLIS % stride == 0 || stride % MIN_GAP_MILLIS == 0;
             case 'U':
                 return MIN_GAP_MICROS % stride == 0 || stride % MIN_GAP_MICROS == 0;
+            case 'n':
+                return MIN_GAP_NANOS % stride == 0 || stride % MIN_GAP_NANOS == 0;
         }
         return false;
     }
@@ -279,6 +282,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             case 's':
             case 'T':
             case 'U':
+            case 'n':
                 return;
         }
         throw SqlException.position(unitPos).put("unexpected unit");

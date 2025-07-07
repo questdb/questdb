@@ -69,6 +69,7 @@ public class NanosTimestampDriver implements TimestampDriver {
     private static final TimestampCeilMethod CEIL_HH = Nanos::ceilHH;
     private static final TimestampCeilMethod CEIL_MI = Nanos::ceilMI;
     private static final TimestampCeilMethod CEIL_MM = Nanos::ceilMM;
+    private static final TimestampCeilMethod CEIL_MR = Nanos::ceilMR;
     private static final TimestampCeilMethod CEIL_MS = Nanos::ceilMS;
     private static final TimestampCeilMethod CEIL_SS = Nanos::ceilSS;
     private static final TimestampCeilMethod CEIL_WW = Nanos::ceilWW;
@@ -111,6 +112,9 @@ public class NanosTimestampDriver implements TimestampDriver {
     private static final TimestampFloorMethod FLOOR_MS = Nanos::floorMS;
     private static final TimestampFloorWithOffsetMethod FLOOR_MS_WITH_OFFSET = Nanos::floorMS;
     private static final TimestampFloorWithStrideMethod FLOOR_MS_WITH_STRIDE = Nanos::floorMS;
+    private static final TimestampFloorMethod FLOOR_NS = Nanos::floorNS;
+    private static final TimestampFloorWithOffsetMethod FLOOR_NS_WITH_OFFSET = Nanos::floorNS;
+    private static final TimestampFloorWithStrideMethod FLOOR_NS_WITH_STRIDE = Nanos::floorNS;
     private static final TimestampFloorMethod FLOOR_QUARTER = Nanos::floorQuarter;
     private static final TimestampFloorMethod FLOOR_SS = Nanos::floorSS;
     private static final TimestampFloorWithOffsetMethod FLOOR_SS_WITH_OFFSET = Nanos::floorSS;
@@ -363,6 +367,35 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public TimestampAddMethod getAddMethod(char c) {
+        switch (c) {
+            case 'n':
+                return Nanos::addNanos;
+            case 'u':
+            case 'U':
+                return Nanos::addMicros;
+            case 'T':
+                return Nanos::addMillis;
+            case 's':
+                return Nanos::addSeconds;
+            case 'm':
+                return Nanos::addMinutes;
+            case 'h':
+                return Nanos::addHours;
+            case 'd':
+                return Nanos::addDays;
+            case 'w':
+                return Nanos::addWeeks;
+            case 'M':
+                return Nanos::addMonths;
+            case 'y':
+                return Nanos::addYears;
+            default:
+                return null;
+        }
+    }
+
+    @Override
     public int getColumnType() {
         return ColumnType.TIMESTAMP_NANO;
     }
@@ -475,6 +508,8 @@ public class NanosTimestampDriver implements TimestampDriver {
                 return CEIL_SS;
             case 'T':
                 return CEIL_MS;
+            case 'n':
+                return CEIL_MR;
             default:
                 return null;
         }
@@ -511,6 +546,8 @@ public class NanosTimestampDriver implements TimestampDriver {
                 return FLOOR_MM;
             case "millisecond":
                 return FLOOR_MS;
+            case "nanosecond":
+                return FLOOR_NS;
             case "millennium":
                 return FLOOR_MILLENNIUM;
             case "quarter":
@@ -545,6 +582,8 @@ public class NanosTimestampDriver implements TimestampDriver {
                 return FLOOR_MS_WITH_OFFSET;
             case 'U':
                 return FLOOR_MC_WITH_OFFSET;
+            case 'n':
+                return FLOOR_NS_WITH_OFFSET;
             default:
                 return null;
         }
@@ -565,6 +604,8 @@ public class NanosTimestampDriver implements TimestampDriver {
                 return FLOOR_MM_WITH_STRIDE;
             case "millisecond":
                 return FLOOR_MS_WITH_STRIDE;
+            case "nanosecond":
+                return FLOOR_NS_WITH_STRIDE;
             case "second":
                 return FLOOR_SS_WITH_STRIDE;
             case "week":
@@ -1040,6 +1081,11 @@ public class NanosTimestampDriver implements TimestampDriver {
     @Override
     public String toString(long timestamp) {
         return Nanos.toString(timestamp);
+    }
+
+    @Override
+    public long toTimezone(long utcTimestamp, DateLocale locale, CharSequence timezone) throws NumericException {
+        return Nanos.toTimezone(utcTimestamp, locale, timezone);
     }
 
     @Override

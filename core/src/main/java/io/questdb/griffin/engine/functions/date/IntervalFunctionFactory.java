@@ -82,38 +82,12 @@ public class IntervalFunctionFactory implements FunctionFactory {
                 || (hiFunc.isConstant() || hiFunc.isRuntimeConstant())) {
             return new RuntimeConstFunc(position, loFunc, hiFunc, intervalType, driver);
         }
-        if (leftTimestampType == timestampType && rightTimestampType == timestampType) {
+        if (leftTimestampType == rightTimestampType || !ColumnType.isTimestamp(leftTimestampType) || !ColumnType.isTimestamp(rightTimestampType)) {
             return new Func(loFunc, hiFunc, intervalType, driver);
-        } else if (leftTimestampType == timestampType) {
-            return new RightVirtual(loFunc, hiFunc, intervalType, driver);
-        } else if (rightTimestampType == timestampType) {
-            return new LeftVirtual(loFunc, hiFunc, intervalType, driver);
+        } else if (leftTimestampType < rightTimestampType) {
+            return new LeftConvert(loFunc, hiFunc, intervalType, driver);
         } else {
-            return new BothVirtual(loFunc, hiFunc, intervalType, driver);
-        }
-    }
-
-    private static class BothVirtual extends Func {
-        private final int leftFunctionType;
-        private final int rightFunctionType;
-
-        public BothVirtual(Function loFunc, Function hiFunc, int timestampType, TimestampDriver timestampDriver) {
-            super(loFunc, hiFunc, timestampType, timestampDriver);
-            this.rightFunctionType = hiFunc.getType();
-            this.leftFunctionType = loFunc.getType();
-        }
-
-        @Override
-        public @NotNull Interval getInterval(Record rec) {
-            long l = timestampDriver.from(loFunc.getTimestamp(rec), leftFunctionType);
-            long r = timestampDriver.from(hiFunc.getTimestamp(rec), rightFunctionType);
-            if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
-                return Interval.NULL;
-            }
-            if (l > r) {
-                throw CairoException.nonCritical().put("invalid interval boundaries");
-            }
-            return interval.of(l, r);
+            return new RightConvert(loFunc, hiFunc, intervalType, driver);
         }
     }
 
@@ -189,10 +163,10 @@ public class IntervalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class LeftVirtual extends Func {
+    private static class LeftConvert extends Func {
         private final int leftFunctionType;
 
-        public LeftVirtual(Function loFunc, Function hiFunc, int timestampType, TimestampDriver timestampDriver) {
+        public LeftConvert(Function loFunc, Function hiFunc, int timestampType, TimestampDriver timestampDriver) {
             super(loFunc, hiFunc, timestampType, timestampDriver);
             this.leftFunctionType = loFunc.getType();
         }
@@ -211,10 +185,10 @@ public class IntervalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class RightVirtual extends Func {
+    private static class RightConvert extends Func {
         private final int rightFunctionType;
 
-        public RightVirtual(Function loFunc, Function hiFunc, int timestampType, TimestampDriver timestampDriver) {
+        public RightConvert(Function loFunc, Function hiFunc, int timestampType, TimestampDriver timestampDriver) {
             super(loFunc, hiFunc, timestampType, timestampDriver);
             this.rightFunctionType = hiFunc.getType();
         }

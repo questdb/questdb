@@ -25,6 +25,7 @@
 package io.questdb.std.datetime.nanotime;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.Clock;
 
 public class NanosecondClockImpl implements Clock {
@@ -37,6 +38,6 @@ public class NanosecondClockImpl implements Clock {
 
     @Override
     public long getTicks() {
-        return System.nanoTime();
+        return Os.currentTimeNanos();
     }
 }

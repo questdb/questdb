@@ -130,6 +130,8 @@ public interface TimestampDriver {
 
     long fromWeeks(int weeks);
 
+    TimestampAddMethod getAddMethod(char c);
+
     int getColumnType();
 
     IntervalConstant getIntervalConstantNull();
@@ -243,6 +245,8 @@ public interface TimestampDriver {
 
     String toString(long timestamp);
 
+    long toTimezone(long utcTimestamp, DateLocale locale, CharSequence timezone) throws NumericException;
+
     long toUTC(long localTimestamp, DateLocale locale, CharSequence timezone) throws NumericException;
 
     void validateBounds(long timestamp);
@@ -250,6 +254,11 @@ public interface TimestampDriver {
     @FunctionalInterface
     interface PartitionAddMethod {
         long calculate(long timestamp, int increment);
+    }
+
+    @FunctionalInterface
+    interface TimestampAddMethod {
+        long add(long a, int b);
     }
 
     @FunctionalInterface

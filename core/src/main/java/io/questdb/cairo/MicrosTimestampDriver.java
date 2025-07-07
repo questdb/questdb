@@ -69,6 +69,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
     private static final TimestampCeilMethod CEIL_HH = Timestamps::ceilHH;
     private static final TimestampCeilMethod CEIL_MI = Timestamps::ceilMI;
     private static final TimestampCeilMethod CEIL_MM = Timestamps::ceilMM;
+    private static final TimestampCeilMethod CEIL_MR = Timestamps::ceilMR;
     private static final TimestampCeilMethod CEIL_MS = Timestamps::ceilMS;
     private static final TimestampCeilMethod CEIL_SS = Timestamps::ceilSS;
     private static final TimestampCeilMethod CEIL_WW = Timestamps::ceilWW;
@@ -112,6 +113,9 @@ public class MicrosTimestampDriver implements TimestampDriver {
     private static final TimestampFloorMethod FLOOR_MS = Timestamps::floorMS;
     private static final TimestampFloorWithOffsetMethod FLOOR_MS_WITH_OFFSET = Timestamps::floorMS;
     private static final TimestampFloorWithStrideMethod FLOOR_MS_WITH_STRIDE = Timestamps::floorMS;
+    private static final TimestampFloorMethod FLOOR_NS = Timestamps::floorNS;
+    private static final TimestampFloorWithOffsetMethod FLOOR_NS_WITH_OFFSET = Timestamps::floorNS;
+    private static final TimestampFloorWithStrideMethod FLOOR_NS_WITH_STRIDE = Timestamps::floorNS;
     private static final TimestampFloorMethod FLOOR_QUARTER = Timestamps::floorQuarter;
     private static final TimestampFloorMethod FLOOR_SS = Timestamps::floorSS;
     private static final TimestampFloorWithOffsetMethod FLOOR_SS_WITH_OFFSET = Timestamps::floorSS;
@@ -360,6 +364,35 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public TimestampAddMethod getAddMethod(char c) {
+        switch (c) {
+            case 'n':
+                return Timestamps::addNanos;
+            case 'u':
+            case 'U':
+                return Timestamps::addMicros;
+            case 'T':
+                return Timestamps::addMillis;
+            case 's':
+                return Timestamps::addSeconds;
+            case 'm':
+                return Timestamps::addMinutes;
+            case 'h':
+                return Timestamps::addHours;
+            case 'd':
+                return Timestamps::addDays;
+            case 'w':
+                return Timestamps::addWeeks;
+            case 'M':
+                return Timestamps::addMonths;
+            case 'y':
+                return Timestamps::addYears;
+            default:
+                return null;
+        }
+    }
+
+    @Override
     public int getColumnType() {
         return ColumnType.TIMESTAMP_MICRO;
     }
@@ -472,6 +505,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 return CEIL_SS;
             case 'T':
                 return CEIL_MS;
+            case 'n':
+                return CEIL_MR;
             default:
                 return null;
         }
@@ -508,6 +543,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 return FLOOR_MM;
             case "millisecond":
                 return FLOOR_MS;
+            case "nanosecond":
+                return FLOOR_NS;
             case "millennium":
                 return FLOOR_MILLENNIUM;
             case "quarter":
@@ -542,6 +579,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 return FLOOR_MS_WITH_OFFSET;
             case 'U':
                 return FLOOR_MC_WITH_OFFSET;
+            case 'n':
+                return FLOOR_NS_WITH_OFFSET;
             default:
                 return null;
         }
@@ -562,6 +601,8 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 return FLOOR_MM_WITH_STRIDE;
             case "millisecond":
                 return FLOOR_MS_WITH_STRIDE;
+            case "nanosecond":
+                return FLOOR_NS_WITH_STRIDE;
             case "second":
                 return FLOOR_SS_WITH_STRIDE;
             case "week":
@@ -1053,6 +1094,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
     @Override
     public String toString(long timestamp) {
         return Timestamps.toString(timestamp);
+    }
+
+    @Override
+    public long toTimezone(long utcTimestamp, DateLocale locale, CharSequence timezone) throws NumericException {
+        return Timestamps.toTimezone(utcTimestamp, locale, timezone);
     }
 
     @Override
