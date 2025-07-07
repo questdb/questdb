@@ -46,6 +46,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -439,6 +440,102 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             setFuzzParams(rnd, 0);
             setFuzzProperties(rnd);
             runMvFuzz(rnd, getTestName(), 4);
+        });
+    }
+
+    @Test
+    public void testUpdateRefreshIntervalsConcurrent() throws Exception {
+        // Timer refresh tests mess with the clock, so set the spin timeout
+        // to a large value to avoid false positive errors.
+        node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, SPIN_LOCK_TIMEOUT);
+        node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_INTERVAL, "10ms");
+        spinLockTimeout = 100_000_000;
+
+        final TestMicrosecondClock testClock = new TestMicrosecondClock(parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z"));
+        testMicrosClock = testClock;
+
+        assertMemoryLeak(() -> {
+            final Rnd rnd = generateRandom(LOG);
+
+            execute(
+                    "create table base_price (" +
+                            "  sym varchar, price long, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            final String viewQuery = "select sym, sum(price) as sum_price, ts from base_price sample by 1m";
+            execute("create materialized view price_1h refresh manual as " + viewQuery);
+            execute("insert into base_price values ('gbpusd', 42, '2000-01-01T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            final int iterations = 100;
+            final CyclicBarrier startBarrier = new CyclicBarrier(2);
+            final AtomicBoolean writesFinished = new AtomicBoolean();
+            final AtomicInteger errorCounter = new AtomicInteger();
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+
+            final Thread writer = new Thread(() -> {
+                try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                    startBarrier.await();
+                    for (int i = 0; i < iterations; i++) {
+                        executionContext.setNowAndFixClock(testClock.micros.get());
+                        execute(
+                                "insert into base_price values ('gbpusd', 1317, dateadd('m', -3, now()))," +
+                                        "('gbpusd', 1318, dateadd('m', -2, now()))," +
+                                        "('gbpusd', 1319, dateadd('m', -1, now()))," +
+                                        "('gbpusd', 1320, now())," +
+                                        "('gbpusd', 1321, dateadd('m', 1, now()))," +
+                                        "('gbpusd', 1322, dateadd('m', 2, now()))," +
+                                        "('gbpusd', 1323, dateadd('m', 3, now()))",
+                                executionContext
+                        );
+                        drainWalQueue();
+                        drainMatViewTimerQueue(timerJob);
+                        testClock.micros.addAndGet(rnd.nextInt(10) * Timestamps.MINUTE_MICROS);
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace(System.out);
+                    errorCounter.incrementAndGet();
+                } finally {
+                    Path.clearThreadLocals();
+                    writesFinished.set(true);
+                }
+            });
+            writer.start();
+
+            final Thread refresher = new Thread(() -> {
+                try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                    startBarrier.await();
+                    for (int i = 0; i < iterations; i++) {
+                        execute("refresh materialized view price_1h incremental;", executionContext);
+                        drainMatViewQueue(engine);
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace(System.out);
+                    errorCounter.incrementAndGet();
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+            refresher.start();
+
+            while (!writesFinished.get()) {
+                drainMatViewTimerQueue(timerJob);
+                drainWalAndMatViewQueues();
+            }
+
+            refresher.join();
+            writer.join();
+
+            execute("refresh materialized view price_1h incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainWalAndMatViewQueues();
+
+            Assert.assertEquals(0, errorCounter.get());
+
+            final StringSink sinkB = new StringSink();
+            printSql(viewQuery, sink);
+            printSql("price_1h", sinkB);
+            TestUtils.assertEquals(sink, sinkB);
         });
     }
 
