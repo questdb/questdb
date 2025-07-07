@@ -173,7 +173,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
             try (final TestServerMain main1 = startMainPortsDisabled(
                     testClock,
-                    PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_INTERVAL.getEnvVarName(), "10s"
+                    PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD.getEnvVarName(), "10s"
             )) {
                 execute(
                         main1,

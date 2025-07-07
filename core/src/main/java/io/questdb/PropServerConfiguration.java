@@ -134,6 +134,8 @@ import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String ACL_ENABLED = "acl.enabled";
+    public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT = 64;
+    public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_MINIMUM = 4;
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
@@ -292,10 +294,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final TimeZoneRules logTimestampTimezoneRules;
     private final boolean matViewEnabled;
     private final long matViewInsertAsSelectBatchSize;
+    private final int matViewMaxRefreshIntervals;
     private final int matViewMaxRefreshRetries;
     private final long matViewMinRefreshInterval;
     private final boolean matViewParallelExecutionEnabled;
-    private final long matViewRefreshIntervalsUpdateInterval;
+    private final long matViewRefreshIntervalsUpdatePeriod;
     private final long matViewRefreshOomRetryTimeout;
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewRefreshPoolConfiguration();
     private final long matViewRefreshSleepTimeout;
@@ -306,7 +309,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewRefreshWorkerSleepThreshold;
     private final long matViewRefreshWorkerYieldThreshold;
     private final int matViewRowsPerQueryEstimate;
-    private final int matViewMaxRefreshIntervals;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
     private final double maxRequiredDelimiterStdDev;
@@ -525,6 +527,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
     protected long walSegmentRolloverSize;
+    private boolean cairoSqlColumnAliasExpressionEnabled;
+    private int cairoSqlColumnAliasGeneratedMaxSize;
     private long cairoSqlCopyMaxIndexChunkSize;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
@@ -643,10 +647,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long queryTimeout;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitBeforeReload;
-    public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT = 64;
-    public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_MINIMUM = 4;
-    private boolean cairoSqlColumnAliasExpressionEnabled;
-    private int cairoSqlColumnAliasGeneratedMaxSize;
 
     public PropServerConfiguration(
             String installRoot,
@@ -776,7 +776,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         // instead cairo.wal.enabled.default=true is added to the config, so only new QuestDB installations have WAL enabled by default
         this.walEnabledDefault = getBoolean(properties, env, PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
         this.walPurgeInterval = getMillis(properties, env, PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 30_000);
-        this.matViewRefreshIntervalsUpdateInterval = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_INTERVAL, walPurgeInterval / 2);
+        this.matViewRefreshIntervalsUpdatePeriod = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, walPurgeInterval / 2);
         this.walPurgeWaitBeforeDelete = getInt(properties, env, PropertyKey.DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE, 0);
         this.walTxnNotificationQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4096);
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
@@ -2704,6 +2704,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getColumnAliasGeneratedMaxSize() {
+            return cairoSqlColumnAliasGeneratedMaxSize;
+        }
+
+        @Override
         public int getColumnIndexerQueueCapacity() {
             return columnIndexerQueueCapacity;
         }
@@ -3007,6 +3012,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getMatViewMaxRefreshIntervals() {
+            return matViewMaxRefreshIntervals;
+        }
+
+        @Override
         public int getMatViewMaxRefreshRetries() {
             return matViewMaxRefreshRetries;
         }
@@ -3017,8 +3027,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getMatViewRefreshIntervalsUpdateInterval() {
-            return matViewRefreshIntervalsUpdateInterval;
+        public long getMatViewRefreshIntervalsUpdatePeriod() {
+            return matViewRefreshIntervalsUpdatePeriod;
         }
 
         @Override
@@ -3029,11 +3039,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMatViewRowsPerQueryEstimate() {
             return matViewRowsPerQueryEstimate;
-        }
-
-        @Override
-        public int getMatViewMaxRefreshIntervals() {
-            return matViewMaxRefreshIntervals;
         }
 
         @Override
@@ -3777,6 +3782,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isColumnAliasExpressionEnabled() {
+            return cairoSqlColumnAliasExpressionEnabled;
+        }
+
+        @Override
         public boolean isDevModeEnabled() {
             return devModeEnabled;
         }
@@ -3914,16 +3924,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean useWithinLatestByOptimisation() {
             return queryWithinLatestByOptimisationEnabled;
-        }
-
-        @Override
-        public boolean isColumnAliasExpressionEnabled() {
-            return cairoSqlColumnAliasExpressionEnabled;
-        }
-
-        @Override
-        public int getColumnAliasGeneratedMaxSize() {
-            return cairoSqlColumnAliasGeneratedMaxSize;
         }
     }
 

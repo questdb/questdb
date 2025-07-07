@@ -484,7 +484,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getMatViewRefreshIntervalsUpdateInterval() {
+    public long getMatViewRefreshIntervalsUpdatePeriod() {
         return 15_000;
     }
 

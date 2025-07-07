@@ -4083,7 +4083,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testRefreshIntervalsCachingSmoke() throws Exception {
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_INTERVAL, "5s");
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
@@ -4204,7 +4204,7 @@ public class MatViewTest extends AbstractCairoTest {
     public void testRefreshIntervalsCapacity() throws Exception {
         final int capacity = 10;
         setProperty(PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS, capacity);
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_INTERVAL, "10s");
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "10s");
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
@@ -5349,7 +5349,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testViewInvalidatedOnRefreshIntervalsUpdateAfterBaseTableRename() throws Exception {
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_INTERVAL, "5s");
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
