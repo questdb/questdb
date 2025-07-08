@@ -26,7 +26,9 @@ package io.questdb.test.griffin.engine.functions.array;
 
 
 import io.questdb.griffin.SqlException;
+import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
@@ -82,6 +84,13 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegScaleNull() throws SqlException {
+        assertSqlWithTypes("round\n" +
+                        "null:DOUBLE[]\n",
+                "select round(null::double[], -3)");
+    }
+
+    @Test
     public void testNegScalePosValue() throws SqlException {
         assertSqlWithTypes("round\n" +
                         "[100.0]:DOUBLE[]\n",
@@ -131,6 +140,13 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPosScaleNull() throws SqlException {
+        assertSqlWithTypes("round\n" +
+                        "null:DOUBLE[]\n",
+                "select round(null::double[], 1)");
+    }
+
+    @Test
     public void testPosScalePosValue() throws SqlException {
         assertSqlWithTypes("round\n" +
                         "[100.4]:DOUBLE[]\n",
@@ -142,6 +158,51 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
         assertSqlWithTypes("round\n" +
                         "[100.5]:DOUBLE[]\n",
                 "select round(array[100.45], 1)");
+    }
+
+    @Test
+    public void testPosScalePosValueParallel() throws Exception {
+        execute("create table tmp as (select rnd_symbol('a','b','v') sym, rnd_double_array(1,0) book from long_sequence(10000))");
+
+        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        String sql = "select sym, round(sum(array_sum(round(book,2))),2) from tmp group by sym order by 1";
+                        TestUtils.assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                sql,
+                                sink,
+                                "sym\tround\n" +
+                                        "a\t14085.95\n" +
+                                        "b\t14270.12\n" +
+                                        "v\t14056.25\n"
+                        );
+
+                        TestUtils.assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                "explain " + sql,
+                                sink,
+                                "QUERY PLAN\n" +
+                                        "Sort light\n" +
+                                        "  keys: [sym]\n" +
+                                        "    VirtualRecord\n" +
+                                        "      functions: [sym,round(sum,-2)]\n" +
+                                        "        Async Group By workers: 4\n" +
+                                        "          keys: [sym]\n" +
+                                        "          values: [sum(array_sum(roundbook))]\n" +
+                                        "          filter: null\n" +
+                                        "            PageFrame\n" +
+                                        "                Row forward scan\n" +
+                                        "                Frame forward scan on: tmp\n"
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        }
     }
 
     @Test

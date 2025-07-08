@@ -56,14 +56,21 @@ public final class Constants {
 
     public static ConstantFunction getNullConstant(int columnType) {
         int typeTag = ColumnType.tagOf(columnType);
-        if (typeTag >= ColumnType.GEOBYTE &&
-                typeTag <= ColumnType.GEOLONG) {
-            int bits = ColumnType.getGeoHashBits(columnType);
-            if (bits != 0) {
-                return geoNullConstants.get(bits);
-            }
+        switch (typeTag) {
+            case ColumnType.GEOBYTE:
+            case ColumnType.GEOSHORT:
+            case ColumnType.GEOINT:
+            case ColumnType.GEOLONG:
+                int bits = ColumnType.getGeoHashBits(columnType);
+                if (bits != 0) {
+                    return geoNullConstants.get(bits);
+                }
+                return nullConstants.getQuick(typeTag);
+            case ColumnType.ARRAY:
+                return new NullArrayConstant(columnType);
+            default:
+                return nullConstants.getQuick(typeTag);
         }
-        return nullConstants.getQuick(typeTag);
     }
 
     public static TypeConstant getTypeConstant(int columnType) {
