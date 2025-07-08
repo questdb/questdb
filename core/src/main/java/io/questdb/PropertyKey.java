@@ -130,6 +130,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_WRITER_DATA_APPEND_PAGE_SIZE("cairo.writer.data.append.page.size"),
     CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE("cairo.system.writer.data.append.page.size"),
     CAIRO_WRITER_MISC_APPEND_PAGE_SIZE("cairo.writer.misc.append.page.size"),
+    CAIRO_SYMBOL_TABLE_APPEND_PAGE_SIZE("cairo.symbol.table.append.page.size"),
     CAIRO_WRITER_COMMAND_QUEUE_SLOT_SIZE("cairo.writer.command.queue.slot.size"),
     CAIRO_SQL_SAMPLEBY_PAGE_SIZE("cairo.sql.sampleby.page.size"),
     CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR("cairo.sql.sampleby.default.alignment.calendar"),
