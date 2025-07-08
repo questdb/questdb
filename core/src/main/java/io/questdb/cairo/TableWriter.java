@@ -10050,8 +10050,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // Unlike mat view state write-through behavior, we update the in-memory definition
         // object here, after updating the definition file.
-        engine.getMatViewStateStore().updateViewDefinition(tableToken, newDefinition);
         engine.getMatViewGraph().updateViewDefinition(tableToken, newDefinition);
+        engine.getMatViewStateStore().updateViewDefinition(tableToken, newDefinition);
     }
 
     private void updateMaxTimestamp(long timestamp) {

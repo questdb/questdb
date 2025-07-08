@@ -207,7 +207,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.queryRegistry = new QueryRegistry(configuration);
             this.rootExecutionContext = createRootExecutionContext();
             this.matViewTimerQueue = createMatViewTimerQueue();
-            this.matViewGraph = new MatViewGraph(matViewTimerQueue);
+            this.matViewGraph = new MatViewGraph();
             this.frameFactory = new FrameFactory(configuration);
 
             settingsStore = new SettingsStore(configuration);
