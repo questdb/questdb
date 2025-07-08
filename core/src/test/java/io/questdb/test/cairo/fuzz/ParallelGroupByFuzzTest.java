@@ -928,7 +928,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "2025-06-27T00:00:00.000000Z null\n" +
                                         "2025-06-28T00:00:00.000000Z null\n" +
                                         "2025-06-29T00:00:00.000000Z null\n" +
-                                        "2025-06-30T00:00:00.000000Z null"
+                                        "2025-06-30T00:00:00.000000Z null\n"
                         );
                     },
                     configuration,
