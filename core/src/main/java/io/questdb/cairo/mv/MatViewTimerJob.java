@@ -49,7 +49,7 @@ import java.util.function.Predicate;
 
 /**
  * A scheduler for mat views with timer refresh.
- * Also, runs special timers for period views and for caching txn intervals for manual/timer views.
+ * Also, runs special timers for period views and for updating refresh intervals for manual/timer views.
  */
 public class MatViewTimerJob extends SynchronizedJob {
     private static final int INITIAL_QUEUE_CAPACITY = 16;
@@ -96,10 +96,10 @@ public class MatViewTimerJob extends SynchronizedJob {
         try {
             if (viewDefinition.getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
                 // The refresh is not immediate, i.e. it's either manual or timer.
-                // Create a special timer that will enqueue WAL txn intervals caching tasks.
+                // Create a special timer that will enqueue refresh intervals update tasks.
                 // We could cache the intervals right in the refresh job when there is a new base table commit,
                 // but that might create many redundant WAL MAT_VIEW_INVALIDATE transactions with mat view state
-                // values. To throttle txn intervals caching, we have this special timer.
+                // values. To throttle refresh intervals caching, we have this special timer.
                 // The end goal of this caching is unblocking WalPurgeJob to delete old WAL segments.
                 createUpdateRefreshIntervalsTimer(viewDefinition, now);
             }
@@ -254,7 +254,7 @@ public class MatViewTimerJob extends SynchronizedJob {
                             matViewStateStore.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, timer.getPeriodHi() - 1);
                             break;
                         case Timer.UPDATE_REFRESH_INTERVALS_TYPE:
-                            // Enqueue WAL txn intervals caching only if the base table had new transactions
+                            // Enqueue refresh intervals update only if the base table had new transactions
                             // since the last caching.
                             final long refreshIntervalsSeq = state.getRefreshIntervalsSeq();
                             if (timer.getKnownSeq() != refreshIntervalsSeq) {
@@ -341,7 +341,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         private long deadlineLocal; // used for sampler interaction only
         private long deadlineUtc;
         // Holds refresh sequence number for "normal" timers
-        // or caching sequence for txn intervals caching timers.
+        // or caching sequence for refresh intervals update timers.
         private long knownSeq = -1;
 
         public Timer(
