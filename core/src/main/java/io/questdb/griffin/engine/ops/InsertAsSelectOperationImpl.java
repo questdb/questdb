@@ -162,7 +162,7 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
                                     circuitBreaker
                             );
                         } else {
-                            rowCount = SqlCompilerImpl.copyOrdered(writer, factory.getMetadata(), cursor, copier, timestampIndex, circuitBreaker);
+                            rowCount = SqlCompilerImpl.copyOrderedBatched(writer, factory.getMetadata(), cursor, copier, timestampIndex, Long.MAX_VALUE, 0, circuitBreaker);
                         }
                     }
                 } catch (Throwable e) {

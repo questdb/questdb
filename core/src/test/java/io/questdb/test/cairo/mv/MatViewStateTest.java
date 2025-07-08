@@ -1,6 +1,5 @@
 package io.questdb.test.cairo.mv;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.BlockFileReader;
@@ -8,6 +7,7 @@ import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
@@ -16,21 +16,14 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Before;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.*;
 
 public class MatViewStateTest extends AbstractCairoTest {
-
-    @Before
-    public void setUp() {
-        super.setUp();
-        setProperty(PropertyKey.MAT_VIEW_DEBUG_ENABLED, "true");
-    }
 
     @Test
     public void testMatViewNoStateFile() throws Exception {
@@ -96,8 +89,8 @@ public class MatViewStateTest extends AbstractCairoTest {
                 for (int i = 0; i < iterations; i++) {
                     boolean invalidate = rnd.nextBoolean();
                     if (invalidate) {
-                        walWriter.resetMatViewState(i, i, true, "Invalidating " + i, Numbers.LONG_NULL);
-                        assertState(tableToken, i, i, true, "Invalidating " + i, Numbers.LONG_NULL);
+                        walWriter.resetMatViewState(i, i, true, "Invalidating " + i, Numbers.LONG_NULL, null, -1);
+                        assertState(tableToken, i, i, true, "Invalidating " + i, Numbers.LONG_NULL, null, -1);
                     }
                     TableWriter.Row row = walWriter.newRow(0);
                     row.putStr(0, "ABC");
@@ -105,7 +98,7 @@ public class MatViewStateTest extends AbstractCairoTest {
                     row.append();
                     walWriter.commitMatView(i, i, i, 0, 1);
                 }
-                assertState(tableToken, iterations - 1, iterations - 1, false, null, iterations - 1);
+                assertState(tableToken, iterations - 1, iterations - 1, false, null, iterations - 1, null, -1);
 
                 fail.set(true);
                 // all subsequent state updates should fail
@@ -116,12 +109,40 @@ public class MatViewStateTest extends AbstractCairoTest {
                     row.append();
                     walWriter.commitMatView(i, i, i, 0, 1);
                     drainWalQueue();
-                    assertState(tableToken, iterations - 1, iterations - 1, false, null, iterations - 1);
+                    assertState(tableToken, iterations - 1, iterations - 1, false, null, iterations - 1, null, -1);
                 }
 
-                walWriter.resetMatViewState(42, 42, true, "missed invalidation", Numbers.LONG_NULL);
+                walWriter.resetMatViewState(42, 42, true, "missed invalidation", Numbers.LONG_NULL, null, -1);
                 drainWalQueue();
-                assertState(tableToken, iterations - 1, iterations - 1, false, null, iterations - 1);
+                assertState(tableToken, iterations - 1, iterations - 1, false, null, iterations - 1, null, -1);
+            }
+        });
+    }
+
+    @Test
+    public void testMatViewStateResetRefreshIntervals() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            execute(
+                    "create table base_price (" +
+                            "  sym string, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            final String viewSql = "select sym0, last(price0) price, ts0 " +
+                    "from (select ts as ts0, sym as sym0, price as price0 from base_price) " +
+                    "sample by 1h";
+
+            execute("create materialized view price_1h as (" + viewSql + ") partition by DAY");
+            drainWalQueue();
+            int iterations = 10;
+            TableToken tableToken = engine.verifyTableName("price_1h");
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                final LongList intervals = new LongList();
+                for (int i = 0; i < iterations; i++) {
+                    intervals.add((long) i, i);
+                    walWriter.resetMatViewState(i, i, false, null, i, intervals, i);
+                    assertState(tableToken, i, i, false, null, i, intervals, i);
+                }
             }
         });
     }
@@ -158,7 +179,7 @@ public class MatViewStateTest extends AbstractCairoTest {
                 // lastTxn = iterations - 1
                 long lastMatViewTxn = (iterations - 1) - 1;
                 long lastPeriodHi = (iterations - 1) - 1;
-                assertState(tableToken, lastMatViewTxn, lastMatViewTxn, false, null, lastPeriodHi);
+                assertState(tableToken, lastMatViewTxn, lastMatViewTxn, false, null, lastPeriodHi, null, -1);
             }
         });
     }
@@ -169,7 +190,9 @@ public class MatViewStateTest extends AbstractCairoTest {
             long lastRefreshTimestamp,
             boolean invalid,
             String invalidationReason,
-            long lastPeriodHi
+            long lastPeriodHi,
+            @Nullable LongList refreshIntervals,
+            long refreshIntervalsBaseTxn
     ) {
         drainWalQueue();
         try (Path path = new Path(); BlockFileReader reader = new BlockFileReader(configuration)) {
@@ -180,6 +203,12 @@ public class MatViewStateTest extends AbstractCairoTest {
             assertEquals(lastRefreshTimestamp, viewState.getLastRefreshTimestamp());
             TestUtils.assertEquals(invalidationReason, viewState.getInvalidationReason());
             assertEquals(lastPeriodHi, viewState.getLastPeriodHi());
+            if (refreshIntervals != null) {
+                TestUtils.assertEquals(refreshIntervals, viewState.getRefreshIntervals());
+            } else {
+                assertTrue(viewState.getRefreshIntervals() == null || viewState.getRefreshIntervals().size() == 0);
+            }
+            assertEquals(refreshIntervalsBaseTxn, viewState.getRefreshIntervalsBaseTxn());
         }
     }
 }
