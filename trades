@@ -1,0 +1,34 @@
+DECLARE 
+  @recent_data_boundary := dateadd('d', -1, date_trunc('day', now())),
+  @historical_data_boundary := dateadd('m', -6, date_trunc('month', now()));
+
+WITH historical_and_recent_trades AS (
+  SELECT
+    timestamp,
+    symbol,
+    first(price) AS open,
+    max(price) AS high,
+    min(price) AS low,
+    last(price) AS close,
+    sum(amount) AS volume
+  FROM trades
+  WHERE timestamp >= @recent_data_boundary
+  SAMPLE BY 10m
+
+  UNION ALL
+
+  SELECT
+    timestamp,
+    symbol,
+    open,
+    high,
+    low,
+    close,
+    volume
+  FROM trades_OHLC_15m
+  WHERE timestamp > @historical_data_boundary
+    AND timestamp < @recent_data_boundary
+)
+SELECT open, high 
+FROM historical_and_recent_trades
+ORDER BY timestamp DESC;
