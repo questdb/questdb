@@ -385,6 +385,10 @@ public final class ColumnType {
     }
 
     public static boolean isSymbolOrString(int columnType) {
+        return columnType == SYMBOL || columnType == STRING;
+    }
+
+    public static boolean isSymbolOrStringOrVarchar(int columnType) {
         return columnType == SYMBOL || columnType == STRING || columnType == VARCHAR;
     }
 
