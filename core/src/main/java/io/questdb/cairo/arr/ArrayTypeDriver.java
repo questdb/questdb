@@ -128,7 +128,11 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             @NotNull CharSink<?> sink
     ) {
         double d = array.getDouble(index);
-        sink.put(d);
+        if (Double.isFinite(d)) {
+            sink.put(d);
+        } else {
+            sink.put("null");
+        }
     }
 
     public static void appendDoubleFromArrayToSinkJson(
