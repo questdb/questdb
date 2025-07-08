@@ -1217,6 +1217,17 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyArray() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql("ARRAY\n[]\n", "SELECT ARRAY[]");
+            assertSql("ARRAY\n[]\n", "SELECT * FROM (SELECT ARRAY[])");
+            assertSql("ARRAY\n[]\n", "WITH q1 AS (SELECT ARRAY[]) SELECT * FROM q1");
+            execute("CREATE TABLE tango AS (SELECT ARRAY[])");
+            assertSql("ARRAY\n[]\n", "tango");
+        });
+    }
+
+    @Test
     public void testEmptyArrayToJsonDouble() {
         try (DirectArray array = new DirectArray(configuration);
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
