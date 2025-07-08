@@ -964,6 +964,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertException("select null::[]double;", 13, "did you mean 'double[]'?");
         assertException("select null::[]float;", 13, "did you mean 'float[]'?");
         assertException("select null::[];", 13, "type definition is expected");
+        assertException("select null::double []", 20, "HINT: Array type syntax requires no space between type and brackets");
     }
 
     @Test

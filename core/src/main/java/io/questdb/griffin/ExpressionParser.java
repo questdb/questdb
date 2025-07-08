@@ -388,9 +388,15 @@ public class ExpressionParser {
                         break;
                     }
                     case '[': {
-                        // the [ has to be directly adjacent to the literal before it
                         ExpressionNode en = opStack.peek();
+                        // en could be null if it follows parentheses
+                        // non-literal en is not a valid type qualifier, and it would not
+                        // successfully cast to FloatingSequence either
                         if (en != null && en.type == ExpressionNode.LITERAL && isTypeQualifier() || scopeStack.peek(1) == Scope.CAST_AS) {
+                            // we should check if there is whitespace left from [
+                            if (lastPos > 0 && lexer.getContent().charAt(lastPos -1) == ' ') {
+                                throw SqlException.$(lastPos, "HINT: Array type syntax requires no space between type and brackets");
+                            }
                             ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
                             break;
                         }
