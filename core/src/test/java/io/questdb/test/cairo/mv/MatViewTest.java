@@ -728,6 +728,16 @@ public class MatViewTest extends AbstractCairoTest {
                     "unexpected token [barbaz]"
             );
             assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh every -1M start '2020-09-10T20:00:00.000000Z'",
+                    53,
+                    "positive number expected: -"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh every 0M start '2020-09-10T20:00:00.000000Z'",
+                    53,
+                    "positive number expected: 0M"
+            );
+            assertExceptionNoLeakCheck(
                     "alter materialized view price_1h_t set refresh period foobar",
                     54,
                     "'(' expected"
@@ -786,6 +796,26 @@ public class MatViewTest extends AbstractCairoTest {
                     "alter materialized view price_1h_t set refresh period (length 1h time zone 'Europe/Sofia' delay 2h)",
                     96,
                     "delay cannot be equal to or greater than length"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (length 1h time zone 'Europe/Sofia' delay -2h)",
+                    96,
+                    "positive number expected: -"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (length 1h time zone 'Europe/Sofia' delay 0h)",
+                    96,
+                    "positive number expected: 0h"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (length -1h delay 42m)",
+                    62,
+                    "positive number expected: -"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (length 0m)",
+                    62,
+                    "positive number expected: 0m"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h_t set refresh period (length 1h time zone 'Europe/Sofia' delay 30m foobar",
@@ -6184,7 +6214,7 @@ public class MatViewTest extends AbstractCairoTest {
     private void testTimerMatViewSmallJumps(String timeZone, String start, String every, String initialClock, long clockJump, int ticksBeforeRefresh) throws Exception {
         assertMemoryLeak(() -> {
             final TimeZoneRules tzRules = timeZone != null ? Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, timeZone) : null;
-            final int interval = Timestamps.getStrideMultiple(every);
+            final int interval = Timestamps.getStrideMultiple(every, -1);
             final char unit = Timestamps.getStrideUnit(every, -1);
             final String unitStr = MatViewsFunctionFactory.getIntervalUnit(unit);
 

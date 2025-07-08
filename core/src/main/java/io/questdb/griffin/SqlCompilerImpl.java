@@ -1686,7 +1686,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             tok = SqlUtil.fetchNext(lexer);
                         } else if (isEveryKeyword(tok)) {
                             tok = expectToken(lexer, "interval");
-                            every = Timestamps.getStrideMultiple(tok);
+                            every = Timestamps.getStrideMultiple(tok, lexer.lastTokenPosition());
                             everyUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
                             SqlParser.validateMatViewEveryUnit(everyUnit, lexer.lastTokenPosition());
                             refreshType = MatViewDefinition.REFRESH_TYPE_TIMER;
@@ -1698,7 +1698,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             expectKeyword(lexer, "(");
                             expectKeyword(lexer, "length");
                             tok = expectToken(lexer, "LENGTH interval");
-                            length = Timestamps.getStrideMultiple(tok);
+                            length = Timestamps.getStrideMultiple(tok, lexer.lastTokenPosition());
                             lengthUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
                             SqlParser.validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
                             final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(length, lengthUnit, lexer.lastTokenPosition());
@@ -1721,7 +1721,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                             if (isDelayKeyword(tok)) {
                                 tok = expectToken(lexer, "DELAY interval");
-                                delay = Timestamps.getStrideMultiple(tok);
+                                delay = Timestamps.getStrideMultiple(tok, lexer.lastTokenPosition());
                                 delayUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
                                 SqlParser.validateMatViewDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
                                 tok = expectToken(lexer, "')'");

@@ -2416,11 +2416,65 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateMatView57() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH EVERY -1s;",
+                46,
+                "positive number expected: -"
+        );
+    }
+
+    @Test
+    public void testCreateMatView58() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH EVERY 0s;",
+                46,
+                "positive number expected: 0s"
+        );
+    }
+
+    @Test
+    public void testCreateMatView59() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH MANUAL PERIOD (LENGTH -1d);",
+                62,
+                "positive number expected: -"
+        );
+    }
+
+    @Test
     public void testCreateMatView6() throws Exception {
         assertSyntaxError(
                 "create materialized view 'myview' with refresh",
                 39,
                 "'base' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView60() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH MANUAL PERIOD (LENGTH 0d);",
+                62,
+                "positive number expected: 0d"
+        );
+    }
+
+    @Test
+    public void testCreateMatView61() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH MANUAL PERIOD (LENGTH 1d DELAY -1h);",
+                71,
+                "positive number expected: -"
+        );
+    }
+
+    @Test
+    public void testCreateMatView62() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH MANUAL PERIOD (LENGTH 1d DELAY 0h);",
+                71,
+                "positive number expected: 0h"
         );
     }
 
