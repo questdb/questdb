@@ -79,6 +79,7 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
 
         @Override
         public void applyToNullArray() {
+            sum = Double.NaN;
         }
 
         @Override

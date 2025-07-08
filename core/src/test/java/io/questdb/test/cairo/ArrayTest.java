@@ -559,7 +559,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     "ts\tarray_sum\tsum\n" +
                             "2025-06-26T00:00:00.000000Z\t220.0\t1.0\n" +
-                            "2025-06-26T00:00:00.000000Z\t0.0\t10.0\n" +
+                            "2025-06-26T00:00:00.000000Z\tnull\t10.0\n" +
                             "2025-06-27T00:00:00.000000Z\t770.0\t18.0\n" +
                             "2025-06-27T00:00:00.000000Z\t1320.0\t25.0\n",
                     "Radix sort light\n" +
@@ -754,13 +754,13 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("array_sum\tarray_sum1\tarray_sum2\n" +
                             "72.0\t71.0\t10.0\n" +
                             "0.0\t0.0\t0.0\n" +
-                            "0.0\t0.0\t0.0\n",
+                            "null\tnull\tnull\n",
                     "SELECT array_sum(arr1), array_sum(arr1[2:]), array_sum(arr1[1:3]) FROM tango");
 
             assertSql("array_sum\tarray_sum1\tarray_sum2\tarray_sum3\tarray_sum4\n" +
                             "72.0\t72.0\t72.0\t72.0\t0.0\n" +
                             "0.0\t0.0\t0.0\t0.0\t0.0\n" +
-                            "0.0\t0.0\t0.0\t0.0\t0.0\n",
+                            "null\tnull\tnull\tnull\tnull\n",
                     "SELECT array_sum(arr2), array_sum(transpose(arr2)), array_sum(arr2[1]), array_sum(arr2[1:]), array_sum(arr2[2:]) FROM tango");
         });
     }
