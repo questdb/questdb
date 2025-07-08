@@ -9,7 +9,7 @@ ORDER BY pg_total_relation_size(relid) DESC;
 ```
 This is not very user-friendly for quickly checking table sizes.
 
-**Describe the solution you'd like**  
+**Describe the solution you'd like** 
 A new command:
 ```
 SHOW TABLES WITH SIZE;
