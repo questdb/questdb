@@ -34,15 +34,15 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.std.Misc;
 
-abstract class DoubleArrayAndScalarArrayOperator extends ArrayFunction implements DoubleUnaryArrayAccessor, BinaryFunction {
+abstract class DoubleArrayAndScalarIntArrayOperator extends ArrayFunction implements DoubleUnaryArrayAccessor, BinaryFunction {
     protected final Function arrayArg;
     protected final Function scalarArg;
     private final DirectArray array;
     private final String name;
     protected MemoryA memory;
-    protected double scalarValue;
+    protected int scalarValue;
 
-    public DoubleArrayAndScalarArrayOperator(String name, Function arrayArg, Function scalarArg, CairoConfiguration configuration) {
+    public DoubleArrayAndScalarIntArrayOperator(String name, Function arrayArg, Function scalarArg, CairoConfiguration configuration) {
         this.name = name;
         this.arrayArg = arrayArg;
         this.scalarArg = scalarArg;
@@ -68,7 +68,7 @@ abstract class DoubleArrayAndScalarArrayOperator extends ArrayFunction implement
             return array;
         }
 
-        scalarValue = scalarArg.getDouble(rec);
+        scalarValue = scalarArg.getInt(rec);
         array.setType(getType());
         array.copyShapeFrom(arr);
         array.applyShape();
