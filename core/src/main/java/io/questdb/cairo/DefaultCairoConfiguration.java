@@ -171,6 +171,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getColumnAliasGeneratedMaxSize() {
+        return 64;
+    }
+
+    @Override
     public int getColumnIndexerQueueCapacity() {
         return 1024;
     }
@@ -474,6 +479,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewMaxRefreshIntervals() {
+        return 100;
+    }
+
+    @Override
     public int getMatViewMaxRefreshRetries() {
         return 10;
     }
@@ -481,6 +491,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getMatViewMinRefreshInterval() {
         return Timestamps.MINUTE_MICROS;
+    }
+
+    @Override
+    public long getMatViewRefreshIntervalsUpdatePeriod() {
+        return 15_000;
     }
 
     @Override
@@ -1032,6 +1047,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSymbolTableAppendPageSize() {
+        return 256 * 1024;
+    }
+
+    @Override
     public long getSystemDataAppendPageSize() {
         return 256 * 1024;
     }
@@ -1231,6 +1251,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isColumnAliasExpressionEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isDevModeEnabled() {
         return false;
     }
@@ -1243,11 +1268,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isIOURingEnabled() {
         return true;
-    }
-
-    @Override
-    public boolean isMatViewDebugEnabled() {
-        return false;
     }
 
     @Override
@@ -1368,15 +1388,5 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean useWithinLatestByOptimisation() {
         return false;
-    }
-
-    @Override
-    public boolean isColumnAliasExpressionEnabled() {
-        return true;
-    }
-
-    @Override
-    public int getColumnAliasGeneratedMaxSize() {
-        return 64;
     }
 }
