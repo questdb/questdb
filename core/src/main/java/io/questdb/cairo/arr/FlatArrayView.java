@@ -183,11 +183,14 @@ public interface FlatArrayView {
      * @param length the number of elements in the block
      */
     default double sumDouble(int offset, int length) {
-        double sum = 0d;
+        double sum = Double.NaN;
         double compensation = 0d;
         for (int i = offset, n = offset + length; i < n; i++) {
             double v = getDoubleAtAbsIndex(i);
             if (!Numbers.isNull(v)) {
+                if (compensation == 0d && Numbers.isNull(sum)) {
+                    sum = 0d;
+                }
                 final double y = v - compensation;
                 final double t = sum + y;
                 compensation = t - sum - y;

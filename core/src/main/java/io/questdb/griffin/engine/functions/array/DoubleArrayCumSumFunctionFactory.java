@@ -72,6 +72,9 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
         public void applyToElement(ArrayView view, int index) {
             double v = view.getDouble(index);
             if (!Numbers.isNull(v)) {
+                if (compensation == 0d && Numbers.isNull(currentSum)) {
+                    currentSum = 0d;
+                }
                 final double y = v - compensation;
                 final double t = currentSum + y;
                 compensation = t - currentSum - y;
@@ -86,6 +89,9 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
             for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
                 double v = flatView.getDoubleAtAbsIndex(i);
                 if (!Numbers.isNull(v)) {
+                    if (compensation == 0d && Numbers.isNull(currentSum)) {
+                        currentSum = 0d;
+                    }
                     final double y = v - compensation;
                     final double t = currentSum + y;
                     compensation = t - currentSum - y;
@@ -93,10 +99,15 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
                 }
                 memory.putDouble(currentSum);
             }
+            if (compensation == 0d && Numbers.isNull(currentSum)) {
+                // no non-null values so return null
+                array.ofNull();
+            }
         }
 
         @Override
         public void applyToNullArray() {
+            array.ofNull();
         }
 
         @Override
@@ -118,13 +129,17 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
                 return array;
             }
 
-            currentSum = 0d;
+            currentSum = Double.NaN;
             compensation = 0d;
             array.setType(getType());
             array.setDimLen(0, arr.getCardinality());
             array.applyShape();
             memory = array.startMemoryA();
             calculate(arr);
+            if (compensation == 0d && Numbers.isNull(currentSum)) {
+                // no non-null values so return null
+                array.ofNull();
+            }
             return array;
         }
 

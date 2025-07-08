@@ -64,6 +64,9 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
         public void applyToElement(ArrayView view, int index) {
             double v = view.getDouble(index);
             if (!Numbers.isNull(v)) {
+                if (compensation == 0d && Numbers.isNull(sum)) {
+                    sum = 0d;
+                }
                 final double y = v - compensation;
                 final double t = sum + y;
                 compensation = t - sum - y;
@@ -73,8 +76,7 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
 
         @Override
         public void applyToEntireVanillaArray(ArrayView view) {
-            double res = view.flatView().sumDouble(view.getFlatViewOffset(), view.getFlatViewLength());
-            sum = Double.isNaN(res) ? 0 : res;
+            sum = view.flatView().sumDouble(view.getFlatViewOffset(), view.getFlatViewLength());
         }
 
         @Override
@@ -89,7 +91,7 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            sum = 0d;
+            sum = Double.NaN;
             compensation = 0d;
             calculate(arrayArg.getArray(rec));
             return sum;
