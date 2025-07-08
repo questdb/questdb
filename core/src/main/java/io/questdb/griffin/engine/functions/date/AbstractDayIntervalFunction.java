@@ -80,9 +80,16 @@ public abstract class AbstractDayIntervalFunction extends IntervalFunction imple
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        // The `executionContext.getIntervalFunctionType()` is primarily designed to serve
+        // `InTimestampIntervalFunctionFactory.Func`. Regular filter functions are created
+        // through post-order traversal, and the type of filtered columns is unknown
+        // when creating interval functions. Functions like 'today()' depend on interval type
+        // to convert to actual interval ranges (relying solely on `TimestampDriver.FixInterval`
+        // would lose precision for `end`). For init calls that are not from InTimestampIntervalFunctionFactory.Func,
+        // the intervalType here must remain consistent with the intervalType used during function creation.
         intervalType = executionContext.getIntervalFunctionType();
         timestampDriver = ColumnType.getTimestampDriverByIntervalType(intervalType);
-        final long now = timestampDriver.from(executionContext.getNow(), executionContext.getNowTimestampType());
+        final long now = timestampDriver.from(executionContext.getNow(), intervalType);
         final long start = timestampDriver.dayStart(now, shiftFromToday());
         final long end = timestampDriver.dayEnd(start);
         interval.of(start, end);

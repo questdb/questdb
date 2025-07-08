@@ -35,16 +35,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.memoization.BooleanFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.ByteFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.CharFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.DateFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.DoubleFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.FloatFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.IPv4FunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.IntFunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.Long256FunctionMemoizer;
-import io.questdb.griffin.engine.functions.memoization.LongFunctionMemoizer;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory;
@@ -110,6 +100,16 @@ import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
+import io.questdb.griffin.engine.functions.memoization.BooleanFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.ByteFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.CharFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.DateFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.DoubleFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.FloatFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.IPv4FunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.IntFunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.Long256FunctionMemoizer;
+import io.questdb.griffin.engine.functions.memoization.LongFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.ShortFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.TimestampFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.UuidFunctionMemoizer;
@@ -1055,8 +1055,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL || argTypeTag == ColumnType.VARCHAR) && arg.isConstant()) {
                 if (sigArgTypeTag == ColumnType.TIMESTAMP) {
                     int position = argPositions.getQuick(k);
-                    long timestamp = parseTimestamp(sigArgType, arg.getStrA(null), position);
-                    args.set(k, TimestampConstant.newInstance(timestamp, sigArgType));
+                    CharSequence timestampStr = arg.getStrA(null);
+                    // Adaptive precision: prefer nano if the string has nanosecond precision
+                    int adaptiveType = getAdaptiveTimestampType(timestampStr, sigArgType);
+                    long timestamp = parseTimestamp(adaptiveType, timestampStr, position);
+                    args.set(k, TimestampConstant.newInstance(timestamp, adaptiveType));
                 } else if (sigArgTypeTag == ColumnType.DATE) {
                     int position = argPositions.getQuick(k);
                     long millis = parseDate(arg.getStrA(null), position);
@@ -1140,6 +1143,45 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             throw SqlException.position(position).put("undefined bind variable: ").put(name);
         }
         return new NamedParameterLinkFunction(Chars.toString(name), function.getType());
+    }
+
+    /**
+     * Extracts the year from a timestamp string.
+     * Supports formats like "YYYY-MM-DD...", "YYYY/MM/DD...", etc.
+     *
+     * @param timestampStr the timestamp string
+     * @return the year, or -1 if cannot be extracted
+     */
+    private int extractYearFromTimestamp(CharSequence timestampStr) {
+        if (timestampStr == null || timestampStr.length() < 4) {
+            return -1;
+        }
+
+        // Look for the first 4 consecutive digits at the start
+        int yearStart = 0;
+        int digitCount = 0;
+
+        for (int i = 0; i < timestampStr.length() && i < 10; i++) { // Limit search to first 10 chars
+            char c = timestampStr.charAt(i);
+            if (c >= '0' && c <= '9') {
+                if (digitCount == 0) {
+                    yearStart = i;
+                }
+                digitCount++;
+                if (digitCount == 4) {
+                    // Found 4 consecutive digits, extract as year
+                    try {
+                        return Numbers.parseInt(timestampStr, yearStart, yearStart + 4);
+                    } catch (NumericException e) {
+                        return -1;
+                    }
+                }
+            } else {
+                digitCount = 0; // Reset if non-digit found
+            }
+        }
+
+        return -1; // Could not extract year
     }
 
     private Function functionToConstant(Function function) {
@@ -1292,6 +1334,63 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             default:
                 return function;
         }
+    }
+
+    /**
+     * Determines the appropriate timestamp type based on the string precision and year range.
+     * If the string contains nanosecond precision (more than 6 digits after seconds) and
+     * the year is within nano timestamp range (< 2262), returns nano type;
+     * otherwise returns the original signature type.
+     *
+     * @param timestampStr the timestamp string to analyze
+     * @param sigArgType   the original signature argument type
+     * @return adaptive timestamp type (nano if detected and within range, otherwise original)
+     */
+    private int getAdaptiveTimestampType(CharSequence timestampStr, int sigArgType) {
+        if (timestampStr == null || timestampStr.length() == 0) {
+            return sigArgType;
+        }
+
+        // Extract year from timestamp string to check nano range
+        int year = extractYearFromTimestamp(timestampStr);
+        if (year >= 2262) {
+            // Year is beyond nano timestamp range, use original type
+            return sigArgType;
+        }
+
+        // Look for fractional seconds part after last '.' or ':'
+        int lastDot = -1;
+        for (int i = timestampStr.length() - 1; i >= 0; i--) {
+            char c = timestampStr.charAt(i);
+            if (c == '.' || c == ':') {
+                lastDot = i;
+                break;
+            }
+            // Stop if we hit a space or non-digit (except for timezone indicators)
+            if (c == ' ' || c == 'T' || c == '+' || c == '-') {
+                break;
+            }
+        }
+
+        if (lastDot >= 0 && lastDot < timestampStr.length() - 1) {
+            // Count digits after the dot/colon until we hit non-digit
+            int digitCount = 0;
+            for (int i = lastDot + 1; i < timestampStr.length(); i++) {
+                char c = timestampStr.charAt(i);
+                if (c >= '0' && c <= '9') {
+                    digitCount++;
+                } else {
+                    break; // Stop at timezone or other non-digit characters
+                }
+            }
+
+            // If more than 6 digits (microsecond precision) and within nano range, use nanosecond type
+            if (digitCount > 6) {
+                return ColumnType.TIMESTAMP_NANO;
+            }
+        }
+
+        return sigArgType; // Use original signature type
     }
 
     @NotNull

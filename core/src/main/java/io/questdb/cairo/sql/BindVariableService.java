@@ -552,9 +552,9 @@ public interface BindVariableService extends Mutable {
      * Set type of bind variable by index as timestamp with specified precision type and provide a value
      *
      * @param index         numeric index of the bind variable
-     * @param timestampType timestamp columnType ({@link io.questdb.cairo.ColumnType.TIMESTAMP_MICRO} or {@link io.questdb.cairo.ColumnType.TIMESTAMP_NANO})
+     * @param timestampType timestamp columnType ({@link io.questdb.cairo.ColumnType#TIMESTAMP_MICRO} or {@link io.questdb.cairo.ColumnType#TIMESTAMP_NANO})
      * @param value         timestamp value
-     * @throws SqlException is throw when variable has already been defined with type
+     * @throws SqlException is thrown when variable has already been defined with type
      *                      that is not compatible with Timestamp
      */
     void setTimestampWithType(int index, int timestampType, long value) throws SqlException;
