@@ -1047,6 +1047,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSymbolTableAppendPageSize() {
+        return 256 * 1024;
+    }
+
+    @Override
     public long getSystemDataAppendPageSize() {
         return 256 * 1024;
     }
