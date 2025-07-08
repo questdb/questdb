@@ -2073,7 +2073,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW myview REFRESH",
                 39,
-                "'immediate' or 'manual' or 'period' or 'start' or 'every' or 'as' expected"
+                "'immediate' or 'manual' or 'period' or 'every' or 'as' expected"
         );
     }
 
@@ -4811,6 +4811,55 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "EXPLAIN (FORMAT TEXT) ",
                 "explain (format text ) select * from x", ExecutionModel.EXPLAIN,
                 modelOf("x").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testExpressionAliasDots() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertQuery(
+                "select-virtual floor(1.2) \"floor(1.2)\", 'Hello there.' \"'Hello there.'\" from (long_sequence(1))",
+                "select floor(1.2), 'Hello there.'"
+        );
+    }
+
+    @Test
+    public void testExpressionAliasFunctions() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertQuery(
+                "select-virtual trim(a) trim(a), floor(b) floor(b) from (select [a, b] from xyz timestamp (ts))",
+                "select trim(a), floor(b) from xyz",
+                modelOf("xyz")
+                        .col("b", ColumnType.DOUBLE)
+                        .col("a", ColumnType.STRING)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testExpressionAliasOperators() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertQuery(
+                "select-virtual a * 2 + b / (d - c) 'a * 2 + b / (d - c)' from (select [a, b, c, d] from xyz timestamp (ts))",
+                "select a*2+b/(d-c) from xyz",
+                modelOf("xyz")
+                        .col("d", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("a", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testExpressionAliasOptOut() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "false");
+        assertQuery(
+                "select-virtual trim(a) trim, 1 + 1 column from (select [a] from xyz timestamp (ts))",
+                "select trim(a), 1 + 1 from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.STRING)
+                        .timestamp("ts")
         );
     }
 
@@ -12106,54 +12155,5 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @FunctionalInterface
     public interface CairoAware {
         void run() throws SqlException;
-    }
-
-    @Test
-    public void testExpressionAliasOperators() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
-        assertQuery(
-                "select-virtual a * 2 + b / (d - c) 'a * 2 + b / (d - c)' from (select [a, b, c, d] from xyz timestamp (ts))",
-                "select a*2+b/(d-c) from xyz",
-                modelOf("xyz")
-                        .col("d", ColumnType.INT)
-                        .col("c", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("a", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testExpressionAliasDots() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
-        assertQuery(
-                "select-virtual floor(1.2) \"floor(1.2)\", 'Hello there.' \"'Hello there.'\" from (long_sequence(1))",
-                "select floor(1.2), 'Hello there.'"
-        );
-    }
-
-    @Test
-    public void testExpressionAliasFunctions() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
-        assertQuery(
-                "select-virtual trim(a) trim(a), floor(b) floor(b) from (select [a, b] from xyz timestamp (ts))",
-                "select trim(a), floor(b) from xyz",
-                modelOf("xyz")
-                        .col("b", ColumnType.DOUBLE)
-                        .col("a", ColumnType.STRING)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testExpressionAliasOptOut() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "false");
-        assertQuery(
-                "select-virtual trim(a) trim, 1 + 1 column from (select [a] from xyz timestamp (ts))",
-                "select trim(a), 1 + 1 from xyz",
-                modelOf("xyz")
-                        .col("a", ColumnType.STRING)
-                        .timestamp("ts")
-        );
     }
 }
