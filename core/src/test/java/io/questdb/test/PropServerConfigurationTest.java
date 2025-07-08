@@ -1849,7 +1849,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(Files.PAGE_SIZE, configuration.getDataIndexKeyAppendPageSize());
         Assert.assertEquals(262144, configuration.getDataIndexValueAppendPageSize());
         Assert.assertEquals(131072, configuration.getMiscAppendPageSize());
-        Assert.assertEquals(8192, configuration.getSymbolTableAppendPageSize());
+        Assert.assertEquals(65536, configuration.getSymbolTableAppendPageSize());
 
         Assert.assertEquals(512, configuration.getColumnPurgeQueueCapacity());
         Assert.assertEquals(5.0, configuration.getColumnPurgeRetryDelayMultiplier(), 0.00001);
@@ -1876,7 +1876,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(4242, configuration.getWalMaxLagTxnCount());
         Assert.assertEquals(262144, configuration.getWalDataAppendPageSize());
         Assert.assertEquals(524288, configuration.getSystemWalDataAppendPageSize());
-        Assert.assertEquals(8192, configuration.getSymbolTableAppendPageSize());
+        Assert.assertEquals(65536, configuration.getSymbolTableAppendPageSize());
 
         Assert.assertEquals(1, configuration.getO3LastPartitionMaxSplits());
         final long TB = (long) Numbers.SIZE_1MB * Numbers.SIZE_1MB;
