@@ -1022,6 +1022,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSymbolTableAppendPageSize() {
+        return getDelegate().getSymbolTableAppendPageSize();
+    }
+
+    @Override
     public long getSystemDataAppendPageSize() {
         return getDelegate().getSystemDataAppendPageSize();
     }
