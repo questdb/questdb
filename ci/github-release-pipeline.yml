@@ -10,56 +10,57 @@ pr: none
 
 stages:
   - stage: BuildAndRunOnAzure
-    displayName: "Building Binaires"
+    displayName: "Building Binaries"
     jobs:
-      - job: RunOn
-        displayName: "on Azure workers"
+      - job: BuildMatrix
+        displayName: "Build for Multiple OS"
         strategy:
           matrix:
             linux-jdk17:
-              imageName: 'ubuntu-latest'
-              poolName: "Azure Pipelines"
-              os: Linux
-              jdk: "1.17"
+              vmImage: 'ubuntu-latest'
+              jdk: '1.17'
             windows:
-              imageName: "windows-latest"
-              poolName: "Azure Pipelines"
-              os: macOS
-              jdk: "1.17"
+              vmImage: 'windows-latest'
+              jdk : '1.17'
+              jdk: '1.17'
         pool:
-          vmImage: $(imageName)
-          name: $(poolName)
+          vmImage: $(vmImage)
         timeoutInMinutes: 60
         steps:
           - checkout: self
             fetchDepth: 1
             lfs: false
             submodules: true
+
           - task: Maven@3
-            displayName: "Building QuestDB"
+            displayName: "Build QuestDB"
             inputs:
               mavenPomFile: "core/pom.xml"
               goals: "package"
-              options:
-                "-DskipTests -Dhttp.keepAlive=false -P build-web-console,build-binaries"
+              options: "-DskipTests -Dhttp.keepAlive=false -P build-web-console,build-binaries"
               jdkVersionOption: $(jdk)
+
           - task: CopyFiles@2
+            displayName: "Copy Build Artifacts"
             inputs:
               SourceFolder: '$(build.sourcesDirectory)/core/target'
-              Contents: '$(build.sourcesDirectory)/core/target/questdb-*.gz'
+              Contents: 'questdb-*.gz'
               TargetFolder: '$(build.artifactstagingdirectory)'
+
           - task: PublishBuildArtifacts@1
+            displayName: "Publish Artifacts"
             inputs:
               PathtoPublish: '$(Build.ArtifactStagingDirectory)'
               ArtifactName: 'drop'
               publishLocation: 'Container'
 
   - stage: Release_Artifacts
-    displayName: "Release binaries to github"
+    displayName: "Release Binaries to GitHub"
     dependsOn:
       - BuildAndRunOnAzure
     jobs:
       - job: Release
+        displayName: "Release to GitHub and Deploy AMI"
         pool:
           vmImage: 'ubuntu-24.04'
         steps:
@@ -70,6 +71,7 @@ stages:
             persistCredentials: true
 
           - task: DownloadBuildArtifacts@1
+            displayName: "Download Artifacts"
             inputs:
               buildType: 'current'
               downloadType: 'single'
@@ -78,28 +80,38 @@ stages:
               cleanDestinationFolder: true
 
           - script: |
-              # Do not continue on errors
               set -e
+              tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f3-)
               
-              tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
-              echo "Checking if release ${tag_name} already exists..."
-              
-              release_tag=$(gh release view ${tag_name} | grep -E "url:.*github.*/tag/" | sed 's#.*/##')
-              echo "Using release tag ${release_tag}"
-              
-              gh release upload ${release_tag} $(Build.ArtifactStagingDirectory)/drop/*.gz
-              gh release edit ${release_tag} --draft=false --latest
+              echo "Release tag: ${tag_name}"
+
+              # Validate tag format (basic SemVer)
+              if ! [[ "$tag_name" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                echo "Invalid tag format: ${tag_name}"
+                exit 1
+              fi
+
+              echo "Checking if GitHub release ${tag_name} exists..."
+              if ! gh release view ${tag_name}; then
+                echo "Creating new release for tag ${tag_name}..."
+                gh release create ${tag_name} -t "${tag_name}" -n "Auto-generated release for ${tag_name}" --draft
+              fi
+
+              echo "Uploading assets to release..."
+              gh release upload ${tag_name} $(System.ArtifactsDirectory)/drop/*.gz --clobber
+
+              echo "Finalizing release..."
+              gh release edit ${tag_name} --draft=false --latest
             env:
               GITHUB_TOKEN: $(GITHUB_TOKEN)
 
           - script: |
               sudo apt-get update
-              cd "$(Build.SourcesDirectory)"/pkg/ami/marketplace
+              cd "$(Build.SourcesDirectory)/pkg/ami/marketplace"
               make install_aws_plugin
               make build_release
             env:
               AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
               AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
               AWS_DEFAULT_REGION: eu-west-1
-            displayName: "AMI: Deploy public image"
-
+            displayName: "AMI: Deploy Public Image"
