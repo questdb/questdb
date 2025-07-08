@@ -132,6 +132,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -268,24 +269,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    public static long copyOrdered(
-            TableWriterAPI writer,
-            RecordMetadata metadata,
-            RecordCursor cursor,
-            RecordToRowCopier copier,
-            int cursorTimestampIndex,
-            SqlExecutionCircuitBreaker circuitBreaker
-    ) {
-        long rowCount;
-
-        if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
-            rowCount = copyOrderedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, circuitBreaker);
-        } else {
-            rowCount = copyOrdered0(writer, cursor, copier, cursorTimestampIndex, circuitBreaker);
-        }
-        return rowCount;
-    }
-
     public static long copyOrderedBatched(
             TableWriterAPI writer,
             RecordMetadata metadata,
@@ -299,6 +282,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         long rowCount;
         if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
             rowCount = copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker);
+        } else if (metadata.getColumnType(cursorTimestampIndex) == ColumnType.VARCHAR) {
+            rowCount = copyOrderedBatchedVarcharTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker);
         } else {
             rowCount = copyOrderedBatched0(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker);
         }
@@ -571,26 +556,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private static long copyOrdered0(
-            TableWriterAPI writer,
-            RecordCursor cursor,
-            RecordToRowCopier copier,
-            int cursorTimestampIndex,
-            SqlExecutionCircuitBreaker circuitBreaker
-    ) {
-        long rowCount = 0;
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-            TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
-            copier.copy(record, row);
-            row.append();
-            rowCount++;
-        }
-
-        return rowCount;
-    }
-
     // returns number of copied rows
     private static long copyOrderedBatched0(
             TableWriterAPI writer,
@@ -633,8 +598,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             CharSequence str = record.getStrA(cursorTimestampIndex);
+            long timestamp = SqlUtil.implicitCastStrAsTimestamp(str);
+
             // It's allowed to insert ISO formatted string to timestamp column
-            TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, -1, ColumnType.STRING, ColumnType.TIMESTAMP));
+            TableWriter.Row row = writer.newRow(timestamp);
             copier.copy(record, row);
             row.append();
             if (++rowCount >= commitTarget) {
@@ -646,24 +613,37 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
-    //returns number of copied rows
-    private static long copyOrderedStrTimestamp(
+    // returns number of copied rows
+    private static long copyOrderedBatchedVarcharTimestamp(
             TableWriterAPI writer,
             RecordCursor cursor,
             RecordToRowCopier copier,
             int cursorTimestampIndex,
+            long batchSize,
+            long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
+        long commitTarget = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            final CharSequence str = record.getStrA(cursorTimestampIndex);
+            Utf8Sequence varchar = record.getVarcharA(cursorTimestampIndex);
+            long timestamp;
+            if (varchar != null) {
+                timestamp = SqlUtil.implicitCastStrAsTimestamp(varchar.asAsciiCharSequence());
+            } else {
+                timestamp = Numbers.LONG_NULL;
+            }
+
             // It's allowed to insert ISO formatted string to timestamp column
-            TableWriter.Row row = writer.newRow(SqlUtil.implicitCastStrAsTimestamp(str));
+            TableWriter.Row row = writer.newRow(timestamp);
             copier.copy(record, row);
             row.append();
-            rowCount++;
+            if (++rowCount >= commitTarget) {
+                writer.ic(o3MaxLag);
+                commitTarget = rowCount + batchSize;
+            }
         }
 
         return rowCount;
@@ -3099,7 +3079,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } else if (batchSize != -1) {
             rowCount = copyOrderedBatched(writer, metadata, cursor, recordToRowCopier, timestampIndex, batchSize, o3MaxLag, circuitBreaker);
         } else {
-            rowCount = copyOrdered(writer, metadata, cursor, recordToRowCopier, timestampIndex, circuitBreaker);
+            rowCount = copyOrderedBatched(writer, metadata, cursor, recordToRowCopier, timestampIndex, Long.MAX_VALUE, o3MaxLag, circuitBreaker);
         }
         writer.commit();
         return rowCount;
@@ -3706,9 +3686,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                 if (virtualColumnType != tableColumnType && !isIPv4UpdateCast(virtualColumnType, tableColumnType)) {
                     if (!ColumnType.isSymbolOrString(tableColumnType) || !ColumnType.isAssignableFrom(virtualColumnType, ColumnType.STRING)) {
-                        // get column position
-                        ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
-                        throw SqlException.inconvertibleTypes(setRhs.position, virtualColumnType, "", tableColumnType, updateColumnName);
+                        if (tableColumnType != ColumnType.VARCHAR || !ColumnType.isAssignableFrom(virtualColumnType, ColumnType.VARCHAR)) {
+                            // get column position
+                            ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
+                            throw SqlException.inconvertibleTypes(setRhs.position, virtualColumnType, "", tableColumnType, updateColumnName);
+                        }
                     }
                 }
             }
