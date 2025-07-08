@@ -960,11 +960,6 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInvalidArraySyntax() throws Exception {
-        assertException("select null::[]double;", 0, "abc");
-    }
-
-    @Test
     public void testIsGeoHashBitsConstantNotValid() {
         Assert.assertFalse(ExpressionParser.isGeoHashBitsConstant("#00110")); // missing '#'
         Assert.assertFalse(ExpressionParser.isGeoHashBitsConstant("#0")); // missing '#'

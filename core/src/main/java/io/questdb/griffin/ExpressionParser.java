@@ -417,7 +417,7 @@ public class ExpressionParser {
                         // precedence must be max value to make sure control node isn't
                         // consumed as parameter to a greedy function
                         opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL,
-                                isArrayConstructor ? "[[" : "[", Integer.MAX_VALUE, lastPos)); // <-- should not be giving string
+                                isArrayConstructor ? "[[" : "[", Integer.MAX_VALUE, lastPos));
                         break;
                     }
                     case ']': {
