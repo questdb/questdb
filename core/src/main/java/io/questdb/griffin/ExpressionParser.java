@@ -393,9 +393,12 @@ public class ExpressionParser {
                         // non-literal en is not a valid type qualifier, and it would not
                         // successfully cast to FloatingSequence either
                         if (en != null && en.type == ExpressionNode.LITERAL && isTypeQualifier() || scopeStack.peek(1) == Scope.CAST_AS) {
-                            // we should check if there is whitespace left from [
-                            if (lastPos > 0 && lexer.getContent().charAt(lastPos -1) == ' ') {
-                                throw SqlException.$(lastPos, "HINT: Array type syntax requires no space between type and brackets");
+                            // Array type declaration context - strict whitespace validation
+                            if (lastPos > 0 && Character.isWhitespace(lexer.getContent().charAt(lastPos - 1))) {
+                                throw SqlException.position(lastPos)
+                                        .put("Array type requires no whitespace: expected '")
+                                        .put(en.token).put("[]' but found '")
+                                        .put(en.token).put(" []'");
                             }
                             ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
                             break;
@@ -432,13 +435,13 @@ public class ExpressionParser {
                             ExpressionNode en = opStack.peek();
                             // we are expecting type[] syntax, the node we "peek" would look like 'type[' in the
                             // best case scenario
-                            if (en.type == ExpressionNode.LITERAL) {
+                            if (en != null && en.type == ExpressionNode.LITERAL) {
                                 GenericLexer.FloatingSequence token = (GenericLexer.FloatingSequence) en.token;
                                 if (token.charAt(token.length() - 1) == '[') {
                                     token.setHi(lastPos + 1);
                                     break;
                                 }
-                            } else {
+                            } else if (en != null) {
                                 // this is already an error state, prepare soft landing for the user
                                 if (en.type == ExpressionNode.CONTROL) {
                                     if (Chars.equalsNc(en.token, '[')) {
@@ -449,6 +452,8 @@ public class ExpressionParser {
                                     }
                                 }
                                 throw SqlException.position(en.position).put("type definition is expected");
+                            } else {
+                                throw SqlException.position(lastPos).put("unexpected ']' in type declaration");
                             }
                         }
                         if (prevBranch == BRANCH_COMMA) {

@@ -966,6 +966,13 @@ public class SqlUtil {
         do {
             CharSequence tok = fetchNext(lexer);
             if (Chars.equalsNc(tok, '[')) {
+                // Check for whitespace before '[' in array type declaration
+                int tokenPosition = lexer.lastTokenPosition();
+                if (tokenPosition > 0 && Character.isWhitespace(lexer.getContent().charAt(tokenPosition - 1))) {
+                    throw SqlException.position(tokenPosition)
+                            .put("Array type requires no whitespace between type and brackets");
+                }
+
                 // could be a start of array type
                 tok = fetchNext(lexer);
 

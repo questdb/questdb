@@ -64,6 +64,22 @@ public class ExpressionParserTest extends AbstractCairoTest {
         x("a b <>all", "a != all(b)");
     }
 
+    @Test
+    public void testArrayAccessWhitespaceErrors() throws Exception {
+        // This would need actual array data, so test the expression parsing part
+        assertException("select f() [0]", 11, "Array access requires no whitespace");
+        assertException("select func(x) [index]", 15, "Array access requires no whitespace");
+        assertException("select obj.method() [0]", 20, "Array access requires no whitespace");
+
+        // Multiple spaces in array access
+        assertException("select data  [0]", 12, "Array access requires no whitespace");
+        assertException("select arr\t[index]", 10, "Array access requires no whitespace");
+
+        // Complex expressions with array access errors
+        assertException("select (a + b) [0]", 15, "Array access requires no whitespace");
+        assertException("select function(x, y) [index]", 22, "Array access requires no whitespace");
+    }
+
     @Ignore
     @Test
     public void testArrayCast() throws SqlException {
@@ -145,6 +161,18 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayTypeErrorRecovery() throws Exception {
+        // Test that parser can handle multiple errors in sequence
+        assertException("select null::double [], null::int []", 20, "Array type requires no whitespace");
+
+        // Test error recovery with different constructs
+        assertException("select x, null::double [], y from table", 23, "Array type requires no whitespace");
+
+        // Test complex expressions with array errors
+        assertException("select (select null::double [] from dual)", 28, "Array type requires no whitespace");
+    }
+
+    @Test
     public void testBetweenConstantAndSelect() {
         assertFail(
                 "x between select and 10",
@@ -161,6 +189,62 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testBooleanLogicPrecedence() throws Exception {
         x("x y not =", "x = NOT y");
+    }
+
+    @Test
+    public void testBrutalArraySyntaxErrors() throws Exception {
+        // Multiple consecutive brackets
+        assertException("select null::[][][]", 13, "type definition is expected");
+        assertException("select null::][", 13, "type definition is expected");
+
+        // Brackets with numbers (common user mistake)
+        assertException("select null::double[1]", 19, "']' expected");
+        assertException("select null::int[0]", 16, "']' expected");
+        assertException("select null::varchar[255]", 20, "']' expected");
+
+        // Brackets with expressions
+        assertException("select null::double[x+1]", 19, "']' expected");
+        assertException("select null::int[null]", 16, "']' expected");
+
+        // Weird spacing patterns in brackets
+        assertException("select null::double[ ]", 19, "']' expected");
+        assertException("select null::int[\t]", 16, "']' expected");
+        assertException("select null::varchar[\n]", 20, "']' expected");
+
+        // Mixed bracket types
+        assertException("select null::double(]", 19, "syntax error");
+        assertException("select null::int[)", 16, "']' expected");
+
+        // Unicode brackets (if parser somehow accepts them)
+        assertException("select null::double【】", 19, "syntax error");
+        assertException("select null::int〔〕", 16, "syntax error");
+
+        // Extreme whitespace variations
+        assertException("select null::double\t\t\t[]", 22, "Array type requires no whitespace");
+        assertException("select null::int\u00A0[]", 16, "Array type requires no whitespace"); // Non-breaking space
+        assertException("select null::varchar\u2003[]", 20, "Array type requires no whitespace"); // Em space
+
+        // Extremely long type names with spaces
+        assertException("select null::doubleprecision []", 29, "Array type requires no whitespace");
+
+        // Case sensitivity issues
+        assertException("select null::DOUBLE []", 20, "Array type requires no whitespace");
+        assertException("select null::Double []", 20, "Array type requires no whitespace");
+        assertException("select null::dOuBlE []", 20, "Array type requires no whitespace");
+
+        // Multiple spaces of different types
+        assertException("select null::double \t []", 21, "Array type requires no whitespace");
+        assertException("select null::int  \t  []", 19, "Array type requires no whitespace");
+
+        // Nested cast errors
+        assertException("select cast(cast(null as double []) as int)", 36, "Array type requires no whitespace");
+
+        // Array in function parameters
+        assertException("select abs(null::double [])", 24, "Array type requires no whitespace");
+
+        // Array in complex expressions
+        assertException("select (1 + null::int []) * 2", 22, "Array type requires no whitespace");
+        assertException("select case when true then null::double [] else null end", 44, "Array type requires no whitespace");
     }
 
     @Test
@@ -964,7 +1048,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertException("select null::[]double;", 13, "did you mean 'double[]'?");
         assertException("select null::[]float;", 13, "did you mean 'float[]'?");
         assertException("select null::[];", 13, "type definition is expected");
-        assertException("select null::double []", 20, "HINT: Array type syntax requires no space between type and brackets");
+        assertException("select null::double []", 20, "Array type requires no whitespace: expected 'double[]' but found 'double []'");
     }
 
     @Test
