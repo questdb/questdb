@@ -388,44 +388,65 @@ public class ExpressionParser {
                         break;
                     }
                     case '[': {
-                        if (isTypeQualifier() || scopeStack.peek(1) == Scope.CAST_AS) {
-                            ExpressionNode en = opStack.peek();
-                            ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
-                            break;
+                        // the [ has to be directly adjacent to the literal before it
+                        ExpressionNode en = opStack.peek();
+                        if (en != null && en.type == ExpressionNode.LITERAL && en.position + en.token.length() == lastPos) {
+                            if (isTypeQualifier() || scopeStack.peek(1) == Scope.CAST_AS) {
+                                ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
+                                break;
+                            }
+                            thisBranch = BRANCH_LEFT_BRACKET;
+                            boolean isArrayConstructor = withinArrayConstructor() && !isCompletedOperand(prevBranch);
+
+                            // pop left literal or . expression, e.g. "a.b[i]" and push to the output queue.
+                            // the precedence of '[' is fixed to 2
+                            ExpressionNode other;
+                            while ((other = opStack.peek()) != null && (other.type == ExpressionNode.LITERAL ||
+                                    other.type == ExpressionNode.ARRAY_CONSTRUCTOR ||
+                                    other.type == ExpressionNode.ARRAY_ACCESS)
+                            ) {
+                                argStackDepth = onNode(listener, other, argStackDepth, prevBranch);
+                                opStack.pop();
+                            }
+
+                            // entering bracketed context, push stuff onto the stacks
+                            paramCountStack.push(paramCount);
+                            paramCount = 0;
+                            argStackDepthStack.push(argStackDepth);
+                            argStackDepth = 0;
+                            scopeStack.push(Scope.BRACKET);
+
+                            // precedence must be max value to make sure control node isn't
+                            // consumed as parameter to a greedy function
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL,
+                                    isArrayConstructor ? "[[" : "[", Integer.MAX_VALUE, lastPos));
+                        } else {
+                            processDefaultBranch = true;
                         }
-                        thisBranch = BRANCH_LEFT_BRACKET;
-                        boolean isArrayConstructor = withinArrayConstructor() && !isCompletedOperand(prevBranch);
-
-                        // pop left literal or . expression, e.g. "a.b[i]" and push to the output queue.
-                        // the precedence of '[' is fixed to 2
-                        ExpressionNode other;
-                        while ((other = opStack.peek()) != null && (other.type == ExpressionNode.LITERAL ||
-                                other.type == ExpressionNode.ARRAY_CONSTRUCTOR ||
-                                other.type == ExpressionNode.ARRAY_ACCESS)
-                        ) {
-                            argStackDepth = onNode(listener, other, argStackDepth, prevBranch);
-                            opStack.pop();
-                        }
-
-                        // entering bracketed context, push stuff onto the stacks
-                        paramCountStack.push(paramCount);
-                        paramCount = 0;
-                        argStackDepthStack.push(argStackDepth);
-                        argStackDepth = 0;
-                        scopeStack.push(Scope.BRACKET);
-
-                        // precedence must be max value to make sure control node isn't
-                        // consumed as parameter to a greedy function
-                        opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL,
-                                isArrayConstructor ? "[[" : "[", Integer.MAX_VALUE, lastPos));
                         break;
                     }
                     case ']': {
                         if (isTypeQualifier() || scopeStack.peek(1) == Scope.CAST_AS) {
-                            GenericLexer.FloatingSequence token = (GenericLexer.FloatingSequence) opStack.peek().token;
-                            if (token.charAt(token.length() - 1) == '[') {
-                                token.setHi(lastPos + 1);
-                                break;
+                            ExpressionNode en = opStack.peek();
+                            // we are expecting type[] syntax, the node we "peek" would look like 'type[' in the
+                            // best case scenario
+                            if (en.type == ExpressionNode.LITERAL) {
+                                GenericLexer.FloatingSequence token = (GenericLexer.FloatingSequence) en.token;
+                                if (token.charAt(token.length() - 1) == '[') {
+                                    token.setHi(lastPos + 1);
+                                    break;
+                                }
+                            } else {
+                                // this is already an error state, prepare soft landing for the user
+                                if (en.type == ExpressionNode.CONTROL) {
+                                    if (Chars.equalsNc(en.token, '[')) {
+                                        tok = SqlUtil.fetchNext(lexer);
+                                        if (tok != null && (int) ColumnType.tagOf(tok) != -1) {
+                                            throw SqlException.position(en.position).put("did you mean '").put(tok).put("[]'?");
+                                        }
+                                    }
+                                }
+                                throw SqlException.position(en.position).put("type definition is expected");
                             }
                         }
                         if (prevBranch == BRANCH_COMMA) {

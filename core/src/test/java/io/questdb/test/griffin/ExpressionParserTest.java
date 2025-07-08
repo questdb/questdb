@@ -960,6 +960,22 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidArraySyntaxInCast() throws Exception {
+        assertException("select null::[]double;", 13, "did you mean 'double[]'?");
+        assertException("select null::[]float;", 13, "did you mean 'float[]'?");
+        assertException("select null::[];", 13, "type definition is expected");
+        assertException("select null::double [];", 20, "identifier should start with a letter or '_'");
+    }
+
+    @Test
+    public void testInvalidArraySyntaxInCreateTable() throws Exception {
+        assertException("create table x(a []double)", 17, "did you mean 'double[]'?");
+        assertException("create table x(a []int)", 17, "did you mean 'int[]'?");
+        assertException("create table x(a [])", 17, "column type is expected here");
+        assertException("create table x(a [], b double)", 17, "column type is expected here");
+    }
+
+    @Test
     public void testIsGeoHashBitsConstantNotValid() {
         Assert.assertFalse(ExpressionParser.isGeoHashBitsConstant("#00110")); // missing '#'
         Assert.assertFalse(ExpressionParser.isGeoHashBitsConstant("#0")); // missing '#'

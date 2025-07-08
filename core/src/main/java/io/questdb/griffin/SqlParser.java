@@ -3925,6 +3925,32 @@ public class SqlParser {
 
     private int toColumnType(GenericLexer lexer, @NotNull CharSequence tok) throws SqlException {
         int typePosition = lexer.lastTokenPosition();
+        if (Chars.equalsNc(tok, '[')) {
+            // '[' is a wierd type name, it could be that someone is either:
+            // 1. array dereferencing [x]
+            // 2. inverting array definition, []type
+            // 3. left out array definition (type), e.g. just []
+            // 4. dangling [, e.g. there is no closing ]
+
+            // we can be brave here, we will error out already, [ is not a type regardless of what we find
+            tok = optTok(lexer);
+            if (tok == null) {
+                throw SqlException.position(typePosition).put("dangling '[' where column type is expected");
+            }
+
+            if (Chars.equals(tok, ']')) {
+                // we have []
+                // lets see if there is a type
+                tok = optTok(lexer);
+                if (tok == null) {
+                    throw SqlException.position(typePosition).put("did you mean 'double[]'?");
+                }
+                if (!Chars.equals(tok, ')') && !Chars.equals(tok, ',') && !Chars.equals(tok, '(')) {
+                    throw SqlException.position(typePosition).put("did you mean '").put(tok).put("[]'?");
+                }
+            }
+            throw SqlException.position(typePosition).put("column type is expected here");
+        }
         final short typeTag = SqlUtil.toPersistedTypeTag(tok, typePosition);
 
         // ignore precision keyword for DOUBLE column: 'double precision' is the same type as 'double'
