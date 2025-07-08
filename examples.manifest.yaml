@@ -1,133 +1,134 @@
-- name: ilp-http
-  lang: java
-  path: examples/src/main/java/com/example/sender/HttpExample.java
-  header: |-
-    Java client library [docs](https://questdb.io/docs/reference/clients/java_ilp)
-    and [Maven artifact](https://search.maven.org/artifact/org.questdb/questdb).
+examples:
+  - name: ilp-http
+    lang: java
+    path: examples/src/main/java/com/example/sender/HttpExample.java
+    header: |-
+      Java client library [docs](https://questdb.io/docs/reference/clients/java_ilp)
+      and [Maven artifact](https://search.maven.org/artifact/org.questdb/questdb).
 
-    Maven
-    ```
-    <dependency>
-        <groupId>org.questdb</groupId>
-        <artifactId>questdb</artifactId>
-        <version>7.4.0</version>
-    </dependency>
-    ```
+      Maven
+      ```
+      <dependency>
+          <groupId>org.questdb</groupId>
+          <artifactId>questdb</artifactId>
+          <version>7.4.0</version>
+      </dependency>
+      ```
 
-    Gradle
-    ```
-    compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
-    ```
-- name: ilp-http-auth
-  lang: java
-  path: examples/src/main/java/com/example/sender/HttpsAuthExample.java
-  header: |-
-    Java client library [docs](https://questdb.io/docs/reference/clients/java_ilp)
-    and [Maven artifact](https://search.maven.org/artifact/org.questdb/questdb).
+      Gradle
+      ```
+      compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
+      ```
+  - name: ilp-http-auth
+    lang: java
+    path: examples/src/main/java/com/example/sender/HttpsAuthExample.java
+    header: |-
+      Java client library [docs](https://questdb.io/docs/reference/clients/java_ilp)
+      and [Maven artifact](https://search.maven.org/artifact/org.questdb/questdb).
 
-    Maven
-    ```
-    <dependency>
-        <groupId>org.questdb</groupId>
-        <artifactId>questdb</artifactId>
-        <version>7.4.0</version>
-    </dependency>
-    ```
+      Maven
+      ```
+      <dependency>
+          <groupId>org.questdb</groupId>
+          <artifactId>questdb</artifactId>
+          <version>7.4.0</version>
+      </dependency>
+      ```
 
-    Gradle
-    ```
-    compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
-    ```
-- name: ilp
-  lang: java
-  path: examples/src/main/java/com/example/sender/BasicExample.java
-  header: |-
-    Java client library [docs](https://questdb.io/docs/reference/clients/java_ilp)
-    and [Maven artifact](https://search.maven.org/artifact/org.questdb/questdb).
+      Gradle
+      ```
+      compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
+      ```
+  - name: ilp
+    lang: java
+    path: examples/src/main/java/com/example/sender/BasicExample.java
+    header: |-
+      Java client library [docs](https://questdb.io/docs/reference/clients/java_ilp)
+      and [Maven artifact](https://search.maven.org/artifact/org.questdb/questdb).
 
-    Maven
-    ```
-    <dependency>
-        <groupId>org.questdb</groupId>
-        <artifactId>questdb</artifactId>
-        <version>7.4.0</version>
-    </dependency>
-    ```
+      Maven
+      ```
+      <dependency>
+          <groupId>org.questdb</groupId>
+          <artifactId>questdb</artifactId>
+          <version>7.4.0</version>
+      </dependency>
+      ```
 
-    Gradle
-    ```
-    compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
-    ```
-- name: ilp-auth-tls
-  lang: java
-  path: examples/src/main/java/com/example/sender/AuthTlsExample.java
-  header: |-
-    Java client library [docs](https://questdb.io/docs/reference/clients/java_ilp)
-    and [Maven artifact](https://search.maven.org/artifact/org.questdb/questdb).
+      Gradle
+      ```
+      compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
+      ```
+  - name: ilp-auth-tls
+    lang: java
+    path: examples/src/main/java/com/example/sender/AuthTlsExample.java
+    header: |-
+      Java client library [docs](https://questdb.io/docs/reference/clients/java_ilp)
+      and [Maven artifact](https://search.maven.org/artifact/org.questdb/questdb).
 
-    Maven
-    ```
-    <dependency>
-        <groupId>org.questdb</groupId>
-        <artifactId>questdb</artifactId>
-        <version>7.4.0</version>
-    </dependency>
-    ```
+      Maven
+      ```
+      <dependency>
+          <groupId>org.questdb</groupId>
+          <artifactId>questdb</artifactId>
+          <version>7.4.0</version>
+      </dependency>
+      ```
 
-    Gradle
-    ```
-    compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
-    ```
-  auth:
-    kid: admin
-    d: GwBXoGG5c6NoUTLXnzMxw_uNiVa8PKobzx5EiuylMW0
-  addr:
-    host: clever-black-363-c1213c97.ilp.b04c.questdb.net
-    port: 32074
-- name: ilp-auth
-  lang: java
-  path: examples/src/main/java/com/example/sender/AuthExample.java
-  header: |-
-    Java client library [docs](https://questdb.io/docs/reference/clients/java_ilp)
-    and [Maven artifact](https://search.maven.org/artifact/org.questdb/questdb).
+      Gradle
+      ```
+      compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
+      ```
+    auth:
+      kid: admin
+      d: GwBXoGG5c6NoUTLXnzMxw_uNiVa8PKobzx5EiuylMW0
+    addr:
+      host: clever-black-363-c1213c97.ilp.b04c.questdb.net
+      port: 32074
+  - name: ilp-auth
+    lang: java
+    path: examples/src/main/java/com/example/sender/AuthExample.java
+    header: |-
+      Java client library [docs](https://questdb.io/docs/reference/clients/java_ilp)
+      and [Maven artifact](https://search.maven.org/artifact/org.questdb/questdb).
 
-    Maven
-    ```
-    <dependency>
-        <groupId>org.questdb</groupId>
-        <artifactId>questdb</artifactId>
-        <version>7.4.0</version>
-    </dependency>
-    ```
+      Maven
+      ```
+      <dependency>
+          <groupId>org.questdb</groupId>
+          <artifactId>questdb</artifactId>
+          <version>7.4.0</version>
+      </dependency>
+      ```
 
-    Gradle
-    ```
-    compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
-    ```
-  auth:
-    kid: testUser1
-    d: GwBXoGG5c6NoUTLXnzMxw_uNiVa8PKobzx5EiuylMW0
-  addr:
-    host: localhost
-    port: 9009
-- name: ilp-from-conf
-  lang: java
-  path: examples/src/main/java/com/example/sender/BasicExample.java
-  header: |-
-    Java client library [docs](https://questdb.io/docs/reference/clients/java_ilp)
-    and [Maven artifact](https://search.maven.org/artifact/org.questdb/questdb).
+      Gradle
+      ```
+      compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
+      ```
+    auth:
+      kid: testUser1
+      d: GwBXoGG5c6NoUTLXnzMxw_uNiVa8PKobzx5EiuylMW0
+    addr:
+      host: localhost
+      port: 9009
+  - name: ilp-from-conf
+    lang: java
+    path: examples/src/main/java/com/example/sender/BasicExample.java
+    header: |-
+      Java client library [docs](https://questdb.io/docs/reference/clients/java_ilp)
+      and [Maven artifact](https://search.maven.org/artifact/org.questdb/questdb).
 
-    Maven
-    ```
-    <dependency>
-        <groupId>org.questdb</groupId>
-        <artifactId>questdb</artifactId>
-        <version>7.4.0</version>
-    </dependency>
-    ```
+      Maven
+      ```
+      <dependency>
+          <groupId>org.questdb</groupId>
+          <artifactId>questdb</artifactId>
+          <version>7.4.0</version>
+      </dependency>
+      ```
 
-    Gradle
-    ```
-    compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
-    ```
-  conf: tcp::addr=localhost:9009;
+      Gradle
+      ```
+      compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
+      ```
+    conf: tcp::addr=localhost:9009;
