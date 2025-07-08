@@ -384,7 +384,7 @@ public class InsertTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAsWith_string() throws Exception {
-        assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456Z\n", "with x as (select 1, '123456') insert atomic into tab select * from x", null, false);
+        assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456Z\n", "with x as (select 1, '123456'::string) insert atomic into tab select * from x", null, false);
     }
 
     @Test
@@ -401,7 +401,7 @@ public class InsertTest extends AbstractCairoTest {
                 CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', :bal)", sqlExecutionContext);
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
 
-                try (InsertOperation insertOperation = cq.popInsertOperation();) {
+                try (InsertOperation insertOperation = cq.popInsertOperation()) {
                     try (InsertMethod method = insertOperation.createMethod(sqlExecutionContext)) {
                         method.execute(sqlExecutionContext);
                         method.commit();
@@ -491,7 +491,7 @@ public class InsertTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', 356.12)", sqlExecutionContext);
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-                try (InsertOperation insertOperation = cq.popInsertOperation();) {
+                try (InsertOperation insertOperation = cq.popInsertOperation()) {
                     execute("alter table balances drop column ccy", sqlExecutionContext);
                     insertOperation.createMethod(sqlExecutionContext);
                 }
