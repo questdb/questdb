@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.std.IntStack;
+import io.questdb.std.Long256;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -440,5 +441,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @FunctionalInterface
     private interface TelemetryFacade {
         void store(short event, short origin);
+    }
+
+    @Override
+    public Long256 getDataId() {
+        return cairoEngine.getDataID().get();
     }
 }

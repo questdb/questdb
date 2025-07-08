@@ -174,6 +174,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
+    private final DataID dataID;
     private @NotNull ConfigReloader configReloader = () -> false; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private FrameFactory frameFactory;
@@ -209,6 +210,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.matViewTimerQueue = createMatViewTimerQueue();
             this.matViewGraph = new MatViewGraph(matViewTimerQueue);
             this.frameFactory = new FrameFactory(configuration);
+            this.dataID = DataIDFactory.open(configuration);
 
             settingsStore = new SettingsStore(configuration);
             settingsStore.init();
@@ -488,6 +490,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(matViewStateStore);
         Misc.free(settingsStore);
         Misc.free(frameFactory);
+        Misc.free(dataID);
     }
 
     @TestOnly
@@ -1859,5 +1862,9 @@ public class CairoEngine implements Closeable, WriterSource {
             }
             return false;
         }
+    }
+
+    public DataID getDataID() {
+        return dataID;
     }
 }

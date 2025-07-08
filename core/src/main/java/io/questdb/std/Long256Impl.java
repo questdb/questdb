@@ -125,6 +125,13 @@ public class Long256Impl implements Long256, Sinkable {
         return sink.toString();
     }
 
+    public void toAddr(long addr) {
+        Unsafe.getUnsafe().putLong(addr, l0);
+        Unsafe.getUnsafe().putLong(addr + Long.BYTES, l1);
+        Unsafe.getUnsafe().putLong(addr + Long.BYTES * 2, l2);
+        Unsafe.getUnsafe().putLong(addr + Long.BYTES * 3, l3);
+    }
+
     static {
         NULL_LONG256.setAll(
                 Numbers.LONG_NULL,

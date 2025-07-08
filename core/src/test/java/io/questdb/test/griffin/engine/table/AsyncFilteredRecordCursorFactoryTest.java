@@ -59,6 +59,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -1345,6 +1346,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void toSink(@NotNull CharSink<?> sink) {
             sqlExecutionContext.toSink(sink);
+        }
+
+        @Override
+        public Long256 getDataId() {
+            return sqlExecutionContext.getDataId();
         }
     }
 }

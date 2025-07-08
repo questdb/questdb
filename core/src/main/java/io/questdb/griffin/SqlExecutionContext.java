@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.std.Long256;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
@@ -248,4 +249,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     default void toSink(@NotNull CharSink<?> sink) {
     }
+
+    Long256 getDataId();
 }
