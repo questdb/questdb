@@ -760,6 +760,9 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             case ColumnType.NULL:
                 return VALUE_APPENDER_LONG;
             default:
+                if (array.getCardinality() == 0) {
+                    return VALUE_APPENDER_LONG;
+                }
                 throw new AssertionError("No appender for ColumnType " + elemType);
         }
     }
