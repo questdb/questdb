@@ -22,7 +22,7 @@ stages:
             windows:
               vmImage: 'windows-latest'
               jdk : '1.17'
-              jdk: '1.17'
+              
         pool:
           vmImage: $(vmImage)
         timeoutInMinutes: 60
