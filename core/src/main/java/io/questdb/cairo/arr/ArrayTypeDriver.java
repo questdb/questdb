@@ -138,11 +138,9 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     ) {
         double d = array.getDouble(index);
         if (Double.isFinite(d)) {
-            Numbers.append(sink, d);
+            sink.put(d);
         } else {
-            sink.put("\"");
-            Numbers.append(sink, d);
-            sink.put("\"");
+            sink.put("null");
         }
     }
 
