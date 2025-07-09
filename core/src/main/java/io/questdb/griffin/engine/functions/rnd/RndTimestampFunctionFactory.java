@@ -56,10 +56,13 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         Function arg = args.getQuick(0);
         Function arg2 = args.getQuick(1);
-        int timestampType = ColumnType.getTimestampType(arg.getType(), arg2.getType(), configuration);
+        int arg1Type = ColumnType.getTimestampType(arg.getType(), configuration);
+        int arg2Type = ColumnType.getTimestampType(arg2.getType(), configuration);
+        ;
+        int timestampType = Math.max(arg1Type, arg2Type);
         TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
-        final long lo = driver.from(arg.getTimestamp(null), arg.getType());
-        final long hi = driver.from(arg2.getTimestamp(null), arg2.getType());
+        final long lo = driver.from(arg.getTimestamp(null), arg1Type);
+        final long hi = driver.from(arg2.getTimestamp(null), arg2Type);
         final int nanRate = args.getQuick(2).getInt(null);
 
         if (nanRate < 0) {

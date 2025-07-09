@@ -4824,7 +4824,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (model.isUpdate()) {
                     // Check the type of the column to be updated
                     int columnIndex = model.getUpdateTableColumnNames().indexOf(column.getAlias());
-                    targetColumnType = model.getUpdateTableColumnTypes().get(columnIndex);
+                    int toType = model.getUpdateTableColumnTypes().get(columnIndex);
+                    // If the column is timestamp, we will not change the type, otherwise we will lose timestamp's precision.
+                    if (!isTimestamp(toType)) {
+                        targetColumnType = toType;
+                    }
                 }
 
                 // define "undefined" functions as string unless it's update.

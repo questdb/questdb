@@ -144,8 +144,8 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
 
         public void of(SqlExecutionContext executionContext, int stepPosition) throws SqlException {
             super.of(executionContext);
-            this.start = timestampDriver.from(startFunc.getTimestamp(null), startFunc.getType());
-            this.end = timestampDriver.from(endFunc.getTimestamp(null), endFunc.getType());
+            this.start = timestampDriver.from(startFunc.getTimestamp(null), ColumnType.getTimestampType(startFunc.getType(), executionContext.getCairoEngine().getConfiguration()));
+            this.end = timestampDriver.from(endFunc.getTimestamp(null), ColumnType.getTimestampType(endFunc.getType(), executionContext.getCairoEngine().getConfiguration()));
 
             final CharSequence stepStr = stepFunc.getStrA(null);
 

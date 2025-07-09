@@ -79,15 +79,15 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "select must provide exactly one column");
         }
         Function arg0 = args.getQuick(0);
-        int arg0Type = arg0.getType();
+        int arg0Type = ColumnType.getTimestampType(arg0.getType(), configuration);
         int timestampType = ColumnType.getTimestampType(arg0Type, metadata.getColumnType(0), configuration);
-        boolean leftNeedsConvert = ColumnType.isTimestamp(arg0Type) && arg0Type != timestampType;
+        boolean leftNeedsConvert = arg0Type != timestampType;
         TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         switch (metadata.getColumnType(0)) {
             case ColumnType.TIMESTAMP:
             case ColumnType.NULL:
                 if (leftNeedsConvert) {
-                    return new LeftConvertTimestampCursorFunc(factory, arg0, args.getQuick(1), driver);
+                    return new LeftConvertTimestampCursorFunc(factory, arg0, args.getQuick(1), driver, timestampType);
                 } else {
                     return new TimestampCursorFunc(factory, arg0, args.getQuick(1), driver);
                 }
@@ -103,9 +103,9 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
     private static class LeftConvertTimestampCursorFunc extends TimestampCursorFunc {
         private final int leftType;
 
-        private LeftConvertTimestampCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, TimestampDriver driver) {
+        private LeftConvertTimestampCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, TimestampDriver driver, int leftType) {
             super(factory, leftFunc, rightFunc, driver);
-            this.leftType = leftFunc.getType();
+            this.leftType = leftType;
         }
 
         @Override
@@ -236,7 +236,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
             this.stateShared = false;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
-                    epoch = driver.from(cursor.getRecord().getTimestamp(0), factory.getMetadata().getColumnType(0));
+                    epoch = driver.from(cursor.getRecord().getTimestamp(0), ColumnType.getTimestampType(factory.getMetadata().getColumnType(0), executionContext.getCairoEngine().getConfiguration()));
                 } else {
                     epoch = Numbers.LONG_NULL;
                 }

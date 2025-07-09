@@ -62,9 +62,9 @@ public class IntervalFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final Function loFunc = args.getQuick(0);
         final Function hiFunc = args.getQuick(1);
-        int leftTimestampType = loFunc.getType();
-        int rightTimestampType = hiFunc.getType();
-        int timestampType = ColumnType.getTimestampType(leftTimestampType, rightTimestampType, configuration);
+        int leftTimestampType = ColumnType.getTimestampType(loFunc.getType(), configuration);
+        int rightTimestampType = ColumnType.getTimestampType(hiFunc.getType(), configuration);
+        int timestampType = Math.max(leftTimestampType, rightTimestampType);
         TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         int intervalType = ColumnType.getIntervalType(timestampType);
         if (loFunc.isConstant() && hiFunc.isConstant()) {
@@ -80,14 +80,14 @@ public class IntervalFunctionFactory implements FunctionFactory {
         }
         if ((loFunc.isConstant() || loFunc.isRuntimeConstant())
                 || (hiFunc.isConstant() || hiFunc.isRuntimeConstant())) {
-            return new RuntimeConstFunc(position, loFunc, hiFunc, intervalType, driver);
+            return new RuntimeConstFunc(position, loFunc, hiFunc, intervalType, driver, leftTimestampType, rightTimestampType);
         }
-        if (leftTimestampType == rightTimestampType || !ColumnType.isTimestamp(leftTimestampType) || !ColumnType.isTimestamp(rightTimestampType)) {
+        if (leftTimestampType == rightTimestampType) {
             return new Func(loFunc, hiFunc, intervalType, driver);
         } else if (leftTimestampType < rightTimestampType) {
-            return new LeftConvert(loFunc, hiFunc, intervalType, driver);
+            return new LeftConvert(loFunc, hiFunc, intervalType, driver, leftTimestampType);
         } else {
-            return new RightConvert(loFunc, hiFunc, intervalType, driver);
+            return new RightConvert(loFunc, hiFunc, intervalType, driver, rightTimestampType);
         }
     }
 
@@ -166,9 +166,9 @@ public class IntervalFunctionFactory implements FunctionFactory {
     private static class LeftConvert extends Func {
         private final int leftFunctionType;
 
-        public LeftConvert(Function loFunc, Function hiFunc, int timestampType, TimestampDriver timestampDriver) {
+        public LeftConvert(Function loFunc, Function hiFunc, int timestampType, TimestampDriver timestampDriver, int leftFunctionType) {
             super(loFunc, hiFunc, timestampType, timestampDriver);
-            this.leftFunctionType = loFunc.getType();
+            this.leftFunctionType = leftFunctionType;
         }
 
         @Override
@@ -188,9 +188,9 @@ public class IntervalFunctionFactory implements FunctionFactory {
     private static class RightConvert extends Func {
         private final int rightFunctionType;
 
-        public RightConvert(Function loFunc, Function hiFunc, int timestampType, TimestampDriver timestampDriver) {
+        public RightConvert(Function loFunc, Function hiFunc, int timestampType, TimestampDriver timestampDriver, int rightFunctionType) {
             super(loFunc, hiFunc, timestampType, timestampDriver);
-            this.rightFunctionType = hiFunc.getType();
+            this.rightFunctionType = rightFunctionType;
         }
 
         @Override
@@ -211,15 +211,19 @@ public class IntervalFunctionFactory implements FunctionFactory {
         private final TimestampDriver driver;
         private final Function hiFunc;
         private final Interval interval = new Interval();
+        private final int leftFunctionType;
         private final Function loFunc;
         private final int position;
+        private final int rightFunctionType;
 
-        public RuntimeConstFunc(int position, Function loFunc, Function hiFunc, int intervalType, TimestampDriver driver) {
+        public RuntimeConstFunc(int position, Function loFunc, Function hiFunc, int intervalType, TimestampDriver driver, int leftFunctionType, int rightFunctionType) {
             super(intervalType);
             this.position = position;
             this.loFunc = loFunc;
             this.hiFunc = hiFunc;
             this.driver = driver;
+            this.leftFunctionType = leftFunctionType;
+            this.rightFunctionType = rightFunctionType;
         }
 
         @Override
@@ -275,8 +279,8 @@ public class IntervalFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             BinaryFunction.super.init(symbolTableSource, executionContext);
-            long lo = driver.from(loFunc.getTimestamp(null), loFunc.getType());
-            long hi = driver.from(hiFunc.getTimestamp(null), hiFunc.getType());
+            long lo = driver.from(loFunc.getTimestamp(null), leftFunctionType);
+            long hi = driver.from(hiFunc.getTimestamp(null), rightFunctionType);
             if (lo == Numbers.LONG_NULL || hi == Numbers.LONG_NULL) {
                 interval.of(Interval.NULL.getLo(), Interval.NULL.getHi());
             }

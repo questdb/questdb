@@ -58,8 +58,8 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         Function fromFn = args.getQuick(1);
         Function toFn = args.getQuick(2);
         int argType = ColumnType.getTimestampType(arg.getType(), configuration);
-        int fromType = fromFn.getType();
-        int toType = toFn.getType();
+        int fromType = ColumnType.getTimestampType(fromFn.getType(), configuration);
+        int toType = ColumnType.getTimestampType(toFn.getType(), configuration);
         TimestampDriver driver = ColumnType.getTimestampDriver(argType);
 
         if (fromFn.isConstant() && toFn.isConstant()) {
@@ -70,23 +70,23 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
             }
             return new ConstFunc(arg, fromFnTimestamp, toFnTimestamp);
         }
-        boolean leftNeedConvert = ColumnType.isTimestamp(fromType) && fromType != argType;
-        boolean rightNeedConvert = ColumnType.isTimestamp(toType) && toType != argType;
+        boolean leftNeedConvert = fromType != argType;
+        boolean rightNeedConvert = toType != argType;
 
         if (!leftNeedConvert && !rightNeedConvert) {
-            return new VarBetweenFunction(arg, fromFn, toFn, driver);
+            return new VarBetweenFunction(arg, fromFn, toFn, driver, fromType, toType);
         } else if (leftNeedConvert && rightNeedConvert) {
-            return new BothConvertFunction(arg, fromFn, toFn, driver);
+            return new BothConvertFunction(arg, fromFn, toFn, driver, fromType, toType);
         } else if (leftNeedConvert) {
-            return new LeftConvertFunction(arg, fromFn, toFn, driver);
+            return new LeftConvertFunction(arg, fromFn, toFn, driver, fromType, toType);
         } else {
-            return new RightConvertFunction(arg, fromFn, toFn, driver);
+            return new RightConvertFunction(arg, fromFn, toFn, driver, fromType, toType);
         }
     }
 
     private static class BothConvertFunction extends VarBetweenFunction {
-        public BothConvertFunction(Function left, Function from, Function to, TimestampDriver driver) {
-            super(left, from, to, driver);
+        public BothConvertFunction(Function left, Function from, Function to, TimestampDriver driver, int fromType, int toType) {
+            super(left, from, to, driver, fromType, toType);
         }
 
         @Override
@@ -140,8 +140,8 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
     }
 
     private static class LeftConvertFunction extends VarBetweenFunction {
-        public LeftConvertFunction(Function left, Function from, Function to, TimestampDriver driver) {
-            super(left, from, to, driver);
+        public LeftConvertFunction(Function left, Function from, Function to, TimestampDriver driver, int fromType, int toType) {
+            super(left, from, to, driver, fromType, toType);
         }
 
         @Override
@@ -165,8 +165,8 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
     }
 
     private static class RightConvertFunction extends VarBetweenFunction {
-        public RightConvertFunction(Function left, Function from, Function to, TimestampDriver driver) {
-            super(left, from, to, driver);
+        public RightConvertFunction(Function left, Function from, Function to, TimestampDriver driver, int fromType, int toType) {
+            super(left, from, to, driver, fromType, toType);
         }
 
         @Override
@@ -197,13 +197,13 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         protected final Function to;
         protected final int toType;
 
-        public VarBetweenFunction(Function left, Function from, Function to, TimestampDriver driver) {
+        public VarBetweenFunction(Function left, Function from, Function to, TimestampDriver driver, int fromType, int toType) {
             this.arg = left;
             this.from = from;
             this.to = to;
             this.driver = driver;
-            this.fromType = from.getType();
-            toType = to.getType();
+            this.fromType = fromType;
+            this.toType = toType;
         }
 
         @Override

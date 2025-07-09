@@ -24,10 +24,11 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.std.ObjList;
 
 @FunctionalInterface
 interface CaseFunctionConstructor {
-    Function getInstance(int position, CaseFunctionPicker picker, ObjList<Function> args, int returnType);
+    Function getInstance(CairoConfiguration configuration, int position, CaseFunctionPicker picker, ObjList<Function> args, int returnType);
 }

@@ -54,14 +54,14 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        int leftType = args.getQuick(0).getType();
-        int rightType = args.getQuick(1).getType();
-        if (leftType == rightType || !ColumnType.isTimestamp(leftType) || !ColumnType.isTimestamp(rightType)) {
+        int leftType = ColumnType.getTimestampType(args.getQuick(0).getType(), configuration);
+        int rightType = ColumnType.getTimestampType(args.getQuick(1).getType(), configuration);
+        if (leftType == rightType) {
             return new Func(args.getQuick(0), args.getQuick(1));
         } else if (leftType < rightType) {
-            return new LeftConvertFunc(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampDriver(leftType), rightType);
+            return new LeftConvertFunc(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampDriver(rightType), leftType);
         } else {
-            return new RightConvertFunc(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampDriver(rightType), leftType);
+            return new RightConvertFunc(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampDriver(leftType), rightType);
         }
     }
 
@@ -77,34 +77,34 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
     }
 
     private static class LeftConvertFunc extends AbstractEqBinaryFunction {
-        protected TimestampDriver leftDriver;
+        protected TimestampDriver driver;
         protected int toTimestampType;
 
-        public LeftConvertFunc(Function left, Function right, TimestampDriver leftDriver, int toTimestampType) {
+        public LeftConvertFunc(Function left, Function right, TimestampDriver driver, int toTimestampType) {
             super(left, right);
-            this.leftDriver = leftDriver;
+            this.driver = driver;
             this.toTimestampType = toTimestampType;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (leftDriver.from(left.getTimestamp(rec), toTimestampType) == right.getTimestamp(rec));
+            return negated != (driver.from(left.getTimestamp(rec), toTimestampType) == right.getTimestamp(rec));
         }
     }
 
     private static class RightConvertFunc extends AbstractEqBinaryFunction {
-        protected TimestampDriver rightDriver;
+        protected TimestampDriver driver;
         protected int toTimestampType;
 
-        public RightConvertFunc(Function left, Function right, TimestampDriver rightDriver, int toTimestampType) {
+        public RightConvertFunc(Function left, Function right, TimestampDriver driver, int toTimestampType) {
             super(left, right);
-            this.rightDriver = rightDriver;
+            this.driver = driver;
             this.toTimestampType = toTimestampType;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (left.getTimestamp(rec) == rightDriver.from(right.getTimestamp(rec), toTimestampType));
+            return negated != (left.getTimestamp(rec) == driver.from(right.getTimestamp(rec), toTimestampType));
         }
     }
 }

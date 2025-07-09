@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions;
 
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -183,7 +184,8 @@ public abstract class DateFunction implements Function {
 
     @Override
     public final long getTimestamp(Record rec) {
-        throw new UnsupportedOperationException();
+        final long value = getDate(rec);
+        return MicrosTimestampDriver.INSTANCE.fromDate(value);
     }
 
     @Override

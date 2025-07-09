@@ -93,7 +93,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
         if (from == Numbers.LONG_NULL) {
             from = 0;
         } else {
-            from = timestampDriver.from(from, args.getQuick(2).getType());
+            from = timestampDriver.from(from, ColumnType.getTimestampType(args.getQuick(2).getType(), configuration));
         }
         final Function offsetFunc = args.getQuick(3);
         final int offsetPos = argPositions.getQuick(3);

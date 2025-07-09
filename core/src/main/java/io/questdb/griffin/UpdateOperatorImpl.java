@@ -32,6 +32,7 @@ import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -219,10 +220,12 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         }
 
                         appendRowUpdate(
+                                sqlExecutionContext,
                                 rowPartitionIndex,
                                 affectedColumnCount,
                                 prevRow,
                                 currentRow,
+                                factory.getMetadata(),
                                 masterRecord,
                                 minRow
                         );
@@ -359,10 +362,12 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     }
 
     private void appendRowUpdate(
+            SqlExecutionContext sqlExecutionContext,
             int rowPartitionIndex,
             int affectedColumnCount,
             long prevRow,
             long currentRow,
+            RecordMetadata metadata,
             Record masterRecord,
             long firstUpdatedRowId
     ) {
@@ -406,7 +411,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     dstFixMem.putLong(masterRecord.getLong(i));
                     break;
                 case ColumnType.TIMESTAMP:
-                    dstFixMem.putLong(masterRecord.getTimestamp(i));
+                    TimestampDriver driver = ColumnType.getTimestampDriver(toType);
+                    dstFixMem.putLong(driver.from(masterRecord.getTimestamp(i), ColumnType.getTimestampType(metadata.getColumnType(i), sqlExecutionContext.getCairoEngine().getConfiguration())));
                     break;
                 case ColumnType.DATE:
                     dstFixMem.putLong(masterRecord.getDate(i));

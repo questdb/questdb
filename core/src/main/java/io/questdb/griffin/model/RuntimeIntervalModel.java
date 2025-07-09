@@ -304,10 +304,9 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     return Numbers.LONG_NULL;
                 }
             }
-        } else if (ColumnType.isTimestamp(functionType)) {
-            return timestampDriver.from(dynamicFunction.getTimestamp(null), functionType);
+        } else {
+            return timestampDriver.from(dynamicFunction.getTimestamp(null), ColumnType.getTimestampType(functionType, sqlExecutionContext.getCairoEngine().getConfiguration()));
         }
-        return dynamicFunction.getTimestamp(null);
     }
 
     private boolean isStatic() {

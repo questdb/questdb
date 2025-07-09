@@ -64,7 +64,7 @@ public class TimestampFloorFromFunctionFactory implements FunctionFactory {
         if (from == Numbers.LONG_NULL) {
             from = 0;
         } else {
-            from = ColumnType.getTimestampDriver(timestampType).from(from, args.getQuick(2).getType());
+            from = ColumnType.getTimestampDriver(timestampType).from(from, ColumnType.getTimestampType(args.getQuick(2).getType(), configuration));
         }
 
         switch (unit) {

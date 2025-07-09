@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.sql.Record;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntObjHashMap;
@@ -287,19 +288,40 @@ public final class ColumnType {
     }
 
     public static int getTimestampType(int left, int right, CairoConfiguration configuration) {
-        if (left == TIMESTAMP_NANO || right == TIMESTAMP_NANO) {
-            return TIMESTAMP_NANO;
-        } else if (left == TIMESTAMP_MICRO || right == TIMESTAMP_MICRO) {
-            return TIMESTAMP_MICRO;
-        }
-        return configuration.getDefaultTimestampType();
+        left = getTimestampType(left, configuration);
+        right = getTimestampType(right, configuration);
+        return Math.max(left, right);
     }
 
+    /**
+     * Determines the (implicit) conversion rule from the other columnTypes to the Timestamp type.
+     * <p>
+     * This conversion rule is consistent with the implementation of the {@link io.questdb.cairo.sql.Function#getTimestamp(Record)} of functions.
+     *
+     * @param left          the input column type to convert
+     * @param configuration the Cairo configuration containing default timestamp type settings
+     * @return the appropriate timestamp type for the input column type
+     * <p>
+     * Conversion rules:
+     * - TIMESTAMP types: returned as-is to preserve existing precision
+     * - DATE types: converted to {@link #TIMESTAMP_MICRO}
+     * - String types (VARCHAR, STRING, SYMBOL): converted to {@link #TIMESTAMP_NANO}
+     * for maximum precision when parsing timestamp strings
+     * - All other types: fall back to the configuration's default timestamp type
+     */
     public static int getTimestampType(int left, CairoConfiguration configuration) {
-        if (isTimestamp(left)) {
-            return left;
+        switch (tagOf(left)) {
+            case TIMESTAMP:
+                return left;
+            case DATE:
+                return ColumnType.TIMESTAMP_MICRO;
+            case VARCHAR:
+            case STRING:
+            case SYMBOL:
+                return ColumnType.TIMESTAMP_NANO;
+            default:
+                return configuration.getDefaultTimestampType();
         }
-        return configuration.getDefaultTimestampType();
     }
 
     public static int getTimestampTypeByIntervalType(int intervalType) {

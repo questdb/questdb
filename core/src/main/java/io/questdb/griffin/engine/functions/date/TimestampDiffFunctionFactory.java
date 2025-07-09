@@ -57,9 +57,9 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         final Function periodFunction = args.getQuick(0);
         final Function start = args.getQuick(1);
         final Function end = args.getQuick(2);
-        final int startType = start.getType();
-        final int endType = end.getType();
-        int timestampType = ColumnType.getTimestampType(startType, endType, configuration);
+        final int startType = ColumnType.getTimestampType(start.getType(), configuration);
+        final int endType = ColumnType.getTimestampType(end.getType(), configuration);
+        int timestampType = Math.max(startType, endType);
         TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
 
         if (periodFunction.isConstant()) {
@@ -68,16 +68,16 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
 
             if (diffMethod != null) {
                 if (start.isConstant() && start.getTimestamp(null) != Numbers.LONG_NULL) {
-                    return new DiffVarConstFunction(args.getQuick(2), start.getLong(null), diffMethod, driver, period);
+                    return new DiffVarConstFunction(end, driver.from(start.getTimestamp(null), startType), diffMethod, driver, startType, period);
                 }
                 if (end.isConstant() && end.getTimestamp(null) != Numbers.LONG_NULL) {
-                    return new DiffVarConstFunction(args.getQuick(1), end.getLong(null), diffMethod, driver, period);
+                    return new DiffVarConstFunction(start, driver.from(end.getTimestamp(null), endType), diffMethod, driver, endType, period);
                 }
-                return new DiffVarVarFunction(args.getQuick(1), args.getQuick(2), driver, diffMethod, period);
+                return new DiffVarVarFunction(start, end, driver, diffMethod, startType, endType, period);
             }
             return driver.getTimestampConstantNull();
         }
-        return new DateDiffFunc(args.getQuick(0), args.getQuick(1), args.getQuick(2), driver);
+        return new DateDiffFunc(args.getQuick(0), args.getQuick(1), args.getQuick(2), driver, startType, endType);
     }
 
     private static class DateDiffFunc extends LongFunction implements TernaryFunction {
@@ -88,13 +88,13 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         final Function right;
         final int rightType;
 
-        public DateDiffFunc(Function left, Function center, Function right, TimestampDriver driver) {
+        public DateDiffFunc(Function left, Function center, Function right, TimestampDriver driver, int leftType, int rightType) {
             this.left = left;
             this.center = center;
             this.right = right;
             this.driver = driver;
-            this.leftType = center.getType();
-            this.rightType = right.getType();
+            this.leftType = leftType;
+            this.rightType = rightType;
         }
 
         @Override
@@ -134,13 +134,13 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         private final char symbol;
         private final int timestampType;
 
-        public DiffVarConstFunction(Function left, long right, TimestampDriver.TimestampDiffMethod func, TimestampDriver driver, char symbol) {
+        public DiffVarConstFunction(Function left, long right, TimestampDriver.TimestampDiffMethod func, TimestampDriver driver, int timestampType, char symbol) {
             this.arg = left;
             this.constantTime = right;
             this.func = func;
             this.symbol = symbol;
             this.driver = driver;
-            this.timestampType = arg.getType();
+            this.timestampType = timestampType;
         }
 
         @Override
@@ -173,14 +173,14 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         private final char symbol;
 
 
-        public DiffVarVarFunction(Function left, Function right, TimestampDriver driver, TimestampDriver.TimestampDiffMethod func, char symbol) {
+        public DiffVarVarFunction(Function left, Function right, TimestampDriver driver, TimestampDriver.TimestampDiffMethod func, int leftType, int rightType, char symbol) {
             this.left = left;
             this.right = right;
             this.func = func;
             this.symbol = symbol;
             this.driver = driver;
-            this.leftType = left.getType();
-            this.rightType = right.getType();
+            this.leftType = leftType;
+            this.rightType = rightType;
         }
 
         @Override

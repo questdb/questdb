@@ -230,7 +230,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
             this.stateShared = false;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
-                    epoch = driver.from(cursor.getRecord().getTimestamp(0), factory.getMetadata().getColumnType(0));
+                    epoch = driver.from(cursor.getRecord().getTimestamp(0), ColumnType.getTimestampType(factory.getMetadata().getColumnType(0), executionContext.getCairoEngine().getConfiguration()));
                 } else {
                     epoch = Numbers.LONG_NULL;
                 }

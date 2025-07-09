@@ -115,7 +115,7 @@ public class CaseFunctionFactory implements FunctionFactory {
             return elseB;
         };
 
-        return CaseCommon.getCaseFunction(position, returnType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(configuration, position, returnType, picker, argsToPoke);
     }
 
     @Override

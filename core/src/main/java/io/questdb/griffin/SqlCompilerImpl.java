@@ -725,6 +725,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 || (from == ColumnType.IPv4 && to == ColumnType.VARCHAR);
     }
 
+    private static boolean isTimestampUpdateCast(int from, int to) {
+        return ColumnType.isTimestamp(to) && ColumnType.isAssignableFrom(from, to);
+    }
+
     private int addColumnWithType(
             AlterOperationBuilder addColumn,
             CharSequence columnName,
@@ -3752,7 +3756,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 int tableColumnIndex = tableColumnNames.indexOf(updateColumnName);
                 int tableColumnType = tableColumnTypes.get(tableColumnIndex);
 
-                if (virtualColumnType != tableColumnType && !isIPv4UpdateCast(virtualColumnType, tableColumnType)) {
+                if (virtualColumnType != tableColumnType && !isIPv4UpdateCast(virtualColumnType, tableColumnType) && !isTimestampUpdateCast(virtualColumnType, tableColumnType)) {
                     if (!ColumnType.isSymbolOrString(tableColumnType) || !ColumnType.isAssignableFrom(virtualColumnType, ColumnType.STRING)) {
                         if (tableColumnType != ColumnType.VARCHAR || !ColumnType.isAssignableFrom(virtualColumnType, ColumnType.VARCHAR)) {
                             // get column position
