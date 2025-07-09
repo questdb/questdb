@@ -147,7 +147,7 @@ impl<W: Write> ParquetWriter<W> {
             version: options.version,
         };
 
-        let created_by = Some("QuestDB version 8.0".to_string());
+        let created_by = Some("QuestDB version 9.0".to_string());
         let writer = FileWriter::with_sorting_columns(
             self.writer,
             parquet_schema.clone(),
