@@ -778,28 +778,28 @@ public class ArrayTest extends AbstractCairoTest {
     public void testArraySumAndCumSumNullBehaviour() throws Exception {
         assertMemoryLeak(() -> {
             assertSqlWithTypes("i\tarray_sum\n" +
-                            "[NaN]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
                             "[NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
                             "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
                             "[NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[NaN]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n",
+                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n",
                     "select rnd_double_array(1,1) i, array_sum(i) from long_sequence(10);\n");
             assertSqlWithTypes("i\tarray_cum_sum\n" +
-                            "[NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
                             "[NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n",
+                            "[NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n",
                     "select rnd_double_array(1,1) i, array_cum_sum(i) from long_sequence(10);\n");
         });
     }
