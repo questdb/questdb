@@ -59,26 +59,24 @@ class PGUtils {
     private PGUtils() {
     }
 
-    public static int calculateArrayColBinSize(ArrayView array, int resumePoint) {
-        int notNullCount = array.isVanilla() ?
-                array.flatView().countDouble(array.getFlatViewOffset(), array.getFlatViewLength())
-                : countNotNullRecursive(array, 0, 0);
-        int nullCount = array.getCardinality() - notNullCount;
-        // When this method is called while resuming the sending of an array (resumePoint > 0),
-        // the header has already been sent. That's why we set header size to 0 in that case.
-        // The calling code must ensure at least one element follows the header, otherwise
-        // resumePoint may stay at 0 even though the header was already sent.
-        int headerSize = resumePoint == 0
-                ? Integer.BYTES // size field (stores the number returned from this method)
+    public static int calculateArrayColBinSize(ArrayView array, int notNullCount) {
+        int headerSize = Integer.BYTES // size field (stores the number returned from this method)
                 + Integer.BYTES // dimension count
                 + Integer.BYTES // "has nulls" flag
                 + Integer.BYTES // component type
-                + array.getDimCount() * (2 * Integer.BYTES) // dimension lengths
-                : 0;
+                + array.getDimCount() * (2 * Integer.BYTES); // dimension lengths
         return headerSize +
-                (notNullCount - resumePoint) *
+                notNullCount *
                         (Integer.BYTES // element size
                                 + Long.BYTES) + // element value
+                (array.getCardinality() - notNullCount) * // number of NULL elements
+                        Integer.BYTES; // element size, zero for NULL value
+    }
+
+    public static int calculateArrayResumeColBinSize(int notNullCount, int nullCount) {
+        return notNullCount *
+                (Integer.BYTES // element size
+                        + Long.BYTES) + // element value
                 nullCount *
                         Integer.BYTES; // element size, zero for NULL value
     }
@@ -178,10 +176,30 @@ class PGUtils {
                 assert ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE ||
                         ColumnType.decodeArrayElementType(columnType) == ColumnType.LONG
                         : "implemented only for DOUBLE and LONG";
-                return calculateArrayColBinSize(array, arrayResumePoint);
+                int notNullCount = PGUtils.countNotNull(array, arrayResumePoint);
+                return calculateArrayResumeColBinSize(notNullCount, array.getCardinality() - notNullCount);
             default:
                 assert false : "unsupported type: " + typeTag;
                 return -1;
+        }
+    }
+
+    public static int countNotNull(ArrayView array, int resumePoint) {
+        if (array.isVanilla()) {
+            switch (array.getElemType()) {
+                case ColumnType.DOUBLE:
+                    return array.flatView().countDouble(
+                            array.getFlatViewOffset() + resumePoint,
+                            array.getFlatViewLength() - resumePoint);
+                case ColumnType.LONG:
+                    return array.flatView().countLong(
+                            array.getFlatViewOffset() + resumePoint,
+                            array.getFlatViewLength() - resumePoint);
+                default:
+                    throw new AssertionError("Unsupported array element type: " + array.getElemType());
+            }
+        } else {
+            return countNotNullRecursive(array, 0, 0, resumePoint);
         }
     }
 
@@ -252,21 +270,31 @@ class PGUtils {
         }
     }
 
-    private static int countNotNullRecursive(ArrayView array, int dim, int flatIndex) {
+    private static int countNotNullRecursive(ArrayView array, int dim, int flatIndex, int resumePoint) {
         int count = 0;
         final int dimLen = array.getDimLen(dim);
         final int stride = array.getStride(dim);
         final boolean atDeepestDim = dim == array.getDimCount() - 1;
         if (atDeepestDim) {
+            short elemType = array.getElemType();
             for (int i = 0; i < dimLen; i++) {
-                if (Numbers.isFinite(array.getDouble(flatIndex))) {
-                    count++;
-                }
+                if (flatIndex >= resumePoint)
+                    switch (elemType) {
+                        case ColumnType.DOUBLE:
+                            if (Numbers.isFinite(array.getDouble(flatIndex))) {
+                                count++;
+                            }
+                            break;
+                        case ColumnType.LONG:
+                            if (array.getLong(flatIndex) != Numbers.LONG_NULL) {
+                                count++;
+                            }
+                    }
                 flatIndex += stride;
             }
         } else {
             for (int i = 0; i < dimLen; i++) {
-                count += countNotNullRecursive(array, dim + 1, flatIndex);
+                count += countNotNullRecursive(array, dim + 1, flatIndex, resumePoint);
                 flatIndex += stride;
             }
         }

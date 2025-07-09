@@ -129,7 +129,8 @@ public interface FlatArrayView {
     }
 
     /**
-     * Counts the number of finite numbers within a block of this flat array.
+     * Counts the number of non-null numbers within a block of this
+     * flat array of DOUBLE.
      *
      * @param offset the starting offset of the block (in elements)
      * @param length the number of elements in the block
@@ -139,6 +140,24 @@ public interface FlatArrayView {
         for (int i = offset, n = offset + length; i < n; i++) {
             double v = getDoubleAtAbsIndex(i);
             if (Numbers.isFinite(v)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Counts the number of non-null numbers within a block of this
+     * flat array of LONG.
+     *
+     * @param offset the starting offset of the block (in elements)
+     * @param length the number of elements in the block
+     */
+    default int countLong(int offset, int length) {
+        int count = 0;
+        for (int i = offset, n = offset + length; i < n; i++) {
+            double v = getLongAtAbsIndex(i);
+            if (v != Numbers.LONG_NULL) {
                 count++;
             }
         }
