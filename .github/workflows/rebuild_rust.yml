@@ -146,6 +146,7 @@ jobs:
           cargo clean
           RUSTFLAGS="-C target-feature=-crt-static" cargo build --release
           mkdir -p ../../src/main/resources/io/questdb/bin/linux-x86-64-musl/
+          strip --strip-unneeded target/release/libquestdbr.so
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux-x86-64-musl/
       - name: Save linux-x86-64-musl Libraries to Cache
         uses: actions/cache/save@v3
@@ -210,6 +211,7 @@ jobs:
           cargo clean
           RUSTFLAGS="-C target-feature=-crt-static" cargo build --release
           mkdir -p ../../src/main/resources/io/questdb/bin/linux-aarch64-musl/
+          strip --strip-unneeded target/release/libquestdbr.so
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux-aarch64-musl/
       - name: Save linux-aarch64-musl Libraries to Cache
         uses: actions/cache/save@v3

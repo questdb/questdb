@@ -167,6 +167,7 @@ jobs:
           cd core
           cmake --build cmake-build-release -j$(nproc) --config Release
           mkdir -p src/main/resources/io/questdb/bin/linux-x86-64-musl/
+          strip --strip-unneeded target/classes/io/questdb/bin-local/libquestdb.so
           cp target/classes/io/questdb/bin-local/libquestdb.so src/main/resources/io/questdb/bin/linux-x86-64-musl/
       - name: Save linux-x86-64-musl Libraries to Cache
         uses: actions/cache/save@v4
@@ -236,8 +237,8 @@ jobs:
           make build_lib_static -j$(nproc)
           ./configure
           make build_lib_shared -j$(nproc)
-          mkdir -p ../../bin/linux-aarch64-musl/
-          cp lib/libjemalloc.so ../../bin/linux-aarch64-musl/
+          mkdir -p ../../../bin/linux-aarch64-musl/
+          cp lib/libjemalloc.so ../../../bin/linux-aarch64-musl/
       - name: Generate Makefiles
         run: |
           cd ./core
@@ -247,6 +248,7 @@ jobs:
           cd core
           cmake --build cmake-build-release -j$(nproc) --config Release
           mkdir -p src/main/resources/io/questdb/bin/linux-aarch64-musl/
+          strip --strip-unneeded target/classes/io/questdb/bin-local/libquestdb.so
           cp target/classes/io/questdb/bin-local/libquestdb.so src/main/resources/io/questdb/bin/linux-aarch64-musl/
       - name: Save linux-aarch64-musl Libraries to Cache
         uses: actions/cache/save@v4
