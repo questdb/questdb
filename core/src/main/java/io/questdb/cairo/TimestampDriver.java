@@ -286,21 +286,13 @@ public interface TimestampDriver {
 
     /**
      * Calculates the period between two timestamps in the specified time unit.
-     * 
-     * This method computes the difference between two timestamps and returns the result
-     * in the requested time unit. The timestamps are automatically converted to the 
-     * appropriate precision based on their types before calculation.
      *
-     * @param unit      the time unit for the result:
-     *                  'u' = microseconds, 'T' = milliseconds, 's' = seconds,
-     *                  'm' = minutes, 'h' = hours, 'd' = days, 'w' = weeks,
-     *                  'M' = months, 'y' = years
+     * @param unit      the time unit
      * @param start     the start timestamp value
-     * @param end       the end timestamp value  
-     * @param leftType  the column type of the start timestamp for proper conversion
-     * @param rightType the column type of the end timestamp for proper conversion
-     * @return the period between the timestamps in the specified unit, 
-     *         or Numbers.LONG_NULL if either timestamp is null
+     * @param end       the end timestamp value
+     * @param leftType  left column type
+     * @param rightType right column type
+     * @return the period between the timestamps in the specified unit
      */
     long getPeriodBetween(char unit, long start, long end, int leftType, int rightType);
 
