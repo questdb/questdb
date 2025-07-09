@@ -133,7 +133,6 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -674,16 +673,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         long commitTarget = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
-        final int timestampType = writer.getMetadata().getTimestampType();
-        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            CharSequence str = record.getStrA(cursorTimestampIndex);
-            long timestamp = SqlUtil.implicitCastStrAsTimestamp(str);
-
             // It's allowed to insert ISO formatted string to timestamp column
-            TableWriter.Row row = writer.newRow(timestampDriver.implicitCast(str));
-            TableWriter.Row row = writer.newRow(timestamp);
+            TableWriter.Row row = writer.newRow(timestampDriver.implicitCast(record.getStrA(cursorTimestampIndex)));
             copier.copy(record, row);
             row.append();
             if (++rowCount >= commitTarget) {
@@ -705,24 +699,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
-        final int timestampType = writer.getMetadata().getTimestampType();
-        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
         long commitTarget = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            Utf8Sequence varchar = record.getVarcharA(cursorTimestampIndex);
-            long timestamp;
-            if (varchar != null) {
-                timestamp = SqlUtil.implicitCastStrAsTimestamp(varchar.asAsciiCharSequence());
-            } else {
-                timestamp = Numbers.LONG_NULL;
-            }
-
             // It's allowed to insert ISO formatted string to timestamp column
-            TableWriter.Row row = writer.newRow(timestampDriver.implicitCast(str));
-            TableWriter.Row row = writer.newRow(timestamp);
+            TableWriter.Row row = writer.newRow(timestampDriver.implicitCastVarchar(record.getVarcharA(cursorTimestampIndex)));
             copier.copy(record, row);
             row.append();
             if (++rowCount >= commitTarget) {
