@@ -24,32 +24,10 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.str.Path;
-
 public class DataIDFactory {
-    public static final CharSequence DATA_ID_FILENAME = "_data_id";
+    public static final CharSequence DATA_ID_FILENAME = "_data_id.d";
 
-    public static DataID open(CairoConfiguration configuration) {
-        long dataFd = 0;
-        long dataMem = 0;
-        final FilesFacade ff = configuration.getFilesFacade();
-        try (Path path = new Path()) {
-            path.of(configuration.getDbRoot());
-            path.concat(DATA_ID_FILENAME);
-            dataFd = TableUtils.openFileRWOrFail(ff, path.$(), configuration.getWriterFileOpenOpts());
-            dataMem = TableUtils.mapRW(ff, dataFd, DataID.FILE_SIZE, MemoryTag.MMAP_DEFAULT);
-        } catch (Throwable th) {
-            if (dataFd != 0) {
-                if (dataMem != 0) {
-                    ff.munmap(dataMem, DataID.FILE_SIZE, MemoryTag.MMAP_DEFAULT);
-                }
-                ff.close(dataFd);
-            }
-            throw th;
-        }
-
-        return new DataID(configuration, dataFd, dataMem);
+    public static DataID newDataID(CairoConfiguration configuration) {
+        return new DataID(configuration, DATA_ID_FILENAME);
     }
 }

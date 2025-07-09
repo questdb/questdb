@@ -35,7 +35,8 @@ public class DataIDTest extends AbstractCairoTest {
     @Test
     public void testOpenDataID() throws Exception {
         assertMemoryLeak(() -> {
-            try (DataID id = DataIDFactory.open(engine.getConfiguration())) {
+            try (DataID id = DataIDFactory.newDataID(engine.getConfiguration())) {
+                id.open();
                 Assert.assertNotEquals(Long256Impl.ZERO_LONG256, id.get());
             }
         });
@@ -44,7 +45,8 @@ public class DataIDTest extends AbstractCairoTest {
     @Test
     public void testSetDataID() throws Exception {
         assertMemoryLeak(() -> {
-            try (DataID id = DataIDFactory.open(engine.getConfiguration())) {
+            try (DataID id = DataIDFactory.newDataID(engine.getConfiguration())) {
+                id.open();
                 Long256Impl previous = id.get();
                 Long256Impl newId = new Long256Impl();
                 newId.fromRnd(engine.getConfiguration().getRandom());

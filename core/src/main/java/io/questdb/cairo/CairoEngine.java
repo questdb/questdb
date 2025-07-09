@@ -210,12 +210,13 @@ public class CairoEngine implements Closeable, WriterSource {
             this.matViewTimerQueue = createMatViewTimerQueue();
             this.matViewGraph = new MatViewGraph(matViewTimerQueue);
             this.frameFactory = new FrameFactory(configuration);
-            this.dataID = DataIDFactory.open(configuration);
+            this.dataID = DataIDFactory.newDataID(configuration);
 
             settingsStore = new SettingsStore(configuration);
             settingsStore.init();
 
             tableIdGenerator.open();
+            dataID.open();
             checkpointRecover();
 
             // Migrate database files.
