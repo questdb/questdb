@@ -62,6 +62,7 @@ public class JsonExtractVarcharFunctionFactory implements FunctionFactory {
                 ColumnType.VARCHAR,
                 json,
                 path,
+                configuration.getDefaultTimestampType(),
                 configuration.getStrFunctionMaxBufferLength()
         );
     }

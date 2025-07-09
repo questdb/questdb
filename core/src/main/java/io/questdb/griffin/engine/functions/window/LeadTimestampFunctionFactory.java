@@ -81,6 +81,11 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
         }
 
         @Override
+        public int getType() {
+            return arg.getType();
+        }
+
+        @Override
         protected boolean doPass1(Record record, long recordOffset, WindowSPI spi) {
             long leadValue;
             if (count < offset) {
@@ -108,6 +113,11 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
                                          Function defaultValue,
                                          long offset) {
             super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         @Override

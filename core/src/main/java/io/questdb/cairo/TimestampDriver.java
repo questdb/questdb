@@ -132,9 +132,149 @@ public interface TimestampDriver {
 
     TimestampAddMethod getAddMethod(char c);
 
+    /**
+     * Gets the century from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the century, or Numbers.INT_NULL if timestamp is null
+     */
+    int getCentury(long timestamp);
+
     int getColumnType();
 
+    /**
+     * Extracts the day of month from a timestamp value.
+     * This method handles the driver-specific timestamp format and precision.
+     *
+     * @param timestamp the timestamp value
+     * @return the day of month (1-31), or Numbers.INT_NULL if timestamp is null
+     */
+    int getDayOfMonth(long timestamp);
+
+    /**
+     * Extracts the day of week from a timestamp value.
+     * This method handles the driver-specific timestamp format and precision.
+     *
+     * @param timestamp the timestamp value
+     * @return the day of week (1=Monday, 7=Sunday), or Numbers.INT_NULL if timestamp is null
+     */
+    int getDayOfWeek(long timestamp);
+
+    /**
+     * Extracts the day of week from a timestamp value with Sunday as the first day.
+     * This method handles the driver-specific timestamp format and precision.
+     *
+     * @param timestamp the timestamp value
+     * @return the day of week (1=Sunday, 7=Saturday), or Numbers.INT_NULL if timestamp is null
+     */
+    int getDayOfWeekSundayFirst(long timestamp);
+
+    /**
+     * Gets the number of days in the month for a timestamp value.
+     * This method handles the driver-specific timestamp format and precision.
+     *
+     * @param timestamp the timestamp value
+     * @return the number of days in the month (28-31), or Numbers.INT_NULL if timestamp is null
+     */
+    int getDaysPerMonth(long timestamp);
+
+    /**
+     * Gets the decade from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the decade, or Numbers.INT_NULL if timestamp is null
+     */
+    int getDecade(long timestamp);
+
+    /**
+     * Gets the day of week (Sunday-first) from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the day of week (0=Sunday, 6=Saturday), or Numbers.INT_NULL if timestamp is null
+     */
+    int getDow(long timestamp);
+
+    /**
+     * Gets the day of year from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the day of year (1-366), or Numbers.INT_NULL if timestamp is null
+     */
+    int getDoy(long timestamp);
+
+    /**
+     * Gets the hour of day from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the hour of day (0-23), or Numbers.INT_NULL if timestamp is null
+     */
+    int getHourOfDay(long timestamp);
+
     IntervalConstant getIntervalConstantNull();
+
+    /**
+     * Gets the ISO year from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the ISO year, or Numbers.INT_NULL if timestamp is null
+     */
+    int getIsoYear(long timestamp);
+
+    /**
+     * Gets the microseconds within the millisecond from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the microseconds within the millisecond (0-999), or Numbers.INT_NULL if timestamp is null
+     */
+    int getMicrosOfMilli(long timestamp);
+
+    /**
+     * Gets the microseconds within the minute from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the microseconds within the minute, or Numbers.LONG_NULL if timestamp is null
+     */
+    long getMicrosOfMinute(long timestamp);
+
+    /**
+     * Gets the millennium from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the millennium, or Numbers.INT_NULL if timestamp is null
+     */
+    int getMillennium(long timestamp);
+
+    /**
+     * Gets the milliseconds within the minute from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the milliseconds within the minute, or Numbers.LONG_NULL if timestamp is null
+     */
+    long getMillisOfMinute(long timestamp);
+
+    /**
+     * Gets the milliseconds within the second from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the milliseconds within the second (0-999), or Numbers.INT_NULL if timestamp is null
+     */
+    int getMillisOfSecond(long timestamp);
+
+    /**
+     * Gets the minute of hour from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the minute of hour (0-59), or Numbers.INT_NULL if timestamp is null
+     */
+    int getMinuteOfHour(long timestamp);
+
+    /**
+     * Gets the month of year from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the month of year (1-12), or Numbers.INT_NULL if timestamp is null
+     */
+    int getMonthOfYear(long timestamp);
 
     PartitionAddMethod getPartitionAddMethod(int partitionBy);
 
@@ -143,6 +283,42 @@ public interface TimestampDriver {
     DateFormat getPartitionDirFormatMethod(int partitionBy);
 
     TimestampFloorMethod getPartitionFloorMethod(int partitionBy);
+
+    /**
+     * Calculates the period between two timestamps in the specified time unit.
+     * 
+     * This method computes the difference between two timestamps and returns the result
+     * in the requested time unit. The timestamps are automatically converted to the 
+     * appropriate precision based on their types before calculation.
+     *
+     * @param unit      the time unit for the result:
+     *                  'u' = microseconds, 'T' = milliseconds, 's' = seconds,
+     *                  'm' = minutes, 'h' = hours, 'd' = days, 'w' = weeks,
+     *                  'M' = months, 'y' = years
+     * @param start     the start timestamp value
+     * @param end       the end timestamp value  
+     * @param leftType  the column type of the start timestamp for proper conversion
+     * @param rightType the column type of the end timestamp for proper conversion
+     * @return the period between the timestamps in the specified unit, 
+     *         or Numbers.LONG_NULL if either timestamp is null
+     */
+    long getPeriodBetween(char unit, long start, long end, int leftType, int rightType);
+
+    /**
+     * Gets the quarter from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the quarter (1-4), or Numbers.INT_NULL if timestamp is null
+     */
+    int getQuarter(long timestamp);
+
+    /**
+     * Gets the second of minute from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the second of minute (0-59), or Numbers.INT_NULL if timestamp is null
+     */
+    int getSecondOfMinute(long timestamp);
 
     int getTZRuleResolution();
 
@@ -153,6 +329,8 @@ public interface TimestampDriver {
     TimestampConstant getTimestampConstantNull();
 
     TimestampDateFormatFactory getTimestampDateFormatFactory();
+
+    TimestampDiffMethod getTimestampDiffMethod(char type);
 
     TimestampFloorMethod getTimestampFloorMethod(String c);
 
@@ -165,6 +343,22 @@ public interface TimestampDriver {
     CommonUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType);
 
     TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException;
+
+    /**
+     * Gets the week of year from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the week of year, or Numbers.INT_NULL if timestamp is null
+     */
+    int getWeek(long timestamp);
+
+    /**
+     * Gets the year from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the year, or Numbers.INT_NULL if timestamp is null
+     */
+    int getYear(long timestamp);
 
     default long implicitCast(CharSequence value, int typeFrom) {
         assert typeFrom == ColumnType.STRING || typeFrom == ColumnType.SYMBOL;
@@ -243,6 +437,8 @@ public interface TimestampDriver {
 
     long toNanosScale();
 
+    long toSeconds(long timestamp);
+
     String toString(long timestamp);
 
     long toTimezone(long utcTimestamp, DateLocale locale, CharSequence timezone) throws NumericException;
@@ -267,6 +463,11 @@ public interface TimestampDriver {
     interface TimestampCeilMethod {
         // returns exclusive ceiling for the give timestamp
         long ceil(long timestamp);
+    }
+
+    @FunctionalInterface
+    interface TimestampDiffMethod {
+        long diff(long a, long b);
     }
 
     @FunctionalInterface

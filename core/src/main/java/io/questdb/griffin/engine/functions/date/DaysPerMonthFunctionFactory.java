@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -32,10 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.CommonUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 
 public class DaysPerMonthFunctionFactory implements FunctionFactory {
 
@@ -47,16 +46,18 @@ public class DaysPerMonthFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
-        return new Func(arg);
+        return new Func(arg, ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType(), configuration)));
     }
 
     private static final class Func extends IntFunction implements UnaryFunction {
 
         private final Function arg;
+        private final TimestampDriver driver;
 
-        public Func(Function arg) {
+        public Func(Function arg, TimestampDriver driver) {
             super();
             this.arg = arg;
+            this.driver = driver;
         }
 
         @Override
@@ -67,13 +68,7 @@ public class DaysPerMonthFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
-                return Numbers.INT_NULL;
-            }
-            final int year = Timestamps.getYear(value);
-            final boolean isLeap = CommonUtils.isLeapYear(year);
-            final int month = Timestamps.getMonthOfYear(value, year, isLeap);
-            return CommonUtils.getDaysPerMonth(month, isLeap);
+            return driver.getDaysPerMonth(value);
         }
 
         @Override

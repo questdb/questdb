@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -189,8 +188,7 @@ public abstract class SymbolFunction implements Function, SymbolTable {
 
     @Override
     public final long getTimestamp(Record rec) {
-        final CharSequence value = getSymbol(rec);
-        return MicrosTimestampDriver.INSTANCE.implicitCast(value, ColumnType.SYMBOL);
+        throw new UnsupportedOperationException();
     }
 
     @Override

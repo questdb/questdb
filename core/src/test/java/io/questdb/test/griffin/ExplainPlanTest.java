@@ -2691,7 +2691,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                                 long memUsedAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ND_ARRAY);
                                 if (memUsedAfter > memUsedBefore) {
-                                    LOG.error().$("Memory leak detected in ").$(factory.getSignature()).$();
+                                    LOG.error().$("Memory leak detected in ").$safe(factory.getSignature()).$();
                                     Assert.fail("Memory leak detected in " + factory.getSignature());
                                 }
                             }

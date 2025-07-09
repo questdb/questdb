@@ -234,7 +234,7 @@ public final class WhereClauseParser implements Mutable {
             boolean detectIntervals
     ) throws SqlException {
         if (!ColumnType.isSymbolOrString(function.getType())) {
-            return function.getTimestamp(null);
+            return timestampDriver.from(function.getTimestamp(null), function.getType());
         }
         return parseStringAsTimestamp(timestampDriver, function.getStrA(null), functionPosition, detectIntervals);
     }

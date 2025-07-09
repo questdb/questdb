@@ -394,13 +394,157 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public int getCentury(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Timestamps.getCentury(timestamp);
+    }
+
+    @Override
     public int getColumnType() {
         return ColumnType.TIMESTAMP_MICRO;
     }
 
     @Override
+    public int getDayOfMonth(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        int year = Timestamps.getYear(timestamp);
+        boolean leap = CommonUtils.isLeapYear(year);
+        int month = Timestamps.getMonthOfYear(timestamp, year, leap);
+        return Timestamps.getDayOfMonth(timestamp, year, month, leap);
+    }
+
+    @Override
+    public int getDayOfWeek(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Timestamps.getDayOfWeek(timestamp);
+    }
+
+    @Override
+    public int getDayOfWeekSundayFirst(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Timestamps.getDayOfWeekSundayFirst(timestamp);
+    }
+
+    @Override
+    public int getDaysPerMonth(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        int year = Timestamps.getYear(timestamp);
+        boolean isLeap = CommonUtils.isLeapYear(year);
+        int month = Timestamps.getMonthOfYear(timestamp, year, isLeap);
+        return CommonUtils.getDaysPerMonth(month, isLeap);
+    }
+
+    @Override
+    public int getDecade(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Timestamps.getDecade(timestamp);
+    }
+
+    @Override
+    public int getDow(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Timestamps.getDow(timestamp);
+    }
+
+    @Override
+    public int getDoy(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Timestamps.getDoy(timestamp);
+    }
+
+    @Override
+    public int getHourOfDay(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Timestamps.getHourOfDay(timestamp);
+    }
+
+    @Override
     public IntervalConstant getIntervalConstantNull() {
         return IntervalConstant.TIMESTAMP_MICRO_NULL;
+    }
+
+    @Override
+    public int getIsoYear(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Timestamps.getIsoYear(timestamp);
+    }
+
+    @Override
+    public int getMicrosOfMilli(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Timestamps.getMicrosOfMilli(timestamp);
+    }
+
+    @Override
+    public long getMicrosOfMinute(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        return Timestamps.getMicrosOfMinute(timestamp);
+    }
+
+    @Override
+    public int getMillennium(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Timestamps.getMillennium(timestamp);
+    }
+
+    @Override
+    public long getMillisOfMinute(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        return Timestamps.getMillisOfMinute(timestamp);
+    }
+
+    @Override
+    public int getMillisOfSecond(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Timestamps.getMillisOfSecond(timestamp);
+    }
+
+    @Override
+    public int getMinuteOfHour(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Timestamps.getMinuteOfHour(timestamp);
+    }
+
+    @Override
+    public int getMonthOfYear(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        int year = Timestamps.getYear(timestamp);
+        boolean isLeap = CommonUtils.isLeapYear(year);
+        return Timestamps.getMonthOfYear(timestamp, year, isLeap);
     }
 
     @Override
@@ -478,6 +622,32 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long getPeriodBetween(char unit, long start, long end, int leftType, int rightType) {
+        if (start == Numbers.LONG_NULL || end == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        start = from(start, leftType);
+        end = from(end, rightType);
+        return Timestamps.getPeriodBetween(unit, start, end);
+    }
+
+    @Override
+    public int getQuarter(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Timestamps.getQuarter(timestamp);
+    }
+
+    @Override
+    public int getSecondOfMinute(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Timestamps.getSecondOfMinute(timestamp);
+    }
+
+    @Override
     public int getTZRuleResolution() {
         return RESOLUTION_MICROS;
     }
@@ -521,6 +691,34 @@ public class MicrosTimestampDriver implements TimestampDriver {
     @Override
     public TimestampDateFormatFactory getTimestampDateFormatFactory() {
         return MicrosFormatFactory.INSTANCE;
+    }
+
+    @Override
+    public TimestampDiffMethod getTimestampDiffMethod(char type) {
+        switch (type) {
+            case 'n':
+                return Timestamps::getNanosBetween;
+            case 'u':
+                return Timestamps::getMicrosBetween;
+            case 'T':
+                return Timestamps::getMillisBetween;
+            case 's':
+                return Timestamps::getSecondsBetween;
+            case 'm':
+                return Timestamps::getMinutesBetween;
+            case 'h':
+                return Timestamps::getHoursBetween;
+            case 'd':
+                return Timestamps::getDaysBetween;
+            case 'w':
+                return Timestamps::getWeeksBetween;
+            case 'M':
+                return Timestamps::getMonthsBetween;
+            case 'y':
+                return Timestamps::getYearsBetween;
+            default:
+                return null;
+        }
     }
 
     @Override
@@ -648,6 +846,22 @@ public class MicrosTimestampDriver implements TimestampDriver {
     @Override
     public TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException {
         return Timestamps.getTimezoneRules(locale, timezone);
+    }
+
+    @Override
+    public int getWeek(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Timestamps.getWeek(timestamp);
+    }
+
+    @Override
+    public int getYear(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Timestamps.getYear(timestamp);
     }
 
     @Override
@@ -1090,6 +1304,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
     @Override
     public long toNanosScale() {
         return Timestamps.MICRO_NANOS;
+    }
+
+    @Override
+    public long toSeconds(long timestamp) {
+        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Timestamps.SECOND_MICROS;
     }
 
     @Override

@@ -183,8 +183,7 @@ public abstract class DateFunction implements Function {
 
     @Override
     public final long getTimestamp(Record rec) {
-        final long value = getDate(rec);
-        return value == Numbers.LONG_NULL ? value : value * 1000L;
+        throw new UnsupportedOperationException();
     }
 
     @Override

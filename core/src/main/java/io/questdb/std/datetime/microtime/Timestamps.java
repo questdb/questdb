@@ -733,8 +733,14 @@ public final class Timestamps {
         }
     }
 
+    public static long getNanosBetween(long a, long b) {
+        return Math.abs(a - b) * MICRO_NANOS;
+    }
+
     public static long getPeriodBetween(char type, long start, long end) {
         switch (type) {
+            case 'n':
+                return Timestamps.getNanosBetween(start, end);
             case 'u':
                 return Timestamps.getMicrosBetween(start, end);
             case 'T':

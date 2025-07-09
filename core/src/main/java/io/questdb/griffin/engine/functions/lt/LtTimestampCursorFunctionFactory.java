@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.functions.lt;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -78,21 +78,25 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
         if (metadata.getColumnCount() != 1) {
             throw SqlException.$(argPositions.getQuick(1), "select must provide exactly one column");
         }
-
+        Function arg0 = args.getQuick(0);
+        int arg0Type = arg0.getType();
+        int timestampType = ColumnType.getTimestampType(arg0Type, metadata.getColumnType(0), configuration);
+        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         switch (metadata.getColumnType(0)) {
             case ColumnType.TIMESTAMP:
             case ColumnType.NULL:
-                return new TimestampCursorFunc(factory, args.getQuick(0), args.getQuick(1));
+                return new TimestampCursorFunc(factory, arg0, args.getQuick(1), driver);
             case ColumnType.STRING:
-                return new StrCursorFunc(factory, args.getQuick(0), args.getQuick(1), argPositions.getQuick(1));
+                return new StrCursorFunc(factory, arg0, args.getQuick(1), driver, argPositions.getQuick(1));
             case ColumnType.VARCHAR:
-                return new VarcharCursorFunc(factory, args.getQuick(0), args.getQuick(1), argPositions.getQuick(1));
+                return new VarcharCursorFunc(factory, arg0, args.getQuick(1), driver, argPositions.getQuick(1));
             default:
                 throw SqlException.$(argPositions.getQuick(1), "cannot compare TIMESTAMP and ").put(ColumnType.nameOf(metadata.getColumnType(0)));
         }
     }
 
     private static class StrCursorFunc extends NegatableBooleanFunction implements BinaryFunction {
+        private final TimestampDriver driver;
         private final RecordCursorFactory factory;
         private final Function leftFunc;
         private final Function rightFunc;
@@ -101,11 +105,12 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
         private boolean stateInherited = false;
         private boolean stateShared = false;
 
-        public StrCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, int rightPos) {
+        public StrCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, TimestampDriver driver, int rightPos) {
             this.factory = factory;
             this.leftFunc = leftFunc;
             this.rightFunc = rightFunc;
             this.rightPos = rightPos;
+            this.driver = driver;
         }
 
         @Override
@@ -138,7 +143,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
                 if (cursor.hasNext()) {
                     final CharSequence value = cursor.getRecord().getStrA(0);
                     try {
-                        epoch = MicrosTimestampDriver.INSTANCE.parseFloorLiteral(value);
+                        epoch = driver.parseFloorLiteral(value);
                     } catch (NumericException e) {
                         throw SqlException.$(rightPos, "the cursor selected invalid timestamp value: ").put(value);
                     }
@@ -182,17 +187,19 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
     }
 
     private static class TimestampCursorFunc extends NegatableBooleanFunction implements BinaryFunction {
+        protected final TimestampDriver driver;
+        protected final Function leftFunc;
         private final RecordCursorFactory factory;
-        private final Function leftFunc;
         private final Function rightFunc;
-        private long epoch;
+        protected long epoch;
         private boolean stateInherited = false;
         private boolean stateShared = false;
 
-        public TimestampCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc) {
+        public TimestampCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, TimestampDriver driver) {
             this.factory = factory;
             this.leftFunc = leftFunc;
             this.rightFunc = rightFunc;
+            this.driver = driver;
         }
 
         @Override
@@ -223,7 +230,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
             this.stateShared = false;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
-                    epoch = cursor.getRecord().getTimestamp(0);
+                    epoch = driver.from(cursor.getRecord().getTimestamp(0), factory.getMetadata().getColumnType(0));
                 } else {
                     epoch = Numbers.LONG_NULL;
                 }
@@ -264,6 +271,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
     }
 
     private static class VarcharCursorFunc extends NegatableBooleanFunction implements BinaryFunction {
+        private final TimestampDriver driver;
         private final RecordCursorFactory factory;
         private final Function leftFunc;
         private final Function rightFunc;
@@ -272,11 +280,12 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
         private boolean stateInherited = false;
         private boolean stateShared = false;
 
-        public VarcharCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, int rightPos) {
+        public VarcharCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, TimestampDriver driver, int rightPos) {
             this.factory = factory;
             this.leftFunc = leftFunc;
             this.rightFunc = rightFunc;
             this.rightPos = rightPos;
+            this.driver = driver;
         }
 
         @Override
@@ -309,7 +318,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
                 if (cursor.hasNext()) {
                     final Utf8Sequence value = cursor.getRecord().getVarcharA(0);
                     try {
-                        epoch = MicrosTimestampDriver.INSTANCE.parseFloorLiteral(value);
+                        epoch = driver.parseFloorLiteral(value);
                     } catch (NumericException e) {
                         throw SqlException.$(rightPos, "the cursor selected invalid timestamp value: ").put(value);
                     }

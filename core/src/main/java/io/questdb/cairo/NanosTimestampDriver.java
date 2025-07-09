@@ -397,13 +397,165 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public int getCentury(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Nanos.getCentury(timestamp);
+    }
+
+    @Override
     public int getColumnType() {
         return ColumnType.TIMESTAMP_NANO;
     }
 
     @Override
+    public int getDayOfMonth(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        int year = Nanos.getYear(timestamp);
+        boolean leap = CommonUtils.isLeapYear(year);
+        int month = Nanos.getMonthOfYear(timestamp, year, leap);
+        return Nanos.getDayOfMonth(timestamp, year, month, leap);
+    }
+
+    @Override
+    public int getDayOfWeek(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Nanos.getDayOfWeek(timestamp);
+    }
+
+    @Override
+    public int getDayOfWeekSundayFirst(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Nanos.getDayOfWeekSundayFirst(timestamp);
+    }
+
+    @Override
+    public int getDaysPerMonth(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        int year = Nanos.getYear(timestamp);
+        boolean isLeap = CommonUtils.isLeapYear(year);
+        int month = Nanos.getMonthOfYear(timestamp, year, isLeap);
+        return CommonUtils.getDaysPerMonth(month, isLeap);
+    }
+
+    @Override
+    public int getDecade(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Nanos.getDecade(timestamp);
+    }
+
+    @Override
+    public int getDow(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Nanos.getDow(timestamp);
+    }
+
+    @Override
+    public int getDoy(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Nanos.getDoy(timestamp);
+    }
+
+    @Override
+    public int getHourOfDay(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        if (timestamp > -1) {
+            return (int) ((timestamp / Nanos.HOUR_NANOS) % CommonUtils.DAY_HOURS);
+        } else {
+            return CommonUtils.DAY_HOURS - 1 + (int) (((timestamp + 1) / Nanos.HOUR_NANOS) % CommonUtils.DAY_HOURS);
+        }
+    }
+
+    @Override
     public IntervalConstant getIntervalConstantNull() {
         return IntervalConstant.TIMESTAMP_NANO_NULL;
+    }
+
+    @Override
+    public int getIsoYear(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Nanos.getIsoYear(timestamp);
+    }
+
+    @Override
+    public int getMicrosOfMilli(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Nanos.getMicrosOfMilli(timestamp);
+    }
+
+    @Override
+    public long getMicrosOfMinute(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        return Nanos.getMillisOfMinute(timestamp) * 1000L + (timestamp % 1_000_000L) / 1000L;
+    }
+
+    @Override
+    public int getMillennium(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Nanos.getMillennium(timestamp);
+    }
+
+    @Override
+    public long getMillisOfMinute(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        return Nanos.getMillisOfMinute(timestamp);
+    }
+
+    @Override
+    public int getMillisOfSecond(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Nanos.getMillisOfSecond(timestamp);
+    }
+
+    @Override
+    public int getMinuteOfHour(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        if (timestamp > -1) {
+            return (int) ((timestamp / Nanos.MINUTE_NANOS) % CommonUtils.HOUR_MINUTES);
+        } else {
+            return CommonUtils.HOUR_MINUTES - 1 + (int) (((timestamp + 1) / Nanos.MINUTE_NANOS) % CommonUtils.HOUR_MINUTES);
+        }
+    }
+
+    @Override
+    public int getMonthOfYear(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        int year = Nanos.getYear(timestamp);
+        boolean isLeap = CommonUtils.isLeapYear(year);
+        return Nanos.getMonthOfYear(timestamp, year, isLeap);
     }
 
     @Override
@@ -481,6 +633,36 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long getPeriodBetween(char unit, long start, long end, int startType, int endType) {
+        if (start == Numbers.LONG_NULL || end == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        start = from(start, startType);
+        end = from(end, endType);
+        return Nanos.getPeriodBetween(unit, start, end);
+    }
+
+    @Override
+    public int getQuarter(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Nanos.getQuarter(timestamp);
+    }
+
+    @Override
+    public int getSecondOfMinute(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        if (timestamp > -1) {
+            return (int) ((timestamp / Nanos.SECOND_NANOS) % 60);
+        } else {
+            return 59 + (int) (((timestamp + 1) / Nanos.SECOND_NANOS) % 60);
+        }
+    }
+
+    @Override
     public int getTZRuleResolution() {
         return RESOLUTION_NANOS;
     }
@@ -524,6 +706,34 @@ public class NanosTimestampDriver implements TimestampDriver {
     @Override
     public TimestampDateFormatFactory getTimestampDateFormatFactory() {
         return NanosFormatFactory.INSTANCE;
+    }
+
+    @Override
+    public TimestampDiffMethod getTimestampDiffMethod(char type) {
+        switch (type) {
+            case 'n':
+                return Nanos::getNanosBetween;
+            case 'u':
+                return Nanos::getMicrosBetween;
+            case 'T':
+                return Nanos::getMillisBetween;
+            case 's':
+                return Nanos::getSecondsBetween;
+            case 'm':
+                return Nanos::getMinutesBetween;
+            case 'h':
+                return Nanos::getHoursBetween;
+            case 'd':
+                return Nanos::getDaysBetween;
+            case 'w':
+                return Nanos::getWeeksBetween;
+            case 'M':
+                return Nanos::getMonthsBetween;
+            case 'y':
+                return Nanos::getYearsBetween;
+            default:
+                return null;
+        }
     }
 
     @Override
@@ -651,6 +861,22 @@ public class NanosTimestampDriver implements TimestampDriver {
     @Override
     public TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException {
         return Nanos.getTimezoneRules(locale, timezone);
+    }
+
+    @Override
+    public int getWeek(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Nanos.getWeek(timestamp);
+    }
+
+    @Override
+    public int getYear(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Nanos.getYear(timestamp);
     }
 
     @Override
@@ -1077,6 +1303,11 @@ public class NanosTimestampDriver implements TimestampDriver {
     @Override
     public long toNanosScale() {
         return 1;
+    }
+
+    @Override
+    public long toSeconds(long timestamp) {
+        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Nanos.SECOND_NANOS;
     }
 
     @Override

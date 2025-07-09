@@ -488,6 +488,15 @@ public final class Nanos {
         return addYears(offset, (int) yearsToAdd);
     }
 
+    public static int getCentury(long nanos) {
+        final int year = Nanos.getYear(nanos);
+        int century = year / 100;
+        if (year > century * 100) {
+            century++;
+        }
+        return century;
+    }
+
     public static int getDayOfMonth(long nanos, int year, int month, boolean leap) {
         long yearNanos = yearNanos(year, leap);
         yearNanos += monthOfYearNanos(month, leap);
@@ -573,6 +582,14 @@ public final class Nanos {
         return Math.abs(nanosA - nanosB) / MICRO_NANOS;
     }
 
+    public static int getMicrosOfMilli(long nanos) {
+        if (nanos > -1) {
+            return (int) (nanos % MILLI_NANOS);
+        } else {
+            return (int) (MILLI_NANOS - 1 + ((nanos + 1) % MILLI_NANOS));
+        }
+    }
+
     // Years in the 1900s are in the second millennium. The third millennium started January 1, 2001.
     public static int getMillennium(long nanos) {
         int year = getYear(nanos);
@@ -586,6 +603,14 @@ public final class Nanos {
 
     public static long getMillisOfMinute(long nanos) {
         return getNanosOfMinute(nanos) / 1000;
+    }
+
+    public static int getMillisOfSecond(long nanos) {
+        if (nanos > -1) {
+            return (int) ((nanos / MILLI_NANOS) % SECOND_MILLIS);
+        } else {
+            return SECOND_MILLIS - 1 + (int) (((nanos + 1) / MILLI_NANOS) % SECOND_MILLIS);
+        }
     }
 
     public static long getMinutesBetween(long nanosA, long nanosB) {
@@ -649,6 +674,10 @@ public final class Nanos {
         }
     }
 
+    public static long getNanosBetween(long nanosA, long nanosB) {
+        return Math.abs(nanosA - nanosB);
+    }
+
     public static int getNanosOfMilli(long nanos) {
         if (nanos > -1) {
             return (int) (nanos % MILLI_NANOS);
@@ -675,6 +704,8 @@ public final class Nanos {
 
     public static long getPeriodBetween(char type, long start, long end) {
         switch (type) {
+            case 'n':
+                return Nanos.getNanosBetween(start, end);
             case 'u':
                 return Nanos.getMicrosBetween(start, end);
             case 'T':

@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -142,8 +143,9 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         super.toSink(sink);
-        sink.putAscii(", refreshMinTs=").putISODate(getTimestamp(1));
-        sink.putAscii(", refreshMaxTs=").putISODate(getTimestamp(2));
+        TimestampDriver driver = ColumnType.getTimestampDriver(baseTableReader.getMetadata().getTimestampType());
+        sink.putAscii(", refreshMinTs=").putISODate(driver, getTimestamp(1));
+        sink.putAscii(", refreshMaxTs=").putISODate(driver, getTimestamp(2));
     }
 
     private long getTimestamp(int index) {

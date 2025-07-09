@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -47,15 +49,17 @@ public class DayOfMonthFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
-        return new DayOfMonthFunction(arg);
+        return new DayOfMonthFunction(arg, ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType(), configuration)));
     }
 
     static final class DayOfMonthFunction extends IntFunction implements UnaryFunction {
 
         private final Function arg;
+        private final TimestampDriver driver;
 
-        public DayOfMonthFunction(Function arg) {
+        public DayOfMonthFunction(Function arg, TimestampDriver driver) {
             this.arg = arg;
+            this.driver = driver;
         }
 
         @Override
@@ -66,13 +70,7 @@ public class DayOfMonthFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
-                return Numbers.INT_NULL;
-            }
-            final int year = Timestamps.getYear(value);
-            final boolean isLeap = CommonUtils.isLeapYear(year);
-            final int month = Timestamps.getMonthOfYear(value, year, isLeap);
-            return Timestamps.getDayOfMonth(value, year, month, isLeap);
+            return driver.getDayOfMonth(value);
         }
 
         @Override
