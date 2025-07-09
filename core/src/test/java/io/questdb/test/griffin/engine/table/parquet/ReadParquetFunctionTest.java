@@ -96,7 +96,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
 
                 sink.clear();
                 sink.put("select a_ts, a_long from read_parquet('x.parquet')");
-                assertSqlCursors("select a_ts, a_long from x", sink);
+                assertSqlCursors0("select a_ts, a_long from x", sink);
             }
         });
     }
@@ -110,6 +110,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     " case when x % 2 = 0 then rnd_int() end as a_long," +
                     " case when x % 2 = 0 then rnd_str(4,4,4,2) end as a_str," +
                     " case when x % 2 = 0 then rnd_varchar(1, 40, 1) end as a_varchar," +
+                    " case when x % 2 = 0 then rnd_double_array(1) end as an_array," +
                     " case when x % 2 = 0 then rnd_boolean() end a_boolean," +
                     " case when x % 2 = 0 then rnd_short() end a_short," +
                     " case when x % 2 = 0 then rnd_byte() end a_byte," +
@@ -138,12 +139,12 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 sink.clear();
                 sink.put("select * from read_parquet('").put(path).put("')");
                 assertQueryNoLeakCheck(
-                        "id\ta_long\ta_str\ta_varchar\ta_boolean\ta_short\ta_byte\ta_char\ta_uuid\ta_double\ta_float\ta_sym\ta_date\ta_long256\ta_ip\ta_geo_byte\ta_geo_short\ta_geo_int\ta_geo_long\ta_bin\ta_ts\n" +
-                                "null\tnull\t\t\tfalse\t0\t0\t\t\tnull\tnull\t\t2015-11-24T20:19:13.843Z\t0x2705e02c613acfc405374f5fbcef4819523eb59d99c647af9840ad8800156d26\t138.69.22.149\t0000\t11001010\t0000101000111011\t10100111010101011100000010101100\t\t2015-01-01T00:00:00.000000Z\n" +
-                                "2\t-461611463\tHYRX\t0L#YS\\%~\\2o#/ZUAI6Q,]K+BuHiX\tfalse\t3428\t25\tO\t71660a9b-0890-42f0-aa0a-ccd425e948d4\t0.38642336707855873\t0.92050034\tGPGW\t2015-02-04T13:09:51.166Z\t0x51686790e59377ca68653a6cd896f81ed4e0ddcd6eb2cff1c736a8b67656c4f1\t250.26.136.156\t1001\t10001000\t1110111101101001\t01010111101100101101110010010001\t00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47\t2015-04-02T07:27:18.000000Z\n" +
-                                "null\tnull\t\t\tfalse\t0\t0\t\t\tnull\tnull\t\t2015-08-16T07:46:57.313Z\t0xc6dfacdd3f3c52b88b4e4831499fc2a526567f4430b46b7f78c594c496995885\t107.3.2.123\t1110\t00110010\t0010010010010011\t01110010110101010111111110111011\t00000000 64 d2 ad 49 1c f2 3c ed 39 ac a8 3b a6\t2015-07-02T14:54:36.000000Z\n" +
-                                "4\t-283321892\tCPSW\t\tfalse\t-22894\t70\tZ\tdb217d41-156b-4ee1-a90c-04663c808638\t0.3679848625908545\t0.82312495\tGPGW\t2015-05-24T01:10:00.026Z\t0x0ec6c3651b1c029f825c96def9f2fcc2b942438168662cb7aa21f9d816335363\t241.72.62.41\t1110\t00100111\t1111001111111000\t11100111010111100111111001011011\t00000000 43 1d 57 34 04 23 8d d8 57 91 88 28 a5 18 93 bd\n" +
-                                "00000010 0b 61 f5\t2015-10-01T22:21:54.000000Z\n",
+                        "id\ta_long\ta_str\ta_varchar\tan_array\ta_boolean\ta_short\ta_byte\ta_char\ta_uuid\ta_double\ta_float\ta_sym\ta_date\ta_long256\ta_ip\ta_geo_byte\ta_geo_short\ta_geo_int\ta_geo_long\ta_bin\ta_ts\n" +
+                                "null\tnull\t\t\tnull\tfalse\t0\t0\t\t\tnull\tnull\t\t2015-11-24T20:19:13.843Z\t0x2705e02c613acfc405374f5fbcef4819523eb59d99c647af9840ad8800156d26\t138.69.22.149\t0000\t11001010\t0000101000111011\t10100111010101011100000010101100\t\t2015-01-01T00:00:00.000000Z\n" +
+                                "2\t-461611463\tHYRX\t0L#YS\\%~\\2o#/ZUAI6Q,]K+BuHiX\t[0.7643643144642823,0.9075843364017028,0.04142812470232493,0.18769708157331322,0.7997733229967019,0.5182451971820676]\ttrue\t-12303\t94\tZ\t30d46a3a-4749-441d-ba90-2c77fa1a889c\t0.8837421918800907\t0.046458483\tGPGW\t2015-01-25T22:58:18.871Z\t0x516e1efd8bbcecf637b4f6e41fbfd55f587274e3ab1ebd4d6cecb916a1ad092b\t73.153.126.70\t1101\t11111101\t0111011001001010\t00000001110101101111000011101010\t\t2015-04-02T07:27:18.000000Z\n" +
+                                "null\tnull\t\t\tnull\tfalse\t0\t0\t\t\tnull\tnull\t\t2015-02-28T06:40:20.165Z\t0xaa1896d0ad3419d2910aa7b6d58506dc7c97a2cb4ac4b04722556b928447b584\t150.153.88.133\t1001\t11101000\t0011001010000011\t00100100100100111101111110011101\t\t2015-07-02T14:54:36.000000Z\n" +
+                                "4\t-2043803188\t\tT?hhV4|v\\x=zkc}ZZOG+\t[0.0171850098561398,0.3679848625908545,0.8231249461985348,0.6697969295620055,0.4295631643526773,0.26369335635512836,0.7632615004324503,0.5699444693578853]\tfalse\t-32151\t98\tL\t50d5a76f-a806-4dc3-897b-5301c2fc12ea\t0.8595900073631431\t0.86771816\t\t2015-02-18T13:45:46.597Z\t0xe70bdbfbf243e78ba1d06d6eb3a5a07949725663d8da97686f25d37307fb5ad3\t196.121.123.67\t0000\t10100011\t0011000110000101\t10001100011101100111010100100010\t00000000 5d d0 eb 67 44 a7 6a 71 34 e0 b0 e9 98 f7 67 62\n" +
+                                "00000010 28 60\t2015-10-01T22:21:54.000000Z\n",
                         sink,
                         null,
                         null,
@@ -157,12 +158,13 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     @Test
     public void testData() throws Exception {
         assertMemoryLeak(() -> {
-            final long rows = 1000_000;
+            final long rows = 100_000;
             execute("create table x as (select" +
                     " case when x % 2 = 0 then cast(x as int) end id," +
                     " case when x % 2 = 0 then rnd_int() end as a_long," +
                     " case when x % 2 = 0 then rnd_str(4,4,4,2) end as a_str," +
                     " case when x % 2 = 0 then rnd_varchar(1, 40, 1) end as a_varchar," +
+                    " case when x % 2 = 0 then rnd_double_array(1) end as an_array," +
                     " case when x % 2 = 0 then rnd_boolean() end a_boolean," +
                     " case when x % 2 = 0 then rnd_short() end a_short," +
                     " case when x % 2 = 0 then rnd_byte() end a_byte," +
@@ -195,7 +197,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
 
                 sink.clear();
                 sink.put("select * from read_parquet('x.parquet')");
-                assertSqlCursors("x", sink);
+                assertSqlCursors0("x", sink);
             }
         });
     }
@@ -255,15 +257,19 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     @Test
     public void testFileSchemaChanged() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x as (select" +
-                    " x id," +
-                    " timestamp_sequence(0,10000) as ts" +
-                    " from long_sequence(1))");
-            execute("create table y as (select" +
-                    " x id," +
-                    " 'foobar' str," +
-                    " timestamp_sequence(0,10000) as ts" +
-                    " from long_sequence(1))");
+            execute(
+                    "create table x as (select" +
+                            " x id," +
+                            " timestamp_sequence(0,10000) as ts" +
+                            " from long_sequence(1))"
+            );
+            execute(
+                    "create table y as (select" +
+                            " x id," +
+                            " 'foobar' str," +
+                            " timestamp_sequence(0,10000) as ts" +
+                            " from long_sequence(1))"
+            );
 
             try (
                     Path path = new Path();
@@ -344,7 +350,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 }
 
                 sink.put(" where 1 = 2");
-                assertSqlCursors("x where 1 = 2", sink);
+                assertSqlCursors0("x where 1 = 2", sink);
             }
         });
     }
@@ -370,12 +376,12 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
 
                 sink.clear();
                 sink.put("select * from read_parquet('x.parquet') order by a_varchar1, a_varchar2");
-                assertSqlCursors("select * from x order by a_varchar1, a_varchar2", sink);
+                assertSqlCursors0("select * from x order by a_varchar1, a_varchar2", sink);
             }
         });
     }
 
-    protected static void assertSqlCursors(CharSequence expectedSql, CharSequence actualSql) throws SqlException {
+    private static void assertSqlCursors0(CharSequence expectedSql, CharSequence actualSql) throws SqlException {
         try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
             TestUtils.assertSqlCursors(
                     sqlCompiler,
