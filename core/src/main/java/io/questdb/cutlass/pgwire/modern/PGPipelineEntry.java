@@ -1677,8 +1677,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             utf8Sink.putNetworkLong(array.getLong(i));
                             break;
                         case ColumnType.DOUBLE:
-                            utf8Sink.putNetworkInt(Double.BYTES);
-                            utf8Sink.putNetworkDouble(array.getDouble(i));
+                            double val = array.getDouble(i);
+                            if (Numbers.isFinite(val)) {
+                                utf8Sink.putNetworkInt(Double.BYTES);
+                                utf8Sink.putNetworkDouble(val);
+                            } else {
+                                utf8Sink.setNullValue();
+                            }
                             break;
                     }
                     utf8Sink.bookmark();
