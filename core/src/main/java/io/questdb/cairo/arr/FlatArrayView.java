@@ -187,7 +187,7 @@ public interface FlatArrayView {
         double compensation = 0d;
         for (int i = offset, n = offset + length; i < n; i++) {
             double v = getDoubleAtAbsIndex(i);
-            if (!Numbers.isNull(v)) {
+            if (Numbers.isFinite(v)) {
                 if (compensation == 0d && Numbers.isNull(sum)) {
                     sum = 0d;
                 }

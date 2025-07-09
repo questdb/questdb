@@ -59,8 +59,8 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
         if (valueArg.isConstant()) {
             double value = valueArg.getDouble(null);
             valueArg.close();
-            return Double.isNaN(value)
-                    ? new ArrayPositionConstNaNFunction(arrayArg)
+            return Numbers.isNull(value)
+                    ? new ArrayPositionConstNullFunction(arrayArg)
                     : new ArrayPositionConstFunction(arrayArg, value);
         }
         return new ArrayIndexOfFunction(arrayArg, valueArg);
@@ -168,11 +168,11 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
         }
     }
 
-    static class ArrayPositionConstNaNFunction extends IntFunction implements UnaryFunction {
+    static class ArrayPositionConstNullFunction extends IntFunction implements UnaryFunction {
 
         protected final Function arrayArg;
 
-        ArrayPositionConstNaNFunction(Function arrayArg) {
+        ArrayPositionConstNullFunction(Function arrayArg) {
             this.arrayArg = arrayArg;
         }
 
@@ -192,7 +192,7 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(FUNCTION_NAME).val('(').val(arrayArg).val(", Null)");
+            sink.val(FUNCTION_NAME).val('(').val(arrayArg).val(", null)");
         }
     }
 }

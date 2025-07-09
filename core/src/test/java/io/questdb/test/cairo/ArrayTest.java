@@ -377,7 +377,7 @@ public class ArrayTest extends AbstractCairoTest {
     public void testArrayCumSumBehaviourMixedNulls() throws Exception {
         assertMemoryLeak(() -> {
             assertSqlWithTypes("a\tarray_cum_sum\n" +
-                            "[NaN,1.2,NaN,5.3]:DOUBLE[]\t[NaN,1.2,1.2,6.5]:DOUBLE[]\n",
+                            "[null,1.2,null,5.3]:DOUBLE[]\t[null,1.2,1.2,6.5]:DOUBLE[]\n",
                     "select array[null, 1.2, null, 5.3] as a, array_cum_sum(a);\n");
         });
     }
@@ -698,19 +698,6 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testArrayPositionNannull() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (arr DOUBLE[])");
-            execute("INSERT INTO tango VALUES (ARRAY[1.0/0.0, 0.0/0.0, -1.0/0.0])");
-            assertSql("array_position\n2\n", "SELECT array_position(arr, 0.0/0.0) FROM tango");
-            //TODO These two assertions document the current behavior, but it isn't the desired one.
-            // The function should find infinities as well.
-            assertSql("array_position\nnull\n", "SELECT array_position(arr, 1.0/0.0) FROM tango");
-            assertSql("array_position\nnull\n", "SELECT array_position(arr, -1.0/0.0) FROM tango");
-        });
-    }
-
-    @Test
     public void testArrayPositionNonVanilla() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (arr DOUBLE[][])");
@@ -725,6 +712,17 @@ public class ArrayTest extends AbstractCairoTest {
                             "array_position(transpose(arr)[1], 11), " +
                             "array_position(transpose(arr)[1, 2:], 9) " +
                             "FROM tango");
+        });
+    }
+
+    @Test
+    public void testArrayPositionNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[])");
+            execute("INSERT INTO tango VALUES (ARRAY[1.0/0.0, 0.0/0.0, -1.0/0.0])");
+            assertSql("array_position\n2\n", "SELECT array_position(arr, 0.0/0.0) FROM tango");
+            assertSql("array_position\n2\n", "SELECT array_position(arr, 1.0/0.0) FROM tango");
+            assertSql("array_position\n2\n", "SELECT array_position(arr, -1.0/0.0) FROM tango");
         });
     }
 
@@ -778,28 +776,28 @@ public class ArrayTest extends AbstractCairoTest {
     public void testArraySumAndCumSumNullBehaviour() throws Exception {
         assertMemoryLeak(() -> {
             assertSqlWithTypes("i\tarray_sum\n" +
-                            "[NaN]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[NaN]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n",
+                            "[null]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[null,null,null]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[null,null,null]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[null]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE\n",
                     "select rnd_double_array(1,1) i, array_sum(i) from long_sequence(10);\n");
             assertSqlWithTypes("i\tarray_cum_sum\n" +
-                            "[NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n",
+                            "[null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[null]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]\n",
                     "select rnd_double_array(1,1) i, array_cum_sum(i) from long_sequence(10);\n");
         });
     }
