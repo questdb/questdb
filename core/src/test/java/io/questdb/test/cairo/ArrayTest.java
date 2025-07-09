@@ -361,16 +361,32 @@ public class ArrayTest extends AbstractCairoTest {
             );
             assertSql("array_cum_sum\tarray_cum_sum1\tarray_cum_sum2\n" +
                             "[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[9.0,19.0,31.0,39.0,39.0,59.0,71.0]\t[1.0,10.0]\n" +
-                            "[0.0]\t[]\t[0.0]\n" +
+                            "null\tnull\tnull\n" +
                             "null\tnull\tnull\n",
                     "SELECT array_cum_sum(arr1), array_cum_sum(arr1[2:]), array_cum_sum(arr1[1:3]) FROM tango");
 
             assertSql("array_cum_sum\tarray_cum_sum1\tarray_cum_sum2\tarray_cum_sum3\tarray_cum_sum4\n" +
-                            "[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[]\n" +
-                            "[0.0]\t[0.0]\t[0.0]\t[0.0]\t[]\n" +
+                            "[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\tnull\n" +
+                            "null\tnull\tnull\tnull\tnull\n" +
                             "null\tnull\tnull\tnull\tnull\n",
                     "SELECT array_cum_sum(arr2), array_cum_sum(transpose(arr2)), array_cum_sum(arr2[1]), array_cum_sum(arr2[1:]), array_cum_sum(arr2[2:]) FROM tango");
         });
+    }
+
+    @Test
+    public void testArrayCumSumBehaviourMixedNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSqlWithTypes("a\tarray_cum_sum\n" +
+                            "[NaN,1.2,NaN,5.3]:DOUBLE[]\t[NaN,1.2,1.2,6.5]:DOUBLE[]\n",
+                    "select array[null, 1.2, null, 5.3] as a, array_cum_sum(a);\n");
+        });
+    }
+
+    @Test
+    public void testArrayCumSumKahan() throws Exception {
+        assertSqlWithTypes("array_cum_sum\n" +
+                        "[10000.0,10003.14159,10005.85987]:DOUBLE[]\n",
+                "SELECT array_cum_sum(array[10000d, 3.14159, 2.71828]);");
     }
 
     @Test
@@ -552,7 +568,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     "ts\tarray_sum\tsum\n" +
                             "2025-06-26T00:00:00.000000Z\t220.0\t1.0\n" +
-                            "2025-06-26T00:00:00.000000Z\t0.0\t10.0\n" +
+                            "2025-06-26T00:00:00.000000Z\tnull\t10.0\n" +
                             "2025-06-27T00:00:00.000000Z\t770.0\t18.0\n" +
                             "2025-06-27T00:00:00.000000Z\t1320.0\t25.0\n",
                     "Radix sort light\n" +
@@ -746,16 +762,53 @@ public class ArrayTest extends AbstractCairoTest {
             );
             assertSql("array_sum\tarray_sum1\tarray_sum2\n" +
                             "72.0\t71.0\t10.0\n" +
-                            "0.0\t0.0\t0.0\n" +
-                            "0.0\t0.0\t0.0\n",
+                            "null\tnull\tnull\n" +
+                            "null\tnull\tnull\n",
                     "SELECT array_sum(arr1), array_sum(arr1[2:]), array_sum(arr1[1:3]) FROM tango");
 
             assertSql("array_sum\tarray_sum1\tarray_sum2\tarray_sum3\tarray_sum4\n" +
-                            "72.0\t72.0\t72.0\t72.0\t0.0\n" +
-                            "0.0\t0.0\t0.0\t0.0\t0.0\n" +
-                            "0.0\t0.0\t0.0\t0.0\t0.0\n",
+                            "72.0\t72.0\t72.0\t72.0\tnull\n" +
+                            "null\tnull\tnull\tnull\tnull\n" +
+                            "null\tnull\tnull\tnull\tnull\n",
                     "SELECT array_sum(arr2), array_sum(transpose(arr2)), array_sum(arr2[1]), array_sum(arr2[1:]), array_sum(arr2[2:]) FROM tango");
         });
+    }
+
+    @Test
+    public void testArraySumAndCumSumNullBehaviour() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSqlWithTypes("i\tarray_sum\n" +
+                            "[NaN]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[NaN]:DOUBLE[]\tnull:DOUBLE\n" +
+                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE\n",
+                    "select rnd_double_array(1,1) i, array_sum(i) from long_sequence(10);\n");
+            assertSqlWithTypes("i\tarray_cum_sum\n" +
+                            "[NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n" +
+                            "[NaN,NaN,NaN,NaN,NaN,NaN]:DOUBLE[]\tnull:DOUBLE[]\n",
+                    "select rnd_double_array(1,1) i, array_cum_sum(i) from long_sequence(10);\n");
+        });
+    }
+
+    @Test
+    public void testArraySumKahan() throws Exception {
+        assertSqlWithTypes("array_sum\n" +
+                        "10005.85987:DOUBLE\n",
+                "SELECT array_sum(array[10000d, 3.14159, 2.71828]);");
     }
 
     @Test
