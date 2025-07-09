@@ -25,6 +25,7 @@ jobs:
         run: tar -xzf core/target/questdb-*-no-jre-bin.tar.gz
       - name: Start QuestDB
         run: |
+          export LD_PRELOAD=${PWD}/core/src/main/bin/linux-x86-64-musl/libjemalloc.so
           JAVA_HOME=/usr/lib/jvm/default-jvm ./questdb-*bin/questdb.sh start
       - name: Query database with curl
         run: |
@@ -59,6 +60,7 @@ jobs:
         run: tar -xzf core/target/questdb-*-no-jre-bin.tar.gz
       - name: Start QuestDB
         run: |
+          export LD_PRELOAD=${PWD}/core/src/main/bin/linux-aarch64-musl/libjemalloc.so
           JAVA_HOME=/usr/lib/jvm/default-jvm ./questdb-*bin/questdb.sh start
       - name: Query database with curl
         run: |
