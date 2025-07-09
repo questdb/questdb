@@ -76,7 +76,6 @@ public interface TimestampDriver {
         }
     }
 
-    // todo: explore static ref
     boolean convertToVar(long fixedAddr, CharSink<?> stringSink);
 
     long dayEnd(long start);
@@ -110,8 +109,6 @@ public interface TimestampDriver {
         }
     }
 
-    @SuppressWarnings("unused")
-        // used by the row copier
     long fromDate(long timestamp);
 
     long fromDays(int days);
@@ -128,6 +125,8 @@ public interface TimestampDriver {
 
     long fromSeconds(int seconds);
 
+    // used by the row copier
+    @SuppressWarnings("unused")
     long fromWeeks(int weeks);
 
     TimestampAddMethod getAddMethod(char c);
@@ -423,8 +422,6 @@ public interface TimestampDriver {
 
     long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy, int lo, int hi);
 
-    @SuppressWarnings("unused")
-        // used by the row copier
     long toDate(long timestamp);
 
     long toNanosScale();
