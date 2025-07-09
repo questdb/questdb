@@ -209,8 +209,12 @@ public class ExpressionNode implements Mutable, Sinkable {
     public void toSink(@NotNull CharSink<?> sink) {
         // note: it's safe to take any registry (new or old) because we don't use precedence here
         OperatorRegistry registry = OperatorExpression.getRegistry();
-        final char openBracket = SqlKeywords.isArrayKeyword(token) ? '[' : '(';
-        final char closeBracket = SqlKeywords.isArrayKeyword(token) ? ']' : ')';
+        char openBracket = '(';
+        char closeBracket = ')';
+        if (token != null && SqlKeywords.isArrayKeyword(token)) {
+            openBracket = '[';
+            closeBracket = ']';
+        }
 
         switch (paramCount) {
             case 0:

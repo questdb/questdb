@@ -172,7 +172,7 @@ public class ColumnAliasExpressionTest extends AbstractCairoTest {
     public void testSelectArray() throws Exception {
         assertGeneratedColumnEqual(
                 "ARRAY[1, 2, 3]\n[1.0,2.0,3.0]\n",
-                "select array[1d, 2, 3]",
+                "select array[1, 2, 3]",
                 0
         );
         assertGeneratedColumnEqual(
@@ -183,6 +183,11 @@ public class ColumnAliasExpressionTest extends AbstractCairoTest {
         assertGeneratedColumnEqual(
                 "ARRAY[1]\n[1.0]\n",
                 "select array[1]",
+                0
+        );
+        assertGeneratedColumnEqual(
+                "ARRAY[ARRAY[1]]\n[[1.0]]\n",
+                "select array[array[1]]",
                 0
         );
     }
