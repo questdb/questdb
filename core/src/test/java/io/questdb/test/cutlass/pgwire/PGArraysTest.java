@@ -678,7 +678,7 @@ public class PGArraysTest extends BasePGTest {
         Assume.assumeTrue(walEnabled);
         int elemCount = 100 + bufferSizeRnd.nextInt(900);
         String literal = buildArrayLiteral1dNulls(elemCount, 0.3f);
-        String result = literal.replace("ARRAY[", "{").replace('}', ']');
+        String result = literal.replace("ARRAY[", "{").replace('}', ']') + '\n';
         assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
             try (PreparedStatement stmt = conn.prepareStatement("SELECT x n, " + literal + " arr FROM long_sequence(9)")) {
                 sink.clear();
