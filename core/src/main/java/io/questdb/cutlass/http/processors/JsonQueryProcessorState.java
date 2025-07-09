@@ -984,16 +984,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         DirectUtf8Sequence columnNames = header.getUrlParam(URL_PARAM_COLS);
 
         int columnCount;
+        this.columnNames.clear();
         columnSkewList.clear();
         this.columnTypesAndFlags.clear();
         if (columnNames != null) {
-            columnsQueryParameter.clear();
-
             columnCount = 0;
             long rawLo = columnNames.lo();
             final long rawHi = columnNames.hi();
             while (rawLo < rawHi) {
-                this.columnNames.clear();
+                columnsQueryParameter.clear();
                 rawLo = parseNextColumnName(rawLo, rawHi);
                 if (rawLo <= 0) {
                     info().$("utf8 error when decoding column list '").$safe(columnNames).$('\'').$();
