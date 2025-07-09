@@ -77,7 +77,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         final int plen = path.size();
         try {
             final FilesFacade ff = configuration.getFilesFacade();
-            final long mapPageSize = configuration.getMiscAppendPageSize();
+            final long mapPageSize = configuration.getSymbolTableAppendPageSize();
 
             // this constructor does not create index. Index must exist,
             // and we use "offset" file to store "header"

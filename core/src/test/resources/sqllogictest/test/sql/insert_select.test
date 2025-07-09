@@ -1,0 +1,23 @@
+statement ok
+create table basic_csv(timestamp varchar, x int);
+
+statement ok
+insert into basic_csv values
+                  	('2022-02-24T00', 1),
+                  	('2022-02-24T01', 2),
+                  	('2022-02-24T02', 3),
+                  	('2022-02-24T03', 4);
+
+statement ok
+create table result(timestamp timestamp, x int) timestamp(timestamp) partition by HOUR BYPASS WAL;
+
+statement ok
+insert into result select * from basic_csv;
+
+query II
+select timestamp, x from result order by timestamp, x
+----
+2022-02-24 00:00:00 1
+2022-02-24 01:00:00 2
+2022-02-24 02:00:00 3
+2022-02-24 03:00:00 4
