@@ -1226,7 +1226,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(pos, "table is not partitioned");
             }
 
-            // Tables with ARRAYS cannot be converter to Parquet, for now
+            // Tables with ARRAYS cannot be converted to Parquet, for now
             if (action == PartitionAction.CONVERT_TO_PARQUET) {
                 for (int i = 0, n = tableMetadata.getColumnCount(); i < n; i++) {
                     if (ColumnType.isArray(tableMetadata.getColumnType(i))) {
@@ -1252,8 +1252,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         final boolean toParquet = action == PartitionAction.CONVERT_TO_PARQUET;
                         alterOperationBuilder = this.alterOperationBuilder.ofConvertPartition(pos, tableToken, tableMetadata.getTableId(), toParquet);
                         break;
+                    case PartitionAction.EXPORT_TO_PARQUET:
+                        alterOperationBuilder = this.alterOperationBuilder.ofExportPartition(pos, tableToken, tableMetadata.getTableId());
+                        break;
                     default:
-                        throw SqlException.$(pos, "WHERE clause can only be used with command DROP PARTITION, DETACH PARTITION or CONVERT PARTITION");
+                        throw SqlException.$(pos, "WHERE clause can only be used with command DROP PARTITION, DETACH PARTITION, CONVERT PARTITION, or EXPORT PARTITION");
                 }
 
                 final int functionPosition = lexer.getPosition();
@@ -1308,6 +1311,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             case PartitionAction.CONVERT_TO_NATIVE:
                 final boolean toParquet = action == PartitionAction.CONVERT_TO_PARQUET;
                 alterOperationBuilder = this.alterOperationBuilder.ofConvertPartition(pos, tableToken, tableMetadata.getTableId(), toParquet);
+                break;
+            case PartitionAction.EXPORT_TO_PARQUET:
+                alterOperationBuilder = this.alterOperationBuilder.ofExportPartition(pos, tableToken, tableMetadata.getTableId());
                 break;
             case PartitionAction.DROP:
                 alterOperationBuilder = this.alterOperationBuilder.ofDropPartition(pos, tableToken, tableMetadata.getTableId());
@@ -1724,7 +1730,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (isAddKeyword(tok)) {
                 securityContext.authorizeAlterTableAddColumn(tableToken);
                 alterTableAddColumn(executionContext.getSecurityContext(), tableNamePosition, tableToken, tableMetadata);
-            } else if (isConvertKeyword(tok)) {
+            } else if (isConvertKeyword(tok) || isExportKeyword(tok)) {
+                boolean export = isExportKeyword(tok);
                 tok = expectToken(lexer, "'partition'");
                 if (!isPartitionKeyword(tok)) {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
@@ -1736,7 +1743,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tok = expectToken(lexer, "'parquet' or 'native'");
                 final int action;
                 if (isParquetKeyword(tok)) {
-                    action = PartitionAction.CONVERT_TO_PARQUET;
+                    action = export ? PartitionAction.EXPORT_TO_PARQUET : PartitionAction.CONVERT_TO_PARQUET;
                 } else if (isNativeKeyword(tok)) {
                     action = PartitionAction.CONVERT_TO_NATIVE;
                 } else {
@@ -3997,6 +4004,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         public static final int CONVERT_TO_PARQUET = 4;
         public static final int DETACH = 3;
         public static final int DROP = 1;
+        public static final int EXPORT_TO_PARQUET = 7;
         public static final int FORCE_DROP = 6;
     }
 
