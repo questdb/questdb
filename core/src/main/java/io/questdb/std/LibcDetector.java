@@ -31,6 +31,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 public class LibcDetector {
     public enum LibcType {
@@ -39,6 +40,11 @@ public class LibcDetector {
 
     public static LibcType detectLibc() {
         // Try multiple methods in order of reliability
+
+        // User may force MUSL through the QDB_FORCE_MUSL env variable
+        if ("true".equalsIgnoreCase(System.getenv("QDB_FORCE_MUSL"))) {
+            return LibcType.MUSL;
+        }
 
         // Method 1: Check /proc/self/maps
         LibcType result = detectFromMaps();
@@ -78,7 +84,7 @@ public class LibcDetector {
                     return LibcType.MUSL;
                 }
             }
-        } catch (IOException e) {
+        } catch (Exception e) {
             // Ignore
         }
         return LibcType.UNKNOWN;
@@ -113,6 +119,7 @@ public class LibcDetector {
     private static LibcType detectViaGetconf() {
         try {
             ProcessBuilder pb = new ProcessBuilder("getconf", "GNU_LIBC_VERSION");
+            pb.redirectErrorStream(true);
             Process process = pb.start();
 
             BufferedReader reader = new BufferedReader(
@@ -124,7 +131,7 @@ public class LibcDetector {
                 return LibcType.GLIBC;
             }
 
-            process.waitFor();
+            process.waitFor(5, TimeUnit.SECONDS);
         } catch (Exception e) {
             // Might indicate musl (getconf GNU_LIBC_VERSION fails on musl)
         }
@@ -133,7 +140,6 @@ public class LibcDetector {
 
     private static LibcType detectFromSystemProperties() {
         String osName = System.getProperty("os.name").toLowerCase();
-        String osVersion = System.getProperty("os.version");
 
         // Some educated guesses based on common distributions
         if (osName.contains("alpine")) {

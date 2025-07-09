@@ -125,8 +125,6 @@ jobs:
           key: nativelibs-linux-${{ github.sha }}
   build-all-linux-x86-64-musl:
     runs-on: ubuntu-latest
-    # manylinux2014 is a container with new-ish compilers and tools, but old glibc - 2.17
-    # 2.17 is old enough to be compatible with most Linux distributions out there
     container:
       image: alpine:3.22
     steps:
@@ -190,8 +188,6 @@ jobs:
           key: nativelibs-armlinux-${{ github.sha }}
   build-all-linux-aarch64-musl:
     runs-on: ubuntu-latest
-    # manylinux2014 is a container with new-ish compilers and tools, but old glibc - 2.17
-    # 2.17 is old enough to be compatible with most Linux distributions out there
     container:
       image: alpine:3.22
     steps:
