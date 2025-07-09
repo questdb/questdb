@@ -190,10 +190,22 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: alpine:3.22
+    volumes:
+      - /:/host
     steps:
+      # Took from https://github.com/actions/runner/issues/801#issuecomment-2394425757 until Alpine is supported by GitHub Actions runners.
+      - name: Patch native Alpine NodeJS into Runner environment
+        if: runner.os == 'Linux'
+        run: |
+          apk add nodejs
+          sed -i "s:ID=alpine:ID=NotpineForGHA:" /etc/os-release
+          cd /host/home/runner/runners/*/externals/
+          rm -rf node20/*
+          mkdir node20/bin
+          ln -s /usr/bin/node node20/bin/node
       - name: Install tools
         run: |
-          apk add python3 gcc musl-dev tar nodejs
+          apk add python3 gcc musl-dev tar
       - uses: actions/checkout@v4
         with:
           submodules: false
