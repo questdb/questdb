@@ -326,12 +326,14 @@ public class Table2IlpTest {
         createTestPath(root);
         engine.getTableIdGenerator().open();
         engine.getTableIdGenerator().reset();
+        engine.getDataID().open();
         engine.reloadTableNames();
     }
 
     @After
     public void tearDown() {
         engine.getTableIdGenerator().close();
+        engine.getDataID().close();
         engine.clear();
         removeTestPath(root);
     }

@@ -230,6 +230,7 @@ public class SecurityTest extends AbstractCairoTest {
     public void tearDown() throws Exception {
         // we've to close id file, otherwise parent tearDown() fails on TestUtils.removeTestPath(root) in Windows
         memoryRestrictedEngine.getTableIdGenerator().close();
+        memoryRestrictedEngine.getDataID().close();
         memoryRestrictedEngine.clear();
         memoryRestrictedEngine.getTableSequencerAPI().releaseInactive();
         memoryRestrictedEngine.closeNameRegistry();
