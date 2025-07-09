@@ -1353,10 +1353,10 @@ mod tests {
     use crate::parquet::tests::ColumnTypeTagExt;
     use crate::parquet_read::decode::{INT_NULL, LONG_NULL, UUID_NULL};
     use crate::parquet_read::{ColumnChunkBuffers, ParquetDecoder};
+    use crate::parquet_write::array::{append_array, append_array_null};
     use crate::parquet_write::file::ParquetWriter;
     use crate::parquet_write::schema::{Column, Partition};
     use crate::parquet_write::varchar::{append_varchar, append_varchar_null};
-    use crate::parquet_write::array::{append_array, append_array_null};
     use arrow::datatypes::ToByteSlice;
     use bytes::Bytes;
     use parquet::file::reader::Length;

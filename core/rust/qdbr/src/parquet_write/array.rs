@@ -24,6 +24,8 @@
 
 use std::mem;
 
+use qdb_core::col_driver::ArrayAuxEntry;
+
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
@@ -34,34 +36,7 @@ use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
 
-const OFFSET_MAX: u64 = (1u64 << 48) - 1;
-const HEADER_SIZE_NULL: [u8; 8] = [
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-    0u8,
-];
-
-#[repr(C, packed)]
-struct ArrayAuxEntry {
-    offset: u64,
-    size: u32,
-    _pad: u32,
-}
-
-impl ArrayAuxEntry {
-    fn size(&self) -> u32 {
-        self.size
-    }
-
-    fn offset(&self) -> u64 {
-        self.offset & OFFSET_MAX
-    }
-}
+const HEADER_SIZE_NULL: [u8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
 
 pub fn array_to_page(
     aux: &[[u8; 16]],

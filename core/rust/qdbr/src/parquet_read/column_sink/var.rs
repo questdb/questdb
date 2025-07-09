@@ -2,8 +2,8 @@ use crate::parquet::error::{ParquetErrorReason, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::DataPageSlicer;
 use crate::parquet_read::ColumnChunkBuffers;
-use crate::parquet_write::varchar::{append_varchar, append_varchar_null, append_varchar_nulls};
 use crate::parquet_write::array::{append_array, append_array_null, append_array_nulls};
+use crate::parquet_write::varchar::{append_varchar, append_varchar_null, append_varchar_nulls};
 use std::mem::size_of;
 
 const VARCHAR_AUX_SIZE: usize = 2 * size_of::<u64>();

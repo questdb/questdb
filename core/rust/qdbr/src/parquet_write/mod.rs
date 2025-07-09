@@ -1,5 +1,6 @@
 use num_traits::AsPrimitive;
 
+pub mod array;
 mod binary;
 mod boolean;
 pub(crate) mod file;
@@ -12,7 +13,6 @@ mod symbol;
 mod update;
 mod util;
 pub mod varchar;
-pub mod array;
 
 pub trait Nullable {
     fn is_null(&self) -> bool;

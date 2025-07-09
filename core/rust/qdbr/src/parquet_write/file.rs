@@ -14,7 +14,9 @@ use parquet2::write::{
 use parquet2::FallibleStreamingIterator;
 
 use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
-use crate::parquet_write::{array, binary, boolean, fixed_len_bytes, primitive, string, symbol, varchar};
+use crate::parquet_write::{
+    array, binary, boolean, fixed_len_bytes, primitive, string, symbol, varchar,
+};
 use qdb_core::col_type::ColumnTypeTag;
 
 use super::{util, GeoByte, GeoInt, GeoLong, GeoShort, IPv4};
@@ -373,7 +375,10 @@ fn column_chunk_to_pages(
 
     let number_of_rows = chunk_length;
     let max_page_size = options.data_page_size.unwrap_or(DEFAULT_PAGE_SIZE);
-    let rows_per_page = cmp::max(max_page_size / bytes_per_type(primitive_type.physical_type), 1);
+    let rows_per_page = cmp::max(
+        max_page_size / bytes_per_type(primitive_type.physical_type),
+        1,
+    );
 
     let rows = (0..number_of_rows)
         .step_by(rows_per_page)

@@ -1,6 +1,6 @@
 use std::slice;
 
-use crate::parquet::error::{ParquetResult};
+use crate::parquet::error::ParquetResult;
 use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_META_KEY};
 use parquet2::encoding::Encoding;
 use parquet2::metadata::KeyValue;
