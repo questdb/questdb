@@ -177,7 +177,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testBrutalArraySyntaxErrors() throws Exception {
         // Multiple consecutive brackets
         assertException("select null::[][][]", 13, "type definition is expected");
-//        assertException("select null::][", 13, "type definition is expected");
+        assertException("select null::][", 13, "syntax error");
 
         // Brackets with numbers (common user mistake)
         assertException("select null::double[1]", 20, "']' expected");

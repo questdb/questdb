@@ -471,7 +471,7 @@ public class ExpressionParser {
                     }
                     case ']': {
                         switch (prevBranch) {
-                            case BRANCH_ARRAY_TYPE_QUALIFIER_START:
+                            case BRANCH_ARRAY_TYPE_QUALIFIER_START: {
                                 // we are confident asserting this because the code that set the
                                 // prevBranch value has to ensure this is the case.
                                 ExpressionNode en = opStack.peek();
@@ -488,11 +488,22 @@ public class ExpressionParser {
                                             .put("]' but found '").put(lexer.getContent(), en.position, lastPos + tok.length())
                                             .put('\'');
                                 }
-                                break;
+                            }
+                            break;
                             case BRANCH_COMMA:
                                 throw missingArgs(lastPos);
                             case BRANCH_LEFT_PARENTHESIS:
                                 throw SqlException.$(lastPos, "syntax error");
+                            case BRANCH_OPERATOR: {
+                                // this would be a syntax error in regular cases, such as
+                                // "1 + ]". However, there is an edge case in array slicing:
+                                // [1:] - this is a valid syntax. The only known one. The best one.
+                                ExpressionNode en = opStack.peek();
+                                if (en == null || !Chars.equals(en.token, ':')) {
+                                    throw SqlException.$(lastPos, "syntax error");
+                                }
+                            }
+                            // fall thru
                             default:
                                 Scope scope = scopeStack.peek();
                                 if (scope != Scope.BRACKET && scope != Scope.ARRAY) {
