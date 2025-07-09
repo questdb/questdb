@@ -60,6 +60,10 @@ class PGUtils {
     }
 
     public static int calculateArrayColBinSize(ArrayView array, int resumePoint) {
+        int notNullCount = array.isVanilla() ?
+                array.flatView().countDouble(array.getFlatViewOffset(), array.getFlatViewLength())
+                : countNotNullRecursive(array, 0, 0);
+        int nullCount = array.getCardinality() - notNullCount;
         // When this method is called while resuming the sending of an array (resumePoint > 0),
         // the header has already been sent. That's why we set header size to 0 in that case.
         // The calling code must ensure at least one element follows the header, otherwise
@@ -72,9 +76,11 @@ class PGUtils {
                 + array.getDimCount() * (2 * Integer.BYTES) // dimension lengths
                 : 0;
         return headerSize +
-                (array.getCardinality() - resumePoint) * // number of elements left to send
+                (notNullCount - resumePoint) *
                         (Integer.BYTES // element size
-                                + Long.BYTES); // element value
+                                + Long.BYTES) + // element value
+                nullCount *
+                        Integer.BYTES; // element size, zero for NULL value
     }
 
     /**
@@ -244,6 +250,27 @@ class PGUtils {
                 assert false : "unsupported type: " + typeTag;
                 return -1;
         }
+    }
+
+    private static int countNotNullRecursive(ArrayView array, int dim, int flatIndex) {
+        int count = 0;
+        final int dimLen = array.getDimLen(dim);
+        final int stride = array.getStride(dim);
+        final boolean atDeepestDim = dim == array.getDimCount() - 1;
+        if (atDeepestDim) {
+            for (int i = 0; i < dimLen; i++) {
+                if (Numbers.isFinite(array.getDouble(flatIndex))) {
+                    count++;
+                }
+                flatIndex += stride;
+            }
+        } else {
+            for (int i = 0; i < dimLen; i++) {
+                count += countNotNullRecursive(array, dim + 1, flatIndex);
+                flatIndex += stride;
+            }
+        }
+        return count;
     }
 
     private static int geoHashBytes(long value, int size) {
