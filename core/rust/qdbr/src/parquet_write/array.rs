@@ -52,7 +52,7 @@ struct ArrayAuxEntry {
 }
 
 pub fn array_to_page(
-    aux: &[i64],
+    aux: &[[u8; 16]],
     data: &[u8],
     column_top: usize,
     options: WriteOptions,

@@ -1,3 +1,4 @@
+use std::cmp;
 use std::collections::VecDeque;
 use std::io::Write;
 
@@ -372,7 +373,7 @@ fn column_chunk_to_pages(
 
     let number_of_rows = chunk_length;
     let max_page_size = options.data_page_size.unwrap_or(DEFAULT_PAGE_SIZE);
-    let rows_per_page = max_page_size / bytes_per_type(primitive_type.physical_type);
+    let rows_per_page = cmp::max(max_page_size / bytes_per_type(primitive_type.physical_type), 1);
 
     let rows = (0..number_of_rows)
         .step_by(rows_per_page)
@@ -589,9 +590,9 @@ fn chunk_to_page(
         }
         ColumnTypeTag::Array => {
             let data = column.primary_data;
-            let offsets: &[i64] = unsafe { util::transmute_slice(column.secondary_data) };
+            let aux: &[[u8; 16]] = unsafe { util::transmute_slice(column.secondary_data) };
             array::array_to_page(
-                &offsets[lower_bound..upper_bound],
+                &aux[lower_bound..upper_bound],
                 data,
                 adjusted_column_top,
                 options,

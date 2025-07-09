@@ -1356,6 +1356,7 @@ mod tests {
     use crate::parquet_write::file::ParquetWriter;
     use crate::parquet_write::schema::{Column, Partition};
     use crate::parquet_write::varchar::{append_varchar, append_varchar_null};
+    use crate::parquet_write::array::{append_array, append_array_null};
     use arrow::datatypes::ToByteSlice;
     use bytes::Bytes;
     use parquet::file::reader::Length;
@@ -1542,28 +1543,39 @@ mod tests {
         ));
         expected_buffs.push((string_buffers, ColumnTypeTag::String.into_type()));
 
-        let string_buffers = create_col_data_buff_varchar(row_count, 3);
+        let varchar_buffers = create_col_data_buff_varchar(row_count, 3);
         columns.push(create_var_column(
             columns.len() as i32,
             row_count,
             "varchar_col",
-            string_buffers.data_vec.as_ref(),
-            string_buffers.aux_vec.as_ref().unwrap(),
+            varchar_buffers.data_vec.as_ref(),
+            varchar_buffers.aux_vec.as_ref().unwrap(),
             ColumnTypeTag::Varchar.into_type(),
         ));
-        expected_buffs.push((string_buffers, ColumnTypeTag::Varchar.into_type()));
+        expected_buffs.push((varchar_buffers, ColumnTypeTag::Varchar.into_type()));
 
         let symbol_buffs = create_col_data_buff_symbol(row_count, 10);
         columns.push(create_symbol_column(
             columns.len() as i32,
             row_count,
-            "string_col",
+            "symbol_col",
             symbol_buffs.data_vec.as_ref(),
             symbol_buffs.sym_chars.as_ref().unwrap(),
             symbol_buffs.sym_offsets.as_ref().unwrap(),
             ColumnTypeTag::Symbol.into_type(),
         ));
         expected_buffs.push((symbol_buffs, ColumnTypeTag::Varchar.into_type()));
+
+        let array_buffers = create_col_data_buff_array(row_count, 3);
+        columns.push(create_var_column(
+            columns.len() as i32,
+            row_count,
+            "array_col",
+            array_buffers.data_vec.as_ref(),
+            array_buffers.aux_vec.as_ref().unwrap(),
+            ColumnTypeTag::Array.into_type(),
+        ));
+        expected_buffs.push((array_buffers, ColumnTypeTag::Array.into_type()));
 
         assert_columns(
             row_count,
@@ -1866,6 +1878,21 @@ mod tests {
         random_string
     }
 
+    fn generate_random_binary(len: usize) -> Vec<u8> {
+        let mut rng = rand::thread_rng();
+
+        let len = 1 + rng.gen_range(0..len - 1);
+
+        let random_bin: Vec<u8> = (0..len)
+            .map(|_| {
+                let u: u8 = rng.gen();
+                u
+            })
+            .collect();
+
+        random_bin
+    }
+
     struct ColumnBuffers {
         data_vec: AcVec<u8>,
         aux_vec: Option<AcVec<u8>>,
@@ -2013,6 +2040,38 @@ mod tests {
                 aux_buff
                     .extend_from_slice(&data_buff.len().to_le_bytes())
                     .unwrap();
+                i += 1;
+            }
+        }
+        ColumnBuffers {
+            data_vec: data_buff,
+            aux_vec: Some(aux_buff),
+            sym_offsets: None,
+            sym_chars: None,
+            expected_data_buff: None,
+            expected_aux_buff: None,
+        }
+    }
+
+    fn create_col_data_buff_array(row_count: usize, distinct_values: usize) -> ColumnBuffers {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let mut aux_buff = AcVec::new_in(allocator.clone());
+        let mut data_buff = AcVec::new_in(allocator);
+
+        let arr_values: Vec<Vec<u8>> = (0..distinct_values)
+            .map(|_| generate_random_binary(10))
+            .collect();
+
+        let mut i = 0;
+        while i < row_count {
+            let arr_value = &arr_values[i % distinct_values];
+            append_array(&mut aux_buff, &mut data_buff, arr_value).unwrap();
+            i += 1;
+
+            if i < row_count {
+                append_array_null(&mut aux_buff, &data_buff).unwrap();
                 i += 1;
             }
         }
