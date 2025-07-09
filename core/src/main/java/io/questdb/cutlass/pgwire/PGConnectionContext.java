@@ -829,7 +829,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void appendDoubleColumn(Record record, int columnIndex) {
         final double value = record.getDouble(columnIndex);
-        if (Numbers.isFinite(value)) {
+        if (!Double.isNaN(value)) {
             final long a = responseUtf8Sink.skip();
             responseUtf8Sink.put(value);
             responseUtf8Sink.putLenEx(a);
@@ -840,7 +840,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void appendDoubleColumnBin(Record record, int columnIndex) {
         final double value = record.getDouble(columnIndex);
-        if (Numbers.isFinite(value)) {
+        if (!Double.isNaN(value)) {
             responseUtf8Sink.putNetworkInt(Double.BYTES);
             responseUtf8Sink.putNetworkDouble(value);
         } else {
@@ -850,7 +850,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void appendFloatColumn(Record record, int columnIndex) {
         final float value = record.getFloat(columnIndex);
-        if (Numbers.isFinite(value)) {
+        if (!Float.isNaN(value)) {
             final long a = responseUtf8Sink.skip();
             responseUtf8Sink.put(value);
             responseUtf8Sink.putLenEx(a);
@@ -861,7 +861,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void appendFloatColumnBin(Record record, int columnIndex) {
         final float value = record.getFloat(columnIndex);
-        if (!Numbers.isNull(value)) {
+        if (!Float.isNaN(value)) {
             responseUtf8Sink.putNetworkInt(Float.BYTES);
             responseUtf8Sink.putNetworkFloat(value);
         } else {
