@@ -28,14 +28,11 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CurrentDataIdFunctionFactory implements FunctionFactory {
-    private static Long256Function INSTANCE = null;
-
     @Override
     public String getSignature() {
         return "current_data_id()";
@@ -48,9 +45,6 @@ public class CurrentDataIdFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        if (INSTANCE == null) {
-            INSTANCE = new Long256Constant(sqlExecutionContext.getDataId());
-        }
-        return INSTANCE;
+        return new Long256Constant(sqlExecutionContext.getDataId());
     }
 }

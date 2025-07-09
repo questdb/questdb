@@ -68,7 +68,6 @@ public class DataID implements QuietCloseable {
         } finally {
             path.trimTo(rootLen);
         }
-
     }
 
     private void setup() {
