@@ -1649,16 +1649,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
         short elemType = array.getElemType();
         if (outResendArrayFlatIndex == 0) {
+            // Send the header. We must ensure at least one element follows the header, otherwise the
+            // outResendArrayFlatIndex stays at 0 even though the header was already sent, which will cause
+            // the header to be sent again.
             int nDims = array.getDimCount();
             int componentTypeOid = getTypeOid(elemType);
+            int notNullCount = PGUtils.countNotNull(array, 0);
 
             // The size field indicates the size of what follows, excluding its own size,
             // that's why we subtract Integer.BYTES from it. The same method is used to calculate
             // the full size of the message, and in that case this field must be included.
-            utf8Sink.putNetworkInt(PGUtils.calculateArrayColBinSize(array, 0) - Integer.BYTES);
-
+            utf8Sink.putNetworkInt(PGUtils.calculateArrayColBinSize(array, notNullCount) - Integer.BYTES);
             utf8Sink.putNetworkInt(nDims);
-            utf8Sink.putIntDirect(0); // "has nulls" flag: always 0 because QuestDB doesn't support NULL as array element
+            utf8Sink.putIntDirect(notNullCount < array.getCardinality() ? 1 : 0); // "has nulls" flag
             utf8Sink.putNetworkInt(componentTypeOid);
             for (int i = 0; i < nDims; i++) {
                 utf8Sink.putNetworkInt(array.getDimLen(i)); // length of each dimension
