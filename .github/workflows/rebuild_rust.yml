@@ -187,7 +187,7 @@ jobs:
             core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdbr.so
           key: nativelibs-armlinux-${{ github.sha }}
   build-all-linux-aarch64-musl:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04-arm
     container:
       image: alpine:3.22
       volumes:
