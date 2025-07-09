@@ -142,8 +142,9 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             @NotNull CharSink<?> sink,
             @NotNull String nullLiteral
     ) {
+        @SuppressWarnings("JavaExistingMethodCanBeUsed")
         double d = array.getDouble(index);
-        if (Double.isFinite(d)) {
+        if (Numbers.isFinite(d)) {
             sink.put(d);
         } else {
             sink.put(nullLiteral);
