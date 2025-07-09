@@ -7,7 +7,7 @@ use crate::parquet_read::column_sink::fixed::{
     FixedLongColumnSink, IntDecimalColumnSink, NanoTimestampColumnSink, ReverseFixedColumnSink,
 };
 use crate::parquet_read::column_sink::var::{
-    BinaryColumnSink, StringColumnSink, VarcharColumnSink,
+    ArrayColumnSink, BinaryColumnSink, StringColumnSink, VarcharColumnSink,
 };
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::dict_decoder::{FixedDictDecoder, VarDictDecoder};
@@ -1040,6 +1040,29 @@ pub fn decode_page(
                     )?;
                     Ok(())
                 }
+                (Encoding::Plain, None, ColumnTypeTag::Array) => {
+                    let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
+                    decode_page0(
+                        version,
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut ArrayColumnSink::new(&mut slicer, bufs),
+                    )?;
+                    Ok(())
+                }
+                (Encoding::DeltaLengthByteArray, None, ColumnTypeTag::Array) => {
+                    let mut slicer =
+                        DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
+                    decode_page0(
+                        version,
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut ArrayColumnSink::new(&mut slicer, bufs),
+                    )?;
+                    Ok(())
+                }
                 _ => Err(encoding_error),
             }
         }
@@ -1286,7 +1309,7 @@ pub fn decode_null_bitmap(
     _version: Version,
     page: &DataPage,
     count: usize,
-) -> ParquetResult<Option<FilteredHybridRleDecoderIter>> {
+) -> ParquetResult<Option<FilteredHybridRleDecoderIter<'_>>> {
     let def_levels = split_buffer(page)?.1;
     if def_levels.is_empty() {
         return Ok(None);

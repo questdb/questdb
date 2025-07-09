@@ -3,10 +3,12 @@ use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::DataPageSlicer;
 use crate::parquet_read::ColumnChunkBuffers;
 use crate::parquet_write::varchar::{append_varchar, append_varchar_null, append_varchar_nulls};
+use crate::parquet_write::array::{append_array, append_array_null, append_array_nulls};
 use std::mem::size_of;
 
 const VARCHAR_AUX_SIZE: usize = 2 * size_of::<u64>();
 const STRING_AUX_SIZE: usize = size_of::<u64>();
+const ARRAY_AUX_SIZE: usize = 2 * size_of::<u64>();
 
 pub struct VarcharColumnSink<'a, T: DataPageSlicer> {
     slicer: &'a mut T,
@@ -248,6 +250,65 @@ impl<T: DataPageSlicer> Pushable for BinaryColumnSink<'_, T> {
 }
 
 impl<'a, T: DataPageSlicer> BinaryColumnSink<'a, T> {
+    pub fn new(slicer: &'a mut T, buffers: &'a mut ColumnChunkBuffers) -> Self {
+        Self { slicer, buffers }
+    }
+}
+
+pub struct ArrayColumnSink<'a, T: DataPageSlicer> {
+    slicer: &'a mut T,
+    pub buffers: &'a mut ColumnChunkBuffers,
+}
+
+impl<T: DataPageSlicer> Pushable for ArrayColumnSink<'_, T> {
+    fn reserve(&mut self) -> ParquetResult<()> {
+        let count = self.slicer.count();
+        self.buffers.aux_vec.reserve(count * ARRAY_AUX_SIZE)?;
+        self.buffers.data_vec.reserve(self.slicer.data_size())?;
+        Ok(())
+    }
+
+    #[inline]
+    fn push(&mut self) -> ParquetResult<()> {
+        append_array(
+            &mut self.buffers.aux_vec,
+            &mut self.buffers.data_vec,
+            self.slicer.next(),
+        )
+    }
+
+    #[inline]
+    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
+        for _ in 0..count {
+            append_array(
+                &mut self.buffers.aux_vec,
+                &mut self.buffers.data_vec,
+                self.slicer.next(),
+            )?;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn push_null(&mut self) -> ParquetResult<()> {
+        append_array_null(&mut self.buffers.aux_vec, &self.buffers.data_vec)
+    }
+
+    #[inline]
+    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
+        append_array_nulls(&mut self.buffers.aux_vec, &self.buffers.data_vec, count)
+    }
+
+    fn skip(&mut self, count: usize) {
+        self.slicer.skip(count);
+    }
+
+    fn result(&self) -> ParquetResult<()> {
+        self.slicer.result()
+    }
+}
+
+impl<'a, T: DataPageSlicer> ArrayColumnSink<'a, T> {
     pub fn new(slicer: &'a mut T, buffers: &'a mut ColumnChunkBuffers) -> Self {
         Self { slicer, buffers }
     }

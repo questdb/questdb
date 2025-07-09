@@ -12,6 +12,7 @@ mod symbol;
 mod update;
 mod util;
 pub mod varchar;
+pub mod array;
 
 pub trait Nullable {
     fn is_null(&self) -> bool;

@@ -13,11 +13,11 @@ use parquet2::write::{
 use parquet2::FallibleStreamingIterator;
 
 use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
-use crate::parquet_write::{binary, boolean, fixed_len_bytes, primitive, string, symbol, varchar};
+use crate::parquet_write::{array, binary, boolean, fixed_len_bytes, primitive, string, symbol, varchar};
 use qdb_core::col_type::ColumnTypeTag;
 
 use super::{util, GeoByte, GeoInt, GeoLong, GeoShort, IPv4};
-use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
+use crate::parquet::error::{ParquetError, ParquetResult};
 use crate::POOL;
 use rayon::prelude::*;
 
@@ -587,6 +587,18 @@ fn chunk_to_page(
                 encoding,
             )
         }
+        ColumnTypeTag::Array => {
+            let data = column.primary_data;
+            let offsets: &[i64] = unsafe { util::transmute_slice(column.secondary_data) };
+            array::array_to_page(
+                &offsets[lower_bound..upper_bound],
+                data,
+                adjusted_column_top,
+                options,
+                primitive_type,
+                encoding,
+            )
+        }
         ColumnTypeTag::Long128 | ColumnTypeTag::Uuid => {
             let reversed = column.data_type.tag() == ColumnTypeTag::Uuid;
             let column: &[[u8; 16]] = unsafe { util::transmute_slice(column.primary_data) };
@@ -611,10 +623,6 @@ fn chunk_to_page(
         ColumnTypeTag::Symbol => {
             panic!("Symbol type is encoded in column_chunk_to_pages()")
         }
-        ColumnTypeTag::Array => Err(fmt_err!(
-            InvalidType,
-            "tables with array columns cannot be converted to Parquet partitions yet"
-        )),
     }
 }
 
