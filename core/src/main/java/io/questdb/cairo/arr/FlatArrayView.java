@@ -138,7 +138,7 @@ public interface FlatArrayView {
         int count = 0;
         for (int i = offset, n = offset + length; i < n; i++) {
             double v = getDoubleAtAbsIndex(i);
-            if (!Double.isNaN(v)) {
+            if (Numbers.isFinite(v)) {
                 count++;
             }
         }
