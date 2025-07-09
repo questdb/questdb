@@ -36,7 +36,7 @@ public class ConstantsTest {
         for (int i = 0; i < ColumnType.NULL; i++) { // NULL is the last type
 
             // Skip known non-nullable types
-            if (i == ColumnType.BYTE || i == ColumnType.SHORT || i == ColumnType.BOOLEAN || i == ColumnType.CHAR) {
+            if (i == ColumnType.BYTE || i == ColumnType.SHORT || i == ColumnType.BOOLEAN || i == ColumnType.CHAR || i == ColumnType.ARRAY) {
                 continue;
             }
 
