@@ -62,6 +62,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
@@ -990,34 +991,30 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.columnTypesAndFlags.clear();
         if (columnNames != null) {
             columnsQueryParameter.clear();
-            if (!Utf8s.utf8ToUtf16(columnNames.lo(), columnNames.hi(), columnsQueryParameter)) {
-                info().$("utf8 error when decoding column list '").$safe(columnNames).$('\'').$();
-                HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
-                JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);
-                response.putAscii('{')
-                        .putAsciiQuoted("error").putAscii(':').putAsciiQuoted("utf8 error in column list")
-                        .putAscii('}');
-                response.sendChunk(true);
-                return false;
-            }
 
-            columnCount = 1;
-            int start = 0;
-            int comma = 0;
-            while (comma > -1) {
-                comma = Chars.indexOf(columnsQueryParameter, start, ',');
-                if (comma > -1) {
-                    if (addColumnToOutput(metadata, columnsQueryParameter, start, comma)) {
-                        return false;
-                    }
-                    start = comma + 1;
-                    columnCount++;
-                } else {
-                    int hi = columnsQueryParameter.length();
-                    if (addColumnToOutput(metadata, columnsQueryParameter, start, hi)) {
-                        return false;
-                    }
+            columnCount = 0;
+            long rawLo = columnNames.lo();
+            final long rawHi = columnNames.hi();
+            int lo = 0;
+            while (rawLo < rawHi) {
+                rawLo = parseNextColumnName(rawLo, rawHi);
+                if (rawLo <= 0) {
+                    info().$("utf8 error when decoding column list '").$safe(columnNames).$('\'').$();
+                    HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
+                    JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);
+                    response.putAscii('{')
+                            .putAsciiQuoted("error").putAscii(':').putAsciiQuoted("utf8 error in column list")
+                            .putAscii('}');
+                    response.sendChunk(true);
+                    return false;
                 }
+
+                final int length = columnsQueryParameter.length();
+                if (addColumnToOutput(metadata, columnsQueryParameter, lo, length)) {
+                    return false;
+                }
+                lo = length;
+                columnCount++;
             }
         } else {
             columnCount = metadata.getColumnCount();
@@ -1027,6 +1024,42 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
         this.columnCount = columnCount;
         return true;
+    }
+
+    // parses comma-separated column names, handling double quotes and escape char while converting from utf8 to utf16 encoding.
+    private long parseNextColumnName(long rawLo, long rawHi) {
+        boolean quoted = false;
+        boolean escaped = false;
+        while (rawLo < rawHi) {
+            byte b = Unsafe.getUnsafe().getByte(rawLo);
+            if (b < 0) {
+                int n = Utf8s.utf8DecodeMultiByte(rawLo, rawHi, b, columnsQueryParameter);
+                if (n == -1) {
+                    // Invalid code point
+                    return 0;
+                }
+                escaped = false;
+                rawLo += n;
+            } else {
+                rawLo++;
+                if (escaped) {
+                    escaped = false;
+                    columnsQueryParameter.put((char) b);
+                    continue;
+                }
+
+                if (b == '\\') {
+                    escaped = true;
+                } else if (b == '"') {
+                    quoted = !quoted;
+                } else if (!quoted && b == ',') {
+                    return rawLo;
+                } else {
+                    columnsQueryParameter.put((char) b);
+                }
+            }
+        }
+        return rawLo;
     }
 
     void querySuffixWithError(
