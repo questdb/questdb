@@ -575,6 +575,8 @@ public interface CairoConfiguration {
 
     int getStrFunctionMaxBufferLength();
 
+    long getSymbolTableAppendPageSize();
+
     long getSystemDataAppendPageSize();
 
     int getSystemO3ColumnMemorySize();

@@ -49,6 +49,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.FlyweightCharSequence;
 import org.jetbrains.annotations.Nullable;
+import io.questdb.std.str.Utf8Sequence;
 
 import java.util.ArrayDeque;
 
@@ -233,10 +234,21 @@ public final class WhereClauseParser implements Mutable {
             int functionPosition,
             boolean detectIntervals
     ) throws SqlException {
-        if (!ColumnType.isSymbolOrString(function.getType())) {
+        int type = function.getType();
+        if (ColumnType.isSymbolOrString(type)) {
+            CharSequence str = function.getStrA(null);
+            return str == null ? Numbers.LONG_NULL : parseStringAsTimestamp(str, functionPosition, detectIntervals);
+        } else if (type == ColumnType.VARCHAR) {
+            Utf8Sequence varchar = function.getVarcharA(null);
+            return varchar == null
+                    ? Numbers.LONG_NULL
+                    : parseStringAsTimestamp(varchar.asAsciiCharSequence(), functionPosition, detectIntervals);
+        } else {
+
             return timestampDriver.from(function.getTimestamp(null), function.getType());
         }
-        return parseStringAsTimestamp(timestampDriver, function.getStrA(null), functionPosition, detectIntervals);
+        CharSequence str = function.getStrA(null);
+        return parseStringAsTimestamp(str, functionPosition, detectIntervals);
     }
 
     private static boolean isFunc(ExpressionNode n) {
