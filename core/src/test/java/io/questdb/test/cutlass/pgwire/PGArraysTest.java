@@ -697,7 +697,7 @@ public class PGArraysTest extends BasePGTest {
                 }
             }
         }, () -> {
-            recvBufferSize = 4 * elemCount;
+            recvBufferSize = 8 * elemCount;
             forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
         });
     }
