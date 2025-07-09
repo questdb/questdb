@@ -634,6 +634,27 @@ public final class Chars {
         return -1;
     }
 
+    public static int indexOfNonWhitespace(@NotNull CharSequence seq, int seqLo, int seqHi, int occurrence) {
+        if (occurrence == 0) {
+            return -1;
+        }
+
+        if (occurrence > 0) {
+            for (int i = seqLo; i < seqHi; i++) {
+                if (!Character.isWhitespace(seq.charAt(i))) {
+                    return i;
+                }
+            }
+        } else { // if occurrence is negative, search in reverse
+            for (int i = seqHi - 1; i >= seqLo; i--) {
+                if (!Character.isWhitespace(seq.charAt(i))) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
     public static int indexOf(CharSequence seq, char c) {
         return indexOf(seq, 0, c);
     }
