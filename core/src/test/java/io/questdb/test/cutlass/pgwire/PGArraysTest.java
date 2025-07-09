@@ -261,21 +261,7 @@ public class PGArraysTest extends BasePGTest {
     @Test
     public void testArrayResultSet() throws Exception {
         skipOnWalRun();
-
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-
-            try (PreparedStatement statement = connection.prepareStatement("select null::double;")) {
-                sink.clear();
-                try (ResultSet rs = statement.executeQuery()) {
-                    assertResultSet(
-                            "abc",
-                            sink, rs);
-                }
-            }
-        }, () -> {
-            sendBufferSize = 1000 * 1024; // use large enough buffer, otherwise we will get fragmented messages and this currently leads to non-deterministic results of rnd_double_array
-        });
-
+        
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             execute("create table xd as (select rnd_double_array(2, 9) from long_sequence(5))");
 
