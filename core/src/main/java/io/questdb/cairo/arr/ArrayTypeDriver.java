@@ -125,26 +125,28 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     public static void appendDoubleFromArrayToSink(
             @NotNull ArrayView array,
             int index,
-            @NotNull CharSink<?> sink
+            @NotNull CharSink<?> sink,
+            @NotNull String nullLiteral
     ) {
         double d = array.getDouble(index);
-        if (Double.isFinite(d)) {
+        if (Numbers.isFinite(d)) {
             sink.put(d);
         } else {
-            sink.put("null");
+            sink.put(nullLiteral);
         }
     }
 
     public static void appendDoubleFromArrayToSinkJson(
             @NotNull ArrayView array,
             int index,
-            @NotNull CharSink<?> sink
+            @NotNull CharSink<?> sink,
+            @NotNull String nullLiteral
     ) {
         double d = array.getDouble(index);
         if (Double.isFinite(d)) {
             sink.put(d);
         } else {
-            sink.put("null");
+            sink.put(nullLiteral);
         }
     }
 
@@ -269,7 +271,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             sink.put(openChar).put(closeChar);
             return;
         }
-        arrayToText(array, 0, 0, sink, appender, openChar, closeChar, arrayState);
+        arrayToText(array, 0, 0, sink, appender, openChar, closeChar, nullLiteral, arrayState);
     }
 
     /**
@@ -679,6 +681,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             @NotNull ArrayValueAppender appender,
             char openChar,
             char closeChar,
+            @NotNull String nullLiteral,
             ArrayWriteState writeState
     ) {
         final int count = array.getDimLen(dim);
@@ -693,7 +696,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
                     writeState.putCharIfNew(sink, ',');
                 }
                 if (writeState.incAndSayIfNewOp()) {
-                    appender.appendItemAtFlatIndex(array, flatIndex, sink);
+                    appender.appendItemAtFlatIndex(array, flatIndex, sink, nullLiteral);
                     flatIndex += stride;
                     writeState.performedOp();
                 } else {
@@ -705,7 +708,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
                 if (i != 0) {
                     writeState.putCharIfNew(sink, ',');
                 }
-                arrayToText(array, dim + 1, flatIndex, sink, appender, openChar, closeChar, writeState);
+                arrayToText(array, dim + 1, flatIndex, sink, appender, openChar, closeChar, nullLiteral, writeState);
                 flatIndex += stride;
             }
         }
@@ -819,13 +822,19 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return offset + size;
     }
 
-    static void appendLongFromArrayToSink(@NotNull ArrayView array, int index, @NotNull CharSink<?> sink) {
+    static void appendLongFromArrayToSink(@NotNull ArrayView array, int index, @NotNull CharSink<?> sink, @NotNull String nullLiteral) {
         long d = array.getLong(index);
-        sink.put(d);
+        if (d == Numbers.LONG_NULL) {
+            // currently, this branch shouldn't be hit, as dimensions are non-null
+            // when we add long arrays, it becomes important
+            sink.put(nullLiteral);
+        } else {
+            sink.put(d);
+        }
     }
 
     @FunctionalInterface
     public interface ArrayValueAppender {
-        void appendItemAtFlatIndex(@NotNull ArrayView array, int index, @NotNull CharSink<?> sink);
+        void appendItemAtFlatIndex(@NotNull ArrayView array, int index, @NotNull CharSink<?> sink, @NotNull String nullLiteral);
     }
 }
