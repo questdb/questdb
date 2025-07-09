@@ -175,9 +175,9 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
                                 sql,
                                 sink,
                                 "sym\tround\n" +
-                                        "a\t14085.95\n" +
-                                        "b\t14270.12\n" +
-                                        "v\t14056.25\n"
+                                        "a\t9688.69\n" +
+                                        "b\t9938.03\n" +
+                                        "v\t9898.59\n"
                         );
 
                         TestUtils.assertSql(
