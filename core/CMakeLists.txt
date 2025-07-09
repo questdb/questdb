@@ -342,7 +342,12 @@ elseif (OS_DARWIN)
     target_link_libraries(questdb -nostdlib++ -dead_strip -lc++ _simdjson)
 else ()
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics -ffunction-sections -fdata-sections)
-    target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc -static-libstdc++ _simdjson)
+    target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc _simdjson)
+endif ()
+
+if (MUSL)
+    # For musl we need to link with static libstdc++ to avoid dynamic linking issues
+    target_link_libraries(questdb -static-libstdc++)
 endif ()
 
 # create output directory in case it does not exist, e.g. after mvn clean

@@ -3,6 +3,7 @@ set(CMAKE_SYSTEM_PROCESSOR          aarch64)
 set(ARM True)
 set(AARCH64 True)
 set(CMAKE_SYSTEM_LIBC musl)
+set(MUSL True)
 
 set(CMAKE_C_FLAGS "-I/usr/lib/jvm/java-17-openjdk/include -I/usr/lib/jvm/java-17-openjdk/include/linux -std=gnu99 -D_GNU_SOURCE -ftls-model=global-dynamic" CACHE INTERNAL "")
 set(CMAKE_CXX_FLAGS "-I/usr/lib/jvm/java-17-openjdk/include -I/usr/lib/jvm/java-17-openjdk/include/linux -fno-exceptions -ftls-model=global-dynamic" CACHE INTERNAL "")
