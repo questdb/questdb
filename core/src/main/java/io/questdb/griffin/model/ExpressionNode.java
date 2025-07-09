@@ -209,6 +209,9 @@ public class ExpressionNode implements Mutable, Sinkable {
     public void toSink(@NotNull CharSink<?> sink) {
         // note: it's safe to take any registry (new or old) because we don't use precedence here
         OperatorRegistry registry = OperatorExpression.getRegistry();
+        final char openBracket = SqlKeywords.isArrayKeyword(token) ? '[' : '(';
+        final char closeBracket = SqlKeywords.isArrayKeyword(token) ? ']' : ')';
+
         switch (paramCount) {
             case 0:
                 if (queryModel != null) {
@@ -222,9 +225,9 @@ public class ExpressionNode implements Mutable, Sinkable {
                 break;
             case 1:
                 sink.put(token);
-                sink.putAscii('(');
+                sink.putAscii(openBracket);
                 toSink(sink, rhs);
-                sink.putAscii(')');
+                sink.putAscii(closeBracket);
                 break;
             case 2:
                 if (registry.isOperator(token)) {
@@ -279,12 +282,12 @@ public class ExpressionNode implements Mutable, Sinkable {
                     sink.put(rhs);
                 } else {
                     sink.put(token);
-                    sink.putAscii('(');
+                    sink.putAscii(openBracket);
                     toSink(sink, lhs);
                     sink.putAscii(',');
                     sink.putAscii(' ');
                     toSink(sink, rhs);
-                    sink.putAscii(')');
+                    sink.putAscii(closeBracket);
                 }
                 break;
             default:
@@ -320,7 +323,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                     sink.put(" end");
                 } else {
                     sink.put(token);
-                    sink.putAscii('(');
+                    sink.putAscii(openBracket);
                     for (int i = n - 1; i > -1; i--) {
                         if (i < n - 1) {
                             sink.putAscii(',');
@@ -328,7 +331,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                         }
                         toSink(sink, args.getQuick(i));
                     }
-                    sink.putAscii(')');
+                    sink.putAscii(closeBracket);
                 }
                 break;
         }
