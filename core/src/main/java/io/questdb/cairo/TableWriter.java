@@ -9499,13 +9499,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long lastLogicalPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
         if (lastLogicalPartitionTimestamp != txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp)) {
             lastLogicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp);
-
             // We can have a split partition without the parent logical partition
             // after some replace commits
             // We need to create a logical partition to squash into
             txWriter.insertPartition(partitionIndex, lastLogicalPartitionTimestamp, 0, txWriter.txn);
             setStateForTimestamp(other, lastLogicalPartitionTimestamp);
-            ff.mkdir(other.$(), configuration.getMkDirMode());
+            if (ff.mkdir(other.$(), configuration.getMkDirMode()) != 0) {
+                throw CairoException.critical(ff.errno()).put("could not create directory [path='").put(other).put("']");
+            }
             partitionIndex++;
         }
 

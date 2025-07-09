@@ -758,6 +758,71 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSquashPartitionsNoLogicalPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            // 4kb prefix split threshold
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
+
+            execute(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " -x j," +
+                            " rnd_str(5,16,2) as str," +
+                            " rnd_varchar(1,40,5) as varc1," +
+                            " rnd_varchar(1, 1,5) as varc2," +
+                            " timestamp_sequence('2020-02-04T00', 60*1000000L) ts" +
+                            " from long_sequence(60*(23*2))" +
+                            ") timestamp (ts) partition by DAY ",
+                    sqlExecutionContext
+            );
+            drainWalQueue();
+
+            try (TableReader ignore = getReader("x")) {
+                String sqlPrefix = "insert into x " +
+                        "select" +
+                        " cast(x as int) * 1000000 i," +
+                        " -x - 1000000L as j," +
+                        " rnd_str(5,16,2) as str," +
+                        " rnd_varchar(1,40,5) as varc1," +
+                        " rnd_varchar(1, 1,5) as varc2,";
+                execute(
+                        sqlPrefix +
+                                " timestamp_sequence('2020-02-04T20:01', 1000000L) ts" +
+                                " from long_sequence(200)",
+                        sqlExecutionContext
+                );
+                drainWalQueue();
+
+                String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
+                assertSql("minTimestamp\tnumRows\tname\n" +
+                        "2020-02-04T00:00:00.000000Z\t1201\t2020-02-04\n" +
+                        "2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001\n" +
+                        "2020-02-05T00:00:00.000000Z\t1320\t2020-02-05\n", partitionsSql);
+
+                execute("alter table x force drop partition list '2020-02-04'",
+                        sqlExecutionContext
+                );
+                drainWalQueue();
+
+                // Partition "2020-02-04" cannot be squashed with the new update because it's locked by the reader
+                assertSql("minTimestamp\tnumRows\tname\n" +
+                        "2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001\n" +
+                        "2020-02-05T00:00:00.000000Z\t1320\t2020-02-05\n", partitionsSql);
+
+                // should squash partitions
+                execute("alter table x squash partitions");
+
+                drainWalQueue();
+                assertSql("minTimestamp\tnumRows\tname\n" +
+                        "2020-02-04T20:01:00.000000Z\t439\t2020-02-04\n" +
+                        "2020-02-05T00:00:00.000000Z\t1320\t2020-02-05\n", partitionsSql);
+            }
+        });
+    }
+
+    @Test
     public void testSquashPartitionsOnEmptyTable() throws Exception {
         testSquashPartitionsOnEmptyTable("");
     }
