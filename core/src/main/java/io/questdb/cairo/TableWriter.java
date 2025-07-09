@@ -9497,7 +9497,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void squashPartitionForce(int partitionIndex) {
         int lastLogicalPartitionIndex = partitionIndex;
         long lastLogicalPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-        assert lastLogicalPartitionTimestamp == txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp);
+        if (lastLogicalPartitionTimestamp != txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp)) {
+            lastLogicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp);
+
+            // We can have a split partition without the parent logical partition
+            // after some replace commits
+            // We need to create a logical partition to squash into
+            txWriter.insertPartition(partitionIndex, lastLogicalPartitionTimestamp, 0, txWriter.txn);
+            setStateForTimestamp(other, lastLogicalPartitionTimestamp);
+            ff.mkdir(other.$(), configuration.getMkDirMode());
+            partitionIndex++;
+        }
 
         // Do not cache txWriter.getPartitionCount() as it changes during the squashing
         while (partitionIndex < txWriter.getPartitionCount()) {
