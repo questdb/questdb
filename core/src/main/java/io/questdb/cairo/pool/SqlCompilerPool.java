@@ -150,13 +150,13 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public RecordCursorFactory generateInsertSelectWithRetries(InsertModel queryModel, SqlExecutionContext executionContext, boolean generateProgressLogger) throws SqlException {
-            return delegate.generateInsertSelectWithRetries(queryModel, executionContext, generateProgressLogger);
-        }
-
-        @Override
-        public RecordCursorFactory generateSelectWithRetries(QueryModel queryModel, SqlExecutionContext executionContext, boolean generateProgressLogger) throws SqlException {
-            return delegate.generateSelectWithRetries(queryModel, executionContext, generateProgressLogger);
+        public RecordCursorFactory generateSelectWithRetries(
+                QueryModel queryModel,
+                @Nullable InsertModel insertModel,
+                SqlExecutionContext executionContext,
+                boolean generateProgressLogger
+        ) throws SqlException {
+            return delegate.generateSelectWithRetries(queryModel, insertModel, executionContext, generateProgressLogger);
         }
 
         @Override

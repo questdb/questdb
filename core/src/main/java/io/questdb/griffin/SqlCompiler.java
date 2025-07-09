@@ -36,6 +36,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public interface SqlCompiler extends QuietCloseable, Mutable {
@@ -55,14 +56,9 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      */
     void execute(final Operation op, SqlExecutionContext executionContext) throws SqlException, CairoException;
 
-    RecordCursorFactory generateInsertSelectWithRetries(
-            InsertModel queryModel,
-            @Transient SqlExecutionContext executionContext,
-            boolean generateProgressLogger
-    ) throws SqlException;
-
     RecordCursorFactory generateSelectWithRetries(
             @Transient QueryModel queryModel,
+            @Nullable @Transient InsertModel insertModel,
             @Transient SqlExecutionContext executionContext,
             boolean generateProgressLogger
     ) throws SqlException;
