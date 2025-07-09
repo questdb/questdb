@@ -34,6 +34,7 @@ use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
 
+const OFFSET_MAX: u64 = (1u64 << 48) - 1;
 const HEADER_SIZE_NULL: [u8; 8] = [
     0u8,
     0u8,
@@ -48,7 +49,18 @@ const HEADER_SIZE_NULL: [u8; 8] = [
 #[repr(C, packed)]
 struct ArrayAuxEntry {
     offset: u64,
-    size: u64,
+    size: u32,
+    _pad: u32,
+}
+
+impl ArrayAuxEntry {
+    fn size(&self) -> u32 {
+        self.size
+    }
+
+    fn offset(&self) -> u64 {
+        self.offset & OFFSET_MAX
+    }
 }
 
 pub fn array_to_page(
@@ -73,15 +85,15 @@ pub fn array_to_page(
     let arr_slices: Vec<Option<&[u8]>> = aux
         .iter()
         .map(|entry| {
-            let size = entry.size as usize;
-            let offset = entry.offset as usize;
+            let size = entry.size() as usize;
+            let offset = entry.offset() as usize;
             if size > 0 {
                 assert!(
                     offset + size <= data.len(),
                     "Data corruption in ARRAY column"
                 );
                 Some(&data[offset..][..size])
-            } else { // null                
+            } else {
                 null_count += 1;
                 None
             }
