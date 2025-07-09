@@ -113,12 +113,13 @@ public class Rnd {
         return (((long) (nextIntForDouble(26)) << 27) + nextIntForDouble(27)) * DOUBLE_UNIT;
     }
 
-    public void nextDoubleArray(int dimCount, DirectArray array, int nanRate, int maxDimLen, int errorPosition) {
+    public void nextDoubleArray(int maxDimCount, DirectArray array, int nanRate, int maxDimLen, int errorPosition) {
+        int dimCount = nextIntExp(maxDimCount - 1) + 1;
         array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, dimCount));
 
         int size = 1;
         for (int i = 0; i < dimCount; i++) {
-            int n = nextInt(maxDimLen) + 1;
+            int n = nextIntExp(maxDimLen) + 1;
             array.setDimLen(i, n);
             size *= n;
         }
@@ -342,6 +343,13 @@ public class Rnd {
     public void syncWith(Rnd other) {
         this.s0 = other.s0;
         this.s1 = other.s1;
+    }
+
+    private int nextIntExp(int boundary) {
+        // Exponential distribution for generating integers
+        // This is a simple implementation that generates integers
+        // with a bias towards smaller values.
+        return (int) Math.exp(nextDouble() * Math.log(boundary));
     }
 
     private int nextIntForDouble(int bits) {
