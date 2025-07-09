@@ -55,6 +55,7 @@ import static org.junit.Assert.fail;
 public class PGArraysTest extends BasePGTest {
 
     private final Rnd bufferSizeRnd = TestUtils.generateRandom(LOG);
+    private final Rnd otherRnd = TestUtils.generateRandom(LOG);
     private final boolean walEnabled;
 
     public PGArraysTest(WalMode walMode) {
@@ -261,7 +262,7 @@ public class PGArraysTest extends BasePGTest {
     @Test
     public void testArrayResultSet() throws Exception {
         skipOnWalRun();
-        
+
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             execute("create table xd as (select rnd_double_array(2, 9) from long_sequence(5))");
 
@@ -673,6 +674,35 @@ public class PGArraysTest extends BasePGTest {
     }
 
     @Test
+    public void testSendBufferOverflowVanillaNulls() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        int elemCount = 100 + bufferSizeRnd.nextInt(900);
+        String literal = buildArrayLiteral1dNulls(elemCount, 0.3f);
+        String result = literal.replace("ARRAY[", "{").replace('}', ']');
+        assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
+            try (PreparedStatement stmt = conn.prepareStatement("SELECT x n, " + literal + " arr FROM long_sequence(9)")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("n[BIGINT],arr[ARRAY]\n" +
+                                    "1," + result +
+                                    "2," + result +
+                                    "3," + result +
+                                    "4," + result +
+                                    "5," + result +
+                                    "6," + result +
+                                    "7," + result +
+                                    "8," + result +
+                                    "9," + result,
+                            sink, rs);
+                }
+            }
+        }, () -> {
+            recvBufferSize = 4 * elemCount;
+            forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+        });
+    }
+
+    @Test
     public void testSliceArray() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]] arr FROM long_sequence(1))");
@@ -788,6 +818,13 @@ public class PGArraysTest extends BasePGTest {
         return b.toString();
     }
 
+    private @NotNull String buildArrayLiteral1dNulls(int elemCount, float nanRate) {
+        StringBuilder b = new StringBuilder();
+        b.append("ARRAY");
+        buildArrayLiteralInnerNulls(b, 0, elemCount, nanRate);
+        return b.toString();
+    }
+
     private @NotNull String buildArrayLiteral2d(int dimLen1, int dimLen2) {
         StringBuilder b = new StringBuilder();
         b.append("ARRAY[");
@@ -808,6 +845,21 @@ public class PGArraysTest extends BasePGTest {
             b.append(comma);
             comma = ",";
             b.append(i);
+        }
+        b.append(']');
+    }
+
+    private void buildArrayLiteralInnerNulls(StringBuilder b, int lowerBound, int upperBound, float nanRate) {
+        b.append('[');
+        String comma = "";
+        for (int i = lowerBound; i < upperBound; i++) {
+            b.append(comma);
+            comma = ",";
+            if (otherRnd.nextFloat() < nanRate) {
+                b.append("null");
+            } else {
+                b.append((double) i);
+            }
         }
         b.append(']');
     }
