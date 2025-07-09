@@ -157,6 +157,7 @@ jobs:
           ./configure
           make build_lib_shared -j$(nproc)
           mkdir -p ../../../bin/linux-x86-64-musl/
+          strip --strip-unneeded lib/libjemalloc.so
           cp lib/libjemalloc.so ../../../bin/linux-x86-64-musl/
       - name: Generate Makefiles
         run: |
@@ -238,6 +239,7 @@ jobs:
           ./configure
           make build_lib_shared -j$(nproc)
           mkdir -p ../../../bin/linux-aarch64-musl/
+          strip --strip-unneeded lib/libjemalloc.so
           cp lib/libjemalloc.so ../../../bin/linux-aarch64-musl/
       - name: Generate Makefiles
         run: |
