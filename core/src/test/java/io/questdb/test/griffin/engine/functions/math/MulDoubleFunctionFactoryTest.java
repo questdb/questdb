@@ -24,30 +24,33 @@
 
 package io.questdb.test.griffin.engine.functions.math;
 
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.math.DivFloatFunctionFactory;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class DivFloatFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class MulDoubleFunctionFactoryTest extends AbstractCairoTest {
     @Test
-    public void testDivByZero() throws SqlException {
-        call(10f, 0f).andAssert(Float.NaN, 0.000001);
+    public void testBothNan() throws SqlException {
+        assertSqlWithTypes("x\nnull:DOUBLE\n", "select NaN::DOUBLE * NaN::DOUBLE x");
     }
 
     @Test
-    public void testNegative() throws SqlException {
-        call(-3f, 4f).andAssert(-0.75, 0.000001);
+    public void testInfinite() throws SqlException {
+        assertSqlWithTypes("x\nnull:DOUBLE\n", "select " + Double.MAX_VALUE + "d * 2d x");
+    }
+
+    @Test
+    public void testNegativeInfinite() throws SqlException {
+        assertSqlWithTypes("x\nnull:DOUBLE\n", "select -" + Double.MAX_VALUE + "d * 2d x");
+    }
+
+    @Test
+    public void testMulByZero() throws SqlException {
+        assertSqlWithTypes("x\n0.0:DOUBLE\n", "select 10d * 0d x");
     }
 
     @Test
     public void testSimple() throws SqlException {
-        call(10f, 8f).andAssert(1.25, 0.000001);
-    }
-
-    @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new DivFloatFunctionFactory();
+        assertSqlWithTypes("x\n20.0:DOUBLE\n", "select 10d * 2d x");
     }
 }

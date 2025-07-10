@@ -80,7 +80,7 @@ public class RoundUpDoubleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             final double l = left.getDouble(rec);
-            if (l != l) {
+            if (Numbers.isNull(l)) {
                 return l;
             }
 
@@ -129,7 +129,7 @@ public class RoundUpDoubleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             final double l = arg.getDouble(rec);
-            if (l != l) {
+            if (Numbers.isNull(l)) {
                 return l;
             }
 
@@ -159,7 +159,7 @@ public class RoundUpDoubleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             final double l = arg.getDouble(rec);
-            if (l != l) {
+            if (Numbers.isNull(l)) {
                 return l;
             }
 
