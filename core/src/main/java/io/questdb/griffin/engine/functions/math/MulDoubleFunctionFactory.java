@@ -58,8 +58,7 @@ public class MulDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            double d = left.getDouble(rec) * right.getDouble(rec);
-            return Numbers.isFinite(d) ? d : Double.NaN;
+            return left.getDouble(rec) * right.getDouble(rec);
         }
 
         @Override

@@ -58,8 +58,7 @@ public class MulFloatFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
-            float f = left.getFloat(rec) * right.getFloat(rec);
-            return Numbers.isFinite(f) ? f : Float.NaN;
+            return left.getFloat(rec) * right.getFloat(rec);
         }
 
         @Override

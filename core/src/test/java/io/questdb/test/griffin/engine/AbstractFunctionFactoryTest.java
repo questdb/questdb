@@ -579,6 +579,18 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             cleanup();
         }
 
+        public void andAssertDoubleNull() {
+            Assert.assertTrue("expected NULL but got value", Numbers.isNull(function1.getDouble(record)));
+            Assert.assertTrue("expected NULL but got value", Numbers.isNull(function2.getDouble(record)));
+            cleanup();
+        }
+
+        public void andAssertFloatNull() {
+            Assert.assertTrue("expected NULL but got value", Numbers.isNull(function1.getFloat(record)));
+            Assert.assertTrue("expected NULL but got value", Numbers.isNull(function2.getFloat(record)));
+            cleanup();
+        }
+
         public void andAssertUtf8(CharSequence expectedString) {
             Utf8Sequence expected = utf8(expectedString);
             if (ColumnType.tagOf(function1.getType()) == ColumnType.VARCHAR) {
