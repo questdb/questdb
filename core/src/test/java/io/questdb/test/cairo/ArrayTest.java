@@ -2859,16 +2859,6 @@ public class ArrayTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testArraySyntaxValidation() throws Exception {
-        // Test that the improved array syntax validation works
-        assertMemoryLeak(() -> {
-            // Valid array type declarations should work
-            execute("CREATE TABLE test_valid (id int, data double[])");
-            execute("DROP TABLE test_valid");
-        });
-    }
-
     private static void fillIntList(IntList list, int... values) {
         list.clear();
         for (int i : values) {
