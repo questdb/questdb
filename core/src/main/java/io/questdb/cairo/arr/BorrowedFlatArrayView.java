@@ -124,6 +124,6 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
 
     @Override
     public double sumDouble(int offset, int length) {
-        return Vect.sumDouble(this.ptr + (long) offset * Double.BYTES, length);
+        return Vect.sumDoubleKahan(this.ptr + (long) offset * Double.BYTES, length);
     }
 }
