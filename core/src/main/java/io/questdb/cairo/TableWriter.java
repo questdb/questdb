@@ -9523,7 +9523,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void squashPartitionForce(int partitionIndex) {
         int lastLogicalPartitionIndex = partitionIndex;
         long lastLogicalPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-        assert lastLogicalPartitionTimestamp == txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp);
+        if (lastLogicalPartitionTimestamp != txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp)) {
+            lastLogicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp);
+            // We can have a split partition without the parent logical partition
+            // after some replace commits
+            // We need to create a logical partition to squash into
+            txWriter.insertPartition(partitionIndex, lastLogicalPartitionTimestamp, 0, txWriter.txn);
+            setStateForTimestamp(other, lastLogicalPartitionTimestamp);
+            if (ff.mkdir(other.$(), configuration.getMkDirMode()) != 0) {
+                throw CairoException.critical(ff.errno()).put("could not create directory [path='").put(other).put("']");
+            }
+            partitionIndex++;
+        }
 
         // Do not cache txWriter.getPartitionCount() as it changes during the squashing
         while (partitionIndex < txWriter.getPartitionCount()) {
@@ -9568,6 +9579,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long logicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(timestampMin);
         int partitionIndexLo = squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(logicalPartitionTimestamp);
 
+        boolean splitsKept = false;
         if (partitionIndexLo < txWriter.getPartitionCount()) {
             int partitionIndexHi = Math.min(squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(timestampMax) + 1, txWriter.getPartitionCount());
             int partitionIndex = partitionIndexLo + 1;
@@ -9577,9 +9589,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long nextPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
                 long nextPartitionLogicalTimestamp = txWriter.getLogicalPartitionTimestamp(nextPartitionTimestamp);
 
-                if (nextPartitionLogicalTimestamp > logicalPartitionTimestamp) {
-                    if (partitionIndex - partitionIndexLo > 1) {
+                if (nextPartitionLogicalTimestamp != logicalPartitionTimestamp) {
+                    int splitCount = partitionIndex - partitionIndexLo;
+                    if (splitCount > 1) {
+                        int partitionCount = txWriter.getPartitionCount();
                         squashPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex);
+                        int partitionReduction = partitionCount - txWriter.getPartitionCount();
+                        splitsKept = partitionReduction < splitCount - 1;
+
                         logicalPartitionTimestamp = nextPartitionTimestamp;
 
                         // Squashing changes the partitions, re-calculate the loop index and boundaries
@@ -9587,6 +9604,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         partitionIndexHi = Math.min(squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(timestampMax) + 1, txWriter.getPartitionCount());
                     } else {
                         partitionIndexLo = partitionIndex;
+                        logicalPartitionTimestamp = nextPartitionLogicalTimestamp;
+                    }
+
+                    if (!splitsKept && timestampMin == minSplitPartitionTimestamp) {
+                        // All splits seen are squashed, move minSplitPartitionTimestamp forward.
+                        minSplitPartitionTimestamp = nextPartitionTimestamp;
                     }
                 }
             }
