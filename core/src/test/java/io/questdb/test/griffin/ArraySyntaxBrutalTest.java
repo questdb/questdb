@@ -69,6 +69,17 @@ public class ArraySyntaxBrutalTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableInvalidSyntax() throws Exception {
+        assertMemoryLeak(() -> {
+            assertException("create table test (arr double[1])", 30, "']' expected");
+            assertException("create table test (arr double [1])", 30, "requires no whitespace");
+            assertException("create table test (arr array[double])", 29, "???");
+            assertException("create table test (arr array[])", 23, "??");
+            assertException("create table test (arr array)", 30, "??");
+        });
+    }
+
+    @Test
     public void testErrorRecoveryAfterArraySyntaxError() throws Exception {
         // Verify parser can recover after array syntax errors
         assertException("CREATE TABLE t (x double [], y int)", 25, "Array type requires no whitespace");
