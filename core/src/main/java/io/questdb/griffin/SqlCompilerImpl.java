@@ -672,7 +672,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         short typeTag = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
         int typePosition = lexer.lastTokenPosition();
 
-        int dim = SqlUtil.parseArrayDimensionality(lexer);
+        int dim = SqlUtil.parseArrayDimensionality(lexer, typeTag, typePosition);
         int columnType;
         if (dim > 0) {
             if (!ColumnType.isSupportedArrayElementType(typeTag)) {

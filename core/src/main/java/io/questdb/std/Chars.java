@@ -1181,6 +1181,7 @@ public final class Chars {
      * @param args command line
      * @return list of 0-terminated strings
      */
+    @SuppressWarnings("resource")
     public static ObjList<Path> splitLpsz(CharSequence args) {
         final ObjList<Path> paths = new ObjList<>();
         int n = args.length();
