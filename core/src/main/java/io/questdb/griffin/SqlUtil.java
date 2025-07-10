@@ -1041,7 +1041,7 @@ public class SqlUtil {
         if (columnType == -1) {
             throw SqlException.$(tokPosition, "unsupported column type: ").put(tok);
         }
-        if (ColumnType.isPersisted(columnType)) {
+        if (ColumnType.isPersisted(ColumnType.tagOf(columnType))) {
             return columnType;
         }
         throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
