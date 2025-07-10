@@ -12136,6 +12136,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
     }
 
+    @Test
+    public void testCreateTableWithInvalidColumnNameShouldFail() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertSyntaxError("create table x as (select rnd_str('a', 'b', 'c') from long_sequence(10))",
+                26,
+                "invalid column alias [alias=rnd_str('a', 'b', 'c')]"
+        );
+    }
+
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {
         assertModel(expected, ddl, ExecutionModel.CREATE_TABLE, tableModels);
     }

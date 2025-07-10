@@ -1501,6 +1501,14 @@ public class SqlParser {
         // Parse SELECT for the sake of basic SQL validation.
         // It'll be compiled and optimized later, at the execution phase.
         final QueryModel selectModel = parseDml(lexer, null, startOfSelect, true, sqlParserCallback, null);
+        final ObjList<QueryColumn> cols = selectModel.getColumns();
+        for (int i = 0, n = cols.size(); i < n; i++) {
+            final QueryColumn col = cols.getQuick(i);
+            final CharSequence alias = col.getAlias();
+            if (alias != null && !TableUtils.isValidColumnName(alias, configuration.getMaxFileNameLength())) {
+                throw SqlException.$(col.getAst().position, "invalid column alias [alias=").put(alias).put(']');
+            }
+        }
         final int endOfSelect = lexer.getPosition() - 1;
         final String selectText = Chars.toString(lexer.getContent(), startOfSelect, endOfSelect);
         createTableOperationBuilder.setSelectText(selectText, startOfSelect);
