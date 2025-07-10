@@ -616,8 +616,9 @@ public class PGArraysTest extends BasePGTest {
         Assume.assumeTrue(walEnabled);
         int dimLen1 = 10 + bufferSizeRnd.nextInt(90);
         int dimLen2 = 10 + bufferSizeRnd.nextInt(90);
-        String literal = buildArrayLiteral2d(dimLen1, dimLen2);
-        String result = buildArrayResult2d(dimLen1, dimLen2) + '\n';
+        String[][] array = buildStringArray(dimLen1, dimLen2);
+        String literal = stringArrayToLiteral(array, false);
+        String result = stringArrayToLiteral(array, true);
         assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
             try (Statement stmt = conn.createStatement()) {
                 stmt.execute("CREATE TABLE tango AS (SELECT x n, " + literal + " arr FROM long_sequence(9))");
@@ -639,7 +640,7 @@ public class PGArraysTest extends BasePGTest {
                 }
             }
         }, () -> {
-            recvBufferSize = 5 * dimLen1 * dimLen2;
+            recvBufferSize = 8 * dimLen1 * dimLen2;
             forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
         });
     }
@@ -649,35 +650,6 @@ public class PGArraysTest extends BasePGTest {
         Assume.assumeTrue(walEnabled);
         int elemCount = 100 + bufferSizeRnd.nextInt(900);
         String literal = buildArrayLiteral1d(elemCount);
-        String result = buildArrayResult1d(elemCount) + '\n';
-        assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
-            try (PreparedStatement stmt = conn.prepareStatement("SELECT x n, " + literal + " arr FROM long_sequence(9)")) {
-                sink.clear();
-                try (ResultSet rs = stmt.executeQuery()) {
-                    assertResultSet("n[BIGINT],arr[ARRAY]\n" +
-                                    "1," + result +
-                                    "2," + result +
-                                    "3," + result +
-                                    "4," + result +
-                                    "5," + result +
-                                    "6," + result +
-                                    "7," + result +
-                                    "8," + result +
-                                    "9," + result,
-                            sink, rs);
-                }
-            }
-        }, () -> {
-            recvBufferSize = 4 * elemCount;
-            forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
-        });
-    }
-
-    @Test
-    public void testSendBufferOverflowVanillaNulls() throws Exception {
-        Assume.assumeTrue(walEnabled);
-        int elemCount = 100 + bufferSizeRnd.nextInt(900);
-        String literal = buildArrayLiteral1dNulls(elemCount);
         String result = literal.replace("ARRAY[", "{").replace(']', '}') + '\n';
         assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
             try (PreparedStatement stmt = conn.prepareStatement("SELECT x n, " + literal + " arr FROM long_sequence(9)")) {
@@ -819,24 +791,6 @@ public class PGArraysTest extends BasePGTest {
         return b.toString();
     }
 
-    private @NotNull String buildArrayLiteral1dNulls(int elemCount) {
-        StringBuilder b = new StringBuilder();
-        b.append("ARRAY");
-        b.append('[');
-        String comma = "";
-        for (int i = 0; i < elemCount; i++) {
-            b.append(comma);
-            comma = ",";
-            if (otherRnd.nextFloat() < (float) 0.3) {
-                b.append("null");
-            } else {
-                b.append((double) i);
-            }
-        }
-        b.append(']');
-        return b.toString();
-    }
-
     private @NotNull String buildArrayLiteral2d(int dimLen1, int dimLen2) {
         StringBuilder b = new StringBuilder();
         b.append("ARRAY[");
@@ -856,44 +810,48 @@ public class PGArraysTest extends BasePGTest {
         for (int i = lowerBound; i < upperBound; i++) {
             b.append(comma);
             comma = ",";
-            b.append(i);
+            if (otherRnd.nextFloat() < (float) 0.3) {
+                b.append("null");
+            } else {
+                b.append((double) i);
+            }
         }
         b.append(']');
     }
 
-    private @NotNull String buildArrayResult1d(int elemCount) {
-        StringBuilder b = new StringBuilder();
-        buildArrayResultInner(0, elemCount, b);
-        return b.toString();
-    }
-
-    private @NotNull String buildArrayResult2d(int dimLen1, int dimLen2) {
-        StringBuilder b = new StringBuilder();
-        b.append("{");
-        String comma = "";
-        for (int i = 1; i < dimLen1; i++) {
-            b.append(comma);
-            comma = ",";
-            buildArrayResultInner(i * dimLen2 + 1, (i + 1) * dimLen2, b);
+    private @NotNull String[][] buildStringArray(int dimLen1, int dimLen2) {
+        String[][] array = new String[dimLen1][dimLen2];
+        for (int i = 0; i < dimLen1; i++) {
+            for (int j = 0; j < dimLen2; j++) {
+                array[i][j] = otherRnd.nextFloat() > (float) 0.3 ? (i * dimLen1 + j) + ".0" : "null";
+            }
         }
-        b.append("}");
-        return b.toString();
-    }
-
-    private void buildArrayResultInner(int lowerBound, int upperBound, StringBuilder b) {
-        b.append("{");
-        String comma = "";
-        for (int i = lowerBound; i < upperBound; i++) {
-            b.append(comma);
-            comma = ",";
-            b.append(i).append(".0");
-        }
-        b.append("}");
+        return array;
     }
 
     private void skipOnWalRun() {
         Assume.assumeTrue("Test disabled during WAL run.", !walEnabled);
     }
 
-
+    private @NotNull String stringArrayToLiteral(String[][] array, boolean createSliceResult) {
+        StringBuilder b = new StringBuilder();
+        b.append(createSliceResult ? "{" : "ARRAY[");
+        char openBracket = createSliceResult ? '{' : '[';
+        char closeBracket = createSliceResult ? '}' : ']';
+        int lowerBound = createSliceResult ? 1 : 0;
+        String outerComma = "";
+        for (int i = lowerBound; i < array.length; i++) {
+            b.append(outerComma);
+            outerComma = ",";
+            b.append(openBracket);
+            String innerComma = "";
+            for (int j = lowerBound; j < array[0].length; j++) {
+                b.append(innerComma);
+                innerComma = ",";
+                b.append(array[i][j]);
+            }
+            b.append(closeBracket);
+        }
+        return b.append(closeBracket).append('\n').toString();
+    }
 }
