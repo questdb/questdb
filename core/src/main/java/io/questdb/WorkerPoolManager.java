@@ -172,8 +172,8 @@ public abstract class WorkerPoolManager implements Target {
     }
 
     /**
-     * @param sharedPoolQuery   A reference to the QUERY SHARED pool
-     * @param sharedPoolWrite   A reference to the WRITE SHARED pool
+     * @param sharedPoolQuery A reference to the QUERY SHARED pool
+     * @param sharedPoolWrite A reference to the WRITE SHARED pool
      */
     protected abstract void configureWorkerPools(
             final WorkerPool sharedPoolQuery,

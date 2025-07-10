@@ -615,12 +615,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "shared.worker.sleep.timeout\tQDB_SHARED_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
                                     "shared.worker.nap.threshold\tQDB_SHARED_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "shared.worker.yield.threshold\tQDB_SHARED_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
-                                    "network.shared.worker.affinity\tQDB_NETWORK_SHARED_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
-                                    "network.shared.worker.count\tQDB_NETWORK_SHARED_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
-                                    "query.shared.worker.affinity\tQDB_QUERY_SHARED_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
-                                    "query.shared.worker.count\tQDB_QUERY_SHARED_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
-                                    "write.shared.worker.affinity\tQDB_WRITE_SHARED_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
-                                    "write.shared.worker.count\tQDB_WRITE_SHARED_WORKER_COUNT\t3\tdefault\tfalse\tfalse\n" +
+                                    "shared.network.worker.affinity\tQDB_SHARED_NETWORK_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
+                                    "shared.network.worker.count\tQDB_SHARED_NETWORK_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
+                                    "shared.query.worker.affinity\tQDB_SHARED_QUERY_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
+                                    "shared.query.worker.count\tQDB_SHARED_QUERY_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
+                                    "shared.write.worker.affinity\tQDB_SHARED_WRITE_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
+                                    "shared.write.worker.count\tQDB_SHARED_WRITE_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
                                     "table.type.conversion.enabled\tQDB_TABLE_TYPE_CONVERSION_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "telemetry.disable.completely\tQDB_TELEMETRY_DISABLE_COMPLETELY\ttrue\tconf\tfalse\tfalse\n" +
                                     "telemetry.enabled\tQDB_TELEMETRY_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
