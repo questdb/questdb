@@ -81,7 +81,7 @@ public class Services {
                 serverConfiguration,
                 cairoEngine,
                 workerPoolManager.getInstanceNetwork(httpServerConfiguration, Requester.HTTP_SERVER),
-                workerPoolManager.getSharedWorkerCount()
+                workerPoolManager.getSharedQueryWorkerCount()
         );
     }
 
@@ -90,7 +90,7 @@ public class Services {
             ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
-            int sharedWorkerCount
+            int sharedQueryWorkerCount
     ) {
         final HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         if (!httpServerConfiguration.isEnabled()) {
@@ -110,7 +110,7 @@ public class Services {
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
                 workerPool.getWorkerCount(),
-                sharedWorkerCount
+                sharedQueryWorkerCount
         );
 
         HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
@@ -125,7 +125,7 @@ public class Services {
                 serverConfiguration,
                 cairoEngine,
                 workerPool,
-                sharedWorkerCount,
+                sharedQueryWorkerCount,
                 jsonQueryProcessorBuilder,
                 ilpV2WriteProcessorBuilder
         );
@@ -273,7 +273,7 @@ public class Services {
                 () -> new SqlExecutionContextImpl(
                         cairoEngine,
                         workerPool.getWorkerCount(),
-                        workerPoolManager.getSharedWorkerCount()
+                        workerPoolManager.getSharedQueryWorkerCount()
                 )
         );
     }

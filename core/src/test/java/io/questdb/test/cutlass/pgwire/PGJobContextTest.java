@@ -12272,11 +12272,11 @@ create table tab as (
 
     private ObjectFactory<SqlExecutionContextImpl> createPGSqlExecutionContextFactory(
             int workerCount,
-            int sharedWorkerCount,
+            int sharedQueryWorkerCount,
             SOCountDownLatch queryStartedCount,
             SOCountDownLatch queryScheduledCount
     ) {
-        return () -> new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount) {
+        return () -> new SqlExecutionContextImpl(engine, workerCount, sharedQueryWorkerCount) {
             @Override
             public QueryFutureUpdateListener getQueryFutureUpdateListener() {
                 return new QueryFutureUpdateListener() {

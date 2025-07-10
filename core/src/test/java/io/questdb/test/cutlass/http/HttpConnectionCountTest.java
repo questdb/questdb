@@ -175,8 +175,8 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                 protected Services services() {
                     return new Services() {
                         @Override
-                        public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool workerPool, int sharedWorkerCount) {
-                            HttpServer server = super.createHttpServer(configuration, cairoEngine, workerPool, sharedWorkerCount);
+                        public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool workerPool, int sharedQueryWorkerCount) {
+                            HttpServer server = super.createHttpServer(configuration, cairoEngine, workerPool, sharedQueryWorkerCount);
                             if (server != null) {
                                 server.bind(new HttpRequestHandlerFactory() {
                                     @Override
@@ -319,8 +319,8 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                 protected Services services() {
                     return new Services() {
                         @Override
-                        public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool workerPool, int sharedWorkerCount) {
-                            HttpServer server = super.createHttpServer(configuration, cairoEngine, workerPool, sharedWorkerCount);
+                        public @Nullable HttpServer createHttpServer(ServerConfiguration configuration, CairoEngine cairoEngine, WorkerPool workerPool, int sharedQueryWorkerCount) {
+                            HttpServer server = super.createHttpServer(configuration, cairoEngine, workerPool, sharedQueryWorkerCount);
                             if (server != null) {
                                 server.bind(new HttpRequestHandlerFactory() {
                                     @Override
@@ -334,7 +334,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                                                 configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration(),
                                                 cairoEngine,
                                                 workerPool.getWorkerCount(),
-                                                sharedWorkerCount
+                                                sharedQueryWorkerCount
                                         ) {
                                             @Override
                                             public void onRequestComplete(

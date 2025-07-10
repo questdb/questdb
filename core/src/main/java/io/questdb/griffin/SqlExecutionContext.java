@@ -138,7 +138,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     @NotNull
     SecurityContext getSecurityContext();
 
-    default int getSharedWorkerCount() {
+    default int getSharedQueryWorkerCount() {
         return getWorkerCount();
     }
 

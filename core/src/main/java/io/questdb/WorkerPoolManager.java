@@ -72,8 +72,8 @@ public abstract class WorkerPoolManager implements Target {
         return sharedPoolNetwork;
     }
 
-    public int getSharedWorkerCount() {
-        return sharedPoolNetwork.getWorkerCount();
+    public int getSharedQueryWorkerCount() {
+        return sharedPoolQuery != null ? sharedPoolQuery.getWorkerCount() : 0;
     }
 
     public void halt() {

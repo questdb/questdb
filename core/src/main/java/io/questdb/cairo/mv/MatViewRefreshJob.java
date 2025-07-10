@@ -90,11 +90,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final WalTxnRangeLoader txnRangeLoader;
     private final int workerId;
 
-    public MatViewRefreshJob(int workerId, CairoEngine engine, int workerCount, int sharedWorkerCount) {
+    public MatViewRefreshJob(int workerId, CairoEngine engine, int workerCount, int sharedQueryWorkerCount) {
         try {
             this.workerId = workerId;
             this.engine = engine;
-            this.refreshSqlExecutionContext = new MatViewRefreshSqlExecutionContext(engine, workerCount, sharedWorkerCount);
+            this.refreshSqlExecutionContext = new MatViewRefreshSqlExecutionContext(engine, workerCount, sharedQueryWorkerCount);
             this.graph = engine.getMatViewGraph();
             this.stateStore = engine.getMatViewStateStore();
             this.configuration = engine.getConfiguration();

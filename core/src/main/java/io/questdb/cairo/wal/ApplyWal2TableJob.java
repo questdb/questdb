@@ -99,14 +99,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private long lastAttemptSeqTxn;
     private long lastCommittedRows;
 
-    public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount) {
+    public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedQueryWorkerCount) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
         this.engine = engine;
         walTelemetry = engine.getTelemetryWal();
         walTelemetryFacade = walTelemetry.isEnabled() ? this::doStoreWalTelemetry : this::storeWalTelemetryNoop;
         telemetry = engine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoOp;
-        operationExecutor = new OperationExecutor(engine, workerCount, sharedWorkerCount);
+        operationExecutor = new OperationExecutor(engine, workerCount, sharedQueryWorkerCount);
         CairoConfiguration configuration = engine.getConfiguration();
         microClock = configuration.getMicrosecondClock();
         walEventReader = new WalEventReader(configuration.getFilesFacade());

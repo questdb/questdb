@@ -105,11 +105,11 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int workerCount,
-            int sharedWorkerCount
+            int sharedQueryWorkerCount
     ) {
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, sharedQueryWorkerCount);
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
         this.engine = engine;

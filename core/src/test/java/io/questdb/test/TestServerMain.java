@@ -54,7 +54,7 @@ public class TestServerMain extends ServerMain {
             protected void setupWalApplyJob(
                     WorkerPool workerPool,
                     CairoEngine engine,
-                    int sharedWorkerCount
+                    int sharedQueryWorkerCount
             ) {
             }
         };

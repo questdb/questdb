@@ -109,12 +109,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int workerCount,
-            int sharedWorkerCount
+            int sharedQueryWorkerCount
     ) {
         this(
                 configuration,
                 engine,
-                new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount)
+                new SqlExecutionContextImpl(engine, workerCount, sharedQueryWorkerCount)
         );
     }
 

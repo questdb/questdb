@@ -132,7 +132,7 @@ public class ServerMain implements Closeable {
 
         return new ServerMain(new Bootstrap(bootstrapConfiguration, Bootstrap.getServerMainArgs(root))) {
             @Override
-            protected void setupWalApplyJob(WorkerPool workerPool, CairoEngine engine, int sharedWorkerCount) {
+            protected void setupWalApplyJob(WorkerPool workerPool, CairoEngine engine, int sharedQueryWorkerCount) {
             }
         };
     }
@@ -394,7 +394,7 @@ public class ServerMain implements Closeable {
                     config.getMatViewRefreshPoolConfiguration(),
                     WorkerPoolManager.Requester.MAT_VIEW_REFRESH
             );
-            setupMatViewJobs(matViewRefreshWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
+            setupMatViewJobs(matViewRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
         }
 
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
@@ -402,7 +402,7 @@ public class ServerMain implements Closeable {
                     config.getWalApplyPoolConfiguration(),
                     WorkerPoolManager.Requester.WAL_APPLY
             );
-            setupWalApplyJob(walApplyWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
+            setupWalApplyJob(walApplyWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
         }
 
         // http
@@ -462,11 +462,11 @@ public class ServerMain implements Closeable {
     protected void setupMatViewJobs(
             WorkerPool workerPool,
             CairoEngine engine,
-            int sharedWorkerCount
+            int sharedQueryWorkerCount
     ) {
         for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
             // create job per worker
-            final MatViewRefreshJob matViewRefreshJob = new MatViewRefreshJob(i, engine, workerCount, sharedWorkerCount);
+            final MatViewRefreshJob matViewRefreshJob = new MatViewRefreshJob(i, engine, workerCount, sharedQueryWorkerCount);
             workerPool.assign(i, matViewRefreshJob);
             workerPool.freeOnExit(matViewRefreshJob);
         }
@@ -477,11 +477,11 @@ public class ServerMain implements Closeable {
     protected void setupWalApplyJob(
             WorkerPool workerPool,
             CairoEngine engine,
-            int sharedWorkerCount
+            int sharedQueryWorkerCount
     ) {
         for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
             // create job per worker
-            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, workerCount, sharedWorkerCount);
+            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, workerCount, sharedQueryWorkerCount);
             workerPool.assign(i, applyWal2TableJob);
             workerPool.freeOnExit(applyWal2TableJob);
         }
