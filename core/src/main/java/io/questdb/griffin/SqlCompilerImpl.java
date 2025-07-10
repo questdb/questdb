@@ -132,8 +132,8 @@ import io.questdb.std.Transient;
 import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -1752,7 +1752,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             tok = SqlUtil.fetchNext(lexer);
                         } else if (isEveryKeyword(tok)) {
                             tok = expectToken(lexer, "interval");
-                            every = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+                            every = CommonUtils.getStrideMultiple(tok);
                             everyUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                             SqlParser.validateMatViewEveryUnit(everyUnit, lexer.lastTokenPosition());
                             refreshType = MatViewDefinition.REFRESH_TYPE_TIMER;
@@ -1778,7 +1778,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 }
                                 tz = unquote(tok).toString();
                                 try {
-                                    tzRules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, tz);
+                                    tzRules = Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
                                 } catch (NumericException e) {
                                     throw SqlException.position(lexer.lastTokenPosition()).put("invalid timezone: ").put(tz);
                                 }
@@ -1820,7 +1820,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     tz = unquote(tok).toString();
                                     // validate time zone
                                     try {
-                                        Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, tz);
+                                        Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
                                     } catch (NumericException e) {
                                         throw SqlException.position(lexer.lastTokenPosition()).put("invalid timezone: ").put(tz);
                                     }

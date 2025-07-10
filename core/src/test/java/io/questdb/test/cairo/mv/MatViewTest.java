@@ -6219,7 +6219,7 @@ public class MatViewTest extends AbstractCairoTest {
     private void testTimerMatViewSmallJumps(String timeZone, String start, String every, String initialClock, long clockJump, int ticksBeforeRefresh) throws Exception {
         assertMemoryLeak(() -> {
             final TimeZoneRules tzRules = timeZone != null ? Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone) : null;
-            final int interval = CommonUtils.getStrideMultiple(every, -1);
+            final int interval = CommonUtils.getStrideMultiple(every);
             final char unit = CommonUtils.getStrideUnit(every, -1);
             final String unitStr = MatViewsFunctionFactory.getIntervalUnit(unit);
 

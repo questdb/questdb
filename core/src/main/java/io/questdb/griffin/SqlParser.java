@@ -43,7 +43,6 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.InsertModel;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
@@ -62,8 +61,8 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -1019,7 +1018,7 @@ public class SqlParser {
                     }
                     tz = unquote(tok).toString();
                     try {
-                        tzRules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, tz);
+                        tzRules = Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
                     } catch (NumericException e) {
                         throw SqlException.position(lexer.lastTokenPosition()).put("invalid timezone: ").put(tz);
                     }
@@ -1059,7 +1058,7 @@ public class SqlParser {
                 if (isStartKeyword(tok)) {
                     tok = tok(lexer, "START timestamp");
                     try {
-                        start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                        start = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP).parseFloorLiteral(GenericLexer.unquote(tok));
                     } catch (NumericException e) {
                         throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                     }
