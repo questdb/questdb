@@ -26,7 +26,6 @@ package io.questdb.cairo.mv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
-import io.questdb.mp.Queue;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -50,17 +49,14 @@ public class MatViewGraph implements Mutable {
     private static final java.lang.ThreadLocal<MatViewDefinition> tlDefinitionTask = new java.lang.ThreadLocal<>();
     private static final ThreadLocal<LowerCaseCharSequenceHashSet> tlSeen = new ThreadLocal<>(LowerCaseCharSequenceHashSet::new);
     private static final ThreadLocal<ArrayDeque<CharSequence>> tlStack = new ThreadLocal<>(ArrayDeque::new);
-    private static final ThreadLocal<MatViewTimerTask> tlTimerTask = new ThreadLocal<>(MatViewTimerTask::new);
     private final Function<CharSequence, MatViewDependencyList> createDependencyList;
     private final ConcurrentHashMap<MatViewDefinition> definitionsByTableDirName = new ConcurrentHashMap<>();
     // Note: this map is grow-only, i.e. keys are never removed.
     private final ConcurrentHashMap<MatViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
-    private final Queue<MatViewTimerTask> timerTaskQueue;
     private final BiFunction<CharSequence, MatViewDefinition, MatViewDefinition> updateDefinitionRef;
 
-    public MatViewGraph(Queue<MatViewTimerTask> timerTaskQueue) {
+    public MatViewGraph() {
         this.createDependencyList = name -> new MatViewDependencyList();
-        this.timerTaskQueue = timerTaskQueue;
         this.updateDefinitionRef = this::updateDefinition;
     }
 
@@ -86,12 +82,6 @@ public class MatViewGraph implements Mutable {
             } finally {
                 list.unlockAfterWrite();
             }
-        }
-        // Publish a timer creation task.
-        // We need timer(s) in all cases, but immediate non-period view.
-        if (viewDefinition.getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE || viewDefinition.getPeriodLength() > 0) {
-            final MatViewTimerTask timerTask = tlTimerTask.get();
-            timerTaskQueue.enqueue(timerTask.ofAdd(viewToken));
         }
         return true;
     }
@@ -165,9 +155,6 @@ public class MatViewGraph implements Mutable {
                     dependentViews.unlockAfterWrite();
                 }
             }
-            // Make sure to remove all timers associated with the mat view.
-            final MatViewTimerTask timerTask = tlTimerTask.get();
-            timerTaskQueue.enqueue(timerTask.ofRemove(viewToken));
         }
     }
 
@@ -196,10 +183,6 @@ public class MatViewGraph implements Mutable {
         tlDefinitionTask.set(newDefinition);
         if (definitionsByTableDirName.computeIfPresent(viewToken.getDirName(), updateDefinitionRef) == null) {
             throw CairoException.nonCritical().put("previous view definition was not found: ").put(viewToken.getTableName());
-        }
-        if (newDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_TIMER) {
-            final MatViewTimerTask timerTask = tlTimerTask.get();
-            timerTaskQueue.enqueue(timerTask.ofUpdate(viewToken));
         }
     }
 
