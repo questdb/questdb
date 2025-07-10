@@ -695,7 +695,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelGroupByArrayFirst() throws Exception {
         Assume.assumeFalse(convertToParquet);
         testParallelGroupByArray(
-                "SELECT first(darr), key FROM tab order by key", "first\tkey\n" +
+                "SELECT first(darr), key FROM tab order by key",
                         "first\tkey\n" +
                         "[[null,null,null],[null,0.7883065830055033,null]]\tk0\n" +
                         "[[null,0.20447441837877756],[null,null]]\tk1\n" +
