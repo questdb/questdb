@@ -375,11 +375,12 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testArrayCumSumBehaviourMixedNulls() throws Exception {
-        assertMemoryLeak(() -> {
-            assertSqlWithTypes("a\tarray_cum_sum\n" +
-                            "[null,1.2,null,5.3]:DOUBLE[]\t[null,1.2,1.2,6.5]:DOUBLE[]\n",
-                    "select array[null, 1.2, null, 5.3] as a, array_cum_sum(a);\n");
-        });
+        assertMemoryLeak(() -> assertSqlWithTypes(
+                        "a\tarray_cum_sum\n" +
+                                "[null,1.2,null,5.3]:DOUBLE[]\t[null,1.2,1.2,6.5]:DOUBLE[]\n",
+                        "select array[null, 1.2, null, 5.3] as a, array_cum_sum(a);\n"
+                )
+        );
     }
 
     @Test
@@ -1234,7 +1235,7 @@ public class ArrayTest extends AbstractCairoTest {
             array.setDimLen(0, 0);
             array.applyShape();
             sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayWriteState.INSTANCE, false);
+            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayWriteState.INSTANCE);
             assertEquals("[]", sink.toString());
         }
     }
@@ -1895,7 +1896,7 @@ public class ArrayTest extends AbstractCairoTest {
             memA.putDouble(5);
             memA.putDouble(6);
             sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayWriteState.INSTANCE, false);
+            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayWriteState.INSTANCE);
             String textViewStr = sink.toString();
 
             long start = mem;
@@ -1909,7 +1910,7 @@ public class ArrayTest extends AbstractCairoTest {
                 start += size;
             } while (!finish);
 
-            ArrayTypeDriver.arrayToJson(parserNative.getArray(), sink, NoopArrayWriteState.INSTANCE, false);
+            ArrayTypeDriver.arrayToJson(parserNative.getArray(), sink, NoopArrayWriteState.INSTANCE);
             assertEquals(textViewStr, sink.toString());
         } catch (ArrayBinaryFormatParser.ParseException e) {
             throw new RuntimeException(e);
@@ -2569,7 +2570,7 @@ public class ArrayTest extends AbstractCairoTest {
             memA.putDouble(3.0);
             memA.putDouble(4.0);
             sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayWriteState.INSTANCE, false);
+            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayWriteState.INSTANCE);
             assertEquals("[[1.0,2.0],[3.0,4.0]]", sink.toString());
         }
     }

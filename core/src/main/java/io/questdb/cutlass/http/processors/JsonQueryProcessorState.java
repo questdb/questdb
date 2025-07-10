@@ -895,7 +895,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         arrayState.of(response);
         var arrayView = arrayState.getArrayView() == null ? record.getArray(columnIdx, columnType) : arrayState.getArrayView();
         try {
-            ArrayTypeDriver.arrayToJson(arrayView, response, arrayState, true);
+            ArrayTypeDriver.arrayToJson(arrayView, response, arrayState);
             arrayState.clear();
             columnValueFullySent = true;
         } catch (Throwable e) {

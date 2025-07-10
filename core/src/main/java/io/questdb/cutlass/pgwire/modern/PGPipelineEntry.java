@@ -1072,7 +1072,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // number of bits or chars for geohash
             final int geohashSize = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
             final int columnValueSize = calculateColumnBinSize(
-                    this, record, i, columnType, geohashSize, maxBlobSize, outResendArrayFlatIndex);
+                    this,
+                    record,
+                    i,
+                    columnType,
+                    geohashSize,
+                    maxBlobSize,
+                    outResendArrayFlatIndex
+            );
 
             if (columnValueSize < 0) {
                 return -1; // unsupported type
@@ -2413,8 +2420,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             if (utf8Sink.getWrittenBytes() == 0) {
                                 // We had nothing but the record in the send buffer,
                                 // so we can estimate the required size to be reported to the user.
-                                final long estimatedSize = estimateRecordSize(record, columnCount);
-                                e.setBytesRequired(estimatedSize);
+                                e.setBytesRequired(estimateRecordSize(record, columnCount));
                             }
                         }
                     } catch (BadProtocolException bpe) {
@@ -2529,7 +2535,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             throw kaput().put("array dimensions cannot be greater than maximum array dimensions [dimensions=").put(dimensions).put(", max=").put(ColumnType.ARRAY_NDIMS_LIMIT).put(']');
         }
 
-        int hasNull = getInt(lo, msgLimit, "malformed array null flag");
+        getInt(lo, msgLimit, "malformed array null flag");
         // hasNull flag is not a reliable indicator of a null element, since some clients
         // send it as 0 even if the array element is null. we need to manually check for null
         lo += Integer.BYTES;

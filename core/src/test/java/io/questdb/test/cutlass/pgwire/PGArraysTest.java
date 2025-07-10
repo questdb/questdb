@@ -677,13 +677,14 @@ public class PGArraysTest extends BasePGTest {
     public void testSendBufferOverflowVanillaNulls() throws Exception {
         Assume.assumeTrue(walEnabled);
         int elemCount = 100 + bufferSizeRnd.nextInt(900);
-        String literal = buildArrayLiteral1dNulls(elemCount, 0.3f);
-        String result = literal.replace("ARRAY[", "{").replace('}', ']') + '\n';
+        String literal = buildArrayLiteral1dNulls(elemCount);
+        String result = literal.replace("ARRAY[", "{").replace(']', '}') + '\n';
         assertWithPgServer(Mode.EXTENDED, true, -1, (conn, binary, mode, port) -> {
             try (PreparedStatement stmt = conn.prepareStatement("SELECT x n, " + literal + " arr FROM long_sequence(9)")) {
                 sink.clear();
                 try (ResultSet rs = stmt.executeQuery()) {
-                    assertResultSet("n[BIGINT],arr[ARRAY]\n" +
+                    assertResultSet(
+                            "n[BIGINT],arr[ARRAY]\n" +
                                     "1," + result +
                                     "2," + result +
                                     "3," + result +
@@ -818,10 +819,21 @@ public class PGArraysTest extends BasePGTest {
         return b.toString();
     }
 
-    private @NotNull String buildArrayLiteral1dNulls(int elemCount, float nanRate) {
+    private @NotNull String buildArrayLiteral1dNulls(int elemCount) {
         StringBuilder b = new StringBuilder();
         b.append("ARRAY");
-        buildArrayLiteralInnerNulls(b, 0, elemCount, nanRate);
+        b.append('[');
+        String comma = "";
+        for (int i = 0; i < elemCount; i++) {
+            b.append(comma);
+            comma = ",";
+            if (otherRnd.nextFloat() < (float) 0.3) {
+                b.append("null");
+            } else {
+                b.append((double) i);
+            }
+        }
+        b.append(']');
         return b.toString();
     }
 
@@ -845,21 +857,6 @@ public class PGArraysTest extends BasePGTest {
             b.append(comma);
             comma = ",";
             b.append(i);
-        }
-        b.append(']');
-    }
-
-    private void buildArrayLiteralInnerNulls(StringBuilder b, int lowerBound, int upperBound, float nanRate) {
-        b.append('[');
-        String comma = "";
-        for (int i = lowerBound; i < upperBound; i++) {
-            b.append(comma);
-            comma = ",";
-            if (otherRnd.nextFloat() < nanRate) {
-                b.append("null");
-            } else {
-                b.append((double) i);
-            }
         }
         b.append(']');
     }

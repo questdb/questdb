@@ -581,7 +581,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         var arrayView = state.arrayState.getArrayView() == null ? record.getArray(columnIdx, columnType) : state.arrayState.getArrayView();
         try {
             state.arrayState.putCharIfNew(response, '"');
-            ArrayTypeDriver.arrayToJson(arrayView, response, state.arrayState, false);
+            ArrayTypeDriver.arrayToJson(arrayView, response, state.arrayState);
             state.arrayState.putCharIfNew(response, '"');
             state.arrayState.clear();
             state.columnValueFullySent = true;

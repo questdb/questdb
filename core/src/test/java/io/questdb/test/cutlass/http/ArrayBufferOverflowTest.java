@@ -123,7 +123,7 @@ public class ArrayBufferOverflowTest extends AbstractTest {
                     ArrayTypeDriver.arrayToJson(
                             arrayView,
                             sinkInterrupted,
-                            ArrayTypeDriver::appendDoubleFromArrayToSinkJson,
+                            ArrayTypeDriver::appendDoubleFromArrayToSink,
                             statePrototype
                     );
                     break;
@@ -136,7 +136,7 @@ public class ArrayBufferOverflowTest extends AbstractTest {
             ArrayTypeDriver.arrayToJson(
                     arrayView,
                     sinkExpected,
-                    ArrayTypeDriver::appendDoubleFromArrayToSinkJson,
+                    ArrayTypeDriver::appendDoubleFromArrayToSink,
                     NoopArrayWriteState.INSTANCE
             );
 

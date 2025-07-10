@@ -138,8 +138,7 @@ public interface FlatArrayView {
     default int countDouble(int offset, int length) {
         int count = 0;
         for (int i = offset, n = offset + length; i < n; i++) {
-            double v = getDoubleAtAbsIndex(i);
-            if (Numbers.isFinite(v)) {
+            if (Numbers.isFinite(getDoubleAtAbsIndex(i))) {
                 count++;
             }
         }
