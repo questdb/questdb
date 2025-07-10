@@ -28,29 +28,29 @@ import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class MulDoubleFunctionFactoryTest extends AbstractCairoTest {
+public class MulFloatFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBothNan() throws SqlException {
-        assertSqlWithTypes("x\nnull:DOUBLE\n", "select NaN::DOUBLE * NaN::DOUBLE x");
+        assertSqlWithTypes("x\nnull:FLOAT\n", "select cast(NaN as float) * cast(NaN as float) x");
     }
 
     @Test
     public void testInfinite() throws SqlException {
-        assertSqlWithTypes("x\nnull:DOUBLE\n", "select " + Double.MAX_VALUE + "d * 2d x");
+        assertSqlWithTypes("x\nnull:FLOAT\n", "select " + Float.MAX_VALUE + "f * 2f x");
     }
 
     @Test
     public void testNegativeInfinite() throws SqlException {
-        assertSqlWithTypes("x\nnull:DOUBLE\n", "select -" + Double.MAX_VALUE + "d * 2d x");
+        assertSqlWithTypes("x\nnull:FLOAT\n", "select -" + Float.MAX_VALUE + "f * 2f x");
     }
 
     @Test
     public void testMulByZero() throws SqlException {
-        assertSqlWithTypes("x\n0.0:DOUBLE\n", "select 10d * 0d x");
+        assertSqlWithTypes("x\n0.0:FLOAT\n", "select 10f * 0f x");
     }
 
     @Test
     public void testSimple() throws SqlException {
-        assertSqlWithTypes("x\n20.0:DOUBLE\n", "select 10d * 2d x");
+        assertSqlWithTypes("x\n20.0:FLOAT\n", "select 10f * 2f x");
     }
 }
