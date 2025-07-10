@@ -533,7 +533,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                         .put("designated timestamp column doesn't exist [name=").put(timestampColumnName).put(']');
             }
             int timestampColType = metadata.getColumnType(timestampIndex);
-            if (timestampColType != ColumnType.TIMESTAMP) {
+            if (!ColumnType.isTimestamp(timestampColType)) {
                 throw SqlException.position(timestampColumnNamePosition)
                         .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampColType)).put(']');
             }

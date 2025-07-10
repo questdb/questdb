@@ -195,7 +195,7 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
 
         @Override
         public long size() {
-            return Math.abs(end - start) / adder.add(0, stride) + 1;
+            return Math.abs(end - start) / adder.add(0, Math.abs(stride)) + 1;
         }
 
         @Override
