@@ -39,23 +39,23 @@ public class ArraySyntaxBrutalTest extends AbstractCairoTest {
             execute("CREATE TABLE test (id int)");
 
             // Alter table add column with space error
-            assertException("ALTER TABLE test ADD COLUMN data double []", 40, "Array type requires no whitespace");
+            assertException("ALTER TABLE test ADD COLUMN data double []", 40, "array type requires no whitespace");
         });
     }
 
     @Test
     public void testBasicWhitespaceInArrayTypes() throws Exception {
         // Single space - the original problem
-        assertException("CREATE TABLE t (x double [])", 25, "Array type requires no whitespace");
+        assertException("CREATE TABLE t (x double [])", 25, "array type requires no whitespace");
 
         // Tab character
-        assertException("CREATE TABLE t (x double\t[])", 25, "Array type requires no whitespace");
+        assertException("CREATE TABLE t (x double\t[])", 25, "array type requires no whitespace");
     }
 
     @Test
     public void testCastExpressionWhitespaceErrors() throws Exception {
         // Basic cast with space
-        assertException("SELECT CAST(null AS double [])", 27, "Array type requires no whitespace");
+        assertException("SELECT CAST(null AS double [])", 27, "array type requires no whitespace");
     }
 
     @Test
@@ -64,7 +64,7 @@ public class ArraySyntaxBrutalTest extends AbstractCairoTest {
             execute("CREATE TABLE base (x int, y int)");
 
             // These should all fail with space errors
-            assertException("SELECT x::double [] FROM base", 17, "Array type requires no whitespace");
+            assertException("SELECT x::double [] FROM base", 17, "array type requires no whitespace");
         });
     }
 
@@ -91,7 +91,7 @@ public class ArraySyntaxBrutalTest extends AbstractCairoTest {
     @Test
     public void testErrorRecoveryAfterArraySyntaxError() throws Exception {
         // Verify parser can recover after array syntax errors
-        assertException("CREATE TABLE t (x double [], y int)", 25, "Array type requires no whitespace");
+        assertException("CREATE TABLE t (x double [], y int)", 25, "array type requires no whitespace");
 
         // Should be able to create valid table after error
         assertMemoryLeak(() -> {
@@ -103,18 +103,18 @@ public class ArraySyntaxBrutalTest extends AbstractCairoTest {
     @Test
     public void testExtremeWhitespaceScenarios() throws Exception {
         // Extreme amounts of whitespace
-        assertException("CREATE TABLE t (x double      [])", 30, "Array type requires no whitespace");
+        assertException("CREATE TABLE t (x double      [])", 30, "array type requires no whitespace");
 
         // Mixed with line breaks
         String sqlWithLineBreak = "CREATE TABLE t (x double\n[])";
-        assertException(sqlWithLineBreak, 25, "Array type requires no whitespace");
+        assertException(sqlWithLineBreak, 25, "array type requires no whitespace");
     }
 
     @Test
     public void testMultipleDimensionsWithSpaces() throws Exception {
         // Multi-dimensional arrays with spaces in different positions
-        assertException("CREATE TABLE t (x double [] [])", 25, "Array type requires no whitespace");
-        assertException("CREATE TABLE t (x double[][] [])", 29, "Array type requires no whitespace");
+        assertException("CREATE TABLE t (x double [] [])", 25, "array type requires no whitespace");
+        assertException("CREATE TABLE t (x double[][] [])", 29, "array type requires no whitespace");
     }
 
     @Test
@@ -133,7 +133,7 @@ public class ArraySyntaxBrutalTest extends AbstractCairoTest {
             );
 
             // Invalid casts with spaces
-            assertException("SELECT CAST(null AS double []) FROM test", 27, "Array type requires no whitespace");
+            assertException("SELECT CAST(null AS double []) FROM test", 27, "array type requires no whitespace");
         });
     }
 

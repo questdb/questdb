@@ -38,7 +38,7 @@ public class SqlParserArrayBrutalTest extends AbstractCairoTest {
             execute("CREATE TABLE test (id int)");
 
             // Alter table add column with space error
-            assertException("ALTER TABLE test ADD COLUMN data double []", 40, "Array type requires no whitespace");
+            assertException("ALTER TABLE test ADD COLUMN data double []", 40, "array type requires no whitespace");
         });
     }
 
@@ -52,7 +52,7 @@ public class SqlParserArrayBrutalTest extends AbstractCairoTest {
             assertSql("ARRAY\n", "SELECT ARRAY[ 1 , 2 , 3 ] FROM test");
 
             // Mixed valid constructor with invalid cast
-            assertException("SELECT CAST(ARRAY[1, 2, 3] AS int []) FROM test", 34, "Array type requires no whitespace");
+            assertException("SELECT CAST(ARRAY[1, 2, 3] AS int []) FROM test", 34, "array type requires no whitespace");
         });
     }
 
@@ -65,14 +65,14 @@ public class SqlParserArrayBrutalTest extends AbstractCairoTest {
             assertException(
                     "WITH cte AS (SELECT CAST(null AS double []) AS arr FROM base) SELECT * FROM cte",
                     40,
-                    "Array type requires no whitespace"
+                    "array type requires no whitespace"
             );
 
             // Nested CTEs
             assertException(
                     "WITH cte1 AS (SELECT id FROM base), cte2 AS (SELECT CAST(null AS int []) AS x FROM cte1) SELECT * FROM cte2",
                     69,
-                    "Array type requires no whitespace"
+                    "array type requires no whitespace"
             );
         });
     }
@@ -83,16 +83,16 @@ public class SqlParserArrayBrutalTest extends AbstractCairoTest {
             execute("CREATE TABLE test (a int, b int, c double)");
 
             // Arithmetic with array type error
-            assertException("SELECT CAST(a + b AS int []) FROM test", 25, "Array type requires no whitespace");
+            assertException("SELECT CAST(a + b AS int []) FROM test", 25, "array type requires no whitespace");
 
             // Function calls with array type error
-            assertException("SELECT CAST(ABS(a) AS int []) FROM test", 26, "Array type requires no whitespace");
+            assertException("SELECT CAST(ABS(a) AS int []) FROM test", 26, "array type requires no whitespace");
 
             // CASE expressions with array type error
-            assertException("SELECT CASE WHEN a > b THEN CAST(c AS double []) ELSE null END FROM test", 45, "Array type requires no whitespace");
+            assertException("SELECT CASE WHEN a > b THEN CAST(c AS double []) ELSE null END FROM test", 45, "array type requires no whitespace");
 
             // Nested function calls
-            assertException("SELECT CAST(COALESCE(a, b) AS int []) FROM test", 34, "Array type requires no whitespace");
+            assertException("SELECT CAST(COALESCE(a, b) AS int []) FROM test", 34, "array type requires no whitespace");
         });
     }
 
@@ -105,7 +105,7 @@ public class SqlParserArrayBrutalTest extends AbstractCairoTest {
             execute("INSERT INTO test VALUES (ARRAY[1.0, 2.0, 3.0])");
 
             // But cast errors should still fail
-            assertException("INSERT INTO test VALUES (CAST(null AS double []))", 45, "Array type requires no whitespace");
+            assertException("INSERT INTO test VALUES (CAST(null AS double []))", 45, "array type requires no whitespace");
         });
     }
 
@@ -116,10 +116,10 @@ public class SqlParserArrayBrutalTest extends AbstractCairoTest {
             execute("CREATE TABLE t2 (id int)");
 
             // JOIN with array type error in SELECT
-            assertException("SELECT CAST(t1.id AS int []) FROM t1 JOIN t2 ON t1.id = t2.id", 25, "Array type requires no whitespace");
+            assertException("SELECT CAST(t1.id AS int []) FROM t1 JOIN t2 ON t1.id = t2.id", 25, "array type requires no whitespace");
 
             // JOIN with array type error in condition
-            assertException("SELECT * FROM t1 JOIN t2 ON CAST(t1.id AS int []) = t2.id", 46, "Array type requires no whitespace");
+            assertException("SELECT * FROM t1 JOIN t2 ON CAST(t1.id AS int []) = t2.id", 46, "array type requires no whitespace");
         });
     }
 
@@ -129,7 +129,7 @@ public class SqlParserArrayBrutalTest extends AbstractCairoTest {
             execute("CREATE TABLE test (id int, num int)");
 
             // LIMIT with array cast error
-            assertException("SELECT * FROM test LIMIT CAST(num AS int [])", 41, "Array type requires no whitespace");
+            assertException("SELECT * FROM test LIMIT CAST(num AS int [])", 41, "array type requires no whitespace");
         });
     }
 
@@ -139,10 +139,10 @@ public class SqlParserArrayBrutalTest extends AbstractCairoTest {
             execute("CREATE TABLE test (id int)");
 
             // ORDER BY with array cast error
-            assertException("SELECT * FROM test ORDER BY CAST(id AS int [])", 43, "Array type requires no whitespace");
+            assertException("SELECT * FROM test ORDER BY CAST(id AS int [])", 43, "array type requires no whitespace");
 
             // GROUP BY with array cast error
-            assertException("SELECT COUNT(*) FROM test GROUP BY CAST(id AS int [])", 50, "Array type requires no whitespace");
+            assertException("SELECT COUNT(*) FROM test GROUP BY CAST(id AS int [])", 50, "array type requires no whitespace");
         });
     }
 
@@ -152,11 +152,11 @@ public class SqlParserArrayBrutalTest extends AbstractCairoTest {
             execute("CREATE TABLE test (id int, data double[])");
 
             // Invalid casts with spaces
-            assertException("SELECT CAST(null AS double []) FROM test", 27, "Array type requires no whitespace");
-            assertException("SELECT CAST(id AS int []) FROM test", 22, "Array type requires no whitespace");
+            assertException("SELECT CAST(null AS double []) FROM test", 27, "array type requires no whitespace");
+            assertException("SELECT CAST(id AS int []) FROM test", 22, "array type requires no whitespace");
 
             // Complex expressions with cast errors
-            assertException("SELECT CASE WHEN id > 0 THEN CAST(null AS double []) ELSE null END FROM test", 49, "Array type requires no whitespace");
+            assertException("SELECT CASE WHEN id > 0 THEN CAST(null AS double []) ELSE null END FROM test", 49, "array type requires no whitespace");
         });
     }
 
@@ -166,13 +166,13 @@ public class SqlParserArrayBrutalTest extends AbstractCairoTest {
             execute("CREATE TABLE test (id int)");
 
             // Subquery with array type error
-            assertException("SELECT (SELECT CAST(null AS double []) FROM test LIMIT 1)", 35, "Array type requires no whitespace");
+            assertException("SELECT (SELECT CAST(null AS double []) FROM test LIMIT 1)", 35, "array type requires no whitespace");
 
             // EXISTS with array type error
-            assertException("SELECT * FROM test WHERE EXISTS (SELECT CAST(null AS int []) FROM test WHERE id = 1)", 57, "Array type requires no whitespace");
+            assertException("SELECT * FROM test WHERE EXISTS (SELECT CAST(null AS int []) FROM test WHERE id = 1)", 57, "array type requires no whitespace");
 
             // IN with array type error
-            assertException("SELECT * FROM test WHERE id IN (SELECT CAST(id AS int []) FROM test)", 54, "Array type requires no whitespace");
+            assertException("SELECT * FROM test WHERE id IN (SELECT CAST(id AS int []) FROM test)", 54, "array type requires no whitespace");
         });
     }
 
@@ -186,7 +186,7 @@ public class SqlParserArrayBrutalTest extends AbstractCairoTest {
             execute("UPDATE test SET data = ARRAY[3.0, 4.0] WHERE id = 1");
 
             // Invalid update with cast error
-            assertException("UPDATE test SET data = CAST(null AS double []) WHERE id = 1", 43, "Array type requires no whitespace");
+            assertException("UPDATE test SET data = CAST(null AS double []) WHERE id = 1", 43, "array type requires no whitespace");
         });
     }
 
@@ -196,7 +196,7 @@ public class SqlParserArrayBrutalTest extends AbstractCairoTest {
             execute("CREATE TABLE test (id int, value double)");
 
             // Aggregate function with array type error
-            assertException("SELECT CAST(SUM(value) AS double []) FROM test", 33, "Array type requires no whitespace");
+            assertException("SELECT CAST(SUM(value) AS double []) FROM test", 33, "array type requires no whitespace");
         });
     }
 }
