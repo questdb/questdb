@@ -3959,8 +3959,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "2c\r\n" +
-                        "{\"query\":\"x\",\"error\":\"empty column in list\"}\r\n" +
+                        "37\r\n" +
+                        "{\"query\":\"x\",\"error\":\"empty column in query parameter\"}\r\n" +
                         "00\r\n" +
                         "\r\n", 20
         );
@@ -4099,7 +4099,7 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
                         "32\r\n" +
-                        "{\"query\":\"x\",\"error\":'invalid column in list: f1'}\r\n" +
+                        "{\"query\":\"x\",\"error\":\"column not found: 'f1'\"}\r\n" +
                         "00\r\n" +
                         "\r\n", 20
         );
@@ -4124,8 +4124,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "32\r\n" +
-                        "{\"query\":\"x\",\"error\":'invalid column in list: l2'}\r\n" +
+                        "2e\r\n" +
+                        "{\"query\":\"x\",\"error\":\"column not found: 'l2'\"}\r\n" +
                         "00\r\n" +
                         "\r\n", 20
         );

@@ -1034,7 +1034,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                             .putAsciiQuoted("error").putAscii(':').putAsciiQuoted("empty column in query parameter")
                             .putAscii('}');
                     response.sendChunk(true);
-                    return true;
+                    return false;
                 }
 
                 if (addSunkColumnToOutput(metadata)) {
