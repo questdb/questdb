@@ -245,6 +245,52 @@ public class HttpMultipartContentParserTest {
         });
     }
 
+    @Test
+    public void testQuotedBoundary() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (HttpMultipartContentParser multipartContentParser = new HttpMultipartContentParser(new HttpHeaderParser(1024, pool))) {
+                final String content = "------gc0pJq0M:08jU5\"34c0p\r\n" +
+                        "Content-Disposition: form-data; name=\"textline\"\r\n" +
+                        "\r\n" +
+                        "value1" +
+                        "\r\n" +
+                        "------gc0pJq0M:08jU534c0p";
+
+                String expected = "Content-Disposition: form-data; name=\"textline\"\r\n" +
+                        "\r\n" +
+                        "value1" +
+                        "\r\n" +
+                        "------gc0pJq0M:08jU534c0p";
+
+                int len = content.length();
+                long p = TestUtils.toMemory(content);
+                try {
+                    String boundary = "\r\n------gc0pJq0M:08jU5\"34c0p";
+                    long pBoundary = TestUtils.toMemory(boundary);
+                    DirectUtf8String boundaryCs = new DirectUtf8String().of(pBoundary, pBoundary + boundary.length());
+                    try {
+                        for (int i = 0; i < len; i++) {
+                            sink.clear();
+                            multipartContentParser.clear();
+                            multipartContentParser.of(boundaryCs);
+                            multipartContentParser.parse(p, p + i, LISTENER);
+                            multipartContentParser.parse(p + i, p + i + 1, LISTENER);
+                            if (len > i + 1) {
+                                multipartContentParser.parse(p + i + 1, p + len, LISTENER);
+                            }
+                            TestUtils.assertEquals(expected, sink);
+                        }
+                    } finally {
+                        Unsafe.free(pBoundary, boundary.length(), MemoryTag.NATIVE_DEFAULT);
+                    }
+                } finally {
+                    Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+
     private boolean parseWithRetry(TestHttpMultipartContentProcessor listener, HttpMultipartContentParser multipartContentParser, long breakPoint, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         boolean result;
         try {
