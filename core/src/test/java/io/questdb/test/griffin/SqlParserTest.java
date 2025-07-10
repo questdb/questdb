@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlCompiler;
@@ -12146,6 +12147,26 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError("create table x as (select 1 \"rnd_str('a', 'b', 'c')\" from long_sequence(10))",
                 13,
                 "invalid column name [name=rnd_str('a', 'b', 'c'), position=0]"
+        );
+    }
+
+    @Test
+    public void testCreateMatViewsWithInvalidColumnNameShouldFail() throws Exception {
+        TableModel model = new TableModel(configuration, "tab", PartitionBy.DAY)
+                .timestamp()
+                .col("a", ColumnType.DOUBLE)
+                .wal();
+
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertSyntaxError("create materialized view x as select timestamp, sum(a) from tab sample by 1h",
+                25,
+                "invalid column name [name=sum(a), position=1]",
+                model
+        );
+        assertSyntaxError("create materialized view x as select timestamp, sum(a) \"a,b\" from tab sample by 1h",
+                25,
+                "invalid column name [name=a,b, position=1]",
+                model
         );
     }
 
