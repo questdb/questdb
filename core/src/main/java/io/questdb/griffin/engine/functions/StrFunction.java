@@ -182,7 +182,7 @@ public abstract class StrFunction implements Function {
 
     @Override
     public final long getTimestamp(Record rec) {
-        return NanosTimestampDriver.INSTANCE.implicitCastVarchar(getVarcharA(rec));
+        return NanosTimestampDriver.INSTANCE.implicitCast(getStrA(rec));
     }
 
     @Override

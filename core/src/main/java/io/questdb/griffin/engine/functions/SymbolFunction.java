@@ -189,7 +189,7 @@ public abstract class SymbolFunction implements Function, SymbolTable {
 
     @Override
     public final long getTimestamp(Record rec) {
-        return NanosTimestampDriver.INSTANCE.implicitCastVarchar(getVarcharA(rec));
+        return NanosTimestampDriver.INSTANCE.implicitCast(getSymbol(rec));
     }
 
     @Override

@@ -56,6 +56,7 @@ public abstract class AbstractVirtualRecordSampleByCursor extends AbstractNoReco
                 configuration,
                 recordFunctions,
                 timestampIndex,
+                timestampType,
                 timestampSampler,
                 groupByFunctions,
                 groupByFunctionsUpdater,

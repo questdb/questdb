@@ -73,28 +73,29 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         //    a. timestamp
         //    b. string - will be parsing this
         //    c. varchar - will be parsing this
-
         final RecordMetadata metadata = factory.getMetadata();
         if (metadata.getColumnCount() != 1) {
             throw SqlException.$(argPositions.getQuick(1), "select must provide exactly one column");
         }
         Function arg0 = args.getQuick(0);
         int arg0Type = ColumnType.getTimestampType(arg0.getType(), configuration);
-        int timestampType = ColumnType.getTimestampType(arg0Type, metadata.getColumnType(0), configuration);
-        boolean leftNeedsConvert = arg0Type != timestampType;
-        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
-        switch (metadata.getColumnType(0)) {
+        int metadataType = metadata.getColumnType(0);
+
+        switch (ColumnType.tagOf(metadataType)) {
             case ColumnType.TIMESTAMP:
             case ColumnType.NULL:
+                int timestampType = Math.max(arg0Type, metadataType);
+                boolean leftNeedsConvert = arg0Type != timestampType;
+                TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
                 if (leftNeedsConvert) {
-                    return new LeftConvertTimestampCursorFunc(factory, arg0, args.getQuick(1), driver, timestampType);
+                    return new LeftConvertTimestampCursorFunc(factory, arg0, args.getQuick(1), driver, arg0Type);
                 } else {
                     return new TimestampCursorFunc(factory, arg0, args.getQuick(1), driver);
                 }
             case ColumnType.STRING:
-                return new StrCursorFunc(factory, arg0, args.getQuick(1), driver, argPositions.getQuick(1));
+                return new StrCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(arg0Type), argPositions.getQuick(1));
             case ColumnType.VARCHAR:
-                return new VarcharCursorFunc(factory, arg0, args.getQuick(1), driver, argPositions.getQuick(1));
+                return new VarcharCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(arg0Type), argPositions.getQuick(1));
             default:
                 throw SqlException.$(argPositions.getQuick(1), "cannot compare TIMESTAMP and ").put(ColumnType.nameOf(metadata.getColumnType(0)));
         }

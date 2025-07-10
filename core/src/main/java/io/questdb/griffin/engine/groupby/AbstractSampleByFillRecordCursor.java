@@ -55,6 +55,7 @@ public abstract class AbstractSampleByFillRecordCursor extends AbstractNoRecordS
                 configuration,
                 recordFunctions,
                 timestampIndex,
+                timestampType,
                 timestampSampler,
                 groupByFunctions,
                 groupByFunctionsUpdater,

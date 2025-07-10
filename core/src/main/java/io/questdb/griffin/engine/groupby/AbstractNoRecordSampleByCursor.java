@@ -37,7 +37,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -67,6 +66,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             CairoConfiguration configuration,
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
+            int timestampType,
             TimestampSampler timestampSampler,
             ObjList<GroupByFunction> groupByFunctions,
             GroupByFunctionsUpdater groupByFunctionsUpdater,
@@ -79,7 +79,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             Function sampleToFunc,
             int sampleToFuncPos
     ) {
-        super(timestampSampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleFromFuncPos, sampleToFunc, sampleToFuncPos);
+        super(configuration, timestampSampler, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleFromFuncPos, sampleToFunc, sampleToFuncPos);
         this.timestampIndex = timestampIndex;
         this.recordFunctions = recordFunctions;
         this.groupByFunctions = groupByFunctions;
@@ -214,8 +214,8 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             timestampSampler.setStart(timestamp);
         } else {
             // FROM-TO may apply to align to calendar queries, fixing the lower bound.
-            if (sampleFromFunc != TimestampConstant.TIMESTAMP_MICRO_NULL) {
-                timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? sampleFromFunc.getTimestamp(null) : 0L);
+            if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
+                timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? timestampDriver.from(sampleFromFunc.getTimestamp(null), sampleFromFuncType) : 0L);
             } else {
                 timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
             }
@@ -223,9 +223,9 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
 
         topTzOffset = tzOffset;
         topNextDst = nextDstUtc;
-        if (sampleFromFunc != TimestampConstant.TIMESTAMP_MICRO_NULL) {
+        if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
             // set the top epoch to be the lower limit
-            topLocalEpoch = timestampSampler.round(sampleFromFunc.getTimestamp(null) + tzOffset);
+            topLocalEpoch = timestampSampler.round(timestampDriver.from(sampleFromFunc.getTimestamp(null), sampleFromFuncType) + tzOffset);
             // set current epoch to be the floor of the starting timestamp
             localEpoch = timestampSampler.round(timestamp + tzOffset);
         } else {

@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.std.Numbers;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -144,6 +145,22 @@ public class DateFunctionTest {
         function.getLong256B(null);
     }
 
+    @Test
+    public void testGetNullTimestamp() {
+        final DateFunction function = new DateFunction() {
+            @Override
+            public long getDate(Record rec) {
+                return Numbers.LONG_NULL;
+            }
+
+            @Override
+            public boolean isThreadSafe() {
+                return true;
+            }
+        };
+        Assert.assertEquals(Numbers.LONG_NULL, function.getTimestamp(null));
+    }
+
     @Test(expected = UnsupportedOperationException.class)
     public void testGetRecordCursorFactory() {
         function.getRecordCursorFactory();
@@ -179,9 +196,9 @@ public class DateFunctionTest {
         function.getSymbolB(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetTimestamp() {
-        function.getTimestamp(null);
+        Assert.assertEquals(163000, function.getTimestamp(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)

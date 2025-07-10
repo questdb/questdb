@@ -25,8 +25,11 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -179,6 +182,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private final FillRangeRecord fillingRecord = new FillRangeRecord();
         private final FillRangeTimestampConstant fillingTimestampFunc;
         private final Function fromFunc;
+        private final TimestampDriver timestampDriver;
         private final int timestampIndex;
         private final TimestampSampler timestampSampler;
         private final Function toFunc;
@@ -209,6 +213,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             this.fillValues = fillValues;
             this.timestampIndex = timestampIndex;
             this.fillingTimestampFunc = new FillRangeTimestampConstant(timestampType);
+            this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
         }
 
         @Override
@@ -298,9 +303,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             return fillValues.getQuick(col);
         }
 
-        private void initTimestamps(Function fromFunc, Function toFunc) {
-            minTimestamp = fromFunc == TimestampConstant.TIMESTAMP_MICRO_NULL ? Long.MAX_VALUE : fromFunc.getTimestamp(null);
-            maxTimestamp = toFunc == TimestampConstant.TIMESTAMP_MICRO_NULL ? Long.MIN_VALUE : toFunc.getTimestamp(null);
+        private void initTimestamps(CairoConfiguration configuration, Function fromFunc, Function toFunc) {
+            minTimestamp = fromFunc == timestampDriver.getTimestampConstantNull() ? Long.MAX_VALUE : timestampDriver.from(fromFunc.getTimestamp(null),
+                    ColumnType.getTimestampType(fromFunc.getType(), configuration));
+            maxTimestamp = toFunc == timestampDriver.getTimestampConstantNull() ? Long.MIN_VALUE : timestampDriver.from(toFunc.getTimestamp(null),
+                    ColumnType.getTimestampType(toFunc.getType(), configuration));
         }
 
         private void initValueFuncs(ObjList<Function> valueFuncs) {
@@ -329,7 +336,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             Function.init(fillValues, baseCursor, executionContext, null);
             fromFunc.init(baseCursor, executionContext);
             toFunc.init(baseCursor, executionContext);
-            initTimestamps(fromFunc, toFunc);
+            initTimestamps(executionContext.getCairoEngine().getConfiguration(), fromFunc, toFunc);
             if (presentTimestamps == null) {
                 long capacity = 8;
                 try {

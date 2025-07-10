@@ -931,7 +931,6 @@ public class NanosTimestampDriver implements TimestampDriver {
                             int sec = Numbers.parseInt(str, p, p += 2);
                             CommonUtils.checkRange(sec, 0, 59);
                             if (p < hi && str.byteAt(p) == '.') {
-
                                 p++;
                                 // var len milli, micros and seconds
                                 int nanoLim = p + 9;
@@ -946,7 +945,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                                     nano *= 10;
                                     nano += c - '0';
                                 }
-                                nano *= CommonUtils.tenPow(nlim - p);
+                                nano *= CommonUtils.tenPow(nanoLim - p);
                                 // micros
                                 ts = Nanos.yearNanos(year, l)
                                         + Nanos.monthOfYearNanos(month, l)

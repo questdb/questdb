@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.ObjList;
 
 public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillRecordCursor {
@@ -125,9 +124,9 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
 
         final boolean hasNext = notKeyedLoop(simpleMapValue);
 
-        if (baseRecord == null && sampleToFunc != TimestampConstant.TIMESTAMP_MICRO_NULL && !endFill) {
+        if (baseRecord == null && sampleToFunc != timestampDriver.getTimestampConstantNull() && !endFill) {
             endFill = true;
-            upperBound = sampleToFunc.getTimestamp(null);
+            upperBound = timestampDriver.from(sampleToFunc.getTimestamp(null), sampleToFuncType);
             // we must not re-initialize baseRecord after base cursor has been exhausted
             nextSamplePeriod(upperBound);
         }

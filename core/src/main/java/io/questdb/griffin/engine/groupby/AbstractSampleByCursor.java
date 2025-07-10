@@ -24,6 +24,9 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.RecordCursor;
@@ -38,16 +41,16 @@ import io.questdb.std.datetime.millitime.Dates;
 
 import java.io.Closeable;
 
-import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
-import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
-
 public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCursor, Closeable {
     protected final Function offsetFunc;
     protected final int offsetFuncPos;
     protected final Function sampleFromFunc;
     protected final int sampleFromFuncPos;
+    protected final int sampleFromFuncType;
     protected final Function sampleToFunc;
     protected final int sampleToFuncPos;
+    protected final int sampleToFuncType;
+    protected final TimestampDriver timestampDriver;
     protected final TimestampSampler timestampSampler;
     protected final Function timezoneNameFunc;
     protected final int timezoneNameFuncPos;
@@ -59,7 +62,9 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
     protected long tzOffset;
 
     public AbstractSampleByCursor(
+            CairoConfiguration configuration,
             TimestampSampler timestampSampler,
+            int timestampType,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
@@ -78,6 +83,9 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
         this.sampleFromFuncPos = sampleFromFuncPos;
         this.sampleToFunc = sampleToFunc;
         this.sampleToFuncPos = sampleToFuncPos;
+        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+        this.sampleFromFuncType = ColumnType.getTimestampType(sampleFromFunc.getType(), configuration);
+        this.sampleToFuncType = ColumnType.getTimestampType(sampleToFunc.getType(), configuration);
     }
 
     @Override
@@ -101,11 +109,11 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
                     // fixed rules means the timezone does not have historical or daylight time changes
                     rules = DateLocaleFactory.EN_LOCALE.getZoneRules(
                             Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, tz.length())),
-                            RESOLUTION_MICROS
+                            timestampDriver.getTZRuleResolution()
                     );
                 } else {
                     // here timezone is in numeric offset format
-                    tzOffset = Numbers.decodeLowInt(opt) * MINUTE_MICROS;
+                    tzOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(opt));
                     nextDstUtc = Long.MAX_VALUE;
                 }
             } catch (NumericException e) {
@@ -123,7 +131,7 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
                 // bad value for offset
                 throw SqlException.$(offsetFuncPos, "invalid offset: ").put(offset);
             }
-            fixedOffset = Numbers.decodeLowInt(val) * MINUTE_MICROS;
+            fixedOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(val));
         } else {
             fixedOffset = Long.MIN_VALUE;
         }

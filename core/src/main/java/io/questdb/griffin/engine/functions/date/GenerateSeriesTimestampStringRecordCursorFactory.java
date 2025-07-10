@@ -195,34 +195,7 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
 
         @Override
         public long size() {
-            long micros = stride;
-            switch (unit) {
-                case 'w':
-                    micros *= Timestamps.WEEK_MICROS;
-                    break;
-                case 'd':
-                    micros *= Timestamps.DAY_MICROS;
-                    break;
-                case 'h':
-                    micros *= Timestamps.HOUR_MICROS;
-                    break;
-                case 'm':
-                    micros *= Timestamps.MINUTE_MICROS;
-                    break;
-                case 's':
-                    micros *= Timestamps.SECOND_MICROS;
-                    break;
-                case 'T':
-                    micros *= Timestamps.MILLI_MICROS;
-                    break;
-                case 'U':
-                case 'u':
-                    // todo: get rid of 'u' case whe nanosecond refactor happens
-                    break;
-                default:
-                    return -1;
-            }
-            return (Math.abs(end - start) / Math.abs(micros)) + 1;
+            return Math.abs(end - start) / adder.add(0, stride) + 1;
         }
 
         @Override

@@ -45,7 +45,6 @@ import io.questdb.griffin.engine.functions.constants.IPv4Constant;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.ShortConstant;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
@@ -161,7 +160,7 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
             case ColumnType.UUID:
                 return UuidConstant.NULL;
             case ColumnType.TIMESTAMP:
-                return TimestampConstant.TIMESTAMP_MICRO_NULL;
+                return ColumnType.getTimestampDriver(type).getTimestampConstantNull();
             default:
                 throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
         }

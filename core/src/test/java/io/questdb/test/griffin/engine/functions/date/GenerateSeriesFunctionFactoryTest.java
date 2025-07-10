@@ -664,13 +664,13 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
         bindVariableService.setStr("t3", "5d");
 
         assertQuery("generate_series\n" +
-                        "2025-01-01T00:00:00.000000Z\n" +
-                        "2025-01-06T00:00:00.000000Z\n" +
-                        "2025-01-11T00:00:00.000000Z\n" +
-                        "2025-01-16T00:00:00.000000Z\n" +
-                        "2025-01-21T00:00:00.000000Z\n" +
-                        "2025-01-26T00:00:00.000000Z\n" +
-                        "2025-01-31T00:00:00.000000Z\n",
+                        "2025-01-01T00:00:00.000000000Z\n" +
+                        "2025-01-06T00:00:00.000000000Z\n" +
+                        "2025-01-11T00:00:00.000000000Z\n" +
+                        "2025-01-16T00:00:00.000000000Z\n" +
+                        "2025-01-21T00:00:00.000000000Z\n" +
+                        "2025-01-26T00:00:00.000000000Z\n" +
+                        "2025-01-31T00:00:00.000000000Z\n",
                 "generate_series(:t1, :t2, :t3);",
                 "generate_series",
                 true,
@@ -679,11 +679,11 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
         bindVariableService.setStr("t3", "1w");
 
         assertQuery("generate_series\n" +
-                        "2025-01-01T00:00:00.000000Z\n" +
-                        "2025-01-08T00:00:00.000000Z\n" +
-                        "2025-01-15T00:00:00.000000Z\n" +
-                        "2025-01-22T00:00:00.000000Z\n" +
-                        "2025-01-29T00:00:00.000000Z\n",
+                        "2025-01-01T00:00:00.000000000Z\n" +
+                        "2025-01-08T00:00:00.000000000Z\n" +
+                        "2025-01-15T00:00:00.000000000Z\n" +
+                        "2025-01-22T00:00:00.000000000Z\n" +
+                        "2025-01-29T00:00:00.000000000Z\n",
                 "generate_series(:t1, :t2, :t3);",
                 "generate_series",
                 true,
