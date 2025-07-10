@@ -71,8 +71,7 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
             return Numbers.INT_NULL;
         }
         for (int i = 0, dimLen = array.getDimLen(0); i < dimLen; i++) {
-            double val = array.getDouble(i);
-            if (Double.isNaN(val)) {
+            if (Numbers.isNull(array.getDouble(i))) {
                 return i;
             }
         }
@@ -89,8 +88,8 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
             int stride = array.getStride(0);
             int index = 0;
             for (int i = 0, n = array.getDimLen(0); i < n; i++) {
-                double v = array.getDouble(index);
-                if (Math.abs(v - value) <= Numbers.DOUBLE_TOLERANCE) {
+                double d = array.getDouble(index);
+                if (Numbers.isFinite(d) && Math.abs(d - value) <= Numbers.DOUBLE_TOLERANCE) {
                     return i;
                 }
                 index += stride;
@@ -117,7 +116,7 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
                 return Numbers.INT_NULL;
             }
             double value = valueArg.getDouble(rec);
-            int index = Double.isNaN(value) ? linearSearchNan(array) : linearSearchValue(array, value);
+            int index = Numbers.isNull(value) ? linearSearchNan(array) : linearSearchValue(array, value);
             return Numbers.INT_NULL == index ? Numbers.INT_NULL : index + 1;
         }
 
