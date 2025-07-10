@@ -330,10 +330,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 // Check that the originally open reader does not see these changes
                 println(cursorFactory, cursor);
                 String expected = "i\tj\tstr\tvarc1\tvarc2\tarr\tts\n" +
-                        "34\t-34\tEOPXYLZ\t\tҔ\t[null,null,null,null,null]\t2020-02-03T17:00:00.000000Z\n" +
-                        "35\t-35\tPCDUISKKGRWJWYSU\trݚӉ1\uDBC6\uDD30ҾԭG٘[5wȾ䏝j+\uDB59\uDC3C֖蠹\tʑ\t[null,null,null,null,null]\t2020-02-03T17:00:00.000000Z\n" +
-                        "36\t-36\t\t\t(\t[null,null,null,null,null,null,null,null,null,null,null,null]\t2020-02-03T18:00:00.000000Z\n" +
-                        "37\t-37\t\t5kz#BD5QYH(%i]?W;(C\t앳\t[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]\t2020-02-03T18:00:00.000000Z\n";
+                        "34\t-34\tZTCQXJOQQYU\tw\tM\t[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]\t2020-02-03T17:00:00.000000Z\n" +
+                        "35\t-35\tTYONWEC\t\uDBB3\uDC03몍Ө*\uDADD\uDD4C2\uD95A\uDC74\t\uDA63\uDF1C\t[null,null]\t2020-02-03T17:00:00.000000Z\n" +
+                        "36\t-36\t\tȾ䶲L_oW4ˣ!۱ݥ0;\uE373춑J͗Eת\tB\t[null,null,null]\t2020-02-03T18:00:00.000000Z\n" +
+                        "37\t-37\tEYDNMIOCCVV\tqhG+Z-%,mY*U\t|\t[null,null,null,null,null,null]\t2020-02-03T18:00:00.000000Z\n";
                 TestUtils.assertEquals(expected, sink);
 
                 // Split at 17:30
@@ -418,10 +418,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 sink.clear();
                 println(cursorFactory, cursor);
                 String expected = "i\tj\tstr\tvarc1\tvarc2\tarr\tts\n" +
-                        "34\t-34\tEOPXYLZ\t\tҔ\t[null,null,null,null,null]\t2020-02-03T17:00:00.000000Z\n" +
-                        "35\t-35\tPCDUISKKGRWJWYSU\trݚӉ1\uDBC6\uDD30ҾԭG٘[5wȾ䏝j+\uDB59\uDC3C֖蠹\tʑ\t[null,null,null,null,null]\t2020-02-03T17:00:00.000000Z\n" +
-                        "36\t-36\t\t\t(\t[null,null,null,null,null,null,null,null,null,null,null,null]\t2020-02-03T18:00:00.000000Z\n" +
-                        "37\t-37\t\t5kz#BD5QYH(%i]?W;(C\t앳\t[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]\t2020-02-03T18:00:00.000000Z\n";
+                        "34\t-34\tZTCQXJOQQYU\tw\tM\t[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]\t2020-02-03T17:00:00.000000Z\n" +
+                        "35\t-35\tTYONWEC\t\uDBB3\uDC03몍Ө*\uDADD\uDD4C2\uD95A\uDC74\t\uDA63\uDF1C\t[null,null]\t2020-02-03T17:00:00.000000Z\n" +
+                        "36\t-36\t\tȾ䶲L_oW4ˣ!۱ݥ0;\uE373춑J͗Eת\tB\t[null,null,null]\t2020-02-03T18:00:00.000000Z\n" +
+                        "37\t-37\tEYDNMIOCCVV\tqhG+Z-%,mY*U\t|\t[null,null,null,null,null,null]\t2020-02-03T18:00:00.000000Z\n";
                 TestUtils.assertEquals(expected, sink);
 
                 // Split at 17:30
