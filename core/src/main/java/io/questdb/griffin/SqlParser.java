@@ -3956,7 +3956,7 @@ public class SqlParser {
             throw SqlException.position(typePosition).put("column type is expected here");
         }
         final short typeTag = SqlUtil.toPersistedTypeTag(tok, typePosition);
-        final int typeTagPosition  = lexer.lastTokenPosition();
+        final int typeTagPosition = lexer.lastTokenPosition();
 
         // ignore precision keyword for DOUBLE column: 'double precision' is the same type as 'double'
         if (typeTag == ColumnType.DOUBLE) {
