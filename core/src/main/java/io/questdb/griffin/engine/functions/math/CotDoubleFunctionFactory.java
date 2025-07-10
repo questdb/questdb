@@ -68,7 +68,7 @@ public class CotDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            double d =  1.0 / Math.tan(angleRad.getDouble(rec));
+            double d = 1.0 / Math.tan(angleRad.getDouble(rec));
             return Numbers.isFinite(d) ? d : Double.NaN;
         }
 

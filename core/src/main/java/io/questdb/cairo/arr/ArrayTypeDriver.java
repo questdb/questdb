@@ -740,7 +740,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         int elemType = array.getElemType();
         switch (elemType) {
             case ColumnType.DOUBLE:
-                return  VALUE_APPENDER_DOUBLE;
+                return VALUE_APPENDER_DOUBLE;
             case ColumnType.LONG:
             case ColumnType.NULL:
                 return VALUE_APPENDER_LONG;
