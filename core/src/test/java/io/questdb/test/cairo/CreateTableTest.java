@@ -61,8 +61,8 @@ public class CreateTableTest extends AbstractCairoTest {
     @Test
     public void testCreateTableArrayWithMismatchedBrackets() throws Exception {
         assertMemoryLeak(() -> {
-            assertException("create table x (arr double[);", 27, "']' expected");
-            assertException("create table x (arr double[][);", 29, "']' expected");
+            assertException("create table x (arr double[);", 26, "syntax error at column type definition, expected array type: 'DOUBLE[]...', but found: 'double[)'");
+            assertException("create table x (arr double[][);", 28, "syntax error at column type definition, expected array type: 'DOUBLE[][]...', but found: 'double[][)'");
             assertException("create table x (arr double]);", 16, "arr has an unmatched `]` - were you trying to define an array?");
             assertException("create table x (arr double[]]);", 16, "arr has an unmatched `]` - were you trying to define an array?");
         });
