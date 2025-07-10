@@ -4098,7 +4098,7 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "32\r\n" +
+                        "2e\r\n" +
                         "{\"query\":\"x\",\"error\":\"column not found: 'f1'\"}\r\n" +
                         "00\r\n" +
                         "\r\n", 20
