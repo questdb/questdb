@@ -75,45 +75,37 @@ public class TimestampFloorFunctionFactory implements FunctionFactory {
         int timestampType = ColumnType.getTimestampType(arg.getType(), configuration);
         switch (c) {
             case 'M':
-                return stride > 1 ?
-                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, "month", stride, timestampType) :
-                        new TimestampFloorFunctions.TimestampFloorFunction(arg, "month", timestampType);
+                return createFloorFunction(arg, "month", stride, timestampType);
             case 'y':
-                return stride > 1 ?
-                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, "year", stride, timestampType) :
-                        new TimestampFloorFunctions.TimestampFloorFunction(arg, "year", timestampType);
+                return createFloorFunction(arg, "year", stride, timestampType);
             case 'w':
-                return stride > 1 ?
-                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, "week", stride, timestampType) :
-                        new TimestampFloorFunctions.TimestampFloorFunction(arg, "week", timestampType);
+                return createFloorFunction(arg, "week", stride, timestampType);
             case 'd':
-                return stride > 1 ?
-                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, "day", stride, timestampType) :
-                        new TimestampFloorFunctions.TimestampFloorFunction(arg, "day", timestampType);
+                return createFloorFunction(arg, "day", stride, timestampType);
             case 'h':
-                return stride > 1 ?
-                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, "hour", stride, timestampType) :
-                        new TimestampFloorFunctions.TimestampFloorFunction(arg, "hour", timestampType);
+                return createFloorFunction(arg, "hour", stride, timestampType);
             case 'm':
-                return stride > 1 ?
-                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, "minute", stride, timestampType) :
-                        new TimestampFloorFunctions.TimestampFloorFunction(arg, "minute", timestampType);
+                return createFloorFunction(arg, "minute", stride, timestampType);
             case 's':
-                return stride > 1 ?
-                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, "second", stride, timestampType) :
-                        new TimestampFloorFunctions.TimestampFloorFunction(arg, "second", timestampType);
+                return createFloorFunction(arg, "second", stride, timestampType);
             case 'T':
-                return stride > 1 ?
-                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, "millisecond", stride, timestampType) :
-                        new TimestampFloorFunctions.TimestampFloorFunction(arg, "millisecond", timestampType);
+                return createFloorFunction(arg, "millisecond", stride, timestampType);
             case 'U':
-                return stride > 1 ?
-                        new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, "microsecond", stride, timestampType) :
-                        new TimestampFloorFunctions.TimestampFloorFunction(arg, "microsecond", timestampType);
+                return createFloorFunction(arg, "microsecond", stride, timestampType);
+            case 'n':
+                return createFloorFunction(arg, "nanosecond", stride, timestampType);
             case 0:
                 throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
             default:
                 throw SqlException.position(argPositions.getQuick(0)).put("invalid unit '").put(str).put('\'');
+        }
+    }
+
+    private static Function createFloorFunction(Function arg, String unit, int stride, int timestampType) {
+        if (stride > 1) {
+            return new TimestampFloorFunctions.TimestampFloorWithStrideFunction(arg, unit, stride, timestampType);
+        } else {
+            return new TimestampFloorFunctions.TimestampFloorFunction(arg, unit, timestampType);
         }
     }
 }

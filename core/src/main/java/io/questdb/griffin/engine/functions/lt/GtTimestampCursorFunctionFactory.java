@@ -78,20 +78,44 @@ public class GtTimestampCursorFunctionFactory implements FunctionFactory {
         if (metadata.getColumnCount() != 1) {
             throw SqlException.$(argPositions.getQuick(1), "select must provide exactly one column");
         }
+
         Function arg0 = args.getQuick(0);
-        int arg0Type = arg0.getType();
-        int timestampType = ColumnType.getTimestampType(arg0Type, metadata.getColumnType(0), configuration);
-        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        int arg0Type = ColumnType.getTimestampType(arg0.getType(), configuration);
+        int metadataType = metadata.getColumnType(0);
         switch (metadata.getColumnType(0)) {
             case ColumnType.TIMESTAMP:
             case ColumnType.NULL:
-                return new TimestampCursorFunc(factory, arg0, args.getQuick(1), driver);
+                int timestampType = Math.max(arg0Type, metadataType);
+                boolean leftNeedsConvert = arg0Type != timestampType;
+                if (leftNeedsConvert) {
+                    return new LeftConvertTimestampCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(timestampType), arg0Type);
+                } else {
+                    return new TimestampCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(timestampType));
+                }
             case ColumnType.STRING:
-                return new StrCursorFunc(factory, arg0, args.getQuick(1), driver, argPositions.getQuick(1));
+                return new StrCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(arg0Type), argPositions.getQuick(1));
             case ColumnType.VARCHAR:
-                return new VarcharCursorFunc(factory, arg0, args.getQuick(1), driver, argPositions.getQuick(1));
+                return new VarcharCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(arg0Type), argPositions.getQuick(1));
             default:
                 throw SqlException.$(argPositions.getQuick(1), "cannot compare TIMESTAMP and ").put(ColumnType.nameOf(metadata.getColumnType(0)));
+        }
+    }
+
+    private static class LeftConvertTimestampCursorFunc extends TimestampCursorFunc {
+        private final int leftTimestampType;
+
+        public LeftConvertTimestampCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, TimestampDriver driver, int leftTimestampType) {
+            super(factory, leftFunc, rightFunc, driver);
+            this.leftTimestampType = leftTimestampType;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return Numbers.lessThan(
+                    epoch,
+                    driver.from(leftFunc.getTimestamp(rec), leftTimestampType),
+                    negated
+            );
         }
     }
 
