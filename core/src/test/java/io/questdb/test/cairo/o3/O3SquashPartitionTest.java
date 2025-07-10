@@ -31,6 +31,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractCairoTest;
@@ -754,6 +755,68 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             assertSql("minTimestamp\tnumRows\tname\n" +
                     "2020-02-04T00:00:00.000000Z\t1720\t2020-02-04\n", partitionsSql);
 
+        });
+    }
+
+    @Test
+    public void testSquashPartitionRollingCommits() throws Exception {
+        assertMemoryLeak(() -> {
+            // 4kb prefix split threshold
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 5);
+
+            execute(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " -x j," +
+                            " rnd_str(5,16,2) as str," +
+                            " rnd_varchar(1,40,5) as varc1," +
+                            " rnd_varchar(1, 1,5) as varc2," +
+                            " timestamp_sequence('2020-02-04T00', 60*1000000L) ts" +
+                            " from long_sequence(1)" +
+                            ") timestamp (ts) partition by HOUR ",
+                    sqlExecutionContext
+            );
+            drainWalQueue();
+
+            // Run loop to create splits, commit 100 row batches shifted 30 seconds apart
+            String sqlPrefix = "insert into x " +
+                    "select" +
+                    " cast(x as int) * 1000000 i," +
+                    " -x - 1000000L as j," +
+                    " rnd_str(5,16,2) as str," +
+                    " rnd_varchar(1,40,5) as varc1," +
+                    " rnd_varchar(1, 1,5) as varc2,";
+
+            long startTs = IntervalUtils.parseFloorPartialTimestamp("2020-02-04T20:01");
+            for (int i = 0; i < 1000; i++) {
+                execute(
+                        sqlPrefix +
+                                " timestamp_sequence(" + startTs + "L, 1000000L) ts" +
+                                " from long_sequence(100)",
+                        sqlExecutionContext
+                );
+                startTs += 30_000_000L; // 30 seconds in microseconds
+            }
+
+            assertSql("minTimestamp\tnumRows\tname\n" +
+                            "2020-02-04T00:00:00.000000Z\t1\t2020-02-04T00\n" +
+                            "2020-02-04T20:01:00.000000Z\t11680\t2020-02-04T20\n" +
+                            "2020-02-04T21:00:00.000000Z\t12000\t2020-02-04T21\n" +
+                            "2020-02-04T22:00:00.000000Z\t12000\t2020-02-04T22\n" +
+                            "2020-02-04T23:00:00.000000Z\t12000\t2020-02-04T23\n" +
+                            "2020-02-05T00:00:00.000000Z\t12000\t2020-02-05T00\n" +
+                            "2020-02-05T01:00:00.000000Z\t12000\t2020-02-05T01\n" +
+                            "2020-02-05T02:00:00.000000Z\t12000\t2020-02-05T02\n" +
+                            "2020-02-05T03:00:00.000000Z\t12000\t2020-02-05T03\n" +
+                            "2020-02-05T04:00:00.000000Z\t2500\t2020-02-05T04\n" +
+                            "2020-02-05T04:12:30.000000Z\t500\t2020-02-05T041229-000001\n" +
+                            "2020-02-05T04:15:00.000000Z\t500\t2020-02-05T041459-000001\n" +
+                            "2020-02-05T04:17:30.000000Z\t500\t2020-02-05T041729-000001\n" +
+                            "2020-02-05T04:20:00.000000Z\t320\t2020-02-05T041959-000001\n",
+                    "select minTimestamp, numRows, name from table_partitions('x')"
+            );
         });
     }
 
