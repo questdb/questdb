@@ -478,9 +478,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 LOG.info().$("retrying plan [q=`").$(queryModel).$("`, fd=").$(executionContext.getRequestFd()).I$();
                 clearExceptSqlText();
                 lexer.restart();
-                queryModel = (QueryModel) compileExecutionModel(executionContext);
                 if (insertModel != null) {
+                    queryModel = compileExecutionModel(executionContext).getQueryModel();
                     insertModel.setQueryModel(queryModel);
+                } else {
+                    queryModel = (QueryModel) compileExecutionModel(executionContext);
                 }
             }
         }
