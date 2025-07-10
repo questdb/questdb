@@ -1651,14 +1651,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             );
 
             // Write pool supposed to be mostly IO constrained, not that CPU constrained
-            // Allocate 50% the shared worker count by default.
+            // Allocate 50% the shared worker count by default, but reduce the priority
             int writeSharedWorkers = configureSharedThreadPool(
                     properties, env,
                     this.writeSharedWorkerPoolConfiguration,
                     PropertyKey.WRITE_SHARED_WORKER_COUNT,
                     PropertyKey.WRITE_SHARED_WORKER_AFFINITY,
                     (int) (1.5 * sharedWorkerCountSett),
-                    Thread.NORM_PRIORITY,
+                    Thread.NORM_PRIORITY - 1,
                     sharedWorkerHaltOnError,
                     sharedWorkerYieldThreshold,
                     sharedWorkerNapThreshold,
