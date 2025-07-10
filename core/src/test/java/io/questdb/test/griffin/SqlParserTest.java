@@ -12143,6 +12143,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 13,
                 "invalid column name [name=rnd_str('a', 'b', 'c'), position=0]"
         );
+        assertSyntaxError("create table x as (select 1 \"rnd_str('a', 'b', 'c')\" from long_sequence(10))",
+                13,
+                "invalid column name [name=rnd_str('a', 'b', 'c'), position=0]"
+        );
     }
 
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {
