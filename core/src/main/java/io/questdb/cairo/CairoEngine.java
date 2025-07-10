@@ -210,7 +210,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.queryRegistry = new QueryRegistry(configuration);
             this.rootExecutionContext = createRootExecutionContext();
             this.matViewTimerQueue = createMatViewTimerQueue();
-            this.matViewGraph = new MatViewGraph(matViewTimerQueue);
+            this.matViewGraph = new MatViewGraph();
             this.frameFactory = new FrameFactory(configuration);
             this.dataID = DataIDUtils.read(configuration);
 
@@ -369,8 +369,8 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
 
                         final MatViewState state = matViewStateStore.getViewState(tableToken);
-                        // Can be null if the graph implementation is no-op.
-                        // The no-op graph does nothing on view creation and other operations
+                        // Can be null if the state store implementation is no-op.
+                        // The no-op state store does nothing on view creation and other operations
                         // and is used when mat views are disabled.
                         if (state != null) {
                             final TableToken baseTableToken = tableNameRegistry.getTableToken(viewDefinition.getBaseTableName());
@@ -395,7 +395,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
                             path.trimTo(pathLen).concat(tableToken);
                             if (!WalUtils.readMatViewState(path, tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader)) {
-                                LOG.info().$("could not find materialized view state, view will be fully refreshed on next base table insert [table=")
+                                LOG.info().$("could not find materialized view state, default values will be used [table=")
                                         .$safe(viewDefinition.getBaseTableName())
                                         .$(", view=").$(tableToken)
                                         .I$();

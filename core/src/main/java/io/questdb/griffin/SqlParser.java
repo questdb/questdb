@@ -248,36 +248,40 @@ public class SqlParser {
         return visitor.visit(node);
     }
 
-    public static void validateMatViewDelay(int lengthInterval, char lengthUnit, int delayInterval, char delayUnit, int pos) throws SqlException {
+    public static void validateMatViewDelay(int length, char lengthUnit, int delay, char delayUnit, int pos) throws SqlException {
+        if (delay < 0) {
+            throw SqlException.position(pos).put("delay cannot be negative");
+        }
+
         int lengthMinutes;
         switch (lengthUnit) {
             case 'm':
-                lengthMinutes = lengthInterval;
+                lengthMinutes = length;
                 break;
             case 'h':
-                lengthMinutes = lengthInterval * 60;
+                lengthMinutes = length * 60;
                 break;
             case 'd':
-                lengthMinutes = lengthInterval * 24 * 60;
+                lengthMinutes = length * 24 * 60;
                 break;
             default:
-                throw SqlException.position(pos).put("unsupported length unit: ").put(lengthInterval).put(lengthUnit)
+                throw SqlException.position(pos).put("unsupported length unit: ").put(length).put(lengthUnit)
                         .put(", supported units are 'm', 'h', 'd'");
         }
 
         int delayMinutes;
         switch (delayUnit) {
             case 'm':
-                delayMinutes = delayInterval;
+                delayMinutes = delay;
                 break;
             case 'h':
-                delayMinutes = delayInterval * 60;
+                delayMinutes = delay * 60;
                 break;
             case 'd':
-                delayMinutes = delayInterval * 24 * 60;
+                delayMinutes = delay * 24 * 60;
                 break;
             default:
-                throw SqlException.position(pos).put("unsupported delay unit: ").put(delayInterval).put(delayUnit)
+                throw SqlException.position(pos).put("unsupported delay unit: ").put(delay).put(delayUnit)
                         .put(", supported units are 'm', 'h', 'd'");
         }
 
@@ -965,7 +969,7 @@ public class SqlParser {
         boolean deferred = false;
         if (isRefreshKeyword(tok)) {
             refreshDefined = true;
-            tok = tok(lexer, "'immediate' or 'manual' or 'period' or 'start' or 'every' or 'as'");
+            tok = tok(lexer, "'immediate' or 'manual' or 'period' or 'every' or 'as'");
             int every = 0;
             char everyUnit = 0;
             // 'incremental' is obsolete, replaced with 'immediate'
@@ -978,7 +982,7 @@ public class SqlParser {
                 tok = tok(lexer, "'deferred' or 'period' or 'as'");
             } else if (isEveryKeyword(tok)) {
                 tok = tok(lexer, "interval");
-                every = Timestamps.getStrideMultiple(tok);
+                every = Timestamps.getStrideMultiple(tok, lexer.lastTokenPosition());
                 everyUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewEveryUnit(everyUnit, lexer.lastTokenPosition());
                 refreshType = MatViewDefinition.REFRESH_TYPE_TIMER;
@@ -995,11 +999,11 @@ public class SqlParser {
             }
 
             if (isPeriodKeyword(tok)) {
-                // REFRESH [IMMEDIATE | MANUAL | EVERY <interval>] PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
+                // REFRESH ... PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
                 expectTok(lexer, "(");
                 expectTok(lexer, "length");
                 tok = tok(lexer, "LENGTH interval");
-                final int length = Timestamps.getStrideMultiple(tok);
+                final int length = Timestamps.getStrideMultiple(tok, lexer.lastTokenPosition());
                 final char lengthUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
                 final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(length, lengthUnit, lexer.lastTokenPosition());
@@ -1026,7 +1030,7 @@ public class SqlParser {
                 char delayUnit = 0;
                 if (isDelayKeyword(tok)) {
                     tok = tok(lexer, "DELAY interval");
-                    delay = Timestamps.getStrideMultiple(tok);
+                    delay = Timestamps.getStrideMultiple(tok, lexer.lastTokenPosition());
                     delayUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
                     validateMatViewDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
                     tok = tok(lexer, "')'");
@@ -1051,7 +1055,7 @@ public class SqlParser {
                 }
                 // Use the current time as the start timestamp if it wasn't specified.
                 long start = configuration.getMicrosecondClock().getTicks();
-                String timeZone = null;
+                String tz = null;
                 if (isStartKeyword(tok)) {
                     tok = tok(lexer, "START timestamp");
                     try {
@@ -1064,11 +1068,11 @@ public class SqlParser {
                     if (isTimeKeyword(tok)) {
                         expectTok(lexer, "zone");
                         tok = tok(lexer, "TIME ZONE name");
-                        timeZone = unquote(tok).toString();
+                        tz = unquote(tok).toString();
                         tok = tok(lexer, "'as'");
                     }
                 }
-                mvOpBuilder.setTimer(timeZone, start, every, everyUnit);
+                mvOpBuilder.setTimer(tz, start, every, everyUnit);
             } else if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
                 // REFRESH EVERY <interval> AS
                 // Don't forget to set timer params.

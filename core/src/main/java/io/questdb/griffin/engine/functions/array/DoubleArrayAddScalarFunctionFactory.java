@@ -52,7 +52,7 @@ public class DoubleArrayAddScalarFunctionFactory implements FunctionFactory {
         return true;
     }
 
-    private static class Func extends DoubleArrayAndScalarArrayOperator {
+    private static class Func extends DoubleArrayAndScalarDoubleArrayOperator {
 
         public Func(Function arrayArg, Function scalarArg, CairoConfiguration configuration) {
             super(OPERATOR_NAME, arrayArg, scalarArg, configuration);
