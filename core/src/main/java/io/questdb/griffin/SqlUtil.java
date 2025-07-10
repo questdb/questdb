@@ -1036,7 +1036,7 @@ public class SqlUtil {
         } while (true);
 
         if (hasNumericDimensionality) {
-            throw SqlException.$(dimensionalityFirstPos, "arrays do not have a fixed size");
+            throw SqlException.$(dimensionalityFirstPos, "arrays do not have a fixed size, remove the number");
         }
         return dim;
     }

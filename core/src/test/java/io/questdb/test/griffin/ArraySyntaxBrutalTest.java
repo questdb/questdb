@@ -71,8 +71,10 @@ public class ArraySyntaxBrutalTest extends AbstractCairoTest {
     @Test
     public void testCreateTableInvalidSyntax() throws Exception {
         assertMemoryLeak(() -> {
-            assertException("create table test (arr double[1])", 30, "arrays do not have a fixed size");
-            assertException("create table test (arr double[][][3])", 34, "arrays do not have a fixed size");
+            assertException("create table test (arr double[1])", 30,
+                    "arrays do not have a fixed size, remove the number");
+            assertException("create table test (arr double[][][3])", 34,
+                    "arrays do not have a fixed size, remove the number");
             assertException("create table test (arr double [1])", 30,
                     "array type requires no whitespace between type and brackets");
             assertException("create table test (arr array[double])", 23,
