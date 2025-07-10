@@ -237,7 +237,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertException("ALTER TABLE tango ADD COLUMN arr CHAR[]", 33, "unsupported array element type [type=CHAR]");
             assertException("ALTER TABLE tango ADD COLUMN arr STRING[]", 33, "unsupported array element type [type=STRING]");
             assertException("ALTER TABLE tango ADD COLUMN arr VARCHAR[]", 33, "unsupported array element type [type=VARCHAR]");
-            assertException("ALTER TABLE tango ADD COLUMN arr ARRAY[]", 33, "unsupported array element type [type=ARRAY]");
+            assertException("ALTER TABLE tango ADD COLUMN arr ARRAY[]", 33, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE. More types incoming.");
             assertException("ALTER TABLE tango ADD COLUMN arr BINARY[]", 33, "unsupported array element type [type=BINARY]");
             assertException("ALTER TABLE tango ADD COLUMN arr DATE[]", 33, "unsupported array element type [type=DATE]");
             assertException("ALTER TABLE tango ADD COLUMN arr TIMESTAMP[]", 33, "unsupported array element type [type=TIMESTAMP]");
@@ -375,11 +375,9 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testArrayCumSumBehaviourMixedNulls() throws Exception {
-        assertMemoryLeak(() -> assertSqlWithTypes(
-                        "a\tarray_cum_sum\n" +
-                                "[null,1.2,null,5.3]:DOUBLE[]\t[null,1.2,1.2,6.5]:DOUBLE[]\n",
-                        "select array[null, 1.2, null, 5.3] as a, array_cum_sum(a);\n"
-                )
+        assertMemoryLeak(() -> assertSqlWithTypes("a\tarray_cum_sum\n" +
+                        "[null,1.2,null,5.3]:DOUBLE[]\t[null,1.2,1.2,6.5]:DOUBLE[]\n",
+                "select array[null, 1.2, null, 5.3] as a, array_cum_sum(a);\n")
         );
     }
 
@@ -965,7 +963,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertException("ALTER TABLE tango ALTER COLUMN n TYPE CHAR[]", 38, "unsupported array element type [type=CHAR]");
             assertException("ALTER TABLE tango ALTER COLUMN n TYPE STRING[]", 38, "unsupported array element type [type=STRING]");
             assertException("ALTER TABLE tango ALTER COLUMN n TYPE VARCHAR[]", 38, "unsupported array element type [type=VARCHAR]");
-            assertException("ALTER TABLE tango ALTER COLUMN n TYPE ARRAY[]", 38, "unsupported array element type [type=ARRAY]");
+            assertException("ALTER TABLE tango ALTER COLUMN n TYPE ARRAY[]", 38, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE. More types incoming.");
             assertException("ALTER TABLE tango ALTER COLUMN n TYPE BINARY[]", 38, "unsupported array element type [type=BINARY]");
             assertException("ALTER TABLE tango ALTER COLUMN n TYPE DATE[]", 38, "unsupported array element type [type=DATE]");
             assertException("ALTER TABLE tango ALTER COLUMN n TYPE TIMESTAMP[]", 38, "unsupported array element type [type=TIMESTAMP]");
@@ -1144,7 +1142,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertException("CREATE TABLE tango (arr CHAR[])", 24, "unsupported array element type [type=CHAR]");
             assertException("CREATE TABLE tango (arr STRING[])", 24, "unsupported array element type [type=STRING]");
             assertException("CREATE TABLE tango (arr VARCHAR[])", 24, "unsupported array element type [type=VARCHAR]");
-            assertException("CREATE TABLE tango (arr ARRAY[])", 24, "unsupported array element type [type=ARRAY]");
+            assertException("CREATE TABLE tango (arr ARRAY[])", 24, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE. More types incoming.");
             assertException("CREATE TABLE tango (arr BINARY[])", 24, "unsupported array element type [type=BINARY]");
             assertException("CREATE TABLE tango (arr DATE[])", 24, "unsupported array element type [type=DATE]");
             assertException("CREATE TABLE tango (arr TIMESTAMP[])", 24, "unsupported array element type [type=TIMESTAMP]");
