@@ -49,7 +49,6 @@ import io.questdb.std.Files;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -5162,8 +5161,6 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testTimerMatViewRefreshAfterCreation() throws Exception {
         assertMemoryLeak(() -> {
-            final long start = TimestampFormatUtils.parseTimestamp("2024-12-12T00:00:00.000000Z");
-
             execute(
                     "create table base_price (" +
                             "sym varchar, price double, ts timestamp" +
@@ -6219,7 +6216,7 @@ public class MatViewTest extends AbstractCairoTest {
     private void testTimerMatViewSmallJumps(String timeZone, String start, String every, String initialClock, long clockJump, int ticksBeforeRefresh) throws Exception {
         assertMemoryLeak(() -> {
             final TimeZoneRules tzRules = timeZone != null ? Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone) : null;
-            final int interval = CommonUtils.getStrideMultiple(every);
+            final int interval = CommonUtils.getStrideMultiple(every, 0);
             final char unit = CommonUtils.getStrideUnit(every, -1);
             final String unitStr = MatViewsFunctionFactory.getIntervalUnit(unit);
 
@@ -6370,7 +6367,7 @@ public class MatViewTest extends AbstractCairoTest {
             return this;
         }
 
-        TestRefreshParams ofPeriod() throws NumericException {
+        TestRefreshParams ofPeriod() {
             refreshType = MatViewDefinition.REFRESH_TYPE_IMMEDIATE;
             this.periodLength = 12;
             this.periodLengthUnit = 'h';

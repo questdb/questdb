@@ -749,24 +749,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok;
         tok = expectToken(lexer, "column type");
 
-        int typeTag = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
-        if (typeTag == ColumnType.TIMESTAMP) {
-            typeTag = ColumnType.typeOf(tok);
-        }
+        int columnType = SqlUtil.toPersistedType(tok, lexer.lastTokenPosition());
         int typePosition = lexer.lastTokenPosition();
 
-        int dim = SqlUtil.parseArrayDimensionality(lexer, typeTag, typePosition);
-        int columnType;
+        int dim = SqlUtil.parseArrayDimensionality(lexer, columnType, typePosition);
         if (dim > 0) {
-            if (!ColumnType.isSupportedArrayElementType(typeTag)) {
+            if (!ColumnType.isSupportedArrayElementType(columnType)) {
                 throw SqlException.position(typePosition)
                         .put("unsupported array element type [type=")
-                        .put(ColumnType.nameOf(typeTag))
+                        .put(ColumnType.nameOf(columnType))
                         .put(']');
             }
-            columnType = ColumnType.encodeArrayType(typeTag, dim);
-        } else {
-            columnType = typeTag;
+            columnType = ColumnType.encodeArrayType(columnType, dim);
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -1752,7 +1746,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             tok = SqlUtil.fetchNext(lexer);
                         } else if (isEveryKeyword(tok)) {
                             tok = expectToken(lexer, "interval");
-                            every = CommonUtils.getStrideMultiple(tok);
+                            every = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
                             everyUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                             SqlParser.validateMatViewEveryUnit(everyUnit, lexer.lastTokenPosition());
                             refreshType = MatViewDefinition.REFRESH_TYPE_TIMER;
@@ -1764,8 +1758,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             expectKeyword(lexer, "(");
                             expectKeyword(lexer, "length");
                             tok = expectToken(lexer, "LENGTH interval");
-                            length = Timestamps.getStrideMultiple(tok, lexer.lastTokenPosition());
-                            lengthUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                            length = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+                            lengthUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                             SqlParser.validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
                             final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(length, lengthUnit, lexer.lastTokenPosition());
                             tok = expectToken(lexer, "'time zone' or 'delay' or ')'");
@@ -1787,8 +1781,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                             if (isDelayKeyword(tok)) {
                                 tok = expectToken(lexer, "DELAY interval");
-                                delay = Timestamps.getStrideMultiple(tok, lexer.lastTokenPosition());
-                                delayUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                                delay = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+                                delayUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                                 SqlParser.validateMatViewDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
                                 tok = expectToken(lexer, "')'");
                             }

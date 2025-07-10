@@ -26,7 +26,6 @@ package io.questdb.std.datetime.microtime;
 
 import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -781,44 +780,6 @@ public final class Timestamps {
 
     public static long getSecondsBetween(long a, long b) {
         return Math.abs(a - b) / SECOND_MICROS;
-    }
-
-    public static int getStrideMultiple(CharSequence str, int position) throws SqlException {
-        if (str != null) {
-            if (Chars.equals(str, '-')) {
-                throw SqlException.position(position).put("positive number expected: ").put(str);
-            }
-            if (str.length() > 1) {
-                try {
-                    final int multiple = Numbers.parseInt(str, 0, str.length() - 1);
-                    if (multiple <= 0) {
-                        throw SqlException.position(position).put("positive number expected: ").put(str);
-                    }
-                    return multiple;
-                } catch (NumericException ignored) {
-                }
-            }
-        }
-        return 1;
-    }
-
-    public static char getStrideUnit(CharSequence str, int position) throws SqlException {
-        assert str.length() > 0;
-        final char unit = str.charAt(str.length() - 1);
-        switch (unit) {
-            case 'M':
-            case 'y':
-            case 'w':
-            case 'd':
-            case 'h':
-            case 'm':
-            case 's':
-            case 'T':
-            case 'U':
-                return unit;
-            default:
-                throw SqlException.position(position).put("Invalid unit: ").put(str);
-        }
     }
 
     public static TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException {

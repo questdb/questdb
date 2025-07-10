@@ -74,8 +74,8 @@ public class CreateTableTest extends AbstractCairoTest {
     @Test
     public void testCreateTableArrayWithMismatchedBrackets() throws Exception {
         assertMemoryLeak(() -> {
-            assertException("create table x (arr double[);", 27, "']' expected");
-            assertException("create table x (arr double[][);", 29, "']' expected");
+            assertException("create table x (arr double[);", 26, "syntax error at column type definition, expected array type: 'DOUBLE[]...', but found: 'double[)'");
+            assertException("create table x (arr double[][);", 28, "syntax error at column type definition, expected array type: 'DOUBLE[][]...', but found: 'double[][)'");
             assertException("create table x (arr double]);", 16, "arr has an unmatched `]` - were you trying to define an array?");
             assertException("create table x (arr double[]]);", 16, "arr has an unmatched `]` - were you trying to define an array?");
         });
@@ -432,7 +432,6 @@ public class CreateTableTest extends AbstractCairoTest {
         execute("create table tab (like x)");
         assertSql("a\tb\tc\td\te\tf\tg\th\tt\tn\tx\tz\ty\tl\tu\tgh1\tgh2\n", "tab");
         assertColumnTypes(columnTypes);
-
     }
 
     @Test
@@ -780,7 +779,7 @@ public class CreateTableTest extends AbstractCairoTest {
                 for (int i = 0; i < columnTypes.length; i++) {
                     String[] arr = columnTypes[i];
                     assertEquals(arr[0], metadata.getColumnName(i));
-                    assertEquals(arr[1], ColumnType.nameOf(metadata.getColumnType(i)));
+                    assertEquals("i="+i,arr[1], ColumnType.nameOf(metadata.getColumnType(i)));
                 }
             }
         });

@@ -956,8 +956,8 @@ public class SqlUtil {
         return pool.next().of(exprNodeType, token, 0, position);
     }
 
-    public static int parseArrayDimensionality(GenericLexer lexer, int typeTag, int typeTagPosition) throws SqlException {
-        if (typeTag == ColumnType.ARRAY) {
+    public static int parseArrayDimensionality(GenericLexer lexer, int columnType, int typeTagPosition) throws SqlException {
+        if (ColumnType.tagOf(columnType) == ColumnType.ARRAY) {
             throw SqlException.position(typeTagPosition).put("the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE. More types incoming.");
         }
         boolean hasNumericDimensionality = false;
@@ -1012,7 +1012,7 @@ public class SqlUtil {
 
                     SqlException e = SqlException.position(openBracketPosition)
                             .put("syntax error at column type definition, expected array type: '")
-                            .put(ColumnType.nameOf(typeTag));
+                            .put(ColumnType.nameOf(columnType));
 
                     // add dimensionality we found so far
                     for (int i = 0, n = dim + 1; i < n; i++) {
@@ -1036,13 +1036,13 @@ public class SqlUtil {
         return dim;
     }
 
-    public static short toPersistedTypeTag(@NotNull CharSequence tok, int tokPosition) throws SqlException {
-        final short typeTag = ColumnType.tagOf(tok);
-        if (typeTag == -1) {
+    public static int toPersistedType(@NotNull CharSequence tok, int tokPosition) throws SqlException {
+        final int columnType = ColumnType.typeOf(tok);
+        if (columnType == -1) {
             throw SqlException.$(tokPosition, "unsupported column type: ").put(tok);
         }
-        if (ColumnType.isPersisted(typeTag)) {
-            return typeTag;
+        if (ColumnType.isPersisted(columnType)) {
+            return columnType;
         }
         throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
     }

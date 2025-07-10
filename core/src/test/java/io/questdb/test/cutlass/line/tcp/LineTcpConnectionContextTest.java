@@ -2205,7 +2205,6 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400200Z\n" +
                             "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400200Z\n" +
                             "us-westcost\t82.0\t2016-06-13T17:43:50.102500200Z\n";
-            ;
             assertTable(expected, table);
         });
     }

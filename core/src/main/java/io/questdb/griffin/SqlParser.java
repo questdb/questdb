@@ -61,6 +61,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -981,8 +982,8 @@ public class SqlParser {
                 tok = tok(lexer, "'deferred' or 'period' or 'as'");
             } else if (isEveryKeyword(tok)) {
                 tok = tok(lexer, "interval");
-                every = Timestamps.getStrideMultiple(tok, lexer.lastTokenPosition());
-                everyUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                every = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+                everyUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewEveryUnit(everyUnit, lexer.lastTokenPosition());
                 refreshType = MatViewDefinition.REFRESH_TYPE_TIMER;
                 tok = tok(lexer, "'deferred' or 'start' or 'period' or 'as'");
@@ -1002,8 +1003,8 @@ public class SqlParser {
                 expectTok(lexer, "(");
                 expectTok(lexer, "length");
                 tok = tok(lexer, "LENGTH interval");
-                final int length = Timestamps.getStrideMultiple(tok, lexer.lastTokenPosition());
-                final char lengthUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                final int length = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+                final char lengthUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
                 final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(length, lengthUnit, lexer.lastTokenPosition());
                 tok = tok(lexer, "'time zone' or 'delay' or ')'");
@@ -1029,8 +1030,8 @@ public class SqlParser {
                 char delayUnit = 0;
                 if (isDelayKeyword(tok)) {
                     tok = tok(lexer, "DELAY interval");
-                    delay = Timestamps.getStrideMultiple(tok, lexer.lastTokenPosition());
-                    delayUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                    delay = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+                    delayUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                     validateMatViewDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
                     tok = tok(lexer, "')'");
                 }
@@ -1326,7 +1327,7 @@ public class SqlParser {
                     throw SqlException.position(timestamp.position)
                             .put("invalid designated timestamp column [name=").put(timestamp.token).put(']');
                 }
-                if (model.getColumnType() != ColumnType.TIMESTAMP) {
+                if (ColumnType.tagOf(model.getColumnType()) != ColumnType.TIMESTAMP) {
                     throw SqlException
                             .position(timestamp.position)
                             .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(model.getColumnType()))
@@ -3954,23 +3955,23 @@ public class SqlParser {
             }
             throw SqlException.position(typePosition).put("column type is expected here");
         }
-        final short typeTag = SqlUtil.toPersistedTypeTag(tok, typePosition);
+        final int columnType = SqlUtil.toPersistedType(tok, typePosition);
         final int typeTagPosition = lexer.lastTokenPosition();
 
         // ignore precision keyword for DOUBLE column: 'double precision' is the same type as 'double'
-        if (typeTag == ColumnType.DOUBLE) {
+        if (ColumnType.tagOf(columnType) == ColumnType.DOUBLE) {
             CharSequence next = optTok(lexer);
             if (next != null && !isPrecisionKeyword(next)) {
                 lexer.unparseLast();
             }
         }
 
-        int nDims = SqlUtil.parseArrayDimensionality(lexer, typeTag, typeTagPosition);
+        int nDims = SqlUtil.parseArrayDimensionality(lexer, columnType, typeTagPosition);
         if (nDims > 0) {
-            if (!ColumnType.isSupportedArrayElementType(typeTag)) {
+            if (!ColumnType.isSupportedArrayElementType(columnType)) {
                 throw SqlException.position(typePosition)
                         .put("unsupported array element type [type=")
-                        .put(ColumnType.nameOf(typeTag))
+                        .put(ColumnType.nameOf(columnType))
                         .put(']');
             }
             if (nDims > ColumnType.ARRAY_NDIMS_LIMIT) {
@@ -3979,14 +3980,16 @@ public class SqlParser {
                         .put(", maxNDims=").put(ColumnType.ARRAY_NDIMS_LIMIT)
                         .put(']');
             }
-            return ColumnType.encodeArrayType(typeTag, nDims);
-        } else if (typeTag == ColumnType.GEOHASH) {
+            return ColumnType.encodeArrayType(columnType, nDims);
+        }
+
+        if (ColumnType.tagOf(columnType) == ColumnType.GEOHASH) {
             expectTok(lexer, '(');
             final int bits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
             expectTok(lexer, ')');
             return ColumnType.getGeoHashTypeWithBits(bits);
         }
-        return typeTag;
+        return columnType;
     }
 
     private @NotNull CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {
