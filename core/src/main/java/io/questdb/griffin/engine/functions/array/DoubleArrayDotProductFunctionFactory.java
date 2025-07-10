@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
@@ -100,7 +101,7 @@ public class DoubleArrayDotProductFunctionFactory implements FunctionFactory {
                 for (int i = 0, n = left.getFlatViewLength(); i < n; i++) {
                     double leftVal = left.getDouble(i);
                     double rightVal = right.getDouble(i);
-                    if (Double.isFinite(leftVal) && Double.isFinite(rightVal)) {
+                    if (Numbers.isFinite(leftVal) && Numbers.isFinite(rightVal)) {
                         value += leftVal * rightVal;
                     }
                 }
@@ -145,7 +146,7 @@ public class DoubleArrayDotProductFunctionFactory implements FunctionFactory {
                 for (int i = 0; i < count; i++) {
                     double leftVal = left.getDouble(flatIndexLeft);
                     double rightVal = right.getDouble(flatIndexLeft);
-                    if (Double.isFinite(leftVal) && Double.isFinite(rightVal)) {
+                    if (Numbers.isFinite(leftVal) && Numbers.isFinite(rightVal)) {
                         value += leftVal * rightVal;
                     }
                     flatIndexLeft += strideLeft;

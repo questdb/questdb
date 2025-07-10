@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class DivFloatFunctionFactory implements FunctionFactory {
@@ -57,7 +58,8 @@ public class DivFloatFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
-            return left.getFloat(rec) / right.getFloat(rec);
+            float f = left.getFloat(rec) / right.getFloat(rec);
+            return Numbers.isFinite(f) ? f : Float.NaN;
         }
 
         @Override

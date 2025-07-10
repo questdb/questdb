@@ -213,7 +213,7 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
         }
 
         private double roundNc(double d) {
-            if (!Numbers.isNull(d)) {
+            if (Numbers.isFinite(d)) {
                 return Numbers.roundHalfUpPosScale(d, scale);
             }
             return Double.NaN;

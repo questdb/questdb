@@ -71,7 +71,7 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
         @Override
         public void applyToElement(ArrayView view, int index) {
             double v = view.getDouble(index);
-            if (!Numbers.isNull(v)) {
+            if (Numbers.isFinite(v)) {
                 if (compensation == 0d && Numbers.isNull(currentSum)) {
                     currentSum = 0d;
                 }
@@ -88,7 +88,7 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
             FlatArrayView flatView = view.flatView();
             for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
                 double v = flatView.getDoubleAtAbsIndex(i);
-                if (!Numbers.isNull(v)) {
+                if (Numbers.isFinite(v)) {
                     if (compensation == 0d && Numbers.isNull(currentSum)) {
                         currentSum = 0d;
                     }
