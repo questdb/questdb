@@ -34,7 +34,6 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
-import io.questdb.std.Long256;
 import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
