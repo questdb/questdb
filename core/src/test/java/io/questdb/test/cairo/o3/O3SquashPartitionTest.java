@@ -27,11 +27,11 @@ package io.questdb.test.cairo.o3;
 import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractCairoTest;
@@ -789,7 +789,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     " rnd_varchar(1,40,5) as varc1," +
                     " rnd_varchar(1, 1,5) as varc2,";
 
-            long startTs = IntervalUtils.parseFloorPartialTimestamp("2020-02-04T20:01");
+            long startTs = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP).parseFloorLiteral("2020-02-04T20:01");
             for (int i = 0; i < 1000; i++) {
                 execute(
                         sqlPrefix +
