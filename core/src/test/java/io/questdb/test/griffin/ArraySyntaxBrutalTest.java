@@ -73,11 +73,16 @@ public class ArraySyntaxBrutalTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             assertException("create table test (arr double[1])", 30, "arrays do not have a fixed size");
             assertException("create table test (arr double[][][3])", 34, "arrays do not have a fixed size");
-            assertException("create table test (arr double [1])", 30, "Array type requires no whitespace between type and brackets");
-            assertException("create table test (arr array[double])", 23, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE");
-            assertException("create table test (arr array[])", 23, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE");
-            assertException("create table test (arr array)", 23, "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE");
-            assertException("create table test (arr double[][col][col2])", 31, "syntax error at column type definition, expected array type: 'DOUBLE[][]...");
+            assertException("create table test (arr double [1])", 30,
+                    "Array type requires no whitespace between type and brackets");
+            assertException("create table test (arr array[double])", 23,
+                    "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE");
+            assertException("create table test (arr array[])", 23,
+                    "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE");
+            assertException("create table test (arr array)", 23,
+                    "the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE");
+            assertException("create table test (arr double[][col][col2])", 31,
+                    "syntax error at column type definition, expected array type: 'DOUBLE[][]...");
         });
     }
 
