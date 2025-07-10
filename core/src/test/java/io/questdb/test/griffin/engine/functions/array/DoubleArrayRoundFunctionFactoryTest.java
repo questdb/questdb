@@ -59,7 +59,7 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
     public void testMultiDimensional() throws SqlException {
         assertSqlWithTypes("round\n" +
                         "[[1.2000000000000002,4.6000000000000005],[7.9,10.100000000000001]]:DOUBLE[][]\n",
-                "select round(array [ [ 1.23, 4.56 ], [ 7.89, 10.1112 ] ], 1)");
+                "select round(array[ [ 1.23, 4.56 ], [ 7.89, 10.1112 ] ], 1)");
     }
 
     @Test

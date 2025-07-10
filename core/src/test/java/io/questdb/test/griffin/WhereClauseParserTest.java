@@ -2307,7 +2307,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp in [\"2014-01-01T12:30:00.000Z\"]");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "too few arg");
+            TestUtils.assertContains(e.getFlyweightMessage(), "'[' is unexpected here");
         }
     }
 
@@ -2734,7 +2734,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("not (timestamp in ['2015-05-11T15:00:00.000Z']) and timestamp IN '2015-05-11'");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "too few");
+            TestUtils.assertContains(e.getFlyweightMessage(), "'[' is unexpected here");
         }
     }
 
