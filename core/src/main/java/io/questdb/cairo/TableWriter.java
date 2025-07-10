@@ -88,6 +88,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
@@ -2860,37 +2861,62 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
+    public void setMatViewRefresh(
+            int refreshType,
+            int timerInterval,
+            char timerUnit,
+            long timerStart,
+            @Nullable CharSequence timerTimeZone,
+            int periodLength,
+            char periodLengthUnit,
+            int periodDelay,
+            char periodDelayUnit
+    ) {
+        assert tableToken.isMatView();
+
+        final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+        if (oldDefinition == null) {
+            throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
+        }
+
+        final MatViewDefinition newDefinition = oldDefinition.updateRefreshParams(
+                refreshType,
+                timerInterval,
+                timerUnit,
+                timerStart,
+                Chars.toString(timerTimeZone),
+                periodLength,
+                periodLengthUnit,
+                periodDelay,
+                periodDelayUnit
+        );
+        updateMatViewDefinition(newDefinition);
+    }
+
+    @Override
     public void setMatViewRefreshLimit(int limitHoursOrMonths) {
         assert tableToken.isMatView();
 
-        try {
-            final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
-            if (oldDefinition == null) {
-                throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
-            }
-
-            final MatViewDefinition newDefinition = oldDefinition.updateRefreshLimit(limitHoursOrMonths);
-            updateMatViewDefinition(newDefinition);
-        } finally {
-            path.trimTo(pathSize);
+        final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+        if (oldDefinition == null) {
+            throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
         }
+
+        final MatViewDefinition newDefinition = oldDefinition.updateRefreshLimit(limitHoursOrMonths);
+        updateMatViewDefinition(newDefinition);
     }
 
     @Override
     public void setMatViewRefreshTimer(long start, int interval, char unit) {
         assert tableToken.isMatView();
 
-        try {
-            final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
-            if (oldDefinition == null) {
-                throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
-            }
-
-            final MatViewDefinition newDefinition = oldDefinition.updateTimer(interval, unit, start);
-            updateMatViewDefinition(newDefinition);
-        } finally {
-            path.trimTo(pathSize);
+        final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+        if (oldDefinition == null) {
+            throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
         }
+
+        final MatViewDefinition newDefinition = oldDefinition.updateTimer(interval, unit, start);
+        updateMatViewDefinition(newDefinition);
     }
 
     @Override
@@ -10008,12 +10034,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try (BlockFileWriter definitionWriter = blockFileWriter) {
             definitionWriter.of(path.concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
             MatViewDefinition.append(newDefinition, definitionWriter);
+        } finally {
+            path.trimTo(pathSize);
         }
 
         // Unlike mat view state write-through behavior, we update the in-memory definition
         // object here, after updating the definition file.
-        engine.getMatViewStateStore().updateViewDefinition(tableToken, newDefinition);
         engine.getMatViewGraph().updateViewDefinition(tableToken, newDefinition);
+        engine.getMatViewStateStore().updateViewDefinition(tableToken, newDefinition);
     }
 
     private void updateMaxTimestamp(long timestamp) {

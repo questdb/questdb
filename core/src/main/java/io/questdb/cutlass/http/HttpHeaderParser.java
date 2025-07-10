@@ -40,6 +40,7 @@ import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -60,6 +61,8 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private final Utf8SequenceObjHashMap<HttpCookie> cookies = new Utf8SequenceObjHashMap<>();
     private final ObjectPool<DirectUtf8String> csPool;
     private final LowerCaseUtf8SequenceObjHashMap<DirectUtf8String> headers = new LowerCaseUtf8SequenceObjHashMap<>();
+    private final HttpHeaderParameterValue parameterValue = new HttpHeaderParameterValue();
+    private final DirectUtf8Sink sink = new DirectUtf8Sink(0, true);
     private final DirectUtf8String temp = new DirectUtf8String();
     private final Utf8SequenceObjHashMap<DirectUtf8String> urlParams = new Utf8SequenceObjHashMap<>();
     protected boolean incomplete;
@@ -148,6 +151,8 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             headerPtr = _wptr = hi = Unsafe.free(headerPtr, hi - headerPtr, MemoryTag.NATIVE_HTTP_CONN);
             boundaryAugmenter.close();
         }
+        sink.close();
+        csPool.clear();
     }
 
     @Override
@@ -690,56 +695,53 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         }
 
         long p = seq.lo();
-        long _lo = p;
-        long hi = seq.hi();
+        final long hi = seq.hi();
 
-        DirectUtf8String name = null;
-        boolean contentType = true;
-        boolean swallowSpace = true;
+        long lo = HttpSemantics.swallowOWS(p, hi);
+        p = parseMediaType(lo, hi);
+        this.contentType = csPool.next().of(lo, p);
+        p = HttpSemantics.swallowOWS(p, hi);
 
-        while (p <= hi) {
-            char b = (char) Unsafe.getUnsafe().getByte(p++);
+        // Parsing parameters (charset, boundary).
+        while (p < hi) {
+            p = HttpSemantics.swallowNextDelimiter(p, hi);
+            p = HttpSemantics.swallowOWS(p, hi);
 
-            if (b == ' ' && swallowSpace) {
-                _lo = p;
-                continue;
+            final long nameLo = p;
+            final long nameHi = HttpSemantics.swallowTokens(p, hi);
+            if (nameHi == nameLo) {
+                throw HttpException.instance("Malformed ").put(HEADER_CONTENT_TYPE).put(" header");
             }
 
-            if (p > hi || b == ';') {
-                if (contentType) {
-                    this.contentType = csPool.next().of(_lo, p - 1);
-                    _lo = p;
-                    contentType = false;
-                    continue;
-                }
-
-                if (name == null) {
-                    throw HttpException.instance("Malformed ").put(HEADER_CONTENT_TYPE).put(" header");
-                }
-
-                if (Utf8s.equalsAscii("charset", name)) {
-                    this.charset = csPool.next().of(_lo, p - 1);
-                    name = null;
-                    _lo = p;
-                    continue;
-                }
-
-                if (Utf8s.equalsAscii("boundary", name)) {
-                    this.boundary = csPool.next().of(_lo, p - 1);
-                    _lo = p;
-                    name = null;
-                    continue;
-                }
-
-                if (p > hi) {
-                    break;
-                }
-            } else if (b == '=') {
-                name = name == null ? csPool.next().of(_lo, p - 1) : name.of(_lo, p - 1);
-                _lo = p;
-                swallowSpace = false;
+            p = HttpSemantics.swallowOWS(nameHi, hi);
+            if ((char) Unsafe.getUnsafe().getByte(p) != '=') {
+                throw HttpException.instance("Malformed ")
+                        .put(HEADER_CONTENT_TYPE)
+                        .put(" header, expected '=' but got '")
+                        .put((char) Unsafe.getUnsafe().getByte(p))
+                        .put('\'');
             }
+            p = HttpSemantics.swallowOWS(p + 1, hi);
+
+            HttpHeaderParameterValue value = parseParameterValue(p, hi);
+            if (Utf8s.equalsAscii("charset", nameLo, nameHi)) {
+                this.charset = value.getStr();
+            } else if (Utf8s.equalsAscii("boundary", nameLo, nameHi)) {
+                this.boundary = value.getStr();
+            }
+
+            p = value.getHi();
         }
+    }
+
+    private long parseMediaType(long lo, long hi) {
+        // media-type format is: type "/" subtype
+        // type and subtype are tokens
+        long p = HttpSemantics.swallowTokens(lo, hi);
+        if (p > hi || ((char) Unsafe.getUnsafe().getByte(p) != '/')) {
+            return p;
+        }
+        return HttpSemantics.swallowTokens(p + 1, hi);
     }
 
     private void parseKnownHeaders() {
@@ -817,6 +819,43 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             Unsafe.getUnsafe().putByte(_wptr++, (byte) b);
         }
         return (int) (p - lo);
+    }
+
+    private HttpHeaderParameterValue parseParameterValue(long lo, long hi) {
+        if (lo > hi) {
+            return parameterValue;
+        }
+
+        long p = lo;
+        char b = (char) Unsafe.getUnsafe().getByte(p++);
+        // fast path for unquoted tokens
+        if (b != '"') {
+            // Instead of relying on swallowTokens we are being more lenient and allow any characters until the ';' delimiter.
+            while (p < hi && ((char) Unsafe.getUnsafe().getByte(p) != ';')) {
+                p++;
+            }
+            parameterValue.of(p, csPool.next().of(lo, p));
+            return parameterValue;
+        }
+
+        final long s_lo = sink.size();
+        boolean escaped = false;
+        while (p <= hi) {
+            b = (char) Unsafe.getUnsafe().getByte(p++);
+
+            if (escaped || (b != '\\' && b != '"')) {
+                sink.put(b);
+                escaped = false;
+            } else if (b == '\\') {
+                escaped = true;
+            } else {
+                p = HttpSemantics.swallowOWS(p, hi);
+                break;
+            }
+        }
+
+        parameterValue.of(p, csPool.next().of(sink.ptr() + s_lo, sink.hi()));
+        return parameterValue;
     }
 
     private int parseProtocol(long lo, long hi) {
