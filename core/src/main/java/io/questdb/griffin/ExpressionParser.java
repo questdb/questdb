@@ -400,7 +400,7 @@ public class ExpressionParser {
                                 int hi = Chars.indexOfNonWhitespace(lexer.getContent(), en.position, lastPos, -1);
                                 assert hi != -1;
                                 throw SqlException.position(lastPos)
-                                        .put("Array type requires no whitespace: expected '")
+                                        .put("array type requires no whitespace: expected '")
                                         // hi is a non-whitespace char index, hence + 1
                                         .put(lexer.getContent(), en.position, hi + 1).put("[]' but found '")
                                         .put(lexer.getContent(), en.position, lastPos).put(" []'");

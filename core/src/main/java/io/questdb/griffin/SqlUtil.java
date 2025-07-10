@@ -975,7 +975,7 @@ public class SqlUtil {
                 int openBracketPosition = lexer.lastTokenPosition();
                 if (openBracketPosition > 0 && Character.isWhitespace(lexer.getContent().charAt(openBracketPosition - 1))) {
                     throw SqlException.position(openBracketPosition)
-                            .put("Array type requires no whitespace between type and brackets");
+                            .put("array type requires no whitespace between type and brackets");
                 }
 
                 // could be a start of array type
