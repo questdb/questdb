@@ -721,9 +721,9 @@ public class ArrayTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (arr DOUBLE[])");
             execute("INSERT INTO tango VALUES (ARRAY[1.0/0.0, 0.0/0.0, -1.0/0.0])");
-            assertSql("array_position\n2\n", "SELECT array_position(arr, 0.0/0.0) FROM tango");
-            assertSql("array_position\n2\n", "SELECT array_position(arr, 1.0/0.0) FROM tango");
-            assertSql("array_position\n2\n", "SELECT array_position(arr, -1.0/0.0) FROM tango");
+            assertSql("array_position\n1\n", "SELECT array_position(arr, 0.0/0.0) FROM tango");
+            assertSql("array_position\n1\n", "SELECT array_position(arr, 1.0/0.0) FROM tango");
+            assertSql("array_position\n1\n", "SELECT array_position(arr, -1.0/0.0) FROM tango");
         });
     }
 

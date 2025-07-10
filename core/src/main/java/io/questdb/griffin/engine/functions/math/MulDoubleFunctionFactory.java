@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class MulDoubleFunctionFactory implements FunctionFactory {
@@ -57,7 +58,8 @@ public class MulDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            return left.getDouble(rec) * right.getDouble(rec);
+            double d = left.getDouble(rec) * right.getDouble(rec);
+            return Numbers.isFinite(d) ? d : Double.NaN;
         }
 
         @Override
