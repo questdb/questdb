@@ -172,8 +172,7 @@ public class CursorPrinter {
                 ArrayTypeDriver.arrayToJson(
                         record.getArray(columnIndex, columnType),
                         sink,
-                        NoopArrayWriteState.INSTANCE,
-                        false
+                        NoopArrayWriteState.INSTANCE
                 );
                 break;
             case ColumnType.ARRAY_STRING:

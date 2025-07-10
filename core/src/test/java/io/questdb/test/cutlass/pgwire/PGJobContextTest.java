@@ -5710,6 +5710,7 @@ if __name__ == "__main__":
 
     @Test
     public void testInsertDoubleTableWithTypeSuffix() throws Exception {
+        Assume.assumeFalse(legacyMode);
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             final PreparedStatement statement = connection.prepareStatement("create table x (val double)");
@@ -5726,8 +5727,8 @@ if __name__ == "__main__":
 
             final String expectedAbleToInsertToDoubleTable = "val[DOUBLE]\n" +
                     "null\n" +
-                    "Infinity\n" +
-                    "-Infinity\n" +
+                    "null\n" +
+                    "null\n" +
                     "1.234567890123\n";
             try (ResultSet resultSet = connection.prepareStatement("select * from x").executeQuery()) {
                 sink.clear();
@@ -5821,6 +5822,7 @@ if __name__ == "__main__":
     @Test
     public void testInsertFloatTableWithTypeSuffix() throws Exception {
         skipOnWalRun(); // non-partitioned table
+        skipInLegacyMode();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             final PreparedStatement statement = connection.prepareStatement("create table x (val float)");
             statement.execute();
@@ -5828,7 +5830,7 @@ if __name__ == "__main__":
             // mimics the behavior of Python drivers
             // which will set NaN and Inf into string with ::float suffix
             final PreparedStatement insert = connection.prepareStatement("insert into x values " +
-                    "('NaN'::float)," +
+                    "('null'::float)," +
                     "('Infinity'::float)," +
                     "('-Infinity'::float)," +
                     "('1.234567890123'::float)");  // should be first cast info double, then cast to float on insert
@@ -5836,8 +5838,8 @@ if __name__ == "__main__":
 
             final String expectedAbleToInsertToFloatTable = "val[REAL]\n" +
                     "null\n" +
-                    "Infinity\n" +
-                    "-Infinity\n" +
+                    "null\n" +
+                    "null\n" +
                     "1.2345679\n";
             try (ResultSet resultSet = connection.prepareStatement("select * from x").executeQuery()) {
                 sink.clear();

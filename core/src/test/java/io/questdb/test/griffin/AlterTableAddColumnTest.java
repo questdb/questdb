@@ -875,8 +875,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     public void testAlterTableAddArrayColumnWithMismatchedBrackets() throws Exception {
         assertMemoryLeak(() -> {
             createX();
-            assertException("alter table x add column arr double[;", 36, "']' expected");
-            assertException("alter table x add column arr double[][;", 38, "']' expected");
+            assertException("alter table x add column arr double[;", 35, "syntax error at column type definition, expected array type: 'DOUBLE[]...', but found: 'double['");
+            assertException("alter table x add column arr double[][;", 37, "syntax error at column type definition, expected array type: 'DOUBLE[][]...', but found: 'double[]['");
             assertException("alter table x add column arr double];", 29, "arr has an unmatched `]` - were you trying to define an array?");
             assertException("alter table x add column arr double[]];", 29, "arr has an unmatched `]` - were you trying to define an array?");
         });

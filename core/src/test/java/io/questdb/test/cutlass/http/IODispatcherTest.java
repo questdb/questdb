@@ -3959,8 +3959,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "2c\r\n" +
-                        "{\"query\":\"x\",\"error\":\"empty column in list\"}\r\n" +
+                        "37\r\n" +
+                        "{\"query\":\"x\",\"error\":\"empty column in query parameter\"}\r\n" +
                         "00\r\n" +
                         "\r\n", 20
         );
@@ -4098,8 +4098,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "32\r\n" +
-                        "{\"query\":\"x\",\"error\":'invalid column in list: f1'}\r\n" +
+                        "2e\r\n" +
+                        "{\"query\":\"x\",\"error\":\"column not found: 'f1'\"}\r\n" +
                         "00\r\n" +
                         "\r\n", 20
         );
@@ -4124,8 +4124,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "32\r\n" +
-                        "{\"query\":\"x\",\"error\":'invalid column in list: l2'}\r\n" +
+                        "2e\r\n" +
+                        "{\"query\":\"x\",\"error\":\"column not found: 'l2'\"}\r\n" +
                         "00\r\n" +
                         "\r\n", 20
         );
@@ -4419,6 +4419,18 @@ public class IODispatcherTest extends AbstractTest {
                         "00\r\n" +
                         "\r\n"
         );
+    }
+
+    @Test
+    public void testJsonQueryQuotedColumnNames() throws Exception {
+        getSimpleTester().run((engine, sqlExecutionContext) -> testHttpClient.assertGet(
+                "{\"query\":\"select 1 \\\"a\\\", 2 \\\"b,c\\\", 3 \\\"d,e\\\", 4 '\\\"f,g\\\"'\",\"columns\":[{\"name\":\"a\",\"type\":\"INT\"},{\"name\":\"b,c\",\"type\":\"INT\"},{\"name\":\"d,e\",\"type\":\"INT\"},{\"name\":\"\\\"f,g\\\"\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1,2,3,4]],\"count\":1}",
+                "select 1 \"a\", 2 \"b,c\", 3 \"d,e\", 4 '\"f,g\"'",
+                new CharSequenceObjHashMap<>() {{
+                    put("cols", "\"a\",\"b,c\",d\\,e,\"\\\"f\\,g\\\"\"");
+                }}
+
+        ));
     }
 
     @Test

@@ -345,10 +345,29 @@ public abstract class BasePGTest extends AbstractCairoTest {
         }
         if (!array.getClass().isArray()) {
             if (array instanceof Number) {
-                if (array instanceof Double || array instanceof Float) {
-                    sink.put(((Number) array).doubleValue());
-                } else {
-                    sink.put(((Number) array).longValue());
+                if (array instanceof Double) {
+                    double d = ((Number) array).doubleValue();
+                    if (Numbers.isNull(d)) {
+                        sink.put("null");
+                    } else {
+                        sink.put(d);
+                    }
+                }
+                if (array instanceof Float) {
+                    float f = ((Number) array).floatValue();
+                    if (Numbers.isNull(f)) {
+                        sink.put("null");
+                    } else {
+                        sink.put(f);
+                    }
+                }
+                if (array instanceof Long) {
+                    long l = ((Number) array).longValue();
+                    if (l == Numbers.LONG_NULL) {
+                        sink.put("null");
+                    } else {
+                        sink.put(l);
+                    }
                 }
             } else if (array instanceof Boolean) {
                 sink.put((Boolean) array);

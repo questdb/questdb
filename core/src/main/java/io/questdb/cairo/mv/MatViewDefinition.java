@@ -364,6 +364,41 @@ public class MatViewDefinition implements Mutable {
         return newDefinition;
     }
 
+    public MatViewDefinition updateRefreshParams(
+            int refreshType,
+            int timerInterval,
+            char timerUnit,
+            long timerStart,
+            @Nullable CharSequence timerTimeZone,
+            int periodLength,
+            char periodLengthUnit,
+            int periodDelay,
+            char periodDelayUnit
+    ) {
+        final MatViewDefinition newDefinition = new MatViewDefinition();
+        newDefinition.init(
+                refreshType,
+                deferred,
+                matViewToken,
+                matViewSql,
+                baseTableName,
+                samplingInterval,
+                samplingIntervalUnit,
+                timeZone,
+                timeZoneOffset,
+                refreshLimitHoursOrMonths,
+                timerInterval,
+                timerUnit,
+                timerStart,
+                Chars.toString(timerTimeZone),
+                periodLength,
+                periodLengthUnit,
+                periodDelay,
+                periodDelayUnit
+        );
+        return newDefinition;
+    }
+
     public MatViewDefinition updateTimer(int timerInterval, char timerUnit, long timerStart) {
         final MatViewDefinition newDefinition = new MatViewDefinition();
         newDefinition.init(

@@ -582,7 +582,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         var arrayView = state.arrayState.getArrayView() == null ? record.getArray(columnIdx, columnType) : state.arrayState.getArrayView();
         try {
             state.arrayState.putCharIfNew(response, '"');
-            ArrayTypeDriver.arrayToJson(arrayView, response, state.arrayState, false);
+            ArrayTypeDriver.arrayToJson(arrayView, response, state.arrayState);
             state.arrayState.putCharIfNew(response, '"');
             state.arrayState.clear();
             state.columnValueFullySent = true;
@@ -609,15 +609,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 break;
             case ColumnType.DOUBLE:
                 double d = rec.getDouble(columnIndex);
-                //noinspection ExpressionComparedToItself
-                if (d == d) {
+                if (Numbers.isFinite(d)) {
                     response.put(d);
                 }
                 break;
             case ColumnType.FLOAT:
                 float f = rec.getFloat(columnIndex);
-                //noinspection ExpressionComparedToItself
-                if (f == f) {
+                if (Numbers.isFinite(f)) {
                     response.put(f);
                 }
                 break;

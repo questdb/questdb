@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
@@ -569,6 +570,14 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             final String columnName = metadata.getColumnName(i);
             final TableColumnMetadata augMeta = augmentedColumnMetadata.get(columnName);
+            if (!TableUtils.isValidColumnName(columnName, 255)) {
+                throw SqlException.position(tableNamePosition)
+                        .put("invalid column name [name=")
+                        .put(columnName)
+                        .put(", position=")
+                        .put(i)
+                        .put(']');
+            }
 
             int columnType;
             int symbolCapacity;

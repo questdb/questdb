@@ -1071,7 +1071,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // number of bits or chars for geohash
             final int geohashSize = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
             final int columnValueSize = calculateColumnBinSize(
-                    this, record, i, columnType, geohashSize, maxBlobSize, outResendArrayFlatIndex);
+                    this,
+                    record,
+                    i,
+                    columnType,
+                    geohashSize,
+                    maxBlobSize,
+                    outResendArrayFlatIndex
+            );
 
             if (columnValueSize < 0) {
                 return -1; // unsupported type
@@ -1648,16 +1655,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
         short elemType = array.getElemType();
         if (outResendArrayFlatIndex == 0) {
+            // Send the header. We must ensure at least one element follows the header, otherwise the
+            // outResendArrayFlatIndex stays at 0 even though the header was already sent, which will cause
+            // the header to be sent again.
             int nDims = array.getDimCount();
             int componentTypeOid = getTypeOid(elemType);
+            int notNullCount = PGUtils.countNotNull(array, 0);
 
             // The size field indicates the size of what follows, excluding its own size,
             // that's why we subtract Integer.BYTES from it. The same method is used to calculate
             // the full size of the message, and in that case this field must be included.
-            utf8Sink.putNetworkInt(PGUtils.calculateArrayColBinSize(array, 0) - Integer.BYTES);
-
+            utf8Sink.putNetworkInt(PGUtils.calculateArrayColBinSize(array, notNullCount) - Integer.BYTES);
             utf8Sink.putNetworkInt(nDims);
-            utf8Sink.putIntDirect(0); // "has nulls" flag: always 0 because QuestDB doesn't support NULL as array element
+            utf8Sink.putIntDirect(notNullCount < array.getCardinality() ? 1 : 0); // "has nulls" flag
             utf8Sink.putNetworkInt(componentTypeOid);
             for (int i = 0; i < nDims; i++) {
                 utf8Sink.putNetworkInt(array.getDimLen(i)); // length of each dimension
@@ -1676,8 +1686,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             utf8Sink.putNetworkLong(array.getLong(i));
                             break;
                         case ColumnType.DOUBLE:
-                            utf8Sink.putNetworkInt(Double.BYTES);
-                            utf8Sink.putNetworkDouble(array.getDouble(i));
+                            double val = array.getDouble(i);
+                            if (Numbers.isFinite(val)) {
+                                utf8Sink.putNetworkInt(Double.BYTES);
+                                utf8Sink.putNetworkDouble(val);
+                            } else {
+                                utf8Sink.setNullValue();
+                            }
                             break;
                     }
                     utf8Sink.bookmark();
@@ -1709,14 +1724,22 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     switch (elemType) {
                         case ColumnType.LONG: {
                             long val = array.getLong(flatIndex);
-                            utf8Sink.putNetworkInt(Long.BYTES);
-                            utf8Sink.putNetworkLong(val);
+                            if (val != Numbers.LONG_NULL) {
+                                utf8Sink.putNetworkInt(Double.BYTES);
+                                utf8Sink.putNetworkDouble(val);
+                            } else {
+                                utf8Sink.setNullValue();
+                            }
                             break;
                         }
                         case ColumnType.DOUBLE: {
                             double val = array.getDouble(flatIndex);
-                            utf8Sink.putNetworkInt(Double.BYTES);
-                            utf8Sink.putNetworkDouble(val);
+                            if (Numbers.isFinite(val)) {
+                                utf8Sink.putNetworkInt(Double.BYTES);
+                                utf8Sink.putNetworkDouble(val);
+                            } else {
+                                utf8Sink.setNullValue();
+                            }
                             break;
                         }
                     }
@@ -1754,7 +1777,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     private void outColBinDouble(PGResponseSink utf8Sink, Record record, int columnIndex) {
         final double value = record.getDouble(columnIndex);
-        if (Double.isNaN(value)) {
+        if (Numbers.isNull(value)) {
             utf8Sink.setNullValue();
         } else {
             utf8Sink.putNetworkInt(Double.BYTES);
@@ -1764,7 +1787,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     private void outColBinFloat(PGResponseSink utf8Sink, Record record, int columnIndex) {
         final float value = record.getFloat(columnIndex);
-        if (Float.isNaN(value)) {
+        if (Numbers.isNull(value)) {
             utf8Sink.setNullValue();
         } else {
             utf8Sink.putNetworkInt(Float.BYTES);
@@ -1923,7 +1946,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     private void outColTxtDouble(PGResponseSink utf8Sink, Record record, int columnIndex) {
         final double doubleValue = record.getDouble(columnIndex);
-        if (Double.isNaN(doubleValue)) {
+        if (Numbers.isNull(doubleValue)) {
             utf8Sink.setNullValue();
         } else {
             final long a = utf8Sink.skipInt();
@@ -1934,7 +1957,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     private void outColTxtFloat(PGResponseSink responseUtf8Sink, Record record, int columnIndex) {
         final float floatValue = record.getFloat(columnIndex);
-        if (Float.isNaN(floatValue)) {
+        if (Numbers.isNull(floatValue)) {
             responseUtf8Sink.setNullValue();
         } else {
             final long a = responseUtf8Sink.skipInt();
@@ -2396,8 +2419,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             if (utf8Sink.getWrittenBytes() == 0) {
                                 // We had nothing but the record in the send buffer,
                                 // so we can estimate the required size to be reported to the user.
-                                final long estimatedSize = estimateRecordSize(record, columnCount);
-                                e.setBytesRequired(estimatedSize);
+                                e.setBytesRequired(estimateRecordSize(record, columnCount));
                             }
                         }
                     } catch (BadProtocolException bpe) {
