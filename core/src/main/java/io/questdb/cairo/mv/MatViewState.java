@@ -256,6 +256,8 @@ public class MatViewState implements QuietCloseable {
         return refreshSeq.get();
     }
 
+    // The view definition may change at any time as a result of ALTER MATERIALIZED VIEW SET REFRESH.
+    // Avoid making chained calls, e.g. viewState.getViewDefinition().getRefreshType().
     public @NotNull MatViewDefinition getViewDefinition() {
         return viewDefinition;
     }
