@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayCountFunctionFactory implements FunctionFactory {
@@ -61,7 +62,7 @@ public class DoubleArrayCountFunctionFactory implements FunctionFactory {
         @Override
         public void applyToElement(ArrayView view, int index) {
             double v = view.getDouble(index);
-            if (!Double.isNaN(v)) {
+            if (Numbers.isFinite(v)) {
                 count++;
             }
         }
@@ -73,7 +74,7 @@ public class DoubleArrayCountFunctionFactory implements FunctionFactory {
 
         @Override
         public void applyToNullArray() {
-
+            count = 0;
         }
 
         @Override
