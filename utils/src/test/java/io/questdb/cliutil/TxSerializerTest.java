@@ -99,12 +99,14 @@ public class TxSerializerTest {
         createTestPath(root);
         engine.getTableIdGenerator().open();
         engine.getTableIdGenerator().reset();
+        engine.getDataID().open();
         engine.reloadTableNames();
     }
 
     @After
     public void tearDown() {
         engine.getTableIdGenerator().close();
+        engine.getDataID().close();
         engine.clear();
         engine.getTableSequencerAPI().releaseInactive();
         engine.closeNameRegistry();
