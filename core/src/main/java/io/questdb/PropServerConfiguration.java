@@ -170,6 +170,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceRowIdListCapacity;
     private final int cairoPageFrameReduceShardCount;
     private final int cairoSQLCopyIdSupplier;
+    private final boolean cairoSqlColumnAliasExpressionEnabled;
     private final int cairoSqlCopyLogRetentionDays;
     private final int cairoSqlCopyQueueCapacity;
     private final String cairoSqlCopyRoot;
@@ -461,6 +462,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlWindowTreeKeyMaxPages;
     private final int sqlWindowTreeKeyPageSize;
     private final int sqlWithClauseModelPoolCapacity;
+    private final long symbolTableAppendPageSize;
     private final int systemO3ColumnMemorySize;
     private final String systemTableNamePrefix;
     private final long systemWalWriterDataAppendPageSize;
@@ -527,7 +529,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
     protected long walSegmentRolloverSize;
-    private boolean cairoSqlColumnAliasExpressionEnabled;
     private int cairoSqlColumnAliasGeneratedMaxSize;
     private long cairoSqlCopyMaxIndexChunkSize;
     private FactoryProvider factoryProvider;
@@ -1269,7 +1270,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgInsertCacheEnabled = getBoolean(properties, env, PropertyKey.PG_INSERT_CACHE_ENABLED, true);
                 this.pgInsertCacheBlockCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_BLOCK_COUNT, 4);
                 this.pgInsertCacheRowCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_ROW_COUNT, 4);
-                this.pgLegacyModeEnabled = getBoolean(properties, env, PropertyKey.PG_LEGACY_MODE_ENABLED, false);
+                // making it harder to pick legacy mode before legacy code is removed from the codebase
+                // diehards that have this set to "true" will automatically be upgraded to the new protocol implementation.
+                // If issues still persist we want to hear about them and this provides the thank you fallback mechanism
+                this.pgLegacyModeEnabled = "!true".equals(getString(properties, env, PropertyKey.PG_LEGACY_MODE_ENABLED, "false"));
                 this.pgUpdateCacheEnabled = getBoolean(properties, env, PropertyKey.PG_UPDATE_CACHE_ENABLED, true);
                 this.pgUpdateCacheBlockCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_BLOCK_COUNT, 4);
                 this.pgUpdateCacheRowCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_ROW_COUNT, 4);
@@ -1378,6 +1382,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.writerDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 16 * Numbers.SIZE_1MB));
             this.systemWriterDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE, 256 * 1024));
             this.writerMiscAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_MISC_APPEND_PAGE_SIZE, Files.PAGE_SIZE));
+            this.symbolTableAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYMBOL_TABLE_APPEND_PAGE_SIZE, 256 * 1024));
 
             this.sqlSampleByIndexSearchPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 0);
             this.sqlSampleByDefaultAlignment = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR, true);
@@ -3579,6 +3584,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getStrFunctionMaxBufferLength() {
             return sqlStrFunctionBufferMaxSize;
+        }
+
+        @Override
+        public long getSymbolTableAppendPageSize() {
+            return symbolTableAppendPageSize;
         }
 
         @Override
