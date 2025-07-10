@@ -174,7 +174,7 @@ public class WorkerPoolManagerTest {
         final ServerConfiguration config = createServerConfig(1); // shared pool
         final WorkerPoolManager workerPoolManager = new WorkerPoolManager(config) {
             @Override
-            protected void configureWorkerPools(final WorkerPool sharedPoolNetwork, final WorkerPool sharedPoolR, final WorkerPool sharedPoolW) {
+            protected void configureWorkerPools(final WorkerPool sharedPoolR, final WorkerPool sharedPoolW) {
                 sharedPoolW.assign(scrapeIntoPrometheusJob(sink));
             }
         };
@@ -301,9 +301,9 @@ public class WorkerPoolManagerTest {
     private static WorkerPoolManager createWorkerPoolManager(int workerCount, Consumer<WorkerPool> call) {
         return new WorkerPoolManager(createServerConfig(workerCount)) {
             @Override
-            protected void configureWorkerPools(final WorkerPool sharedPoolNetwork, final WorkerPool sharedPoolR, final WorkerPool sharedPoolW) {
+            protected void configureWorkerPools(final WorkerPool sharedPoolR, final WorkerPool sharedPoolW) {
                 if (call != null) {
-                    call.accept(sharedPoolNetwork);
+                    call.accept(sharedPoolR);
                 }
             }
         };

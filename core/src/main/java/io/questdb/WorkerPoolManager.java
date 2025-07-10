@@ -56,7 +56,7 @@ public abstract class WorkerPoolManager implements Target {
         sharedPoolWrite = new WorkerPool(config.getWriteWorkerPoolConfiguration());
 
         WorkerPool queryPool = sharedPoolQuery != null ? sharedPoolQuery : sharedPoolNetwork;
-        configureWorkerPools(sharedPoolNetwork, queryPool, sharedPoolWrite); // abstract method giving callers the chance to assign jobs
+        configureWorkerPools(queryPool, sharedPoolWrite); // abstract method giving callers the chance to assign jobs
         config.getMetrics().addScrapable(this);
     }
 
@@ -172,12 +172,10 @@ public abstract class WorkerPoolManager implements Target {
     }
 
     /**
-     * @param sharedPoolNetwork A reference to the NETWORK SHARED pool
      * @param sharedPoolQuery   A reference to the QUERY SHARED pool
      * @param sharedPoolWrite   A reference to the WRITE SHARED pool
      */
     protected abstract void configureWorkerPools(
-            final WorkerPool sharedPoolNetwork,
             final WorkerPool sharedPoolQuery,
             final WorkerPool sharedPoolWrite
     );

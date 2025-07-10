@@ -328,7 +328,7 @@ public class ServerMain implements Closeable {
 
         workerPoolManager = new WorkerPoolManager(config) {
             @Override
-            protected void configureWorkerPools(final WorkerPool sharedPoolNetwork, final WorkerPool sharedPoolQuery, final WorkerPool sharedPoolWrite) {
+            protected void configureWorkerPools(final WorkerPool sharedPoolQuery, final WorkerPool sharedPoolWrite) {
                 try {
                     sharedPoolWrite.assign(engine.getEngineMaintenanceJob());
                     WorkerPoolUtils.setupQueryJobs(sharedPoolQuery, engine);
