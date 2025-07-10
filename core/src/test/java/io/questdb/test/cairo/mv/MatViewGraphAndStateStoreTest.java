@@ -30,7 +30,6 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
-import io.questdb.mp.NoOpQueue;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -41,7 +40,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
-    private final MatViewGraph graph = new MatViewGraph(new NoOpQueue<>());
+    private final MatViewGraph graph = new MatViewGraph();
     private final ObjList<TableToken> ordered = new ObjList<>();
     private final MatViewStateStoreImpl stateStore = new MatViewStateStoreImpl(engine);
     private final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
