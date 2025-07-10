@@ -39,12 +39,13 @@ import io.questdb.std.str.Path;
 // One shouldn't modify the data id in an unblank database as it may cause data loss.
 public final class DataIDUtils {
     public static final CharSequence FILENAME = "_data_id.d";
-    public static long FILE_SIZE = 32;
     private static final Long256Impl currentId = new Long256Impl();
     private static final Path path = new Path();
+    public static long FILE_SIZE = 32;
 
     /**
      * Read the `_data_id.d` file (or creates it if it doesn't exist yet) and returns its current value.
+     *
      * @param configuration the configuration that is used to provide the FileFacade and DbRoot.
      * @return the current data id.
      */
@@ -78,8 +79,9 @@ public final class DataIDUtils {
     /**
      * Set the data id to a new value and writes it to `_data_id.d`.
      * This function should be used with care as it may lead with data losses from restore/replication.
-     * @param configuration  the configuration that is used to provide the FileFacade and DbRoot.
-     * @param dataID the new data id to set.
+     *
+     * @param configuration the configuration that is used to provide the FileFacade and DbRoot.
+     * @param dataID        the new data id to set.
      */
     public static void set(CairoConfiguration configuration, Long256Impl dataID) {
         if (currentId.equals(dataID)) {
