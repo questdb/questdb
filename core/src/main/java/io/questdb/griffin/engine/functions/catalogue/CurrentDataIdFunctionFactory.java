@@ -45,6 +45,6 @@ public class CurrentDataIdFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Long256Constant(sqlExecutionContext.getDataId());
+        return new Long256Constant(sqlExecutionContext.getCairoEngine().getDataID());
     }
 }

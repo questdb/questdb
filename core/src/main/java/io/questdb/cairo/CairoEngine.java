@@ -107,6 +107,8 @@ import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -174,7 +176,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
-    private final DataID dataID;
+    private final Long256 dataID;
     private @NotNull ConfigReloader configReloader = () -> false; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private FrameFactory frameFactory;
@@ -210,13 +212,12 @@ public class CairoEngine implements Closeable, WriterSource {
             this.matViewTimerQueue = createMatViewTimerQueue();
             this.matViewGraph = new MatViewGraph(matViewTimerQueue);
             this.frameFactory = new FrameFactory(configuration);
-            this.dataID = DataIDFactory.newDataID(configuration);
+            this.dataID = DataIDUtils.read(configuration);
 
             settingsStore = new SettingsStore(configuration);
             settingsStore.init();
 
             tableIdGenerator.open();
-            dataID.open();
             checkpointRecover();
 
             // Migrate database files.
@@ -491,7 +492,6 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(matViewStateStore);
         Misc.free(settingsStore);
         Misc.free(frameFactory);
-        Misc.free(dataID);
     }
 
     @TestOnly
@@ -1865,7 +1865,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public DataID getDataID() {
+    public Long256 getDataID() {
         return dataID;
     }
 }

@@ -256,9 +256,4 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     @Override
     public void setUseSimpleCircuitBreaker(boolean value) {
     }
-
-    @Override
-    public Long256 getDataId() {
-        return null;
-    }
 }

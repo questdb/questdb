@@ -22,12 +22,33 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.test.cairo;
 
-public class DataIDFactory {
-    public static final CharSequence DATA_ID_FILENAME = "_data_id.d";
+import io.questdb.cairo.DataIDUtils;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
+import org.junit.Test;
 
-    public static DataID newDataID(CairoConfiguration configuration) {
-        return new DataID(configuration, DATA_ID_FILENAME);
+public class DataIDUtilsTest extends AbstractCairoTest {
+    @Test
+    public void testOpenDataID() throws Exception {
+        assertMemoryLeak(() -> {
+            Long256 id = DataIDUtils.read(configuration);
+            Assert.assertNotEquals(Long256Impl.ZERO_LONG256, id);
+        });
+    }
+
+    @Test
+    public void testSetDataID() throws Exception {
+        assertMemoryLeak(() -> {
+            Long256 previous = DataIDUtils.read(configuration);
+            Long256Impl newId = new Long256Impl();
+            newId.fromRnd(configuration.getRandom());
+            Assert.assertNotEquals(newId, previous);
+            DataIDUtils.set(configuration, newId);
+            Assert.assertEquals(newId, DataIDUtils.read(configuration));
+        });
     }
 }

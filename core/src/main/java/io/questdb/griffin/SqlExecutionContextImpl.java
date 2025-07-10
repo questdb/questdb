@@ -442,9 +442,4 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private interface TelemetryFacade {
         void store(short event, short origin);
     }
-
-    @Override
-    public Long256 getDataId() {
-        return cairoEngine.getDataID().get();
-    }
 }

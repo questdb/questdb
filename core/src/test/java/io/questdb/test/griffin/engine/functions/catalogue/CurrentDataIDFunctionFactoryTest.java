@@ -24,11 +24,9 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
+import io.questdb.cairo.DataIDUtils;
 import io.questdb.std.Long256Impl;
-import io.questdb.std.Rnd;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class CurrentDataIDFunctionFactoryTest extends AbstractCairoTest {
@@ -36,7 +34,7 @@ public class CurrentDataIDFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCurrentDataID() throws Exception {
         sink.clear();
-        engine.getDataID().get().toSink(sink);
+        engine.getDataID().toSink(sink);
         final String id = sink.toString();
         assertSql("current_data_id\n" + id + "\n",
                 "select current_data_id();");
@@ -45,8 +43,8 @@ public class CurrentDataIDFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSetCurrentDataID() throws Exception {
         final Long256Impl newID = new Long256Impl();
-        newID.fromRnd(engine.getConfiguration().getRandom());
-        engine.getDataID().set(newID);
+        newID.fromRnd(configuration.getRandom());
+        DataIDUtils.set(configuration, newID);
         sink.clear();
         newID.toSink(sink);
         final String id = sink.toString();

@@ -1347,10 +1347,5 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         public void toSink(@NotNull CharSink<?> sink) {
             sqlExecutionContext.toSink(sink);
         }
-
-        @Override
-        public Long256 getDataId() {
-            return sqlExecutionContext.getDataId();
-        }
     }
 }
