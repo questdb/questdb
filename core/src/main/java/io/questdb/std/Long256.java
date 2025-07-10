@@ -43,6 +43,13 @@ public interface Long256 extends Long256Acceptor, Sinkable {
 
     long getLong3();
 
+    default void toAddress(long address) {
+        Unsafe.getUnsafe().putLong(address, getLong0());
+        Unsafe.getUnsafe().putLong(address + Long.BYTES, getLong1());
+        Unsafe.getUnsafe().putLong(address + Long.BYTES * 2, getLong2());
+        Unsafe.getUnsafe().putLong(address + Long.BYTES * 3, getLong3());
+    }
+
     @Override
     default void toSink(@NotNull CharSink<?> sink) {
         Numbers.appendLong256(getLong0(), getLong1(), getLong2(), getLong3(), sink);

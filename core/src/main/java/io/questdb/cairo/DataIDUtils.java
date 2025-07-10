@@ -67,7 +67,7 @@ public final class DataIDUtils {
                 if (currentId.equals(Long256Impl.ZERO_LONG256)) {
                     Rnd rnd = new Rnd(configuration.getMicrosecondClock().getTicks(), configuration.getMillisecondClock().getTicks());
                     currentId.fromRnd(rnd);
-                    currentId.toAddr(mem.getAddress());
+                    currentId.toAddress(mem.getAddress());
                 }
             }
         }
@@ -89,7 +89,7 @@ public final class DataIDUtils {
         synchronized (currentId) {
             currentId.copyFrom(dataID);
             try (MemoryCMARWImpl mem = openDataIDFile(configuration)) {
-                currentId.toAddr(mem.getAddress());
+                currentId.toAddress(mem.getAddress());
             }
         }
     }
