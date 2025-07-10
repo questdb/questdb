@@ -462,6 +462,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @Override
     public RecordCursorFactory generateSelectWithRetries(
             @Transient QueryModel initialQueryModel,
+            @Nullable @Transient InsertModel insertModel,
             @Transient SqlExecutionContext executionContext,
             boolean generateProgressLogger
     ) throws SqlException {
@@ -477,7 +478,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 LOG.info().$("retrying plan [q=`").$(queryModel).$("`, fd=").$(executionContext.getRequestFd()).I$();
                 clearExceptSqlText();
                 lexer.restart();
-                queryModel = (QueryModel) compileExecutionModel(executionContext);
+                if (insertModel != null) {
+                    queryModel = compileExecutionModel(executionContext).getQueryModel();
+                    insertModel.setQueryModel(queryModel);
+                } else {
+                    queryModel = (QueryModel) compileExecutionModel(executionContext);
+                }
             }
         }
     }
@@ -2511,9 +2517,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         RecordCursorFactory factory = null;
 
         try (TableRecordMetadata writerMetadata = executionContext.getMetadataForWrite(tableToken)) {
-            QueryModel queryModel = model.getQueryModel();
             final long metadataVersion = writerMetadata.getMetadataVersion();
-            factory = generateSelectWithRetries(queryModel, executionContext, true);
+            factory = generateSelectWithRetries(model.getQueryModel(), model, executionContext, true);
             final RecordMetadata cursorMetadata = factory.getMetadata();
             // Convert sparse writer metadata into dense
             final int writerTimestampIndex = writerMetadata.getTimestampIndex();
@@ -2686,7 +2691,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
             executionContext.setAllowNonDeterministicFunction(false);
             try {
-                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, executionContext, false));
+                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false));
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
@@ -2974,6 +2979,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     compiledQuery.ofSelect(
                             generateSelectWithRetries(
                                     (QueryModel) executionModel,
+                                    null,
                                     executionContext,
                                     generateProgressLogger
                             )
