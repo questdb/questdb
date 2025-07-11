@@ -22,36 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Sinkable;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.Long256Constant;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-/**
- * A 256-bit hash with string representation up to 64 hex digits following a prefix '0x'.
- * (e.g. 0xaba86bf575ba7fde98b6673bb7d85bf489fd71a619cddaecba5de0378e3d22ed)
- */
-public interface Long256 extends Long256Acceptor, Sinkable {
-    int BYTES = 32;
-
-    long getLong0();
-
-    long getLong1();
-
-    long getLong2();
-
-    long getLong3();
-
-    default void toAddress(long address) {
-        Unsafe.getUnsafe().putLong(address, getLong0());
-        Unsafe.getUnsafe().putLong(address + Long.BYTES, getLong1());
-        Unsafe.getUnsafe().putLong(address + Long.BYTES * 2, getLong2());
-        Unsafe.getUnsafe().putLong(address + Long.BYTES * 3, getLong3());
+public class CurrentDataIdFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "current_data_id()";
     }
 
     @Override
-    default void toSink(@NotNull CharSink<?> sink) {
-        Numbers.appendLong256(getLong0(), getLong1(), getLong2(), getLong3(), sink);
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new Long256Constant(sqlExecutionContext.getCairoEngine().getDataID());
     }
 }

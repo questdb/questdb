@@ -22,36 +22,33 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Sinkable;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.DataIDUtils;
+import io.questdb.std.Long256Impl;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Test;
 
-/**
- * A 256-bit hash with string representation up to 64 hex digits following a prefix '0x'.
- * (e.g. 0xaba86bf575ba7fde98b6673bb7d85bf489fd71a619cddaecba5de0378e3d22ed)
- */
-public interface Long256 extends Long256Acceptor, Sinkable {
-    int BYTES = 32;
+public class CurrentDataIDFunctionFactoryTest extends AbstractCairoTest {
 
-    long getLong0();
-
-    long getLong1();
-
-    long getLong2();
-
-    long getLong3();
-
-    default void toAddress(long address) {
-        Unsafe.getUnsafe().putLong(address, getLong0());
-        Unsafe.getUnsafe().putLong(address + Long.BYTES, getLong1());
-        Unsafe.getUnsafe().putLong(address + Long.BYTES * 2, getLong2());
-        Unsafe.getUnsafe().putLong(address + Long.BYTES * 3, getLong3());
+    @Test
+    public void testCurrentDataID() throws Exception {
+        sink.clear();
+        engine.getDataID().toSink(sink);
+        final String id = sink.toString();
+        assertSql("current_data_id\n" + id + "\n",
+                "select current_data_id();");
     }
 
-    @Override
-    default void toSink(@NotNull CharSink<?> sink) {
-        Numbers.appendLong256(getLong0(), getLong1(), getLong2(), getLong3(), sink);
+    @Test
+    public void testSetCurrentDataID() throws Exception {
+        final Long256Impl newID = new Long256Impl();
+        newID.fromRnd(configuration.getRandom());
+        DataIDUtils.set(configuration, newID);
+        sink.clear();
+        newID.toSink(sink);
+        final String id = sink.toString();
+        assertSql("current_data_id\n" + id + "\n",
+                "select current_data_id();");
     }
 }
