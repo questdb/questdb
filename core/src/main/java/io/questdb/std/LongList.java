@@ -318,6 +318,11 @@ public class LongList implements Mutable, LongVec, Sinkable {
         data[index] = data[index] + 1;
     }
 
+    public void increment(int index, long delta) {
+        assert delta > -1;
+        data[index] = data[index] + delta;
+    }
+
     public int indexOf(long o) {
         for (int i = 0, n = pos; i < n; i++) {
             if (o == getQuick(i)) {

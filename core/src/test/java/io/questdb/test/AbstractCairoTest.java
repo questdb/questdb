@@ -1604,6 +1604,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         printSql(sql, sink);
     }
 
+    protected static void printSql(RecordCursor cursor, RecordMetadata metadata) throws SqlException {
+        engine.print(cursor, metadata, sink);
+    }
+
     protected static void printSql(CharSequence sql, MutableUtf16Sink sink) throws SqlException {
         engine.print(sql, sink, sqlExecutionContext);
     }

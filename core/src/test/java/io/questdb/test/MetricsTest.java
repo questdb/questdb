@@ -144,6 +144,15 @@ public class MetricsTest {
             delegate.addTarget(target);
         }
 
+        @Override
+        public void clear() {
+            delegate.clear();
+            metricNames.clear();
+            labelNames.clear();
+            metricsWithNotUniqueLabels.clear();
+            notUniqueMetrics.clear();
+        }
+
         public Set<CharSequence> getLabelNames() {
             return labelNames;
         }
