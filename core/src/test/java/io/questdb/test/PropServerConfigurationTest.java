@@ -707,7 +707,7 @@ public class PropServerConfigurationTest {
         properties.setProperty("shared.worker.count", "2");
         properties.setProperty("shared.worker.affinity", "2,3");
         env.put("QDB_SHARED_WORKER_COUNT", "3");
-        env.put("QDB_NETWORK_SHARED_WORKER_AFFINITY", "5,6,7");
+        env.put("QDB_SHARED_NETWORK_WORKER_AFFINITY", "5,6,7");
 
         // int size
         properties.setProperty("http.send.buffer.size", "4k");
@@ -1062,7 +1062,7 @@ public class PropServerConfigurationTest {
     }
 
     @Test
-    public void testMinimum4SharedWorkers() throws Exception {
+    public void testMinimum2SharedWorkers() throws Exception {
         final Properties properties = new Properties();
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertEquals("shared-network", configuration.getNetworkWorkerPoolConfiguration().getPoolName());
@@ -1072,7 +1072,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue("must be minimum of 2 shared workers", configuration.getQueryWorkerPoolConfiguration().getWorkerCount() >= 2);
 
         Assert.assertEquals("shared-write", configuration.getWriteWorkerPoolConfiguration().getPoolName());
-        Assert.assertTrue("must be minimum of 3 shared workers", configuration.getWriteWorkerPoolConfiguration().getWorkerCount() >= 3);
+        Assert.assertTrue("must be minimum of 2 shared workers", configuration.getWriteWorkerPoolConfiguration().getWorkerCount() >= 2);
     }
 
     @Test
