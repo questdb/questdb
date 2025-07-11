@@ -37,7 +37,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.network.IOContext;
-import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -47,7 +46,6 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8String;
-import org.jetbrains.annotations.NotNull;
 
 public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
@@ -205,36 +203,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         }
     }
 
-    @Override
-    public void init() {
-        if (socket.supportsTls()) {
-            if (socket.startTlsSession(null) != 0) {
-                throw CairoException.nonCritical().put("failed to start TLS session");
-            }
-        }
-    }
-
-    @Override
-    public LineTcpConnectionContext of(long fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
-        super.of(fd, dispatcher);
-        if (recvBuffer.getBufStart() == 0) {
-            recvBuffer.of(configuration.getRecvBufferSize(), configuration.getMaxRecvBufferSize());
-            goodMeasurement = true;
-        }
-        authenticator.init(socket, recvBuffer.getBufStart(), recvBuffer.getBufEnd(), 0, 0);
-        if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
-            // when security context has not been set by anything else (subclass) we assume
-            // this is an authenticated, anonymous user
-            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
-                    null,
-                    SecurityContext.AUTH_TYPE_NONE,
-                    SecurityContextFactory.ILP
-            );
-            securityContext.authorizeLineTcp();
-        }
-        return this;
-    }
-
     private boolean checkQueueFullLogHysteresis() {
         long millis = milliClock.getTicks();
         if ((millis - lastQueueFullLogMillis) >= QUEUE_FULL_LOG_HYSTERESIS_IN_MS) {
@@ -325,6 +293,32 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
 
     void addTableUpdateDetails(Utf8String tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
         tableUpdateDetailsUtf8.put(tableNameUtf8, tableUpdateDetails);
+    }
+
+    @Override
+    protected void doInit() {
+        if (recvBuffer.getBufStart() == 0) {
+            recvBuffer.of(configuration.getRecvBufferSize(), configuration.getMaxRecvBufferSize());
+            goodMeasurement = true;
+        }
+
+        authenticator.init(socket, recvBuffer.getBufStart(), recvBuffer.getBufEnd(), 0, 0);
+        if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
+            // when security context has not been set by anything else (subclass) we assume
+            // this is an authenticated, anonymous user
+            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
+                    null,
+                    SecurityContext.AUTH_TYPE_NONE,
+                    SecurityContextFactory.ILP
+            );
+            securityContext.authorizeLineTcp();
+        }
+
+        if (socket.supportsTls()) {
+            if (socket.startTlsSession(null) != 0) {
+                throw CairoException.nonCritical().put("failed to start TLS session");
+            }
+        }
     }
 
     protected SecurityContext getSecurityContext() {

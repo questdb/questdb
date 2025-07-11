@@ -273,9 +273,9 @@ public class IODispatcherTest extends AbstractTest {
                             return IODispatcherConfiguration.BIAS_WRITE;
                         }
                     },
-                    (fd, dispatcher1) -> {
+                    fd -> {
                         connectLatch.countDown();
-                        return new HelloContext(fd, contextClosedLatch, dispatcher1);
+                        return new HelloContext(fd, contextClosedLatch);
                     }
             )) {
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -394,7 +394,7 @@ public class IODispatcherTest extends AbstractTest {
                             return nf;
                         }
                     },
-                    (fd, dispatcher1) -> new HttpConnectionContext(serverConfiguration, PlainSocketFactory.INSTANCE).of(fd, dispatcher1)
+                    fd -> new HttpConnectionContext(serverConfiguration, PlainSocketFactory.INSTANCE).of(fd)
             )) {
                 // spin up dispatcher thread
                 AtomicBoolean dispatcherRunning = new AtomicBoolean(true);
@@ -462,8 +462,9 @@ public class IODispatcherTest extends AbstractTest {
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     DefaultIODispatcherConfiguration.INSTANCE,
                     new IOContextFactory<HttpConnectionContext>() {
+                        @SuppressWarnings("resource")
                         @Override
-                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -476,7 +477,7 @@ public class IODispatcherTest extends AbstractTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            }.of(fd, dispatcher1);
+                            }.of(fd);
                         }
                     }
             )) {
@@ -4422,18 +4423,6 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testJsonQueryQuotedColumnNames() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> testHttpClient.assertGet(
-                "{\"query\":\"select 1 \\\"a\\\", 2 \\\"b,c\\\", 3 \\\"d,e\\\", 4 '\\\"f,g\\\"'\",\"columns\":[{\"name\":\"a\",\"type\":\"INT\"},{\"name\":\"b,c\",\"type\":\"INT\"},{\"name\":\"d,e\",\"type\":\"INT\"},{\"name\":\"\\\"f,g\\\"\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1,2,3,4]],\"count\":1}",
-                "select 1 \"a\", 2 \"b,c\", 3 \"d,e\", 4 '\"f,g\"'",
-                new CharSequenceObjHashMap<>() {{
-                    put("cols", "\"a\",\"b,c\",d\\,e,\"\\\"f\\,g\\\"\"");
-                }}
-
-        ));
-    }
-
-    @Test
     public void testJsonQueryOutsideLimit() throws Exception {
         testJsonQuery(
                 20,
@@ -4646,6 +4635,18 @@ public class IODispatcherTest extends AbstractTest {
                         "00\r\n" +
                         "\r\n"
         );
+    }
+
+    @Test
+    public void testJsonQueryQuotedColumnNames() throws Exception {
+        getSimpleTester().run((engine, sqlExecutionContext) -> testHttpClient.assertGet(
+                "{\"query\":\"select 1 \\\"a\\\", 2 \\\"b,c\\\", 3 \\\"d,e\\\", 4 '\\\"f,g\\\"'\",\"columns\":[{\"name\":\"a\",\"type\":\"INT\"},{\"name\":\"b,c\",\"type\":\"INT\"},{\"name\":\"d,e\",\"type\":\"INT\"},{\"name\":\"\\\"f,g\\\"\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1,2,3,4]],\"count\":1}",
+                "select 1 \"a\", 2 \"b,c\", 3 \"d,e\", 4 '\"f,g\"'",
+                new CharSequenceObjHashMap<>() {{
+                    put("cols", "\"a\",\"b,c\",d\\,e,\"\\\"f\\,g\\\"\"");
+                }}
+
+        ));
     }
 
     @Test
@@ -5680,7 +5681,7 @@ public class IODispatcherTest extends AbstractTest {
                     new IOContextFactory<HttpConnectionContext>() {
                         @SuppressWarnings("resource")
                         @Override
-                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd) {
                             openCount.incrementAndGet();
                             return new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -5688,7 +5689,7 @@ public class IODispatcherTest extends AbstractTest {
                                     closeCount.incrementAndGet();
                                     super.close();
                                 }
-                            }.of(fd, dispatcher1);
+                            }.of(fd);
                         }
                     }
             )) {
@@ -5912,13 +5913,13 @@ public class IODispatcherTest extends AbstractTest {
             HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(configuration);
             try (IODispatcher<HttpConnectionContext> ignored1 = IODispatchers.create(
                     DefaultIODispatcherConfiguration.INSTANCE,
-                    (fd, d) -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE)
+                    fd -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE)
             )) {
                 // Simulate a scenario where the socket cannot be bound
                 try {
                     try (IODispatcher<HttpConnectionContext> ignored2 = IODispatchers.create(
                             DefaultIODispatcherConfiguration.INSTANCE,
-                            (fd, d) -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE)
+                            fd -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE)
                     )) {
                         Assert.fail("ignored2 should not have been created as the socket binding failed");
                     }
@@ -5964,7 +5965,7 @@ public class IODispatcherTest extends AbstractTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     configuration,
-                    (fd, dispatcher1) -> {
+                    fd -> {
                         // Throw out of memory exception when we reach the limit
                         throw CairoException.nonCritical().setOutOfMemory(true)
                                 .put("global RSS memory limit exceeded [usage=test]");
@@ -6654,8 +6655,9 @@ public class IODispatcherTest extends AbstractTest {
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     DefaultIODispatcherConfiguration.INSTANCE,
                     new IOContextFactory<HttpConnectionContext>() {
+                        @SuppressWarnings("resource")
                         @Override
-                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -6668,7 +6670,7 @@ public class IODispatcherTest extends AbstractTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            }.of(fd, dispatcher1);
+                            }.of(fd);
                         }
                     }
             )) {
@@ -6827,8 +6829,9 @@ public class IODispatcherTest extends AbstractTest {
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     DefaultIODispatcherConfiguration.INSTANCE,
                     new IOContextFactory<HttpConnectionContext>() {
+                        @SuppressWarnings("resource")
                         @Override
-                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -6841,7 +6844,7 @@ public class IODispatcherTest extends AbstractTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            }.of(fd, dispatcher1);
+                            }.of(fd);
                         }
                     }
             )) {
@@ -6987,8 +6990,9 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     },
                     new IOContextFactory<HttpConnectionContext>() {
+                        @SuppressWarnings("resource")
                         @Override
-                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -7001,7 +7005,7 @@ public class IODispatcherTest extends AbstractTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            }.of(fd, dispatcher1);
+                            }.of(fd);
                         }
                     }
             )) {
@@ -8146,7 +8150,7 @@ public class IODispatcherTest extends AbstractTest {
                                     return true;
                                 }
                             },
-                            (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE).of(fd, dispatcher1)
+                            fd -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE).of(fd)
                     );
                     final RingQueue<Status> queue = new RingQueue<>(Status::new, 1024)
             ) {
@@ -9595,7 +9599,7 @@ public class IODispatcherTest extends AbstractTest {
             final AtomicInteger nConnected = new AtomicInteger();
             final LongHashSet serverConnectedFds = new LongHashSet();
             final LongHashSet clientActiveFds = new LongHashSet();
-            IOContextFactory<TestIOContext> contextFactory = (fd, dispatcher) -> {
+            IOContextFactory<TestIOContext> contextFactory = fd -> {
                 LOG.info().$(fd).$(" connected").$();
                 serverConnectedFds.add(fd);
                 nConnected.incrementAndGet();
@@ -9831,9 +9835,9 @@ public class IODispatcherTest extends AbstractTest {
         private final long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
         private final SOCountDownLatch closeLatch;
 
-        public HelloContext(long fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
+        public HelloContext(long fd, SOCountDownLatch closeLatch) {
             super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG);
-            this.of(fd, dispatcher);
+            this.of(fd);
             this.closeLatch = closeLatch;
         }
 
