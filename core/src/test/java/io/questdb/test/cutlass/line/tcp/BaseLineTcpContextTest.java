@@ -47,7 +47,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcher;
-import io.questdb.network.IORequestProcessor;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -166,6 +165,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         return createReceiverConfiguration(false, nf);
     }
 
+    @SuppressWarnings("resource")
     protected LineTcpReceiverConfiguration createReceiverConfiguration(final boolean withAuth, final NetworkFacade nf) {
         final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
             @Override
@@ -339,45 +339,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         };
         noNetworkIOJob.setScheduler(scheduler);
         context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler);
-        context.of(FD, new IODispatcher<>() {
-            @Override
-            public void close() {
-            }
-
-            @Override
-            public void disconnect(LineTcpConnectionContext context, int reason) {
-                disconnected = true;
-            }
-
-            @Override
-            public int getConnectionCount() {
-                return disconnected ? 0 : 1;
-            }
-
-            @Override
-            public int getPort() {
-                return 9009;
-            }
-
-            @Override
-            public boolean isListening() {
-                return true;
-            }
-
-            @Override
-            public boolean processIOQueue(IORequestProcessor<LineTcpConnectionContext> processor) {
-                return false;
-            }
-
-            @Override
-            public void registerChannel(LineTcpConnectionContext context, int operation) {
-            }
-
-            @Override
-            public boolean run(int workerId, @NotNull RunStatus runStatus) {
-                return false;
-            }
-        });
+        context.of(FD);
+        context.init();
         Assert.assertFalse(context.invalid());
         Assert.assertEquals(FD, context.getFd());
         workerPool.start(LOG);

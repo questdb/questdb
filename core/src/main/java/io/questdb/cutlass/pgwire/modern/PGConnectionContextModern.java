@@ -53,7 +53,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.network.IOContext;
-import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.Net;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
@@ -466,31 +465,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 // messages
             }
         }
-    }
-
-    @Override
-    public PGConnectionContextModern of(long fd, @NotNull IODispatcher<PGConnectionContextModern> dispatcher) {
-        super.of(fd, dispatcher);
-        sqlExecutionContext.with(fd);
-        if (recvBuffer == 0) {
-            // re-read recv buffer size in case the config was reloaded
-            this.recvBufferSize = configuration.getRecvBufferSize();
-            this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
-        }
-        if (sendBuffer == 0) {
-            // re-read send buffer size in case the config was reloaded
-            this.sendBufferSize = configuration.getSendBufferSize();
-            this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
-            this.sendBufferPtr = sendBuffer;
-            this.responseUtf8Sink.bookmarkPtr = this.sendBufferPtr;
-            this.sendBufferLimit = sendBuffer + sendBufferSize;
-        }
-        authenticator.init(socket, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
-
-        // reinitialize the prepared statement limit - this property can be changed at runtime
-        // so new connections need to pick up the new value
-        this.namedStatementLimit = configuration.getNamedStatementLimit();
-        return this;
     }
 
     public void setAuthenticator(SocketAuthenticator authenticator) {
@@ -1481,6 +1455,31 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
 
     static short getShortUnsafe(long address) {
         return Numbers.bswap(Unsafe.getUnsafe().getShort(address));
+    }
+
+    @Override
+    protected void doInit() {
+        sqlExecutionContext.with(getFd());
+
+        if (recvBuffer == 0) {
+            // re-read recv buffer size in case the config was reloaded
+            this.recvBufferSize = configuration.getRecvBufferSize();
+            this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
+        }
+        if (sendBuffer == 0) {
+            // re-read send buffer size in case the config was reloaded
+            this.sendBufferSize = configuration.getSendBufferSize();
+            this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
+            this.sendBufferPtr = sendBuffer;
+            this.responseUtf8Sink.bookmarkPtr = this.sendBufferPtr;
+            this.sendBufferLimit = sendBuffer + sendBufferSize;
+        }
+
+        // reinitialize the prepared statement limit - this property can be changed at runtime
+        // so new connections need to pick up the new value
+        this.namedStatementLimit = configuration.getNamedStatementLimit();
+
+        authenticator.init(socket, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
     }
 
     int doReceive(int remaining) {

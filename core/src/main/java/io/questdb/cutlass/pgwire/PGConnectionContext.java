@@ -70,7 +70,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.network.IOContext;
-import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.Net;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
@@ -585,22 +584,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         } catch (Throwable th) {
             handleException(-1, th.getMessage(), true, -1, true);
         }
-    }
-
-    @Override
-    public PGConnectionContext of(long fd, @NotNull IODispatcher<PGConnectionContext> dispatcher) {
-        super.of(fd, dispatcher);
-        sqlExecutionContext.with(fd);
-        if (recvBuffer == 0) {
-            this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
-        }
-        if (sendBuffer == 0) {
-            this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
-            this.sendBufferPtr = sendBuffer;
-            this.sendBufferLimit = sendBuffer + sendBufferSize;
-        }
-        authenticator.init(socket, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
-        return this;
     }
 
     public void setAuthenticator(SocketAuthenticator authenticator) {
@@ -2937,6 +2920,22 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             StdoutSink.INSTANCE.put(direction);
             Net.dump(buffer, len);
         }
+    }
+
+    @Override
+    protected void doInit() {
+        sqlExecutionContext.with(getFd());
+
+        if (recvBuffer == 0) {
+            this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
+        }
+        if (sendBuffer == 0) {
+            this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
+            this.sendBufferPtr = sendBuffer;
+            this.sendBufferLimit = sendBuffer + sendBufferSize;
+        }
+
+        authenticator.init(socket, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
     }
 
     int doReceive(int remaining) {
