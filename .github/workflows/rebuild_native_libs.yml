@@ -171,7 +171,7 @@ jobs:
           strip --strip-unneeded target/classes/io/questdb/bin-local/libquestdb.so
           cp target/classes/io/questdb/bin-local/libquestdb.so src/main/resources/io/questdb/bin/linux-x86-64-musl/
       - name: Save linux-x86-64-musl Libraries to Cache
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/linux-x86-64-musl/libquestdb.so
@@ -266,7 +266,7 @@ jobs:
           strip --strip-unneeded target/classes/io/questdb/bin-local/libquestdb.so
           cp target/classes/io/questdb/bin-local/libquestdb.so src/main/resources/io/questdb/bin/linux-aarch64-musl/
       - name: Save linux-aarch64-musl Libraries to Cache
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/linux-aarch64-musl/libquestdb.so
