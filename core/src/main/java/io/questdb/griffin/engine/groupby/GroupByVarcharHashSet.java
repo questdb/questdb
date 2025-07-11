@@ -157,23 +157,11 @@ public class GroupByVarcharHashSet {
         if (storedHash == hash) {
             int length = Unsafe.getUnsafe().getInt(slotAddr + SLOT_LENGTH_OFFSET);
             if (dataEqualsUtf8(key, dataPtr + offset, length)) {
-//                System.out.println("Probing distance: 0");
                 return -idealIndex - 1;
             }
         }
 
-        long actualIndex = probe(key, hash, idealIndex);
-        long distance;
-
-//        if (actualIndex > 0) {
-//            if (actualIndex < idealIndex) {
-//                distance = actualIndex + (mask + 1) - idealIndex;
-//            } else {
-//                distance = actualIndex - idealIndex;
-//            }
-//            System.out.println("Probing distance: " + distance);
-//        }
-        return actualIndex;
+        return probe(key, hash, idealIndex);
     }
 
     public void merge(GroupByVarcharHashSet srcSet) {
@@ -261,6 +249,11 @@ public class GroupByVarcharHashSet {
         ) & 0x7FFFFFFF; // non-negative hash
     }
 
+    private static int hash2(int hash) {
+        // must return an odd number to visit all slots in a power-of-2 sized table
+        return (hash ^ (hash >>> 16)) | 1;
+    }
+
     private void clearSlots(long ptr, int capacity) {
         long slotBase = ptr + HEADER_SIZE;
         for (int i = 0; i < capacity; i++) {
@@ -342,15 +335,12 @@ public class GroupByVarcharHashSet {
         return probe(key, hash, index);
     }
 
-    private long probe(Utf8Sequence key, int hash, long index) {
+    private long probe(Utf8Sequence key, int hash, long initialIndex) {
+        int step = hash2(hash);
+        long index = initialIndex;
         for (; ; ) {
-            index = (index + 1) & mask;
+            index = (index + step) & mask;
             long slotAddr = getSlotAddress(index);
-
-//            if (offset == EMPTY_SLOT) {
-//                return index;
-//            }
-
             int storedHash = Unsafe.getUnsafe().getInt(slotAddr + SLOT_HASH_OFFSET);
             if (storedHash == EMPTY_SLOT) {
                 return index;
@@ -396,13 +386,14 @@ public class GroupByVarcharHashSet {
 
             if (offset != EMPTY_SLOT) {
                 int hash = Unsafe.getUnsafe().getInt(oldSlotAddr + SLOT_HASH_OFFSET);
+                int hash2 = hash2(hash);
                 int length = Unsafe.getUnsafe().getInt(oldSlotAddr + SLOT_LENGTH_OFFSET);
 
                 long index = hash & mask;
                 long slotAddr = getSlotAddress(index);
 
                 while (Unsafe.getUnsafe().getInt(slotAddr + SLOT_DATA_OFFSET) != EMPTY_SLOT) {
-                    index = (index + 1) & mask;
+                    index = (index + hash2) & mask;
                     slotAddr = getSlotAddress(index);
                 }
 
