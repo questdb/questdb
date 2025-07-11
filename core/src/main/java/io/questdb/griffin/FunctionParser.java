@@ -1348,14 +1348,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
      */
     private int getAdaptiveTimestampType(CharSequence timestampStr, int sigArgType) {
         if (timestampStr == null || timestampStr.length() == 0) {
-            return sigArgType;
+            return FunctionFactoryDescriptor.toType(sigArgType);
         }
 
         // Extract year from timestamp string to check nano range
         int year = extractYearFromTimestamp(timestampStr);
         if (year >= 2262) {
             // Year is beyond nano timestamp range, use original type
-            return sigArgType;
+            return FunctionFactoryDescriptor.toType(sigArgType);
         }
 
         // Look for fractional seconds part after last '.' or ':'
@@ -1390,7 +1390,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
         }
 
-        return sigArgType; // Use original signature type
+        return FunctionFactoryDescriptor.toType(sigArgType); // Use original signature type
     }
 
     @NotNull

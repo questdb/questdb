@@ -41,7 +41,7 @@ public class TimestampConstant extends TimestampFunction implements ConstantFunc
     }
 
     public static TimestampConstant newInstance(long value, int timestampType) {
-        return value != Numbers.LONG_NULL ? new TimestampConstant(value, timestampType) : TIMESTAMP_MICRO_NULL;
+        return value != Numbers.LONG_NULL ? new TimestampConstant(value, timestampType) : ColumnType.getTimestampDriver(timestampType).getTimestampConstantNull();
     }
 
     @Override

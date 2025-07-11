@@ -452,6 +452,9 @@ public final class Nanos {
     }
 
     public static long floorWW(long nanos, int stride, long offsetNanos) {
+        if (offsetNanos == 0) {
+            return floorWW(nanos, stride);
+        }
         if (nanos < offsetNanos) {
             return offsetNanos;
         }

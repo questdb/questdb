@@ -136,7 +136,6 @@ import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
@@ -523,7 +522,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         // Neither type is geohash, use the type cast matrix to resolve.
-        return UNION_CAST_MATRIX[tagA][tagB];
+        int result = UNION_CAST_MATRIX[tagA][tagB];
+
+        //  indicate at least one of typeA or typeA is timestamp(timestamp_ns) type
+        if (result == TIMESTAMP) {
+            if (ColumnType.isTimestamp(typeA) && ColumnType.isTimestamp(typeB)) {
+                return Math.max(typeA, typeB);
+            } else if (ColumnType.isTimestamp(typeA)) {
+                return typeA;
+            } else {
+                return typeB;
+            }
+        }
+        return result;
     }
 
     @Override
@@ -641,7 +652,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (node.type == LITERAL) {
                 int idx = metadata.getColumnIndex(node.token);
                 int columnType = metadata.getColumnType(idx);
-                if (columnType == ColumnType.TIMESTAMP) {
+                if (ColumnType.isTimestamp(columnType)) {
                     if (idx != timestampIdx) {
                         return false;
                     }
@@ -670,7 +681,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
-    private static void coerceRuntimeConstantType(Function func, short type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
+    private static void coerceRuntimeConstantType(Function func, int type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
         if (ColumnType.isUndefined(func.getType())) {
             func.assignType(type, context.getBindVariableService());
         } else if ((!func.isConstant() && !func.isRuntimeConstant()) || !ColumnType.isAssignableFrom(func.getType(), type)) {
@@ -2252,13 +2263,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         ObjList<Function> fillValues = null;
-        Function fillFromFunc = TimestampConstant.TIMESTAMP_MICRO_NULL;
-        Function fillToFunc = TimestampConstant.TIMESTAMP_MICRO_NULL;
-
         final ExpressionNode fillFrom = curr.getFillFrom();
         final ExpressionNode fillTo = curr.getFillTo();
         final ExpressionNode fillStride = curr.getFillStride();
         ObjList<ExpressionNode> fillValuesExprs = curr.getFillValues();
+        Function fillFromFunc = null;
+        Function fillToFunc = null;
 
         try {
             if (fillValuesExprs == null) {
@@ -2281,16 +2291,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (fillValues.size() == 0 || (fillValues.size() == 1 && isNoneKeyword(fillValues.getQuick(0).getName()))) {
                 Misc.freeObjList(fillValues);
                 return groupByFactory;
-            }
-
-            if (fillFrom != null) {
-                fillFromFunc = functionParser.parseFunction(fillFrom, EmptyRecordMetadata.INSTANCE, executionContext);
-                coerceRuntimeConstantType(fillFromFunc, ColumnType.TIMESTAMP, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", fillFrom.position);
-            }
-
-            if (fillTo != null) {
-                fillToFunc = functionParser.parseFunction(fillTo, EmptyRecordMetadata.INSTANCE, executionContext);
-                coerceRuntimeConstantType(fillToFunc, ColumnType.TIMESTAMP, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", fillTo.position);
             }
 
 
@@ -2331,6 +2331,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int timestampIndex = groupByFactory.getMetadata().getColumnIndexQuiet(alias);
             int timestampType = groupByFactory.getMetadata().getColumnType(timestampIndex);
             TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            fillFromFunc = driver.getTimestampConstantNull();
+            fillToFunc = driver.getTimestampConstantNull();
+            if (fillFrom != null) {
+                fillFromFunc = functionParser.parseFunction(fillFrom, EmptyRecordMetadata.INSTANCE, executionContext);
+                coerceRuntimeConstantType(fillFromFunc, timestampType, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", fillFrom.position);
+            }
+
+            if (fillTo != null) {
+                fillToFunc = functionParser.parseFunction(fillTo, EmptyRecordMetadata.INSTANCE, executionContext);
+                coerceRuntimeConstantType(fillToFunc, timestampType, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", fillTo.position);
+            }
 
             int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(fillStride.token, fillStride.position, "sample");
             long samplingInterval = TimestampSamplerFactory.parseInterval(fillStride.token, samplingIntervalEnd, fillStride.position, "sample", Numbers.INT_NULL, ' ');
@@ -3553,7 +3564,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         } else {
                             listColumnFilterA.add(index + 1);
                         }
-                        if (i == 0 && metadata.getColumnType(index) == ColumnType.TIMESTAMP) {
+                        if (i == 0 && ColumnType.isTimestamp(metadata.getColumnType(index))) {
                             orderedByTimestampIndex = index;
                         }
                     }
@@ -3750,26 +3761,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             offsetFuncPos = 0;
         }
 
-        if (model.getSampleByFrom() != null) {
-            sampleFromFunc = functionParser.parseFunction(model.getSampleByFrom(), EmptyRecordMetadata.INSTANCE, executionContext);
-            sampleFromFuncPos = model.getSampleByFrom().position;
-            coerceRuntimeConstantType(sampleFromFunc, ColumnType.TIMESTAMP, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", sampleFromFuncPos);
-        } else {
-            sampleFromFunc = TimestampConstant.TIMESTAMP_MICRO_NULL;
-            sampleFromFuncPos = 0;
-        }
-
-        if (model.getSampleByTo() != null) {
-            sampleToFunc = functionParser.parseFunction(model.getSampleByTo(), EmptyRecordMetadata.INSTANCE, executionContext);
-            sampleToFuncPos = model.getSampleByTo().position;
-            coerceRuntimeConstantType(sampleToFunc, ColumnType.TIMESTAMP, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", sampleToFuncPos);
-        } else {
-            sampleToFunc = TimestampConstant.TIMESTAMP_MICRO_NULL;
-            sampleToFuncPos = 0;
-        }
-
-        final boolean isFromTo = sampleFromFunc != TimestampConstant.TIMESTAMP_MICRO_NULL || sampleToFunc != TimestampConstant.TIMESTAMP_MICRO_NULL;
-
         RecordCursorFactory factory = null;
         // We require timestamp with asc order.
         final int timestampIndex;
@@ -3791,7 +3782,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final RecordMetadata baseMetadata = factory.getMetadata();
         final ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
         final int timestampType = baseMetadata.getColumnType(timestampIndex);
-        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
+
+        if (model.getSampleByFrom() != null) {
+            sampleFromFunc = functionParser.parseFunction(model.getSampleByFrom(), EmptyRecordMetadata.INSTANCE, executionContext);
+            sampleFromFuncPos = model.getSampleByFrom().position;
+            coerceRuntimeConstantType(sampleFromFunc, timestampType, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", sampleFromFuncPos);
+        } else {
+            sampleFromFunc = timestampDriver.getTimestampConstantNull();
+            sampleFromFuncPos = 0;
+        }
+
+        if (model.getSampleByTo() != null) {
+            sampleToFunc = functionParser.parseFunction(model.getSampleByTo(), EmptyRecordMetadata.INSTANCE, executionContext);
+            sampleToFuncPos = model.getSampleByTo().position;
+            coerceRuntimeConstantType(sampleToFunc, timestampType, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", sampleToFuncPos);
+        } else {
+            sampleToFunc = timestampDriver.getTimestampConstantNull();
+            sampleToFuncPos = 0;
+        }
+
+        final boolean isFromTo = sampleFromFunc != timestampDriver.getTimestampConstantNull() || sampleToFunc != timestampDriver.getTimestampConstantNull();
         final TimestampSampler timestampSampler;
         final int fillCount = sampleByFill.size();
         try {
@@ -3873,7 +3884,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            valueTypes.add(ColumnType.TIMESTAMP); // first value is always timestamp
+            valueTypes.add(timestampType); // first value is always timestamp
 
             final int columnCount = model.getColumns().size();
             final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
@@ -4417,7 +4428,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (isHourKeyword(columnExpr.token) && columnExpr.paramCount == 1 && columnExpr.rhs.type == LITERAL) {
                     // check the column type via aliasToColumnMap
                     QueryColumn tableColumn = nested.getAliasToColumnMap().get(columnExpr.rhs.token);
-                    if (tableColumn != null && tableColumn.getColumnType() == ColumnType.TIMESTAMP) {
+                    if (tableColumn != null && ColumnType.isTimestamp(tableColumn.getColumnType())) {
                         hourIndex = i;
                     }
                 }
@@ -5669,7 +5680,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     myMeta.setTimestampIndex(myMeta.getColumnCount() - 1);
 
                     columnIndexes.add(readerTimestampIndex);
-                    columnSizeShifts.add((Numbers.msb(ColumnType.TIMESTAMP)));
+                    columnSizeShifts.add((Numbers.msb(metadata.getColumnType(readerTimestampIndex))));
                 }
             }
         } finally {

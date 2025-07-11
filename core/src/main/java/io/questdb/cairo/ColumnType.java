@@ -305,8 +305,7 @@ public final class ColumnType {
      * Conversion rules:
      * - TIMESTAMP types: returned as-is to preserve existing precision
      * - DATE types: converted to {@link #TIMESTAMP_MICRO}
-     * - String types (VARCHAR, STRING, SYMBOL): converted to {@link #TIMESTAMP_NANO}
-     * for maximum precision when parsing timestamp strings
+     * - String types (VARCHAR, STRING, SYMBOL): converted to {@link #TIMESTAMP_NANO} for maximum precision when parsing timestamp strings
      * - All other types: fall back to the configuration's default timestamp type
      */
     public static int getTimestampType(int left, CairoConfiguration configuration) {
