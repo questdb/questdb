@@ -170,13 +170,13 @@ jobs:
           mkdir -p src/main/resources/io/questdb/bin/linux-x86-64-musl/
           strip --strip-unneeded target/classes/io/questdb/bin-local/libquestdb.so
           cp target/classes/io/questdb/bin-local/libquestdb.so src/main/resources/io/questdb/bin/linux-x86-64-musl/
-      - name: Save linux-x86-64-musl Libraries to Cache
-        uses: actions/cache/save@v3
+      - name: Save linux-x86-64-musl Libraries as an artifact
+        uses: actions/upload-artifact@v4
         with:
+          name: linux-x86-64-musl
           path: |
             core/src/main/resources/io/questdb/bin/linux-x86-64-musl/libquestdb.so
             core/src/main/bin/linux-x86-64-musl/libjemalloc.so
-          key: nativelibs-linux-musl-${{ github.sha }}
   build-all-linux-aarch64:
     runs-on: ubuntu-22.04-arm
     container:
@@ -357,13 +357,10 @@ jobs:
             core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
             core/src/main/bin/linux-x86-64/libjemalloc.so
           key: nativelibs-linux-${{ github.sha }}
-      - name: Restore linux-x86-64-musl Libraries from Cache
-        uses: actions/cache/restore@v3
+      - name: Restore linux-x86-64-musl Libraries from artifact
+        uses: actions/download-artifact@v4
         with:
-          path: |
-            core/src/main/resources/io/questdb/bin/linux-x86-64-musl/libquestdb.so
-            core/src/main/bin/linux-x86-64-musl/libjemalloc.so
-          key: nativelibs-linux-musl-${{ github.sha }}
+          name: linux-x86-64-musl
       - name: Restore linux-aarch64 Libraries from Cache
         uses: actions/cache/restore@v3
         with:
