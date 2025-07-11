@@ -191,9 +191,31 @@ function start {
 
     JAVA_LIB="$BASE/questdb.jar"
 
+    # if we are a full platform-specific distribution
+    # we should load binary libraries from the lib directory instead of copying them to a temporary directory
+    # how? we set a system property that points to the lib directory
+    # and the Java code will try load libraries from there
+    LIB_DIR_CANDIDATE="$BASE/../lib"
+    if [ -d "$LIB_DIR_CANDIDATE" ]; then
+        # resolve the absolute path to the lib directory
+        if command -v realpath >/dev/null 2>&1; then
+            LIB_DIR=$(realpath "$LIB_DIR_CANDIDATE")
+        else
+            # fallback for systems without 'realpath'
+            LIB_DIR=$(cd "$LIB_DIR_CANDIDATE" && pwd)
+        fi
+
+        if [ -r "$LIB_DIR" ]; then
+            LIB_DIR_PROP="-Dquestdb.libs.dir=${LIB_DIR}"
+        else
+            echo "Warning: Library directory '${LIB_DIR}' found, but it is not readable." >&2
+        fi
+    fi
+
     JAVA_OPTS="
     -D$QDB_PROCESS_LABEL
     -Dcontainerized=$([ "${QDB_CONTAINER_MODE}" != '' ] && echo "true" || echo "false" )
+    ${LIB_DIR_PROP}
     -ea -Dnoebug
     -XX:ErrorFile=${QDB_ROOT}/db/hs_err_pid+%p.log
     -XX:+UnlockExperimentalVMOptions
