@@ -1,5 +1,6 @@
 use num_traits::AsPrimitive;
 
+pub mod array;
 mod binary;
 mod boolean;
 pub(crate) mod file;

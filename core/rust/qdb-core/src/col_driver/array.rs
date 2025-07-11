@@ -53,16 +53,16 @@ const OFFSET_MAX: u64 = (1u64 << 48) - 1;
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-struct ArrayAuxEntry {
+pub struct ArrayAuxEntry {
     packed: u128,
 }
 
 impl ArrayAuxEntry {
-    fn size(&self) -> u32 {
+    pub fn size(&self) -> u32 {
         (self.packed >> 64) as u32
     }
 
-    fn offset(&self) -> u64 {
+    pub fn offset(&self) -> u64 {
         (self.packed as u64) & OFFSET_MAX
     }
 }
