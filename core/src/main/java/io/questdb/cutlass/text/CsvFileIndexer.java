@@ -26,7 +26,7 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
@@ -48,7 +48,6 @@ import io.questdb.std.SwarUtils;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
@@ -137,6 +136,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private long sortBufferPtr;
     // adapter used to parse timestamp column
     private TimestampAdapter timestampAdapter;
+    private TimestampDriver timestampDriver;
     // position of timestamp column in csv (0-based)
     private int timestampIndex;
     private long timestampValue;
@@ -310,7 +310,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         //  allowing for importing 256TB big files with rows up to 65kB long
         long lengthAndOffset = (length << 48 | lineStartOffset);
         long partitionKey = partitionFloorMethod.floor(timestampValue);
-        long mapKey = partitionKey / Timestamps.HOUR_MICROS; //remove trailing zeros to avoid excessive collisions in hashmap
+        long mapKey = timestampDriver.getHourOfDay(partitionKey); //remove trailing zeros to avoid excessive collisions in hashmap
 
         final IndexOutputFile target;
         int keyIndex = outputFileLookupMap.keyIndex(mapKey);
@@ -348,8 +348,9 @@ public class CsvFileIndexer implements Closeable, Mutable {
     ) {
         this.inputFileName = inputFileName;
         this.importRoot = importRoot;
-        this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(timestampType, partitionBy);
-        this.partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(timestampType, partitionBy);
+        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+        this.partitionFloorMethod = timestampDriver.getPartitionFloorMethod(partitionBy);
+        this.partitionDirFormatMethod = timestampDriver.getPartitionDirFormatMethod(partitionBy);
         this.offset = 0;
         this.columnDelimiter = columnDelimiter;
         this.columnDelimiterMask = SwarUtils.broadcast(columnDelimiter);

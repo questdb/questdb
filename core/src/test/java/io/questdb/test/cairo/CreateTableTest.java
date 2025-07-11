@@ -779,7 +779,7 @@ public class CreateTableTest extends AbstractCairoTest {
                 for (int i = 0; i < columnTypes.length; i++) {
                     String[] arr = columnTypes[i];
                     assertEquals(arr[0], metadata.getColumnName(i));
-                    assertEquals("i="+i,arr[1], ColumnType.nameOf(metadata.getColumnType(i)));
+                    assertEquals(arr[1], ColumnType.nameOf(metadata.getColumnType(i)));
                 }
             }
         });
