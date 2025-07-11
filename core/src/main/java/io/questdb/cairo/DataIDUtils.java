@@ -96,7 +96,7 @@ public final class DataIDUtils {
     }
 
     private static MemoryCMARWImpl openDataIDFile(CairoConfiguration configuration) {
-        try (Path path = new Path() ) {
+        try (Path path = new Path()) {
             path.of(configuration.getDbRoot());
             path.concat(FILENAME);
 
