@@ -29,7 +29,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 
 // DataIDUtils handles the mapping of the _data_id.d file located at the root of the database.
@@ -50,6 +49,9 @@ public final class DataIDUtils {
      */
     public static Long256 read(CairoConfiguration configuration) {
         if (!Long256Impl.isNull(currentId)) {
+            if (currentId.equals(Long256Impl.ZERO_LONG256)) {
+                return null;
+            }
             return currentId;
         }
 
@@ -61,13 +63,8 @@ public final class DataIDUtils {
 
             try (MemoryCMARWImpl mem = openDataIDFile(configuration)) {
                 currentId.fromAddress(mem.getAddress());
-
-                // When the file is empty, it is truncated to 32 bytes with zero bytes.
-                // In such a case, we should initialize with a new random value.
                 if (currentId.equals(Long256Impl.ZERO_LONG256)) {
-                    Rnd rnd = new Rnd(configuration.getMicrosecondClock().getTicks(), configuration.getMillisecondClock().getTicks());
-                    currentId.fromRnd(rnd);
-                    currentId.toAddress(mem.getAddress());
+                    return null;
                 }
             }
         }
