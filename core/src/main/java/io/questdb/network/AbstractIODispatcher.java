@@ -24,6 +24,7 @@
 
 package io.questdb.network;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.Counter;
@@ -212,7 +213,14 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             C connectionContext = event.context;
             final int operation = event.operation;
             ioEventSubSeq.done(cursor);
-            connectionContext.init();
+            try {
+                connectionContext.init();
+            } catch (CairoException e) {
+                LOG.error().$("could not initialize connection context [fd=").$(connectionContext.getFd())
+                        .$(", e=").$safe(e.getFlyweightMessage())
+                        .I$();
+                ioContextFactory.done(connectionContext);
+            }
             useful = processor.onRequest(operation, connectionContext, this);
         }
 
