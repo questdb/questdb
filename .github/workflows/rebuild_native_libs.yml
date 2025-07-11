@@ -142,7 +142,7 @@ jobs:
     steps:
       - name: Install dependencies
         run: |
-          apk add cmake g++ linux-headers nasm git make openjdk17-jdk nodejs autoconf tar
+          apk add cmake g++ linux-headers nasm git make openjdk17-jdk nodejs autoconf tar liburing-dev
       - uses: actions/checkout@v4
         with:
           submodules: true
@@ -237,7 +237,7 @@ jobs:
         shell: sh # No bash in Alpine by default
       - name: Install dependencies
         run: |
-          apk add cmake g++ linux-headers nasm git make openjdk17-jdk autoconf tar
+          apk add cmake g++ linux-headers nasm git make openjdk17-jdk autoconf tar liburing-dev
       - uses: actions/checkout@v4
         with:
           submodules: true
