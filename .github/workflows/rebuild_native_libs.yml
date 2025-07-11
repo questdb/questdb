@@ -361,6 +361,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: linux-x86-64-musl
+          path: core/src/main/
       - name: Restore linux-aarch64 Libraries from Cache
         uses: actions/cache/restore@v3
         with:
