@@ -47,7 +47,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     @Test
     public void testBigStep() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
         iterator.of(
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "UTC"),
@@ -70,7 +70,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     @Test
     public void testFixedOffset() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
         final long offset = Timestamps.HOUR_MICROS;
         iterator.of(
                 sampler,
@@ -144,7 +144,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     @Test
     public void testIntervalsEmpty() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
         iterator.of(
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "UTC"),
@@ -164,7 +164,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     @Test
     public void testIntervalsSingle() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
         final TimeZoneRules tzRules = Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "UTC");
         final LongList intervals = new LongList();
 
@@ -224,7 +224,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     @Test
     public void testIntervalsToTop() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
         final TimeZoneRules tzRules = Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "UTC");
         final LongList intervals = new LongList();
 
@@ -247,7 +247,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     @Test
     public void testSmoke() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
         iterator.of(
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "UTC"),
@@ -272,7 +272,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     @Test
     public void testTimeZoneWithDst() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(2, 'h', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 2, 'h', 0);
         iterator.of(
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin"),
@@ -305,7 +305,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     @Test
     public void testTimeZoneWithDstForwardShiftWithIntervalLargerThanShift() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(75, 'm', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 75, 'm', 0);
         iterator.of(
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin"),
@@ -338,7 +338,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     @Test
     public void testTimeZoneWithDstShiftBackwardWithSmallInterval1() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(15, 'm', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 15, 'm', 0);
         iterator.of(
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin"),
@@ -363,7 +363,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     @Test
     public void testTimeZoneWithDstShiftBackwardWithSmallInterval2() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(15, 'm', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 15, 'm', 0);
         iterator.of(
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin"),
@@ -407,7 +407,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     @Test
     public void testTimeZoneWithDstShiftForwardWithSmallInterval() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(30, 'm', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 30, 'm', 0);
         iterator.of(
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin"),
@@ -452,7 +452,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     @Test
     public void testTimeZoneWithDstSingleRow1() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(30, 'm', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 30, 'm', 0);
         iterator.of(
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/London"),
@@ -476,7 +476,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     @Test
     public void testTimeZoneWithDstSingleRow2() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(30, 'm', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 30, 'm', 0);
         iterator.of(
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/London"),
@@ -500,7 +500,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     @Test
     public void testTimeZoneWithFixedOffset() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
         iterator.of(
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "GMT+00:30"),

@@ -31,7 +31,7 @@ import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.std.datetime.microtime.Timestamps.toMicros;
 
-public class MonthTimestampSampler implements TimestampSampler {
+public class MonthTimestampMicrosSampler implements TimestampSampler {
     private final int stepMonths;
     private int startDay;
     private int startHour;
@@ -40,7 +40,7 @@ public class MonthTimestampSampler implements TimestampSampler {
     private int startMin;
     private int startSec;
 
-    public MonthTimestampSampler(int stepMonths) {
+    public MonthTimestampMicrosSampler(int stepMonths) {
         this.stepMonths = stepMonths;
     }
 

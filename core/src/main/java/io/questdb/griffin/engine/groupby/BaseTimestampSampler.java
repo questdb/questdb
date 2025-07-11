@@ -27,11 +27,11 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-public class MicroTimestampSampler implements TimestampSampler {
+public class BaseTimestampSampler implements TimestampSampler {
     private final long bucket;
     private long start;
 
-    public MicroTimestampSampler(long bucket) {
+    public BaseTimestampSampler(long bucket) {
         this.bucket = bucket;
     }
 

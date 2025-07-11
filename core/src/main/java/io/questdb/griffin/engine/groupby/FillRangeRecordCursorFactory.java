@@ -43,7 +43,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
@@ -74,6 +73,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     private final long samplingInterval;
     private final char samplingIntervalUnit;
     private final int timestampIndex;
+    private final int timestampType;
     private final Function toFunc;
 
     public FillRangeRecordCursorFactory(
@@ -98,6 +98,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         this.samplingIntervalUnit = samplingIntervalUnit;
         this.timestampIndex = timestampIndex;
         this.fillValues = fillValues;
+        this.timestampType = timestampType;
         this.cursor = new FillRangeRecordCursor(timestampSampler, fromFunc, toFunc, fillValues, timestampIndex, timestampType);
     }
 
@@ -138,7 +139,8 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Fill Range");
-        if (fromFunc != TimestampConstant.TIMESTAMP_MICRO_NULL || toFunc != TimestampConstant.TIMESTAMP_MICRO_NULL) {
+        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        if (fromFunc != driver.getTimestampConstantNull() || toFunc != driver.getTimestampConstantNull()) {
             sink.attr("range").val('(').val(fromFunc).val(',').val(toFunc).val(')');
         }
         sink.attr("stride").val('\'').val(samplingInterval).val(samplingIntervalUnit).val('\'');

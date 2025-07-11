@@ -2329,13 +2329,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             int timestampIndex = groupByFactory.getMetadata().getColumnIndexQuiet(alias);
+            int timestampType = groupByFactory.getMetadata().getColumnType(timestampIndex);
+            TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
 
             int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(fillStride.token, fillStride.position, "sample");
             long samplingInterval = TimestampSamplerFactory.parseInterval(fillStride.token, samplingIntervalEnd, fillStride.position, "sample", Numbers.INT_NULL, ' ');
             assert samplingInterval > 0;
             assert samplingIntervalEnd < fillStride.token.length();
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
-            TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(samplingInterval, samplingIntervalUnit, fillStride.position);
+            TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(driver, samplingInterval, samplingIntervalUnit, fillStride.position);
 
             return new FillRangeRecordCursorFactory(
                     groupByFactory.getMetadata(),
@@ -2347,7 +2349,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     timestampSampler,
                     fillValues,
                     timestampIndex,
-                    groupByFactory.getMetadata().getColumnType(timestampIndex)
+                    timestampType
 
             );
         } catch (Throwable e) {
@@ -3788,11 +3790,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         final RecordMetadata baseMetadata = factory.getMetadata();
         final ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
+        final int timestampType = baseMetadata.getColumnType(timestampIndex);
+        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         final TimestampSampler timestampSampler;
         final int fillCount = sampleByFill.size();
         try {
             if (sampleByUnits == null) {
-                timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
+                timestampSampler = TimestampSamplerFactory.getInstance(timestampDriver, sampleByNode.token, sampleByNode.position);
             } else {
                 Function sampleByPeriod = functionParser.parseFunction(
                         sampleByNode,
@@ -3805,7 +3809,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 long period = sampleByPeriod.getLong(null);
                 sampleByPeriod.close();
-                timestampSampler = TimestampSamplerFactory.getInstance(period, sampleByUnits.token, sampleByUnits.position);
+                timestampSampler = TimestampSamplerFactory.getInstance(timestampDriver, period, sampleByUnits.token, sampleByUnits.position);
             }
 
             keyTypes.clear();
@@ -3861,7 +3865,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         entityColumnFilter,
                         groupByFunctionPositions,
                         timestampIndex,
-                        baseMetadata.getColumnType(timestampIndex),
+                        timestampType,
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -3944,7 +3948,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             groupByFunctions,
                             outerProjectionFunctions,
                             timestampIndex,
-                            baseMetadata.getColumnType(timestampIndex),
+                            timestampType,
                             valueTypes.getColumnCount(),
                             timezoneNameFunc,
                             timezoneNameFuncPos,
@@ -3971,7 +3975,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         groupByFunctions,
                         outerProjectionFunctions,
                         timestampIndex,
-                        baseMetadata.getColumnType(timestampIndex),
+                        timestampType,
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -3996,7 +4000,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             outerProjectionFunctions,
                             valueTypes.getColumnCount(),
                             timestampIndex,
-                            baseMetadata.getColumnType(timestampIndex),
+                            timestampType,
                             timezoneNameFunc,
                             timezoneNameFuncPos,
                             offsetFunc,
@@ -4022,7 +4026,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         keyTypes,
                         valueTypes,
                         timestampIndex,
-                        baseMetadata.getColumnType(timestampIndex),
+                        timestampType,
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -4047,7 +4051,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             recordFunctionPositions,
                             valueTypes.getColumnCount(),
                             timestampIndex,
-                            baseMetadata.getColumnType(timestampIndex),
+                            timestampType,
                             timezoneNameFunc,
                             timezoneNameFuncPos,
                             offsetFunc,
@@ -4074,7 +4078,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         outerProjectionFunctions,
                         recordFunctionPositions,
                         timestampIndex,
-                        baseMetadata.getColumnType(timestampIndex),
+                        timestampType,
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -4101,7 +4105,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         recordFunctionPositions,
                         valueTypes.getColumnCount(),
                         timestampIndex,
-                        baseMetadata.getColumnType(timestampIndex),
+                        timestampType,
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
@@ -4129,7 +4133,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     outerProjectionFunctions,
                     recordFunctionPositions,
                     timestampIndex,
-                    baseMetadata.getColumnType(timestampIndex),
+                    timestampType,
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,

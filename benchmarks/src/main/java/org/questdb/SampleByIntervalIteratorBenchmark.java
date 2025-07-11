@@ -24,6 +24,7 @@
 
 package org.questdb;
 
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.mv.FixedOffsetIntervalIterator;
 import io.questdb.cairo.mv.TimeZoneIntervalIterator;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
@@ -56,7 +57,7 @@ public class SampleByIntervalIteratorBenchmark {
 
     public SampleByIntervalIteratorBenchmark() {
         try {
-            final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'm', 0);
+            final TimestampSampler sampler = TimestampSamplerFactory.getInstance(MicrosTimestampDriver.INSTANCE, 1, 'm', 0);
             final TimeZoneRulesMicros rules = new TimeZoneRulesMicros(ZoneId.of("Europe/Berlin").getRules());
 
             final long minTs = TimestampFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");

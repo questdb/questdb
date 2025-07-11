@@ -25,8 +25,13 @@
 package io.questdb.cairo;
 
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.griffin.engine.groupby.BaseTimestampSampler;
+import io.questdb.griffin.engine.groupby.MonthTimestampNanosSampler;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.griffin.engine.groupby.YearTimestampNanosSampler;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
@@ -851,6 +856,43 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public TimestampSampler getTimestampSampler(long interval, char timeUnit, int position) throws SqlException {
+        switch (timeUnit) {
+            case 'n':
+                // nanos
+                return new BaseTimestampSampler(interval);
+            case 'U':
+                // micros
+                return new BaseTimestampSampler(interval * Nanos.MICRO_NANOS);
+            case 'T':
+                // millis
+                return new BaseTimestampSampler(Nanos.MILLI_NANOS * interval);
+            case 's':
+                // seconds
+                return new BaseTimestampSampler(Nanos.SECOND_NANOS * interval);
+            case 'm':
+                // minutes
+                return new BaseTimestampSampler(Nanos.MINUTE_NANOS * interval);
+            case 'h':
+                // hours
+                return new BaseTimestampSampler(Nanos.HOUR_NANOS * interval);
+            case 'd':
+                // days
+                return new BaseTimestampSampler(Nanos.DAY_NANOS * interval);
+            case 'w':
+                // weeks
+                return new BaseTimestampSampler(Nanos.WEEK_NANOS * interval);
+            case 'M':
+                // months
+                return new MonthTimestampNanosSampler((int) interval);
+            case 'y':
+                return new YearTimestampNanosSampler((int) interval);
+            default:
+                throw SqlException.$(position, "unsupported interval qualifier");
+        }
+    }
+
+    @Override
     public CommonUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType) {
         if (srcTimestampType == ColumnType.TIMESTAMP_MICRO) {
             return CommonUtils::microsToNanos;
@@ -1335,7 +1377,6 @@ public class NanosTimestampDriver implements TimestampDriver {
             validateBounds0(timestamp);
         }
     }
-
 
     private static long checkTimezoneTail(CharSequence seq, int p, int lim) throws NumericException {
         if (lim == p) {

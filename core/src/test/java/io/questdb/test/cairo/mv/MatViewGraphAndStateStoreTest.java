@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
@@ -216,6 +217,7 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
         MatViewDefinition viewDefinition = new MatViewDefinition();
         viewDefinition.init(
                 MatViewDefinition.REFRESH_TYPE_IMMEDIATE,
+                ColumnType.TIMESTAMP_MICRO,
                 false,
                 viewToken,
                 "x",

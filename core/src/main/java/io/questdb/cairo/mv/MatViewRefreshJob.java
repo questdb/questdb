@@ -27,12 +27,14 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -295,6 +297,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long lastTxn = baseTableReader.getSeqTxn();
         final TableToken baseTableToken = baseTableReader.getTableToken();
         final TableToken viewToken = viewDefinition.getMatViewToken();
+        TimestampDriver driver = ColumnType.getTimestampDriver(viewDefinition.getTimestampType());
 
         final long now = microsecondClock.getTicks();
         final boolean rangeRefresh = rangeTo != Numbers.LONG_NULL;
@@ -371,7 +374,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             if (viewDefinition.getPeriodLength() > 0) {
                 TimestampSampler periodSampler = viewDefinition.getPeriodSampler();
                 if (periodSampler == null) {
-                    periodSampler = TimestampSamplerFactory.getInstance(viewDefinition.getPeriodLength(), viewDefinition.getPeriodLengthUnit(), -1);
+                    periodSampler = TimestampSamplerFactory.getInstance(driver, viewDefinition.getPeriodLength(), viewDefinition.getPeriodLengthUnit(), -1);
                     viewDefinition.setPeriodSampler(periodSampler);
                 }
                 periodSampler.setStart(viewDefinition.getTimerStart());
@@ -434,15 +437,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // For small sampling intervals such as '10T' or '2s' the actual sampler is
             // chosen as a 10x multiple of the original interval. That's to speed up
             // iteration done by the interval iterator.
-            final long minIntervalMicros = configuration.getMatViewMinRefreshInterval();
+            final long minInterval = driver.from(configuration.getMatViewMinRefreshInterval(), ColumnType.TIMESTAMP_MICRO);
             long approxBucketSize = timestampSampler.getApproxBucketSize();
             long actualInterval = viewDefinition.getSamplingInterval();
-            if (approxBucketSize < minIntervalMicros) {
-                while (approxBucketSize < minIntervalMicros) {
+            if (approxBucketSize < minInterval) {
+                while (approxBucketSize < minInterval) {
                     approxBucketSize *= 10;
                     actualInterval *= 10;
                 }
                 timestampSampler = TimestampSamplerFactory.getInstance(
+                        driver,
                         actualInterval,
                         viewDefinition.getSamplingIntervalUnit(),
                         0

@@ -25,11 +25,11 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.std.datetime.CommonUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-public class YearTimestampSampler implements TimestampSampler {
+public class YearTimestampNanosSampler implements TimestampSampler {
     private final int stepYears;
     private int startDay;
     private int startHour;
@@ -37,15 +37,16 @@ public class YearTimestampSampler implements TimestampSampler {
     private int startMillis;
     private int startMin;
     private int startMonth;
+    private int startNanos;
     private int startSec;
 
-    public YearTimestampSampler(int stepYears) {
+    public YearTimestampNanosSampler(int stepYears) {
         this.stepYears = stepYears;
     }
 
     @Override
     public long getApproxBucketSize() {
-        return Timestamps.YEAR_MICROS_NONLEAP * stepYears;
+        return Nanos.YEAR_NANOS_NONLEAP * stepYears;
     }
 
     @Override
@@ -65,8 +66,8 @@ public class YearTimestampSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        final int y = Timestamps.getYear(value);
-        return Timestamps.toMicros(
+        final int y = Nanos.getYear(value);
+        return Nanos.toNanos(
                 y - y % stepYears,
                 CommonUtils.isLeapYear(y),
                 startDay,
@@ -75,21 +76,23 @@ public class YearTimestampSampler implements TimestampSampler {
                 startMin,
                 startSec,
                 startMillis,
-                startMicros
+                startMicros,
+                startNanos
         );
     }
 
     @Override
     public void setStart(long timestamp) {
-        final int y = Timestamps.getYear(timestamp);
+        final int y = Nanos.getYear(timestamp);
         final boolean leap = CommonUtils.isLeapYear(y);
-        this.startMonth = Timestamps.getMonthOfYear(timestamp, y, leap);
-        this.startDay = Timestamps.getDayOfMonth(timestamp, y, startMonth, leap);
-        this.startHour = Timestamps.getHourOfDay(timestamp);
-        this.startMin = Timestamps.getMinuteOfHour(timestamp);
-        this.startSec = Timestamps.getSecondOfMinute(timestamp);
-        this.startMillis = Timestamps.getMillisOfSecond(timestamp);
-        this.startMicros = Timestamps.getMicrosOfMilli(timestamp);
+        this.startMonth = Nanos.getMonthOfYear(timestamp, y, leap);
+        this.startDay = Nanos.getDayOfMonth(timestamp, y, startMonth, leap);
+        this.startHour = Nanos.getWallHours(timestamp);
+        this.startMin = Nanos.getWallMinutes(timestamp);
+        this.startSec = Nanos.getWallSeconds(timestamp);
+        this.startMillis = Nanos.getWallMillis(timestamp);
+        this.startMicros = Nanos.getWallMicros(timestamp);
+        this.startNanos = Nanos.getWallNanos(timestamp);
     }
 
     @Override
@@ -101,16 +104,17 @@ public class YearTimestampSampler implements TimestampSampler {
         if (numYears == 0) {
             return timestamp;
         }
-        final int y = Timestamps.getYear(timestamp);
+        final int y = Nanos.getYear(timestamp);
         final boolean leap = CommonUtils.isLeapYear(y + numYears);
         final int maxDay = Math.min(startDay, CommonUtils.getDaysPerMonth(startMonth, leap)) - 1;
-        return Timestamps.yearMicros(y + numYears, leap)
-                + Timestamps.monthOfYearMicros(startMonth, leap)
-                + maxDay * Timestamps.DAY_MICROS
-                + startHour * Timestamps.HOUR_MICROS
-                + startMin * Timestamps.MINUTE_MICROS
-                + startSec * Timestamps.SECOND_MICROS
-                + startMillis * Timestamps.MILLI_MICROS
-                + startMicros;
+        return Nanos.yearNanos(y + numYears, leap)
+                + Nanos.monthOfYearNanos(startMonth, leap)
+                + maxDay * Nanos.DAY_NANOS
+                + startHour * Nanos.HOUR_NANOS
+                + startMin * Nanos.MINUTE_NANOS
+                + startSec * Nanos.SECOND_NANOS
+                + startMillis * Nanos.MILLI_NANOS
+                + startMicros * Nanos.MICRO_NANOS
+                + startNanos;
     }
 }

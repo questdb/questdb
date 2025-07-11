@@ -50,6 +50,7 @@ public final class Nanos {
     public static final long MICRO_NANOS = 1000;
     public static final long MILLI_NANOS = 1_000_000;
     public static final long MINUTE_NANOS = 60_000_000_000L;
+    public static final long MONTH_NANOS_APPROX = 30 * DAY_NANOS;
     public static final long SECOND_NANOS = 1_000_000_000;
     public static final long WEEK_NANOS = DAY_NANOS * 7L; // DAY_NANOS * 7
     public static final long YEAR_NANOS_NONLEAP = 365 * DAY_NANOS;

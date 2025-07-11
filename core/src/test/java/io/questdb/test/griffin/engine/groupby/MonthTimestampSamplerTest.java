@@ -24,7 +24,7 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.griffin.engine.groupby.MonthTimestampSampler;
+import io.questdb.griffin.engine.groupby.MonthTimestampMicrosSampler;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
@@ -36,7 +36,7 @@ public class MonthTimestampSamplerTest {
 
     @Test
     public void testNextTimestamp() throws NumericException {
-        MonthTimestampSampler sampler = new MonthTimestampSampler(1);
+        MonthTimestampMicrosSampler sampler = new MonthTimestampMicrosSampler(1);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
@@ -59,7 +59,7 @@ public class MonthTimestampSamplerTest {
 
     @Test
     public void testNextTimestampWithStep() throws NumericException {
-        MonthTimestampSampler sampler = new MonthTimestampSampler(1);
+        MonthTimestampMicrosSampler sampler = new MonthTimestampMicrosSampler(1);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
@@ -82,7 +82,7 @@ public class MonthTimestampSamplerTest {
 
     @Test
     public void testPreviousTimestamp() throws NumericException {
-        MonthTimestampSampler sampler = new MonthTimestampSampler(1);
+        MonthTimestampMicrosSampler sampler = new MonthTimestampMicrosSampler(1);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
@@ -105,7 +105,7 @@ public class MonthTimestampSamplerTest {
 
     @Test
     public void testRound() throws NumericException {
-        MonthTimestampSampler sampler = new MonthTimestampSampler(1);
+        MonthTimestampMicrosSampler sampler = new MonthTimestampMicrosSampler(1);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
@@ -129,7 +129,7 @@ public class MonthTimestampSamplerTest {
     @Test
     public void testSimple() throws NumericException {
         StringSink sink = new StringSink();
-        MonthTimestampSampler sampler = new MonthTimestampSampler(6);
+        MonthTimestampMicrosSampler sampler = new MonthTimestampMicrosSampler(6);
 
         long timestamp = TimestampFormatUtils.parseUTCTimestamp("2018-11-16T15:00:00.000000Z");
         sampler.setStart(timestamp);

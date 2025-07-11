@@ -26,6 +26,7 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
@@ -1570,7 +1571,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             reader,
                             path,
                             rootLen,
-                            matViewToken
+                            matViewToken,
+                            ColumnType.TIMESTAMP_MICRO
                     );
                     Assert.fail("exception expected");
                 } catch (CairoException e) {
@@ -1601,7 +1603,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             reader,
                             path,
                             rootLen,
-                            matViewToken
+                            matViewToken,
+                            ColumnType.TIMESTAMP_MICRO
                     );
                     Assert.fail("exception expected");
                 } catch (CairoException e) {
@@ -1647,7 +1650,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             reader,
                             path,
                             rootLen,
-                            matViewToken
+                            matViewToken,
+                            ColumnType.TIMESTAMP_MICRO
                     );
 
                     assertEquals(matViewDefinition.getMatViewSql(), actualDefinition.getMatViewSql());
@@ -1724,6 +1728,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             try {
                 def.init(
                         MatViewDefinition.REFRESH_TYPE_IMMEDIATE,
+                        ColumnType.TIMESTAMP_MICRO,
                         false,
                         matViewToken,
                         query,
@@ -1750,6 +1755,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             try {
                 def.init(
                         MatViewDefinition.REFRESH_TYPE_IMMEDIATE,
+                        ColumnType.TIMESTAMP_MICRO,
                         false,
                         matViewToken,
                         query,
@@ -1775,6 +1781,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             try {
                 def.init(
                         MatViewDefinition.REFRESH_TYPE_IMMEDIATE,
+                        ColumnType.TIMESTAMP_MICRO,
                         false,
                         matViewToken,
                         query,
@@ -1911,6 +1918,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     MatViewDefinition unknownDefinition = new MatViewDefinition();
                     unknownDefinition.init(
                             MatViewDefinition.REFRESH_TYPE_IMMEDIATE + 42,
+                            ColumnType.TIMESTAMP_MICRO,
                             false,
                             matViewToken,
                             matViewDefinition.getMatViewSql(),
@@ -1945,7 +1953,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                                 reader,
                                 path,
                                 rootLen,
-                                matViewToken
+                                matViewToken,
+                                ColumnType.TIMESTAMP_MICRO
                         );
                         Assert.fail();
                     } catch (CairoException e) {
@@ -2145,7 +2154,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             reader,
                             path,
                             rootLen,
-                            matViewToken
+                            matViewToken,
+                            ColumnType.TIMESTAMP_MICRO
                     );
                     Assert.fail("exception expected");
                 } catch (CairoException e) {
@@ -2272,7 +2282,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     reader,
                     path,
                     rootLen,
-                    matViewToken
+                    matViewToken,
+                    ColumnType.TIMESTAMP_MICRO
             );
 
             assertEquals(refreshType, matViewDefinition.getRefreshType());

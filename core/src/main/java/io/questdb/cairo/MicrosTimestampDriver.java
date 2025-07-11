@@ -25,8 +25,13 @@
 package io.questdb.cairo;
 
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.griffin.engine.groupby.BaseTimestampSampler;
+import io.questdb.griffin.engine.groupby.MonthTimestampMicrosSampler;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.griffin.engine.groupby.YearTimestampMicrosSampler;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
@@ -832,6 +837,40 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 return Timestamps.WEEK_MICROS;
             default:
                 return 0;
+        }
+    }
+
+    @Override
+    public TimestampSampler getTimestampSampler(long interval, char timeUnit, int position) throws SqlException {
+        switch (timeUnit) {
+            case 'U':
+                // micros
+                return new BaseTimestampSampler(interval);
+            case 'T':
+                // millis
+                return new BaseTimestampSampler(Timestamps.MILLI_MICROS * interval);
+            case 's':
+                // seconds
+                return new BaseTimestampSampler(Timestamps.SECOND_MICROS * interval);
+            case 'm':
+                // minutes
+                return new BaseTimestampSampler(Timestamps.MINUTE_MICROS * interval);
+            case 'h':
+                // hours
+                return new BaseTimestampSampler(Timestamps.HOUR_MICROS * interval);
+            case 'd':
+                // days
+                return new BaseTimestampSampler(Timestamps.DAY_MICROS * interval);
+            case 'w':
+                // weeks
+                return new BaseTimestampSampler(Timestamps.WEEK_MICROS * interval);
+            case 'M':
+                // months
+                return new MonthTimestampMicrosSampler((int) interval);
+            case 'y':
+                return new YearTimestampMicrosSampler((int) interval);
+            default:
+                throw SqlException.$(position, "unsupported interval qualifier");
         }
     }
 

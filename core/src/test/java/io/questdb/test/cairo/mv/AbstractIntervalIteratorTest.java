@@ -24,6 +24,8 @@
 
 package io.questdb.test.cairo.mv;
 
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.SampleByIntervalIterator;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
@@ -36,6 +38,7 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
 public abstract class AbstractIntervalIteratorTest {
+    protected TimestampDriver timestampDriver = MicrosTimestampDriver.INSTANCE;
 
     private static void intersectInPlace(LongList dest, long lo, long hi) {
         dest.add(lo, hi);
@@ -79,7 +82,7 @@ public abstract class AbstractIntervalIteratorTest {
             offset = (rnd.nextBoolean() ? 1 : -1) * rnd.nextLong(Timestamps.HOUR_MICROS);
         }
 
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(interval, timeUnit, 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, interval, timeUnit, 0);
 
         LongList intervals = null;
         if (rnd.nextBoolean()) {

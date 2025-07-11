@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
@@ -1006,7 +1007,8 @@ public class SqlParser {
                 final int length = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
                 final char lengthUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
-                final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(length, lengthUnit, lexer.lastTokenPosition());
+                TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+                final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(driver, length, lengthUnit, lexer.lastTokenPosition());
                 tok = tok(lexer, "'time zone' or 'delay' or ')'");
 
                 TimeZoneRules tzRules = null;
@@ -1019,7 +1021,7 @@ public class SqlParser {
                     }
                     tz = unquote(tok).toString();
                     try {
-                        tzRules = Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
+                        tzRules = driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
                     } catch (NumericException e) {
                         throw SqlException.position(lexer.lastTokenPosition()).put("invalid timezone: ").put(tz);
                     }

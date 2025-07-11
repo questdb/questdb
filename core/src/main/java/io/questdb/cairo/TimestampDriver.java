@@ -26,8 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -330,6 +332,15 @@ public interface TimestampDriver {
     TimestampFloorWithStrideMethod getTimestampFloorWithStrideMethod(String c);
 
     long getTimestampMultiplier(char unit);
+
+    /**
+     * Creates a timestamp sampler instance for the given interval and time unit.
+     *
+     * @param interval the interval value
+     * @param timeUnit the time unit qualifier ('U', 'T', 's', 'm', 'h', 'd', 'w', 'M', 'y')
+     * @return a timestamp sampler instance
+     */
+    TimestampSampler getTimestampSampler(long interval, char timeUnit, int position) throws SqlException;
 
     CommonUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType);
 

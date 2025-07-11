@@ -42,7 +42,7 @@ import io.questdb.cairo.sql.SingleSymbolFilter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.engine.groupby.MicroTimestampSampler;
+import io.questdb.griffin.engine.groupby.BaseTimestampSampler;
 import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
@@ -4837,7 +4837,7 @@ public class SampleByTest extends AbstractCairoTest {
             new SampleByFirstLastRecordCursorFactory(
                     configuration,
                     null,
-                    new MicroTimestampSampler(100L),
+                    new BaseTimestampSampler(100L),
                     groupByMeta,
                     columns,
                     meta,
@@ -4878,7 +4878,7 @@ public class SampleByTest extends AbstractCairoTest {
             new SampleByFirstLastRecordCursorFactory(
                     configuration,
                     null,
-                    new MicroTimestampSampler(100L),
+                    new BaseTimestampSampler(100L),
                     groupByMeta,
                     columns,
                     meta,
