@@ -1,3 +1,4 @@
+examples:
 - name: ilp-http
   lang: java
   path: examples/src/main/java/com/example/sender/HttpExample.java
