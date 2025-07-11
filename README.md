@@ -230,7 +230,7 @@ and contact information.
 - [QuestDB documentation:](https://questdb.io/docs/) begin the journey
 - [Product roadmap:](https://github.com/orgs/questdb/projects/1/views/5) check
   out our plan for upcoming releases
-- [Tutorials:](https://questdb.io/tutorial/) learn what's possible with QuestDB,
+- [Tutorials:](https://questdb.com/blog/?tag=tutorial) learn what's possible with QuestDB,
   step by step
 
 ### ❓ Get support
@@ -246,10 +246,10 @@ and contact information.
 
 ### 🚢 Deploy QuestDB
 
-- [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
-- [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)
-- [Official Docker image](https://questdb.io/docs/get-started/docker)
-- [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean)
+- [AWS AMI](https://questdb.com/docs/deployment/aws/)
+- [Google Cloud Platform](https://questdb.com/docs/deployment/gcp/)
+- [Official Docker image](https://questdb.com/docs/quick-start/#docker)
+- [DigitalOcean droplets](https://questdb.com/docs/deployment/digital-ocean/)
 - [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)
 
 ## Contribute
