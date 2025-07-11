@@ -1346,6 +1346,16 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long toHours(long timestamp) {
+        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Timestamps.HOUR_MICROS;
+    }
+
+    @Override
+    public long toMinutes(long timestamp) {
+        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Timestamps.MINUTE_MICROS;
+    }
+
+    @Override
     public long toSeconds(long timestamp) {
         return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Timestamps.SECOND_MICROS;
     }

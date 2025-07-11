@@ -435,6 +435,10 @@ public interface TimestampDriver {
 
     long toDate(long timestamp);
 
+    long toHours(long timestamp);
+
+    long toMinutes(long timestamp);
+
     long toNanosScale();
 
     long toSeconds(long timestamp);

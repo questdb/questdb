@@ -1347,6 +1347,16 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long toHours(long timestamp) {
+        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Nanos.HOUR_NANOS;
+    }
+
+    @Override
+    public long toMinutes(long timestamp) {
+        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Nanos.MINUTE_NANOS;
+    }
+
+    @Override
     public long toSeconds(long timestamp) {
         return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Nanos.SECOND_NANOS;
     }
