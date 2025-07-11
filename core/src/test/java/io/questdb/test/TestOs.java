@@ -24,6 +24,7 @@
 
 package io.questdb.test;
 
+import io.questdb.std.LibcDetector;
 import io.questdb.std.Os;
 
 import java.io.IOException;
@@ -68,7 +69,8 @@ public class TestOs {
             rustLibName = "libqdbsqllogictest" + outputLibExt;
         }
 
-        URL resource = TestOs.class.getResource("/io/questdb/bin/" + Os.name + '-' + Os.archName + '/' + rustLibName);
+        final boolean isMusl = Os.libc == LibcDetector.LibcType.MUSL;
+        URL resource = TestOs.class.getResource("/io/questdb/bin/" + Os.name + '-' + Os.archName + (isMusl ? "-musl" : "") + '/' + rustLibName);
         if (resource != null) {
             String absolutePathPreCompiled;
             try {

@@ -2,7 +2,7 @@ set(CMAKE_SYSTEM_NAME               Linux)
 set(CMAKE_SYSTEM_PROCESSOR          aarch64)
 set (ARM True)
 set (AARCH64 True)
-
+set(MUSL True)
 
 set(CMAKE_CXX_FLAGS                 "${CMAKE_C_FLAGS} -fno-exceptions" CACHE INTERNAL "")
 
