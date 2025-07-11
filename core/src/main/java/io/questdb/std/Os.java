@@ -54,6 +54,7 @@ public final class Os {
     public static final String archName;
     public static final String name;
     public static final int type;
+    public static final LibcDetector.LibcType libc;
 
     private Os() {
     }
@@ -296,7 +297,16 @@ public final class Os {
                 throw new Error("Unsupported OS: " + osName);
             }
 
-            final boolean isMusl = type == LINUX && LibcDetector.detectLibc() == LibcDetector.LibcType.MUSL;
+            if (type == LINUX) {
+                libc = LibcDetector.detectLibc();
+                if (libc == LibcDetector.LibcType.UNKNOWN) {
+                    throw new FatalError("Cannot detect libc type, please report this as a bug");
+                }
+            } else {
+                libc = LibcDetector.LibcType.UNKNOWN;
+            }
+
+            final boolean isMusl = libc == LibcDetector.LibcType.MUSL;
 
             String prdLibRoot = "/io/questdb/bin/" + name + '-' + archName + (isMusl ? "-musl" : "") + '/';
             String devCXXLibRoot = "/io/questdb/bin-local/";
@@ -335,6 +345,7 @@ public final class Os {
         } else {
             type = _32Bit;
             name = System.getProperty("os.name");
+            libc = LibcDetector.LibcType.UNKNOWN;
         }
     }
 }
