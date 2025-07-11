@@ -40,7 +40,6 @@ import io.questdb.std.str.Path;
 public final class DataIDUtils {
     public static final CharSequence FILENAME = "_data_id.d";
     private static final Long256Impl currentId = new Long256Impl();
-    private static final Path path = new Path();
     public static long FILE_SIZE = 32;
 
     /**
@@ -97,13 +96,13 @@ public final class DataIDUtils {
     }
 
     private static MemoryCMARWImpl openDataIDFile(CairoConfiguration configuration) {
-        if (path.size() == 0) {
+        try (Path path = new Path() ) {
             path.of(configuration.getDbRoot());
             path.concat(FILENAME);
-        }
 
-        final FilesFacade ff = configuration.getFilesFacade();
-        return new MemoryCMARWImpl(ff, path.$(), FILE_SIZE, -1, MemoryTag.MMAP_DEFAULT, configuration.getWriterFileOpenOpts());
+            final FilesFacade ff = configuration.getFilesFacade();
+            return new MemoryCMARWImpl(ff, path.$(), FILE_SIZE, -1, MemoryTag.MMAP_DEFAULT, configuration.getWriterFileOpenOpts());
+        }
     }
 
     static {
