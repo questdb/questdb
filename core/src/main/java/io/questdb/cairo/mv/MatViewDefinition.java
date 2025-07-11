@@ -388,6 +388,7 @@ public class MatViewDefinition implements Mutable {
         final MatViewDefinition newDefinition = new MatViewDefinition();
         newDefinition.init(
                 refreshType,
+                timestampType,
                 deferred,
                 matViewToken,
                 matViewSql,

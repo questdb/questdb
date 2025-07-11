@@ -1761,7 +1761,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             length = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
                             lengthUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                             SqlParser.validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
-                            final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(length, lengthUnit, lexer.lastTokenPosition());
+                            final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(MicrosTimestampDriver.INSTANCE, length, lengthUnit, lexer.lastTokenPosition());
                             tok = expectToken(lexer, "'time zone' or 'delay' or ')'");
 
                             if (isTimeKeyword(tok)) {
@@ -1772,7 +1772,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 }
                                 tz = unquote(tok).toString();
                                 try {
-                                    tzRules = Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
+                                    tzRules = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
                                 } catch (NumericException e) {
                                     throw SqlException.position(lexer.lastTokenPosition()).put("invalid timezone: ").put(tz);
                                 }

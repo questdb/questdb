@@ -136,7 +136,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         final char lengthUnit = viewDefinition.getPeriodLengthUnit();
         final TimestampSampler sampler;
         try {
-            sampler = TimestampSamplerFactory.getInstance(ColumnType.getTimestampDriver(viewDefinition.getTimestampType()), periodLength, periodLengthUnit, -1);
+            sampler = TimestampSamplerFactory.getInstance(ColumnType.getTimestampDriver(viewDefinition.getTimestampType()), length, lengthUnit, -1);
         } catch (SqlException e) {
             throw CairoException.nonCritical().put("invalid LENGTH interval and/or unit: ").put(length)
                     .put(", ").put(lengthUnit);
@@ -173,7 +173,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         final char unit = viewDefinition.getTimerUnit();
         final TimestampSampler sampler;
         try {
-            sampler = TimestampSamplerFactory.getInstance(ColumnType.getTimestampDriver(viewDefinition.getTimestampType()), timerInterval, timerUnit, -1);
+            sampler = TimestampSamplerFactory.getInstance(ColumnType.getTimestampDriver(viewDefinition.getTimestampType()), interval, unit, -1);
         } catch (SqlException e) {
             throw CairoException.nonCritical().put("invalid EVERY interval and/or unit: ").put(interval)
                     .put(", ").put(unit);
@@ -200,7 +200,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         final long periodMs = configuration.getMatViewRefreshIntervalsUpdatePeriod();
         final TimestampSampler sampler;
         try {
-            sampler = TimestampSamplerFactory.getInstance(ColumnType.getTimestampDriver(viewDefinition.getTimestampType()), intervalMs, 'T', -1);
+            sampler = TimestampSamplerFactory.getInstance(ColumnType.getTimestampDriver(viewDefinition.getTimestampType()), periodMs, 'T', -1);
         } catch (SqlException e) {
             throw CairoException.nonCritical().put("invalid refresh intervals update period: ").put(periodMs);
         }
