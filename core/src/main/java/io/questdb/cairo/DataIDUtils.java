@@ -30,12 +30,16 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
-// DataIDUtils handles the mapping of the _data_id.d file located at the root of the database.
-// Its role is to store a unique id (consisting of a randomly generated 256 bits number)
-// that is replicated among the database cluster.
-//
-// One shouldn't modify the data id in an unblank database as it may cause data loss.
+/**
+ * DataIDUtils handles the mapping of the _data_id.d file located at the root of the database.
+ * Its role is to store a unique id (consisting of a randomly generated 256 bits number)
+ * that is replicated among the database cluster.
+ * <p>
+ * One shouldn't modify the data id in an unblank database as it may cause data loss.
+ * </p>
+ */
 public final class DataIDUtils {
     public static final CharSequence FILENAME = "_data_id.d";
     private static final Long256Impl currentId = new Long256Impl();
@@ -45,9 +49,9 @@ public final class DataIDUtils {
      * Read the `_data_id.d` file (or creates it if it doesn't exist yet) and returns its current value.
      *
      * @param configuration the configuration that is used to provide the FileFacade and DbRoot.
-     * @return the current data id.
+     * @return the current data id or NULL if `_data_id.d` didn't exists/wasn't initialized.
      */
-    public static Long256 read(CairoConfiguration configuration) {
+    public static @Nullable Long256 read(CairoConfiguration configuration) {
         if (!Long256Impl.isNull(currentId)) {
             if (currentId.equals(Long256Impl.ZERO_LONG256)) {
                 return null;
@@ -58,6 +62,9 @@ public final class DataIDUtils {
         synchronized (currentId) {
             // Double-checked locking
             if (!Long256Impl.isNull(currentId)) {
+                if (currentId.equals(Long256Impl.ZERO_LONG256)) {
+                    return null;
+                }
                 return currentId;
             }
 
