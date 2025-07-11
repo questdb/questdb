@@ -52,7 +52,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
-    private final int sharedWorkerCount;
+    private final int sharedQueryWorkerCount;
     private final AtomicBooleanCircuitBreaker simpleCircuitBreaker;
     private final Telemetry<TelemetryTask> telemetry;
     private final TelemetryFacade telemetryFacade;
@@ -79,11 +79,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long requestFd = -1;
     private boolean useSimpleCircuitBreaker;
 
-    public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
+    public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedQueryWorkerCount) {
         assert workerCount > 0;
         this.workerCount = workerCount;
-        assert sharedWorkerCount > 0;
-        this.sharedWorkerCount = sharedWorkerCount;
+        assert sharedQueryWorkerCount >= 0;
+        this.sharedQueryWorkerCount = sharedQueryWorkerCount;
         this.cairoEngine = cairoEngine;
 
         cairoConfiguration = cairoEngine.getConfiguration();
@@ -225,8 +225,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public int getSharedWorkerCount() {
-        return sharedWorkerCount;
+    public int getSharedQueryWorkerCount() {
+        return sharedQueryWorkerCount;
     }
 
     @Override

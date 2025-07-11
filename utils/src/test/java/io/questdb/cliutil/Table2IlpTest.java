@@ -488,7 +488,7 @@ public class Table2IlpTest {
             ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
-            int sharedWorkerCount
+            int sharedQueryWorkerCount
     ) {
         final HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         if (!httpServerConfiguration.isEnabled()) {
@@ -508,7 +508,7 @@ public class Table2IlpTest {
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
                 workerPool.getWorkerCount(),
-                sharedWorkerCount
+                sharedQueryWorkerCount
         );
 
         HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
@@ -523,7 +523,7 @@ public class Table2IlpTest {
                 serverConfiguration,
                 cairoEngine,
                 workerPool,
-                sharedWorkerCount,
+                sharedQueryWorkerCount,
                 jsonQueryProcessorBuilder,
                 ilpV2WriteProcessorBuilder
         );

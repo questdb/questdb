@@ -1750,7 +1750,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void freeUpdateCommand(UpdateOperation op) {
         // Create a copy of sqlExecutionContext here
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-        SqlExecutionContextImpl newSqlExecutionContext = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedWorkerCount());
+        SqlExecutionContextImpl newSqlExecutionContext = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedQueryWorkerCount());
         newSqlExecutionContext.with(sqlExecutionContext.getSecurityContext(), bindVariableService, sqlExecutionContext.getRandom(), sqlExecutionContext.getRequestFd(), circuitBreaker);
         sqlExecutionContext = newSqlExecutionContext;
 

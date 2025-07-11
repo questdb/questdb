@@ -49,14 +49,14 @@ class OperationExecutor implements Closeable {
     OperationExecutor(
             CairoEngine engine,
             int workerCount,
-            int sharedWorkerCount
+            int sharedQueryWorkerCount
     ) {
         rnd = new Rnd();
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         executionContext = new WalApplySqlExecutionContext(
                 engine,
                 workerCount,
-                sharedWorkerCount
+                sharedQueryWorkerCount
         );
         executionContext.with(
                 engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),

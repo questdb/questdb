@@ -1005,7 +1005,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             protected void setupMatViewJobs(
                     WorkerPool workerPool,
                     CairoEngine engine,
-                    int sharedWorkerCount
+                    int sharedQueryWorkerCount
             ) {
             }
 
@@ -1013,7 +1013,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             protected void setupWalApplyJob(
                     WorkerPool workerPool,
                     CairoEngine engine,
-                    int sharedWorkerCount
+                    int sharedQueryWorkerCount
             ) {
             }
         };

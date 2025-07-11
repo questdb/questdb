@@ -46,7 +46,6 @@ import java.sql.SQLException;
 import java.util.Properties;
 
 import static io.questdb.test.cutlass.pgwire.BasePGTest.assertResultSet;
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static io.questdb.test.tools.TestUtils.unchecked;
 
 public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
@@ -61,7 +60,10 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
     @Test
     public void testBindVariableLimitSignChange() throws Exception {
         assertMemoryLeak(() -> {
-            createDummyConfiguration("pg.select.cache.enabled=true");
+            createDummyConfiguration(
+                    "pg.select.cache.enabled=true"
+            );
+
             try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 serverMain.start();
                 createTable(serverMain, 100);
@@ -291,7 +293,12 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
     @Test
     public void testLowAndHighLimitWithCache() throws Exception {
         assertMemoryLeak(() -> {
-            createDummyConfiguration("pg.select.cache.enabled=true");
+            createDummyConfiguration(
+                    "pg.select.cache.enabled=true",
+                    "cairo.sql.parallel.filter.enabled=false",
+                    "cairo.sql.parallel.groupby.enabled=false",
+                    "cairo.sql.parallel.read.parquet.enabled=false"
+            );
             try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 serverMain.start();
                 createTable(serverMain, 10000);
