@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class RoundDoubleZeroScaleFunctionFactory implements FunctionFactory {
@@ -61,7 +62,7 @@ public class RoundDoubleZeroScaleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             final double d = arg.getDouble(rec);
-            return d == d ? Math.round(d) : Double.NaN;
+            return Numbers.isFinite(d) ? Math.round(d) : Double.NaN;
         }
 
         @Override

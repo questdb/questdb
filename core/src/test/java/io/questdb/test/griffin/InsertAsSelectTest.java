@@ -27,9 +27,17 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.test.tools.TestUtils.createSqlExecutionCtx;
 
 public class InsertAsSelectTest extends AbstractCairoTest {
     @Test
@@ -61,7 +69,6 @@ public class InsertAsSelectTest extends AbstractCairoTest {
             execute("insert into target select * from append");
             drainWalQueue();
 
-
             // check
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 TestUtils.assertEquals(
@@ -74,5 +81,64 @@ public class InsertAsSelectTest extends AbstractCairoTest {
         } finally {
             ColumnType.resetStringToDefault();
         }
+    }
+
+    @Test
+    public void testInsertAsSelectWithConcurrentSchemaChange() throws Exception {
+        execute("create table source (ts timestamp) timestamp (ts) partition by DAY");
+        execute("create table target (ts timestamp) timestamp (ts) partition by DAY");
+
+        execute("insert into source select timestamp_sequence(0, 1000000L) from long_sequence(10)");
+        drainWalQueue();
+
+        final SOCountDownLatch startLatch = new SOCountDownLatch(2);
+        final SOCountDownLatch doneLatch = new SOCountDownLatch(2);
+        final AtomicReference<Exception> insertException = new AtomicReference<>();
+
+        Thread insertThread = new Thread(() -> {
+            try {
+                startLatch.countDown();
+                startLatch.await();
+
+                for (int i = 0; i < 10; i++) {
+                    execute("insert into target (ts) select ts from source");
+                    drainWalQueue();
+                    Os.sleep(10);
+                }
+            } catch (Exception e) {
+                LOG.info().$("insert as select failed with:").$(e).$();
+                insertException.set(e);
+            } finally {
+                doneLatch.countDown();
+            }
+        });
+
+        Thread alterThread = new Thread(() -> {
+            try (
+                    final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, bindVariableService, 1)
+            ) {
+                startLatch.countDown();
+                startLatch.await();
+
+
+                for (int i = 0; i < 3; i++) {
+                    try {
+                        execute("alter table source add column new_col" + i + " int", sqlExecutionContext);
+                        Os.sleep(10);
+                    } catch (Throwable e) {
+                        LOG.info().$("Alter retry ").$(i).$(" failed with: ").$(e).$();
+                    }
+                }
+            } finally {
+                doneLatch.countDown();
+            }
+        });
+
+        insertThread.start();
+        alterThread.start();
+        doneLatch.await();
+        Assert.assertNull(insertException.get());
+        drainWalQueue();
+        assertSql("count\n100\n", "select count(*) from target");
     }
 }

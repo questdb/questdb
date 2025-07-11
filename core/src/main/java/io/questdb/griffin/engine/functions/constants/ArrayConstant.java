@@ -131,7 +131,7 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
     @Override
     public void toPlan(PlanSink sink) {
         StringSink strSink = new StringSink();
-        ArrayTypeDriver.arrayToJson(array, strSink, NoopArrayWriteState.INSTANCE, false);
+        ArrayTypeDriver.arrayToJson(array, strSink, NoopArrayWriteState.INSTANCE);
         sink.val("ARRAY" + strSink);
     }
 

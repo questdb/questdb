@@ -55,7 +55,7 @@ public class TimestampFloorFromFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final CharSequence str = args.getQuick(0).getStrA(null);
-        final int stride = Timestamps.getStrideMultiple(str);
+        final int stride = Timestamps.getStrideMultiple(str, argPositions.getQuick(0));
         final char unit = Timestamps.getStrideUnit(str, argPositions.getQuick(0));
         final Function timestampFunc = args.getQuick(1);
         long from = args.getQuick(2).getTimestamp(null);

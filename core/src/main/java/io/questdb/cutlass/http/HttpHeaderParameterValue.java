@@ -22,32 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions.math;
+package io.questdb.cutlass.http;
 
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.math.DivFloatFunctionFactory;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
-import org.junit.Test;
+import io.questdb.std.str.DirectUtf8String;
 
-public class DivFloatFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    @Test
-    public void testDivByZero() throws SqlException {
-        call(10f, 0f).andAssert(Float.NaN, 0.000001);
+public class HttpHeaderParameterValue {
+    private long hi;
+    private DirectUtf8String str;
+
+    public HttpHeaderParameterValue of(long hi, DirectUtf8String str) {
+        this.hi = hi;
+        this.str = str;
+        return this;
     }
 
-    @Test
-    public void testNegative() throws SqlException {
-        call(-3f, 4f).andAssert(-0.75, 0.000001);
+    public long getHi() {
+        return hi;
     }
 
-    @Test
-    public void testSimple() throws SqlException {
-        call(10f, 8f).andAssert(1.25, 0.000001);
-    }
-
-    @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new DivFloatFunctionFactory();
+    public DirectUtf8String getStr() {
+        return str;
     }
 }
