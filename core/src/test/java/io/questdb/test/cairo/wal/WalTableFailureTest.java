@@ -57,6 +57,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -68,6 +69,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Arrays;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -75,13 +78,13 @@ import java.util.function.Function;
 import static io.questdb.cairo.ErrorTag.*;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
-import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.std.Files.SEPARATOR;
 import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class WalTableFailureTest extends AbstractCairoTest {
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();
@@ -595,15 +598,20 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             TableToken tableToken = createStandardWalTable(tableName);
 
-            FilesFacade ff = configuration.getFilesFacade();
-            long waldFd = TableUtils.openRW(
-                    ff,
-                    Path.getThreadLocal(root).concat(tableToken).concat(WAL_NAME_BASE).put(1).concat("0").concat(EVENT_INDEX_FILE_NAME).$(),
-                    LOG,
-                    configuration.getWriterFileOpenOpts()
-            );
-            Files.truncate(waldFd, 0);
-            ff.close(waldFd);
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    final String eventIndexName = SEPARATOR + tableToken.getDirName() +
+                            SEPARATOR + "wal1" +
+                            SEPARATOR + "0" +
+                            SEPARATOR + "_event.i";
+                    if (Utf8s.endsWithAscii(name, eventIndexName)) {
+                        return -1;
+                    }
+
+                    return super.openRO(name);
+                }
+            };
 
             drainWalQueue();
 
@@ -870,6 +878,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                         return 0;
                     }
 
+                    @Override
                     public SqlExecutionContext getSqlExecutionContext() {
                         return sqlExecutionContext;
                     }
@@ -1020,12 +1029,12 @@ public class WalTableFailureTest extends AbstractCairoTest {
             drainWalQueue();
 
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
-            execute("insert into " + tableToken.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            execute("insert into " + tableToken.getTableName() + " values (1, 'ac', '2022-02-24T23', 'ef')");
             execute("ALTER TABLE " + tableToken.getTableName() + " RESUME WAL FROM TXN 3");
 
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n" +
-                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n", tableToken.getTableName());
+                    "1\tac\t2022-02-24T23:00:00.000000Z\tef\n", tableToken.getTableName());
         });
     }
 
@@ -1300,6 +1309,42 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalApplyMetrics() throws Exception {
+        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            private int attempt = 0;
+
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
+                    return -1;
+                }
+                return Files.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(filesFacade, () -> {
+            assertWalApplyMetrics(0, 0, 0);
+
+            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+
+            assertWalApplyMetrics(0, 1, 0);
+
+            execute("update " + tableToken.getTableName() + " set x = 11;");
+            execute("update " + tableToken.getTableName() + " set x = 111;");
+            execute("update " + tableToken.getTableName() + " set x = 1111;");
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertWalApplyMetrics(1, 4, 1);
+
+            execute("alter table " + tableToken.getTableName() + " resume wal;");
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            drainWalQueue();
+            assertWalApplyMetrics(0, 4, 4);
+        });
+    }
+
+    @Test
     public void testWalMultipleColumnConversions() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table abc (x0 symbol, x string, y string, y1 symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
@@ -1440,9 +1485,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(
-                        ex.getFlyweightMessage(),
-                        "statements containing multiple transactions, such as 'alter table add column col1, col2'" +
-                                " are currently not supported for WAL tables"
+                        ex.getFlyweightMessage(), "statement is either no-op," +
+                                " or contains multiple transactions, such as 'alter table add column col1, col2'," +
+                                " and currently not supported for WAL tables" +
+                                " [table=testWalTableMultiColumnAddNotSupported, oldStructureVersion=0, newStructureVersion=2]"
                 );
             }
 
@@ -1685,6 +1731,32 @@ public class WalTableFailureTest extends AbstractCairoTest {
         }
     }
 
+    private void assertWalApplyMetrics(int suspendedTables, int seqTxnTotal, int writerTxnTotal) {
+        String tagSuspendedTables = "questdb_suspended_tables ";
+        String tagSeqTxn = "questdb_wal_apply_seq_txn_total ";
+        String tagWriterTxn = "questdb_wal_apply_writer_txn_total ";
+        String missing = "missing";
+        try (DirectUtf8Sink metricsSink = new DirectUtf8Sink(1024)) {
+            engine.getMetrics().scrapeIntoPrometheus(metricsSink);
+            String[] lines = metricsSink.toString().split("\n");
+
+            Optional<String> suspendedTablesLine = Arrays.stream(lines)
+                    .filter(line -> line.startsWith(tagSuspendedTables)).findFirst();
+            Assert.assertTrue(tagSuspendedTables + missing, suspendedTablesLine.isPresent());
+            Assert.assertEquals(tagSuspendedTables + suspendedTables, suspendedTablesLine.get());
+
+            Optional<String> seqTxnLine = Arrays.stream(lines)
+                    .filter(line -> line.startsWith(tagSeqTxn)).findFirst();
+            Assert.assertTrue(tagSeqTxn + missing, seqTxnLine.isPresent());
+            Assert.assertEquals(tagSeqTxn + seqTxnTotal, seqTxnLine.get());
+
+            Optional<String> writerTxnLine = Arrays.stream(lines)
+                    .filter(line -> line.startsWith(tagWriterTxn)).findFirst();
+            Assert.assertTrue(tagWriterTxn + missing, writerTxnLine.isPresent());
+            Assert.assertEquals(tagWriterTxn + writerTxnTotal, writerTxnLine.get());
+        }
+    }
+
     private void createStandardNonWalTable(String tableName) throws SqlException {
         createStandardTable(tableName, false);
     }
@@ -1784,14 +1856,14 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
                         " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
                 try (
-                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertOperation insertOperation = compiledQuery.popInsertOperation();
                         InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
                 ) {
-                    insertMethod.execute();
-                    insertMethod.execute();
+                    insertMethod.execute(sqlExecutionContext);
+                    insertMethod.execute(sqlExecutionContext);
                     insertMethod.commit();
 
-                    insertMethod.execute();
+                    insertMethod.execute(sqlExecutionContext);
                     execute("alter table " + tableName + " add column new_column int");
 
                     try {

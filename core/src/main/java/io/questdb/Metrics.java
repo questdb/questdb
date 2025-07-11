@@ -59,7 +59,7 @@ public class Metrics implements Target, Mutable {
     private final VirtualLongGauge.StatProvider jvmFreeMemRef = runtime::freeMemory;
     private final VirtualLongGauge.StatProvider jvmMaxMemRef = runtime::maxMemory;
     private final VirtualLongGauge.StatProvider jvmTotalMemRef = runtime::totalMemory;
-    private final TableWriterMetrics tableWriter;
+    private final TableWriterMetrics tableWriterMetrics;
     private final WalMetrics walMetrics;
     private final WorkerMetrics workerMetrics;
     private boolean enabled;
@@ -72,7 +72,7 @@ public class Metrics implements Target, Mutable {
         this.pgWireMetrics = new PGWireMetrics(metricsRegistry);
         this.lineMetrics = new LineMetrics(metricsRegistry);
         this.healthCheck = new HealthMetricsImpl(metricsRegistry);
-        this.tableWriter = new TableWriterMetrics(metricsRegistry);
+        this.tableWriterMetrics = new TableWriterMetrics(metricsRegistry);
         this.walMetrics = new WalMetrics(metricsRegistry);
         createMemoryGauges(metricsRegistry);
         this.metricsRegistry = metricsRegistry;
@@ -86,7 +86,7 @@ public class Metrics implements Target, Mutable {
         pgWireMetrics.clear();
         lineMetrics.clear();
         healthCheck.clear();
-        tableWriter.clear();
+        tableWriterMetrics.clear();
         walMetrics.clear();
         workerMetrics.clear();
         httpMetrics.clear();
@@ -134,7 +134,7 @@ public class Metrics implements Target, Mutable {
     }
 
     public TableWriterMetrics tableWriterMetrics() {
-        return tableWriter;
+        return tableWriterMetrics;
     }
 
     public WalMetrics walMetrics() {

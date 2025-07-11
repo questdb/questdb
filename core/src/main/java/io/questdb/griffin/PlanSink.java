@@ -113,6 +113,8 @@ public interface PlanSink {
 
     PlanSink val(Plannable s);
 
+    PlanSink val(Plannable s, RecordCursorFactory factory);
+
     PlanSink val(long hash, int geoHashBits);
 
     PlanSink valIPv4(int ip);

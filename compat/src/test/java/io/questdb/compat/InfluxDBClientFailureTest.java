@@ -132,26 +132,16 @@ public class InfluxDBClientFailureTest extends AbstractTest {
     @Test
     public void testCommitFailed() {
         final FilesFacade filesFacade = new FilesFacadeImpl() {
-            private final AtomicInteger counter = new AtomicInteger(2);
-
-            private long fd;
-
-            @Override
-            public long append(long fd, long buf, long len) {
-                if (fd == this.fd && counter.decrementAndGet() == 0) {
-                    throw CairoException.critical(24).put("test error");
-                }
-                return Files.append(fd, buf, len);
-            }
+            private final AtomicInteger counter = new AtomicInteger(1);
 
             @Override
             public long openRW(LPSZ name, long opts) {
-                long fd = super.openRW(name, opts);
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + EVENT_INDEX_FILE_NAME)
-                        && Utf8s.containsAscii(name, "failed_table")) {
-                    this.fd = fd;
+                        && Utf8s.containsAscii(name, "failed_table")
+                        && (counter.getAndDecrement() > 0)) {
+                    return -1;
                 }
-                return fd;
+                return super.openRW(name, opts);
             }
         };
 
@@ -169,8 +159,12 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                 points.add("first_table,ok=true allgood=true\n");
                 points.add("second_table,ok=true allgood=true\n");
-                InfluxDBUtils.assertRequestErrorContains(influxDB, points, "failed_table,tag1=value1 f1=1i,y=12i",
-                        "{\"code\":\"internal error\",\"message\":\"commit error for table: failed_table, errno: 24, error: test error\",\"errorId\":"
+
+                InfluxDBUtils.assertRequestErrorContains(
+                        influxDB,
+                        points,
+                        "failed_table,tag1=value1 f1=1i,y=12i",
+                        "{\"code\":\"internal error\",\"message\":\"failed to parse line protocol:errors encountered on line(s):write error: failed_table, errno: 2, error: could not open read-write"
                 );
 
                 // Retry is ok
@@ -328,10 +322,10 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             }
 
             serverMain.awaitTxn("good", 1);
-            assertSql(serverMain.getEngine(), "select count() from good", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from good", "count()\n" +
                     "1\n");
             serverMain.awaitTable("drop");
-            assertSql(serverMain.getEngine(), "select count() from \"drop\"", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from \"drop\"", "count()\n" +
                     "1\n");
         }
     }

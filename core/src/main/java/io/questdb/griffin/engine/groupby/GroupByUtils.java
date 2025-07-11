@@ -32,12 +32,14 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
+import io.questdb.griffin.engine.functions.columns.ArrayColumn;
 import io.questdb.griffin.engine.functions.columns.BinColumn;
 import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.columns.ByteColumn;
@@ -76,6 +78,11 @@ import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 public class GroupByUtils {
 
+    public static final int PROJECTION_FUNCTION_FLAG_ANY = -1;
+    public static final int PROJECTION_FUNCTION_FLAG_COLUMN = 0;
+    public static final int PROJECTION_FUNCTION_FLAG_GROUP_BY = 2;
+    public static final int PROJECTION_FUNCTION_FLAG_VIRTUAL = 1;
+
     public static void assembleGroupByFunctions(
             @NotNull FunctionParser functionParser,
             @NotNull ArrayDeque<ExpressionNode> sqlNodeStack,
@@ -86,11 +93,12 @@ public class GroupByUtils {
             boolean timestampUnimportant,
             ObjList<GroupByFunction> outGroupByFunctions,
             IntList outGroupByFunctionPositions,
-            ObjList<Function> outRecordFunctions,
-            IntList outRecordFunctionPositions,
-            GenericRecordMetadata outGroupByMetadata,
-            @Nullable ObjList<Function> outKeyFunctions,
-            @Nullable ObjList<ExpressionNode> outKeyFunctionNodes,
+            ObjList<Function> outerProjectionFunctions, // projection presented by the group-by execution, values are typically read from the map
+            ObjList<Function> innerProjectionFunctions, // projection used by the group-by function to build maps
+            IntList projectionFunctionPositions,
+            IntList projectionFunctionFlags,
+            GenericRecordMetadata projectionMetadata,
+            PriorityMetadata outPriorityMetadata,
             ArrayColumnTypes outValueTypes,
             ArrayColumnTypes outKeyTypes,
             ListColumnFilter outColumnFilter,
@@ -99,36 +107,89 @@ public class GroupByUtils {
     ) throws SqlException {
         try {
             outGroupByFunctionPositions.clear();
-            outRecordFunctionPositions.clear();
+            projectionFunctionPositions.clear();
             int fillCount = sampleByFill != null ? sampleByFill.size() : 0;
 
             int columnKeyCount = 0;
             int lastIndex = -1;
             final ObjList<QueryColumn> columns = model.getColumns();
 
-            // There are two iterations over the model's columns. The first iterations creates value
-            // slots for the group-by functions. They are added first because each group-by function is likely
-            // to require several slots. The number of slots for each function is not known upfront and
-            // is effectively evaluates in the first loop.
+            // compile functions upfront and assemble the metadata for group-by
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final QueryColumn column = columns.getQuick(i);
                 final ExpressionNode node = column.getAst();
-
-                if (node.type != LITERAL) {
-                    // this can fail
-                    final Function function = functionParser.parseFunction(
+                final int index = baseMetadata.getColumnIndexQuiet(node.token);
+                TableColumnMetadata m = null;
+                if (node.type != LITERAL || index != timestampIndex || timestampUnimportant) {
+                    Function func = functionParser.parseFunction(
                             node,
                             baseMetadata,
                             executionContext
                     );
 
-                    if (model.isMatView() && function.isNonDeterministic()) {
-                        throw SqlException.nonDeterministicColumn(node.position, node.token);
+                    // functions added to the outer projections will later be replaced by column references
+                    outerProjectionFunctions.add(func);
+                    innerProjectionFunctions.add(func);
+
+                    if (node.type != LITERAL) {
+
+                        m = new TableColumnMetadata(
+                                Chars.toString(column.getName()),
+                                func.getType(),
+                                false,
+                                0,
+                                func instanceof SymbolFunction && (((SymbolFunction) func).isSymbolTableStatic()),
+                                func.getMetadata()
+                        );
+
+                        if (func instanceof GroupByFunction) {
+                            projectionFunctionFlags.add(PROJECTION_FUNCTION_FLAG_GROUP_BY);
+                        } else {
+                            projectionFunctionFlags.add(PROJECTION_FUNCTION_FLAG_VIRTUAL);
+                        }
+                    } else {
+                        projectionFunctionFlags.add(PROJECTION_FUNCTION_FLAG_COLUMN);
                     }
+                } else {
+                    // set this function to null, cursor will replace it with an instance class
+                    // timestamp function returns value of class member which makes it impossible
+                    // to create these columns in advance of cursor instantiation
+                    outerProjectionFunctions.add(null);
+                    projectionFunctionFlags.add(PROJECTION_FUNCTION_FLAG_COLUMN);
 
-                    // record functions will have all model function, including consecutive duplicates
-                    outRecordFunctions.add(function);
+                    if (projectionMetadata.getTimestampIndex() == -1) {
+                        projectionMetadata.setTimestampIndex(i);
+                    }
+                }
 
+                if (m == null) {
+                    if (column.getAlias() == null) {
+                        m = baseMetadata.getColumnMetadata(index);
+                    } else {
+                        m = new TableColumnMetadata(
+                                Chars.toString(column.getAlias()),
+                                baseMetadata.getColumnType(index),
+                                baseMetadata.isColumnIndexed(index),
+                                baseMetadata.getIndexValueBlockCapacity(index),
+                                baseMetadata.isSymbolTableStatic(index),
+                                baseMetadata.getMetadata(index)
+                        );
+                    }
+                }
+                projectionMetadata.add(m);
+                outPriorityMetadata.add(m);
+            }
+
+            // There are two iterations over the model's columns. The first iterations create value
+            // slots for the group-by functions. They are added first because each group-by function is likely
+            // to require several slots. The number of slots for each function is not known upfront and
+            // is effectively evaluated in the first loop.
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final QueryColumn column = columns.getQuick(i);
+                final ExpressionNode node = column.getAst();
+
+                if (node.type != LITERAL) {
+                    Function function = outerProjectionFunctions.getQuick(i);
                     if (function instanceof GroupByFunction) {
                         // configure map value columns for group-by functions
                         // some functions may need more than one column in values,
@@ -170,26 +231,15 @@ public class GroupByUtils {
                             }
                         }
                         func.initValueTypes(outValueTypes);
-                    } else {
-                        // it's a key function
-                        if (outKeyFunctions == null || outKeyFunctionNodes == null) {
-                            throw SqlException.$(node.position, "key functions are supported in GROUP BY only [function=").put(node).put(']');
-                        }
-                        outKeyFunctions.add(function);
-                        outKeyFunctionNodes.add(node);
                     }
                 } else {
-                    // function is unknown at this iteration, because we cannot create function not knowing
-                    // the slot in the map it will occupy.
-                    outRecordFunctions.add(null);
-
                     int index = baseMetadata.getColumnIndexQuiet(node.token);
                     if (index == -1) {
                         throw SqlException.invalidColumn(node.position, node.token);
                     }
 
                     if (index != timestampIndex || timestampUnimportant) {
-                        // when we have same column several times in a row
+                        // when we have the same column several times in a row,
                         // we only add it once to map keys
                         if (lastIndex != index) {
                             columnKeyCount++;
@@ -197,7 +247,7 @@ public class GroupByUtils {
                         }
                     }
                 }
-                outRecordFunctionPositions.add(node.position);
+                projectionFunctionPositions.add(node.position);
             }
 
             int valueCount = outValueTypes.getColumnCount();
@@ -215,6 +265,7 @@ public class GroupByUtils {
                     // column index has already been validated
                     int index = baseMetadata.getColumnIndexQuiet(node.token);
                     type = baseMetadata.getColumnType(index);
+
                     if (index != timestampIndex || timestampUnimportant) {
                         if (lastIndex != index) {
                             outColumnFilter.add(index + 1);
@@ -222,35 +273,13 @@ public class GroupByUtils {
                             keyColumnIndex++;
                             lastIndex = index;
                         }
-                        outRecordFunctions.set(i, createColumnFunction(baseMetadata, keyColumnIndex, type, index));
-                    } else {
-                        // set this function to null, cursor will replace it with an instance class
-                        // timestamp function returns value of class member which makes it impossible
-                        // to create these columns in advance of cursor instantiation
-                        if (outGroupByMetadata.getTimestampIndex() == -1) {
-                            outGroupByMetadata.setTimestampIndex(i);
-                        }
-                        assert ColumnType.tagOf(type) == ColumnType.TIMESTAMP;
+                        outerProjectionFunctions.set(i, createColumnFunction(baseMetadata, keyColumnIndex, type, index));
                     }
 
                     // and finish with populating metadata for this factory
-                    if (column.getAlias() == null) {
-                        outGroupByMetadata.add(baseMetadata.getColumnMetadata(index));
-                    } else {
-                        outGroupByMetadata.add(
-                                new TableColumnMetadata(
-                                        Chars.toString(column.getAlias()),
-                                        type,
-                                        baseMetadata.isColumnIndexed(index),
-                                        baseMetadata.getIndexValueBlockCapacity(index),
-                                        baseMetadata.isSymbolTableStatic(index),
-                                        baseMetadata.getMetadata(index)
-                                )
-                        );
-                    }
                     inferredKeyColumnCount++;
                 } else {
-                    Function func = outRecordFunctions.getQuick(i);
+                    Function func = outerProjectionFunctions.getQuick(i);
 
                     if (!(func instanceof GroupByFunction)) {
                         // leave group-by function alone but re-write non-group-by functions as column references
@@ -261,30 +290,15 @@ public class GroupByUtils {
                             // must be a function key, so we need to cast it to symbol
                             columnRefFunc = new CastStrToSymbolFunctionFactory.Func(columnRefFunc);
                         }
-
                         // override function with column ref function
-                        func = columnRefFunc;
-                        outRecordFunctions.set(i, columnRefFunc);
+                        outerProjectionFunctions.set(i, columnRefFunc);
                         inferredKeyColumnCount++;
                     }
-
-                    // and finish with populating metadata for this factory
-                    outGroupByMetadata.add(
-                            new TableColumnMetadata(
-                                    Chars.toString(column.getName()),
-                                    func.getType(),
-                                    false,
-                                    0,
-                                    func instanceof SymbolFunction && (((SymbolFunction) func).isSymbolTableStatic()),
-                                    func.getMetadata()
-                            )
-                    );
                 }
             }
             validateGroupByColumns(sqlNodeStack, model, inferredKeyColumnCount);
         } catch (Throwable e) {
-            Misc.freeObjList(outGroupByFunctions);
-            Misc.freeObjList(outKeyFunctions);
+            Misc.freeObjListAndClear(outerProjectionFunctions);
             throw e;
         }
     }
@@ -307,13 +321,13 @@ public class GroupByUtils {
                 func = ShortColumn.newInstance(keyColumnIndex - 1);
                 break;
             case ColumnType.CHAR:
-                func = CharColumn.newInstance(keyColumnIndex - 1);
+                func = new CharColumn(keyColumnIndex - 1);
                 break;
             case ColumnType.INT:
                 func = IntColumn.newInstance(keyColumnIndex - 1);
                 break;
             case ColumnType.IPv4:
-                func = IPv4Column.newInstance(keyColumnIndex - 1);
+                func = new IPv4Column(keyColumnIndex - 1);
                 break;
             case ColumnType.LONG:
                 func = LongColumn.newInstance(keyColumnIndex - 1);
@@ -325,10 +339,10 @@ public class GroupByUtils {
                 func = DoubleColumn.newInstance(keyColumnIndex - 1);
                 break;
             case ColumnType.STRING:
-                func = StrColumn.newInstance(keyColumnIndex - 1);
+                func = new StrColumn(keyColumnIndex - 1);
                 break;
             case ColumnType.VARCHAR:
-                func = VarcharColumn.newInstance(keyColumnIndex - 1);
+                func = new VarcharColumn(keyColumnIndex - 1);
                 break;
             case ColumnType.SYMBOL:
                 if (metadata != null) {
@@ -368,6 +382,9 @@ public class GroupByUtils {
                 break;
             case ColumnType.INTERVAL:
                 func = IntervalColumn.newInstance(keyColumnIndex - 1);
+                break;
+            case ColumnType.ARRAY:
+                func = new ArrayColumn(keyColumnIndex - 1, type);
                 break;
             default:
                 func = BinColumn.newInstance(keyColumnIndex - 1);
@@ -473,12 +490,12 @@ public class GroupByUtils {
             final ExpressionNode key = groupByColumns.getQuick(i);
             switch (key.type) {
                 case ExpressionNode.LITERAL:
-                    final int dotIndex = Chars.indexOf(key.token, '.');
+                    final int dotIndex = Chars.indexOfLastUnquoted(key.token, '.');
 
                     if (dotIndex > -1) {
                         int aliasIndex = model.getModelAliasIndex(key.token, 0, dotIndex);
                         if (aliasIndex > -1) {
-                            // we should now check against main model
+                            // we should now check against the main model
                             int refColumn = model.getAliasToColumnMap().keyIndex(key.token);
                             if (refColumn > -1) {
                                 // a.x not found, look for "x"
@@ -489,8 +506,8 @@ public class GroupByUtils {
                                 throw SqlException.$(key.position, "group by column does not match any key column is select statement");
                             }
                         } else {
-                            // the table alias could be referencing join model
-                            // we need to descend to first NONE model and see if that can resolve columns we are
+                            // the table alias could be referencing a join model
+                            // we need to descend to the first NONE model and see if that can resolve columns we are
                             // looking for
                             if (chooseModel != null && chooseModel.getColumnNameToAliasMap().keyIndex(key.token) < 0) {
                                 continue;

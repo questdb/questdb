@@ -196,9 +196,9 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             String errorDirName,
             TableToken conflictTableToken
     ) {
-        LOG.critical().$("duplicate table dir to name mapping found [tableName=").utf8(errorTableName)
-                .$(", dirName1=").utf8(conflictTableToken.getDirName())
-                .$(", dirName2=").utf8(errorDirName)
+        LOG.critical().$("duplicate table dir to name mapping found [tableName=").$safe(errorTableName)
+                .$(", dirName1=").$(conflictTableToken.getDirNameUtf8())
+                .$(", dirName2=").$safe(errorDirName)
                 .I$();
         dumpTableRegistry(lastFileVersion);
         if (isLocked()) {
@@ -292,8 +292,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             currentOffset += Integer.BYTES;
 
             LOG.advisoryW().$("operation=").$(operation == OPERATION_ADD ? "add (" : "remove (").$(operation)
-                    .$("), tableName=").utf8(tableName)
-                    .$(", dirName=").utf8(dirName)
+                    .$("), tableName=").$safe(tableName)
+                    .$(", dirName=").$safe(dirName)
                     .$(", tableId=").$(tableId)
                     .$(", tableType=").$(tableType)
                     .$(']').$();
@@ -383,8 +383,9 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                                 // One of the tables can be in pending drop state.
                                 if (!resolveTableNameConflict(tableNameToTableTokenMap, dirNameToTableTokenMap, token, existingTableToken, ff, path, plimit)) {
                                     LOG.critical().$("duplicate table name found, table will not be available [dirName=").$(dirNameSink)
-                                            .$(", name=").utf8(tableName)
-                                            .$(", existingTableDir=").utf8(tableNameToTableTokenMap.get(tableName).getDirName())
+                                            .$(", name=").$safe(tableName)
+                                            .$(", existingTableDir=")
+                                            .$(tableNameToTableTokenMap.get(tableName).getDirNameUtf8())
                                             .I$();
                                 }
                                 continue;
@@ -506,7 +507,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     tableNameToTableTokenMap.put(tableName, token);
                     if (!Chars.startsWith(token.getDirName(), token.getTableName())) {
                         // This table is renamed, log system to real table name mapping
-                        LOG.debug().$("table dir name does not match logical name [table=").utf8(tableName).$(", dirName=").utf8(dirName).I$();
+                        LOG.debug().$("table dir name does not match logical name [table=").$safe(tableName).$(", dirName=").$safe(dirName).I$();
                     }
                     dirNameToTableTokenMap.put(token.getDirName(), ReverseTableMapItem.of(token));
                 }

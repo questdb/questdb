@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import org.jetbrains.annotations.Nullable;
 
@@ -49,6 +50,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     // number of rows either returned by SELECT operation or affected by UPDATE or INSERT
     private long affectedRowsCount;
     private AlterOperation alterOp;
+    private boolean done;
     private InsertOperation insertOp;
     private boolean isExecutedAtParseTime;
     private Operation operation;
@@ -61,14 +63,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private UpdateOperation updateOp;
 
     public CompiledQueryImpl(CairoEngine engine) {
-        // type inference fails on java 8 if <UpdateOperation> is removed
         updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution") {
             @Override
             protected long apply(UpdateOperation operation, TableWriterAPI writerAPI) {
                 return writerAPI.apply(operation);
             }
         };
-        // type inference fails on java 8 if <AlterOperation> is removed
         alterOperationDispatcher = new OperationDispatcher<>(engine, "Alter table execute") {
             @Override
             protected long apply(AlterOperation operation, TableWriterAPI writerAPI) {
@@ -92,6 +92,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.statementName = null;
         this.operation = null;
         this.isExecutedAtParseTime = false;
+        this.done = false;
+    }
+
+    public void done() {
+        this.done = true;
     }
 
     @Override
@@ -105,9 +110,18 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
             SCSequence eventSubSeq,
             boolean closeOnDone
     ) throws SqlException {
+        if (done) {
+            return doneFuture.of(0);
+        }
+
         switch (type) {
             case INSERT:
-                return insertOp.execute(sqlExecutionContext);
+            case INSERT_AS_SELECT:
+                OperationFuture future = insertOp.execute(sqlExecutionContext);
+                if (closeOnDone) {
+                    Misc.free(insertOp);
+                }
+                return future;
             case UPDATE:
                 updateOp.withSqlStatement(sqlStatement);
                 return updateOperationDispatcher.execute(updateOp, sqlExecutionContext, eventSubSeq, closeOnDone);
@@ -138,11 +152,6 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     @Override
     public AlterOperation getAlterOperation() {
         return alterOp;
-    }
-
-    @Override
-    public InsertOperation getInsertOperation() {
-        return insertOp;
     }
 
     @Override
@@ -262,16 +271,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
-    public void ofInsert(InsertOperation insertOperation) {
+    public void ofInsert(InsertOperation insertOperation, boolean isInsectAsSelect) {
         this.insertOp = insertOperation;
-        of(INSERT);
+        of(isInsectAsSelect ? INSERT_AS_SELECT : INSERT);
         this.isExecutedAtParseTime = false;
-    }
-
-    public void ofInsertAsSelect(long affectedRowsCount) {
-        of(INSERT_AS_SELECT);
-        this.affectedRowsCount = affectedRowsCount;
-        this.isExecutedAtParseTime = true;
     }
 
     // although executor was there it had to fail back to the model
@@ -349,11 +352,20 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = true;
     }
 
+    @Override
+    public InsertOperation popInsertOperation() {
+        InsertOperation op = insertOp;
+        this.insertOp = null;
+        return op;
+    }
+
+    @Override
     public CompiledQueryImpl withContext(SqlExecutionContext sqlExecutionContext) {
         this.sqlExecutionContext = sqlExecutionContext;
         return this;
     }
 
+    @Override
     public void withSqlText(String sqlText) {
         this.sqlStatement = sqlText;
     }

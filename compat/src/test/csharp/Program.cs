@@ -1,8 +1,10 @@
 ﻿using System.Globalization;
+using System.Text;
 using Npgsql;
 using NpgsqlTypes;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
+using InvalidCastException = System.InvalidCastException;
 
 namespace csharp;
 
@@ -198,7 +200,8 @@ public class TestRunner
                 var row = new OrderedDictionary<string, object>();
                 for (var i = 0; i < reader.FieldCount; i++)
                 {
-                    row[reader.GetName(i)] = reader.GetValue(i);
+                    string fieldName = reader.GetName(i);
+                    row[fieldName] = reader.GetValue(i);
                 }
 
                 result.Add(row);
@@ -249,6 +252,7 @@ public class TestRunner
         "timestamp" => NpgsqlDbType.Timestamp,
         "date" => NpgsqlDbType.Date,
         "char" => NpgsqlDbType.Char,
+        "array_float8" => NpgsqlDbType.Double | NpgsqlDbType.Array,
         _ => throw new ArgumentException($"Unsupported type: {type}")
     };
 
@@ -263,8 +267,33 @@ public class TestRunner
             "date" => DateTime.Parse(value.ToString()!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
             "char" => Convert.ToChar(value),
             "timestamp" => DateTime.Parse(value.ToString()!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+            "array_float8" =>  ParseFloatArray(value.ToString()),
             _ => value
         };
+    }
+    
+    private double?[] ParseFloatArray(string? arrayString)
+    {
+        if (string.IsNullOrEmpty(arrayString))
+            return Array.Empty<double?>();
+
+        // Remove the curly braces and split by comma
+        string trimmed = arrayString.Trim().TrimStart('{').TrimEnd('}');
+
+        // Handle empty array case
+        if (string.IsNullOrWhiteSpace(trimmed))
+            return Array.Empty<double?>();
+
+        // Split the string by commas and convert each element to nullable double
+        return trimmed.Split(',')
+            .Select(s => {
+                string value = s.Trim();
+                if (string.Equals(value, "NULL", StringComparison.OrdinalIgnoreCase))
+                    return (double?)null;  // Explicit cast to double?
+                else
+                    return Convert.ToDouble(value, CultureInfo.InvariantCulture);
+            })
+            .ToArray();
     }
 
     private void AssertResult(ExpectDefinition expect, object actual)
@@ -320,14 +349,81 @@ public class TestRunner
                     DateTime dt => (object)dt.ToString("yyyy-MM-ddTHH:mm:ss.ffffffZ"),
                     // Convert all numeric types to string and cast back to object
                     long l => l.ToString(CultureInfo.InvariantCulture),
-                    double d => d.ToString(CultureInfo.InvariantCulture),
+                    double d => d.ToString("0.0########", CultureInfo.InvariantCulture),
                     int i => i.ToString(CultureInfo.InvariantCulture),
                     short s => s.ToString(CultureInfo.InvariantCulture),
                     decimal dec => dec.ToString(CultureInfo.InvariantCulture),
+                    double[] doubleArray => ArrayToText(doubleArray),
+                    double[,] array => ArrayToText(array),
                     _ => value.ToString() ?? ""
                 })
                 .ToList())
             .ToList();
+    }
+   
+   
+    // Process any array object into PostgreSQL text format
+    private static string ArrayToText(object arrayValue)
+    {
+        if (arrayValue == null)
+        {
+            return "NULL";
+        }
+
+        var sb = new StringBuilder();
+        var arr = (Array)arrayValue;
+        ProcessDimension(arr, 0, new int[arr.Rank], sb);
+        return sb.ToString();
+    }
+    
+    // Recursive method to process array dimensions - closely matches your Java implementation
+    private static void ProcessDimension(Array array, int dim, int[] indices, StringBuilder sb)
+    {
+        int count = array.GetLength(dim);
+        bool atDeepestDim = (dim == array.Rank - 1);
+        
+        // Opening brace
+        sb.Append('{');
+        
+        for (int i = 0; i < count; i++)
+        {
+            // Add comma between elements
+            if (i > 0)
+                sb.Append(',');
+                
+            indices[dim] = i;
+            
+            if (atDeepestDim)
+            {
+                // At leaf level, append the actual value
+                object? value = array.GetValue(indices);
+                
+                if (value == null || value is DBNull)
+                {
+                    sb.Append("NULL");
+                }
+                else if (value is double d)
+                {
+                    // Ensure decimal point for integer values
+                    if (Math.Abs(d % 1) < double.Epsilon)
+                        sb.Append($"{d:0.0}");
+                    else
+                        sb.Append(d);
+                }
+                else
+                {
+                    sb.Append(value);
+                }
+            }
+            else
+            {
+                // For nested dimensions, recurse
+                ProcessDimension(array, dim + 1, indices, sb);
+            }
+        }
+        
+        // Closing brace
+        sb.Append('}');
     }
 
     private bool DeepEquals(object obj1, object obj2)

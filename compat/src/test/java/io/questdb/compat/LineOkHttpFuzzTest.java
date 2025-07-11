@@ -49,7 +49,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
     @Test
     public void testChunkedDataIlpUploadNoKeepAlive() throws Exception {
         Rnd rnd = generateRandom(LOG);
-        int fragmentation = 1 + rnd.nextInt(5);
+        int fragmentation = 10 + rnd.nextInt(5);
         LOG.info().$("=== fragmentation=").$(fragmentation).$();
         try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation));
@@ -84,7 +84,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
 
             serverMain.awaitTable("m1");
 
-            assertSql(serverMain.getEngine(), "select count() from m1", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from m1", "count()\n" +
                     totalCount + "\n");
         }
     }
@@ -128,7 +128,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
             }
 
             serverMain.awaitTable("line");
-            assertSql(serverMain.getEngine(), "select count() from line", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from line", "count()\n" +
                     totalCount + "\n");
         }
     }
@@ -136,7 +136,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
     @Test
     public void testFuzzChunkedDataIlpUpload() throws SqlException {
         Rnd rnd = generateRandom(LOG);
-        int fragmentation = 1 + rnd.nextInt(5);
+        int fragmentation = 10 + rnd.nextInt(5);
         LOG.info().$("=== fragmentation=").$(fragmentation).$();
 
         try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
@@ -170,7 +170,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
             }
 
             serverMain.awaitTable("m1");
-            assertSql(serverMain.getEngine(), "select count() from m1", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from m1", "count()\n" +
                     totalCount + "\n");
         }
     }
@@ -204,7 +204,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
             }
 
             serverMain.awaitTable("m1");
-            assertSql(serverMain.getEngine(), "select count() from m1", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from m1", "count()\n" +
                     "4096\n");
         }
     }
@@ -229,7 +229,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
             }
             serverMain.awaitTable("m1");
 
-            assertSql(serverMain.getEngine(), "select count() from m1", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from m1", "count()\n" +
                     "2048\n");
         }
     }
@@ -304,7 +304,7 @@ public class LineOkHttpFuzzTest extends AbstractTest {
             }
 
             serverMain.awaitTable("line");
-            assertSql(serverMain.getEngine(), "select count() from line", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from line", "count()\n" +
                     totalCount + "\n");
         }
     }

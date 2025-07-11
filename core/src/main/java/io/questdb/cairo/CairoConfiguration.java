@@ -33,7 +33,6 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IOURingFacade;
 import io.questdb.std.IOURingFacadeImpl;
@@ -50,6 +49,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -71,6 +71,16 @@ public interface CairoConfiguration {
     }
 
     boolean enableTestFactories();
+
+    /**
+     * Exports subset of configuration parameters into a sink. Configuration
+     * parameters are exported in JSON format.
+     *
+     * @return true if anything was exported
+     */
+    default boolean exportConfiguration(CharSink<?> sink) {
+        return false;
+    }
 
     default boolean freeLeakedReaders() {
         return true;
@@ -120,6 +130,14 @@ public interface CairoConfiguration {
     @NotNull
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
+    /**
+     * Maximum size for a generated alias, the column will be truncated if it's longer than that. Note
+     * that this flag only works if isColumnAliasExpressionEnabled is enabled.
+     *
+     * @return the maximum size of a generated alias.
+     */
+    int getColumnAliasGeneratedMaxSize();
+
     int getColumnIndexerQueueCapacity();
 
     int getColumnPurgeQueueCapacity();
@@ -132,9 +150,7 @@ public interface CairoConfiguration {
 
     int getColumnPurgeTaskPoolCapacity();
 
-    default long getCommitLatency() {
-        return 30_000_000; // 30s
-    }
+    long getCommitLatency();
 
     int getCommitMode();
 
@@ -263,9 +279,13 @@ public interface CairoConfiguration {
 
     long getMatViewInsertAsSelectBatchSize();
 
+    int getMatViewMaxRefreshIntervals();
+
     int getMatViewMaxRefreshRetries();
 
     long getMatViewMinRefreshInterval();
+
+    long getMatViewRefreshIntervalsUpdatePeriod();
 
     long getMatViewRefreshOomRetryTimeout();
 
@@ -372,6 +392,8 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
+    int getPreferencesStringPoolCapacity();
+
     int getQueryCacheEventQueueCapacity();
 
     int getQueryRegistryPoolSize();
@@ -425,6 +447,10 @@ public interface CairoConfiguration {
     long getSpinLockTimeout();
 
     int getSqlAsOfJoinLookAhead();
+
+    int getSqlAsOfJoinMapEvacuationThreshold();
+
+    int getSqlAsOfJoinShortCircuitCacheCapacity();
 
     int getSqlCharacterStoreCapacity();
 
@@ -546,6 +572,8 @@ public interface CairoConfiguration {
 
     int getStrFunctionMaxBufferLength();
 
+    long getSymbolTableAppendPageSize();
+
     long getSystemDataAppendPageSize();
 
     int getSystemO3ColumnMemorySize();
@@ -649,6 +677,13 @@ public interface CairoConfiguration {
      */
     boolean isCheckpointRecoveryEnabled();
 
+    /**
+     * This is a flag to enable/disable the generation of column alias based on the expression passed as a query.
+     *
+     * @return true if SqlParser should return the expression normalized instead of the default behavior.
+     */
+    boolean isColumnAliasExpressionEnabled();
+
     boolean isDevModeEnabled();
 
     boolean isGroupByPresizeEnabled();
@@ -729,8 +764,9 @@ public interface CairoConfiguration {
      */
     boolean mangleTableDirNames();
 
-    default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-    }
+    int maxArrayElementCount();
 
     boolean useFastAsOfJoin();
+
+    boolean useWithinLatestByOptimisation();
 }

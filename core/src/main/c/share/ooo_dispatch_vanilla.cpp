@@ -48,7 +48,7 @@ template<class T>
 inline void re_shuffle(const T *src, T *dest, const index_t *index, const int64_t count) {
     for (int64_t i = 0; i < count; i++) {
         dest[i] = src[index[i].i];
-    };
+    }
 }
 
 // 0, 3
@@ -100,9 +100,6 @@ void merge_copy_varchar_column(
 ) {
     int64_t *src_fix[] = {src_ooo_fix, src_data_fix};
     char *src_var[] = {src_ooo_var, src_data_var};
-
-    // todo: perf. optimizations
-    // todo: check types, possible UB, etc.
     for (int64_t l = 0; l < merge_index_size; l++) {
         const uint64_t row = merge_index[l].i;
         const uint32_t bit = (row >> 63);
@@ -113,7 +110,6 @@ void merge_copy_varchar_column(
         auto originalData = secondWord & 0x000000000000ffffLL;
         auto rellocatedSecondWord = originalData | (dst_var_offset << 16);
         if ((firstWord & 1) == 0 && (firstWord & 4) == 0) {
-            // todo: is this branch needed? perhaps we can get away without it?
             // not inlined and not null
             auto originalOffset = secondWord >> 16;
             auto len = (firstWord >> 4) & 0xffffff;
@@ -123,6 +119,38 @@ void merge_copy_varchar_column(
         }
         dst_fix[l * 2] = firstWord;
         dst_fix[l * 2 + 1] = rellocatedSecondWord;
+    }
+}
+
+void merge_copy_array_column(
+        index_t *merge_index,
+        int64_t merge_index_size,
+        int64_t *src_data_fix,
+        char *src_data_var,
+        int64_t *src_ooo_fix,
+        char *src_ooo_var,
+        int64_t *dst_fix,
+        char *dst_var,
+        int64_t dst_var_offset
+) {
+    int64_t *src_fix[] = {src_ooo_fix, src_data_fix};
+    char *src_var[] = {src_ooo_var, src_data_var};
+    for (int64_t l = 0; l < merge_index_size; l++) {
+        const uint64_t row = merge_index[l].i;
+        const uint32_t bit = (row >> 63);
+        const uint64_t rr = row & ~(1ull << 63);
+        const int64_t offset = src_fix[bit][rr * 2] & OFFSET_MAX;
+        uint32_t size = static_cast<int>(src_fix[bit][rr * 2 + 1] & ARRAY_SIZE_MAX);
+
+        const auto relocated_var_offset = dst_var_offset & OFFSET_MAX;
+        if (size > 0) {
+            // not inlined and not null
+            auto data = src_var[bit] + offset;
+            __MEMCPY(dst_var + dst_var_offset, data, size);
+            dst_var_offset += size;
+        }
+        dst_fix[l * 2] = relocated_var_offset;
+        dst_fix[l * 2 + 1] = size;
     }
 }
 
@@ -196,7 +224,7 @@ void re_shuffle_128bit(const __int128 *src, __int128 *dest, const index_t *index
 
 // 12
 void merge_shuffle_int64(const int64_t *src1, const int64_t *src2, int64_t *dest, const index_t *index,
-                                const int64_t count) {
+                         const int64_t count) {
     merge_shuffle_vanilla<int64_t>(src1, src2, dest, index, count);
 }
 
@@ -249,12 +277,12 @@ void set_memory_vanilla_short(int16_t *data, const int16_t value, const int64_t 
 }
 
 // 24
-void set_var_refs_64_bit(int64_t *data, int64_t offset, int64_t count) {
+void set_binary_column_null_refs(int64_t *data, int64_t offset, int64_t count) {
     set_var_refs<sizeof(int64_t)>(data, offset, count);
 }
 
 // 25
-void set_var_refs_32_bit(int64_t *data, int64_t offset, int64_t count) {
+void set_string_column_null_refs(int64_t *data, int64_t offset, int64_t count) {
     set_var_refs<sizeof(int32_t)>(data, offset, count);
 }
 
@@ -294,8 +322,27 @@ void copy_index_timestamp(index_t *index, int64_t index_lo, int64_t index_hi, in
 
 // 30
 void set_varchar_null_refs(int64_t *aux, int64_t offset, int64_t count) {
+    auto o = offset << 16;
     for (int64_t i = 0; i < 2 * count; i += 2) {
-        aux[i] = 4;                 // null flag
-        aux[i + 1] = offset << 16;  // offset for subsequent null varchars stays the same
+        aux[i] = 4;      // null flag
+        aux[i + 1] = o;  // offset for subsequent null varchars stays the same
     }
 }
+
+// 31
+void set_array_null_refs(int64_t *aux, int64_t offset, int64_t count) {
+    for (int64_t i = 0; i < 2 * count; i += 2) {
+        aux[i] = offset;
+        aux[i + 1] = 0; // null flag
+    }
+}
+
+// 32
+void shift_copy_array_aux(int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest) {
+    const int64_t count = 2 * (src_hi - src_lo + 1);
+    for (int64_t i = 0; i < count; i += 2) {
+        dest[i] = src[i + 2 * src_lo] - shift;
+        dest[i + 1] = src[i + 2 * src_lo + 1];
+    }
+}
+

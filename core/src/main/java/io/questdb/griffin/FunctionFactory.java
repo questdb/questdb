@@ -41,31 +41,31 @@ public interface FunctionFactory {
      * <p>
      * Argument types are represented by single character from this table:
      * <ul>
+     * <li>A = char</li>
      * <li>B = byte</li>
      * <li>C = cursor</li>
-     * <li>E = short</li>
-     * <li>I = int</li>
-     * <li>L = long</li>
-     * <li>F = float</li>
      * <li>D = double</li>
-     * <li>S = string</li>
-     * <li>A = char</li>
+     * <li>E = short</li>
+     * <li>F = float</li>
+     * <li>G = GeoHash</li>
+     * <li>H = long256</li>
+     * <li>I = int</li>
+     * <li>J = long128</li>
      * <li>K = symbol</li>
-     * <li>T = boolean</li>
+     * <li>L = long</li>
      * <li>M = date</li>
      * <li>N = timestamp</li>
-     * <li>U = binary</li>
-     * <li>V = variable argument list</li>
-     * <li>R = record</li>
-     * <li>H = long256</li>
-     * <li>G = GeoHash</li>
      * <li>o = NULL - this type is used in cast()</li>
      * <li>p = REGCLASS - this type is used in cast()</li>
      * <li>q = REGPROCEDURE - this type is used in cast()</li>
-     * <li>J = long128</li>
-     * <li>Z = uuid</li>
+     * <li>R = record</li>
+     * <li>S = string</li>
+     * <li>T = boolean</li>
+     * <li>U = binary</li>
+     * <li>V = variable argument list</li>
      * <li>W = string array</li>
      * <li>X = ipv4</li>
+     * <li>Z = uuid</li>
      * <li>Ø(ø) = varchar</li>
      * <li>Δ(δ) = interval</li>
      * </ul>
@@ -126,6 +126,19 @@ public interface FunctionFactory {
      */
     default int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) throws SqlException {
         return ColumnType.STRING;
+    }
+
+    /**
+     * This method should return true when the function signature specifies two parameters
+     * of different types, but we want to accept them in the opposite order as well.
+     * <p>
+     * Example: {@code array + scalar}, where we also want to support {@code scalar + array}.
+     * <p>
+     * When this returns true, a function signature with the opposite parameter order will
+     * be automatically generated.
+     */
+    default boolean shouldSwapArgs() {
+        return false;
     }
 
     default boolean supportImplicitCastCharToStr() {

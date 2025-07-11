@@ -30,6 +30,7 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -68,6 +69,20 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
 
         Assert.assertTrue(graph.addView(viewDefinition));
         Assert.assertFalse(graph.addView(viewDefinition));
+    }
+
+    // loops
+    @Test
+    public void testDirectSelfLoop() {
+        TableToken viewA = newViewToken("viewA");
+
+        MatViewDefinition viewDefinition = createDefinition(viewA, viewA);
+        try {
+            graph.addView(viewDefinition);
+            Assert.fail("Expected a dependency loop exception");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
+        }
     }
 
     @Test
@@ -113,6 +128,24 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIndirectLoopViaSharedDependency() {
+        TableToken viewA = newViewToken("viewA");
+        TableToken viewB = newViewToken("viewB");
+        TableToken viewC = newViewToken("viewC");
+
+        addDefinition(viewA, viewB);
+        addDefinition(viewC, viewB);
+        MatViewDefinition viewDefinition = createDefinition(viewB, viewA);
+
+        try {
+            graph.addView(viewDefinition);
+            Assert.fail("Expected a dependency loop exception");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
+        }
+    }
+
+    @Test
     public void testNoViews() {
         newTableToken("table1");
         newTableToken("table2");
@@ -139,12 +172,16 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
         Assert.assertEquals("table1", ordered.getQuick(1).getTableName());
     }
 
-    // loops
     @Test
-    public void testDirectSelfLoop() {
+    public void testThreeLevelLoop() {
         TableToken viewA = newViewToken("viewA");
+        TableToken viewB = newViewToken("viewB");
+        TableToken viewC = newViewToken("viewC");
 
-        MatViewDefinition viewDefinition = createDefinition(viewA, viewA);
+        addDefinition(viewA, viewB);
+        addDefinition(viewB, viewC);
+        MatViewDefinition viewDefinition = createDefinition(viewC, viewA);
+
         try {
             graph.addView(viewDefinition);
             Assert.fail("Expected a dependency loop exception");
@@ -169,42 +206,6 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
         }
     }
 
-    @Test
-    public void testThreeLevelLoop() {
-        TableToken viewA = newViewToken("viewA");
-        TableToken viewB = newViewToken("viewB");
-        TableToken viewC = newViewToken("viewC");
-
-        addDefinition(viewA, viewB);
-        addDefinition(viewB, viewC);
-        MatViewDefinition viewDefinition = createDefinition(viewC, viewA);
-
-        try {
-            graph.addView(viewDefinition);
-            Assert.fail("Expected a dependency loop exception");
-        } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
-        }
-    }
-
-    @Test
-    public void testIndirectLoopViaSharedDependency() {
-        TableToken viewA = newViewToken("viewA");
-        TableToken viewB = newViewToken("viewB");
-        TableToken viewC = newViewToken("viewC");
-
-        addDefinition(viewA, viewB);
-        addDefinition(viewC, viewB);
-        MatViewDefinition viewDefinition = createDefinition(viewB, viewA);
-
-        try {
-            graph.addView(viewDefinition);
-            Assert.fail("Expected a dependency loop exception");
-        } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
-        }
-    }
-
     private void addDefinition(TableToken viewToken, TableToken baseTableToken) {
         MatViewDefinition viewDefinition = createDefinition(viewToken, baseTableToken);
         stateStore.addViewState(viewDefinition);
@@ -214,14 +215,24 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
     private MatViewDefinition createDefinition(TableToken viewToken, TableToken baseTableToken) {
         MatViewDefinition viewDefinition = new MatViewDefinition();
         viewDefinition.init(
-                MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
+                MatViewDefinition.REFRESH_TYPE_IMMEDIATE,
+                false,
                 viewToken,
                 "x",
                 baseTableToken.getTableName(),
                 0,
                 'm',
                 null,
-                null
+                null,
+                0,
+                0,
+                (char) 0,
+                Numbers.LONG_NULL,
+                null,
+                0,
+                (char) 0,
+                0,
+                (char) 0
         );
         return viewDefinition;
     }

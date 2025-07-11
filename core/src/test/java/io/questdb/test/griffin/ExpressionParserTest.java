@@ -34,6 +34,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static org.junit.Assert.assertEquals;
+
 public class ExpressionParserTest extends AbstractCairoTest {
     private final static RpnBuilder rpnBuilder = new RpnBuilder();
 
@@ -62,6 +64,36 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayCast() throws SqlException {
+        x("'{1, 2, 3, 4}' double[] cast", "cast('{1, 2, 3, 4}' as double[])");
+    }
+
+    @Test
+    public void testArrayConstruct() throws SqlException {
+        x("1 2 3 ARRAY", "ARRAY[1, 2, 3]");
+        x("1 2 ARRAY 3 ARRAY", "ARRAY[1, [2], 3]");
+        x("1 2 3 4 ARRAY ARRAY 5 ARRAY", "ARRAY[1, [2, [3, 4]], 5]");
+        x("x 1 []", "x[1]");
+        x("x 1 2 []", "x[1, 2]");
+        x("x.y 1 2 []", "x.y[1, 2]");
+        x("b i [] c i [] func", "func(b[i], c[i])");
+        x("1 2 func 3 ARRAY", "ARRAY[1, func(2), 3]");
+        x("1 func 2 []", "func(1)[2]");
+        x("1 2 func 3 [] 4 ARRAY", "ARRAY[1, func(2)[3], 4]");
+        x("1 2 func ARRAY 3 ARRAY", "ARRAY[1, [func(2)], 3]");
+        x("1 2 ARRAY 3 ARRAY", "ARRAY[1, ARRAY[2], 3]");
+        x("1 ARRAY 2 []", "ARRAY[1][2]");
+        x("1 2 ARRAY 3 [] 4 ARRAY", "ARRAY[1, ARRAY[2][3], 4]");
+    }
+
+    @Test
+    public void testArrayConstructInvalid() {
+        assertFail("ARRAY[1", 5, "unbalanced [");
+        assertFail("ARRAY[1, [1]", 5, "unbalanced [");
+        assertFail("ARRAY[1 2]", 8, "dangling expression");
+    }
+
+    @Test
     public void testArrayDereferenceExpr() throws SqlException {
         x("a i 10 + []", "a[i+10]");
     }
@@ -71,7 +103,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "a[]",
                 2,
-                "missing array index"
+                "empty brackets"
         );
     }
 
@@ -80,7 +112,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "a[",
                 1,
-                "unbalanced ]"
+                "unbalanced ["
         );
     }
 
@@ -89,7 +121,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "f(a[)",
                 3,
-                "unbalanced ]"
+                "unbalanced ["
         );
     }
 
@@ -97,8 +129,8 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testArrayDereferenceNotClosedFunctionArg() {
         assertFail(
                 "f(b,a[,c)",
-                5,
-                "unbalanced ]"
+                6,
+                "missing arguments"
         );
     }
 
@@ -108,6 +140,18 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 "nspname 'pg_toast' <> nspname '^pg_temp_' !~ nspname true pg_catalog.current_schemas 1 [] = or and",
                 "nspname <> 'pg_toast' AND (nspname !~ '^pg_temp_'  OR nspname = (pg_catalog.current_schemas(true))[1])"
         );
+    }
+
+    @Test
+    public void testArrayTypeErrorRecovery() throws Exception {
+        // Test that parser can handle multiple errors in sequence
+        assertException("select null::double [], null::int []", 20, "array type requires no whitespace");
+
+        // Test error recovery with different constructs
+        assertException("select x, null::double [], y from table", 23, "array type requires no whitespace");
+
+        // Test complex expressions with array errors
+        assertException("select (select null::double [] from dual)", 28, "array type requires no whitespace");
     }
 
     @Test
@@ -127,6 +171,64 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testBooleanLogicPrecedence() throws Exception {
         x("x y not =", "x = NOT y");
+    }
+
+    @Test
+    public void testBrutalArraySyntaxErrors() throws Exception {
+        // Multiple consecutive brackets
+        assertException("select null::[][][]", 13, "type definition is expected");
+        assertException("select null::][", 13, "syntax error");
+
+        // Brackets with numbers (common user mistake)
+        assertException("select null::double[1]", 20, "']' expected");
+        assertException("select null::int[0]", 17, "']' expected");
+        assertException("select null::varchar[255]", 21, "']' expected");
+
+        // Brackets with expressions
+        assertException("select null::double[x+1]", 20, "']' expected");
+        assertException("select null::int[null]", 17, "']' expected");
+
+        // Weird spacing patterns in brackets
+        assertException("select null::double[ ]", 21, "expected 'double[]' but found 'double[ ]'");
+        assertException("select null::int[\t]", 18, "expected 'int[]' but found 'int[\t]'");
+        assertException("select null::varchar[\n]", 22, "expected 'varchar[]' but found 'varchar[\n]'");
+
+        // Mixed bracket types
+        assertException("select null::double(]", 20, "syntax error");
+        assertException("select null::int[)", 17, "']' expected");
+
+        // Unicode brackets (if parser somehow accepts them)
+        assertException("select null::double【】", 13, "invalid constant: double【】");
+        assertException("select null::int〔〕", 13, "invalid constant: int〔〕");
+
+        // Extreme whitespace variations
+        assertException("select null::double\t\t\t[]", 22, "array type requires no whitespace: expected 'double[]' but found 'double\t\t\t []'");
+
+        // NBSP is NOT picked up by Character.isWhitespace()
+        assertException("select null::int\u00A0[]", 13, "invalid constant: int []"); // Non-breaking space
+        assertException("select null::varchar\u2003[]", 21, "array type requires no whitespace: expected 'varchar[]' but found 'varchar  []'"); // Em space
+
+        // Extremely long type names with spaces
+        assertException("select null::doubleprecision []", 29, "array type requires no whitespace: expected 'doubleprecision[]' but found 'doubleprecision  []'");
+
+        // Case sensitivity issues
+        assertException("select null::DOUBLE []", 20, "array type requires no whitespace");
+        assertException("select null::Double []", 20, "array type requires no whitespace");
+        assertException("select null::dOuBlE []", 20, "array type requires no whitespace");
+
+        // Multiple spaces of different types
+        assertException("select null::double \t []", 22, "array type requires no whitespace");
+        assertException("select null::int  \t  []", 21, "array type requires no whitespace");
+
+        // Nested cast errors
+        assertException("select cast(cast(null as double []) as int)", 32, "array type requires no whitespace");
+
+        // Array in function parameters
+        assertException("select abs(null::double [])", 24, "array type requires no whitespace");
+
+        // Array in complex expressions
+        assertException("select (1 + null::int []) * 2", 22, "array type requires no whitespace");
+        assertException("select case when true then null::double [] else null end", 40, "array type requires no whitespace");
     }
 
     @Test
@@ -732,7 +834,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "a(i)(o)",
                 4,
-                "not a method call"
+                "not a function call"
         );
     }
 
@@ -752,7 +854,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testExtractGeoHashBitsSuffixNoSuffix() throws SqlException {
         for (String tok : new String[]{"#", "#/", "#p", "#pp", "#ppp", "#0", "#01", "#001"}) {
-            Assert.assertEquals(
+            assertEquals(
                     Numbers.encodeLowHighShorts((short) 0, (short) (5 * (tok.length() - 1))),
                     ExpressionParser.extractGeoHashSuffix(0, tok));
         }
@@ -765,17 +867,17 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testExtractGeoHashBitsSuffixValid() throws SqlException {
         for (int bits = 1; bits < 10; bits++) {
-            Assert.assertEquals(
+            assertEquals(
                     Numbers.encodeLowHighShorts((short) 2, (short) bits),
                     ExpressionParser.extractGeoHashSuffix(0, "#/" + bits)); // '/d'
         }
         for (int bits = 1; bits < 10; bits++) {
-            Assert.assertEquals(
+            assertEquals(
                     Numbers.encodeLowHighShorts((short) 3, (short) bits),
                     ExpressionParser.extractGeoHashSuffix(0, "#/0" + bits)); // '/0d'
         }
         for (int bits = 10; bits <= 60; bits++) {
-            Assert.assertEquals(
+            assertEquals(
                     Numbers.encodeLowHighShorts((short) 3, (short) bits),
                     ExpressionParser.extractGeoHashSuffix(0, "#/" + bits)); // '/dd'
         }
@@ -923,6 +1025,22 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testInOperator() throws Exception {
         x("a 10 = b x y in and", "a = 10 and b in (x,y)");
+    }
+
+    @Test
+    public void testInvalidArraySyntaxInCast() throws Exception {
+        assertException("select null::[]double;", 13, "did you mean 'double[]'?");
+        assertException("select null::[]float;", 13, "did you mean 'float[]'?");
+        assertException("select null::[];", 13, "type definition is expected");
+        assertException("select null::double []", 20, "array type requires no whitespace: expected 'double[]' but found 'double  []'");
+    }
+
+    @Test
+    public void testInvalidArraySyntaxInCreateTable() throws Exception {
+        assertException("create table x(a []double)", 17, "did you mean 'double[]'?");
+        assertException("create table x(a []int)", 17, "did you mean 'int[]'?");
+        assertException("create table x(a [])", 17, "column type is expected here");
+        assertException("create table x(a [], b double)", 17, "column type is expected here");
     }
 
     @Test
@@ -1158,7 +1276,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "a([i)]",
                 2,
-                "unbalanced ]"
+                "'[' is unexpected here"
         );
     }
 
@@ -1236,6 +1354,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testTextArrayQualifier() throws SqlException {
         x("'{hello}' text[] ::", "'{hello}'::text[]");
+    }
+
+    @Test
+    public void testTimestampWithTimezone() throws SqlException {
+        x("'2021-12-31 15:15:51.663+00:00' timestamp cast",
+                "cast('2021-12-31 15:15:51.663+00:00' as timestamp with time zone)");
     }
 
     @Test
@@ -1318,7 +1442,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
             compiler.testParseExpression(content, rpnBuilder);
             Assert.fail("expected exception");
         } catch (SqlException e) {
-            Assert.assertEquals(pos, e.getPosition());
+            assertEquals(pos, e.getPosition());
             if (!Chars.contains(e.getFlyweightMessage(), contains)) {
                 Assert.fail(e.getMessage() + " does not contain '" + contains + '\'');
             }

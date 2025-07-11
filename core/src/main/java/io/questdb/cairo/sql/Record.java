@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -61,6 +62,9 @@ public interface Record {
         return sink;
     };
 
+    default ArrayView getArray(int col, int columnType) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Gets the value of a binary column by index
@@ -121,7 +125,6 @@ public interface Record {
     default long getDate(int col) {
         return getLong(col);
     }
-
 
     /**
      * Gets the value of a double column by index

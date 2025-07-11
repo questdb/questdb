@@ -29,16 +29,16 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.DirectLongLongHeap;
-import io.questdb.std.DirectLongLongMaxHeap;
-import io.questdb.std.DirectLongLongMinHeap;
+import io.questdb.std.DirectLongLongAscList;
+import io.questdb.std.DirectLongLongDescList;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 
 class LongTopKRecordCursor implements RecordCursor {
     private final int columnIndex;
-    private final DirectLongLongHeap heap;
-    private final DirectLongLongHeap.Cursor rowIdCursor;
+    private final DirectLongLongSortedList.Cursor rowIdCursor;
+    private final DirectLongLongSortedList sortedList;
     private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -48,17 +48,17 @@ class LongTopKRecordCursor implements RecordCursor {
     public LongTopKRecordCursor(int columnIndex, int lo, boolean ascending) {
         this.columnIndex = columnIndex;
         isOpen = true;
-        heap = ascending
-                ? new DirectLongLongMinHeap(lo, MemoryTag.NATIVE_DEFAULT)
-                : new DirectLongLongMaxHeap(lo, MemoryTag.NATIVE_DEFAULT);
-        rowIdCursor = heap.getCursor();
+        sortedList = ascending
+                ? new DirectLongLongAscList(lo, MemoryTag.NATIVE_DEFAULT)
+                : new DirectLongLongDescList(lo, MemoryTag.NATIVE_DEFAULT);
+        rowIdCursor = sortedList.getCursor();
     }
 
     @Override
     public void close() {
         if (isOpen) {
             isOpen = false;
-            Misc.free(heap);
+            Misc.free(sortedList);
             baseCursor = Misc.free(baseCursor);
             baseRecord = null;
         }
@@ -102,11 +102,16 @@ class LongTopKRecordCursor implements RecordCursor {
 
         if (!isOpen) {
             isOpen = true;
-            heap.reopen();
+            sortedList.reopen();
         }
 
         circuitBreaker = executionContext.getCircuitBreaker();
         initialized = false;
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return RecordCursor.fromBool(initialized) + baseCursor.preComputedStateSize();
     }
 
     @Override
@@ -116,14 +121,14 @@ class LongTopKRecordCursor implements RecordCursor {
 
     @Override
     public long size() {
-        return initialized ? heap.size() : -1;
+        return initialized ? sortedList.size() : -1;
     }
 
     @Override
     public void toTop() {
         rowIdCursor.toTop();
         if (!initialized) {
-            heap.clear();
+            sortedList.clear();
             baseCursor.toTop();
         }
     }
@@ -136,7 +141,7 @@ class LongTopKRecordCursor implements RecordCursor {
     }
 
     private void topK() {
-        baseCursor.longTopK(heap, columnIndex);
+        baseCursor.longTopK(sortedList, columnIndex);
         rowIdCursor.toTop();
     }
 }

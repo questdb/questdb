@@ -37,7 +37,7 @@ import static io.questdb.cutlass.pgwire.PGOids.*;
 
 class PgProcCatalogueCursor implements NoRandomAccessRecordCursor {
     static final RecordMetadata METADATA;
-    private static final int rowCount = PG_TYPE_OIDS.size();
+    private static final int rowCount = PG_TYPE_TO_PROC_NAME.length;
     private final PgProdCatalogueRecord record = new PgProdCatalogueRecord();
     private int row = -1;
 
@@ -59,6 +59,11 @@ class PgProcCatalogueCursor implements NoRandomAccessRecordCursor {
     @Override
     public long size() {
         return rowCount;
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return 0;
     }
 
     @Override
@@ -97,6 +102,11 @@ class PgProcCatalogueCursor implements NoRandomAccessRecordCursor {
         }
 
         @Override
+        public float getFloat(int col) {
+            return 0;
+        }
+
+        @Override
         public int getInt(int col) {
             switch (col) {
                 case 0: // oid (of type proc)
@@ -112,6 +122,9 @@ class PgProcCatalogueCursor implements NoRandomAccessRecordCursor {
                 case 8: // prosupport
                     return 0;
                 case 18: // prorettype
+                    // todo: this assume there is the same number of procedures
+                    // as types. this breaks at the moment we introduce
+                    // array types beyond float[]. it will need some rework.
                     return PG_TYPE_OIDS.get(row);
             }
             throw new UnsupportedOperationException("not a int col: " + col);
@@ -126,11 +139,6 @@ class PgProcCatalogueCursor implements NoRandomAccessRecordCursor {
                     return 0;
             }
             throw new UnsupportedOperationException("not a short col: " + col);
-        }
-
-        @Override
-        public float getFloat(int col) {
-            return 0;
         }
 
         @Override

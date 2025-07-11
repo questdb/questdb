@@ -120,7 +120,7 @@ public class PGWireServerModern implements IPGWireServer {
                                         : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND
                         );
                     } catch (BadProtocolException e) {
-                        LOG.error().$("protocol issue [err: `").$(e.getFlyweightMessage()).$("`]").$();
+                        LOG.error().$("protocol issue [err: `").$safe(e.getFlyweightMessage()).$("`]").$();
                         dispatcher.disconnect(context, DISCONNECT_REASON_PROTOCOL_VIOLATION);
                     } catch (Throwable e) { // must remain last in catch list!
                         LOG.critical().$("internal error [ex=").$(e).$(']').$();
@@ -165,6 +165,11 @@ public class PGWireServerModern implements IPGWireServer {
     @Override
     public WorkerPool getWorkerPool() {
         return workerPool;
+    }
+
+    @Override
+    public boolean isListening() {
+        return dispatcher.isListening();
     }
 
     @Override

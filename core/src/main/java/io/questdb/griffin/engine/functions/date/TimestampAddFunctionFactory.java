@@ -54,6 +54,32 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
     private static final LongAddIntFunction ADD_WEEKS_FUNCTION = Timestamps::addWeeks;
     private static final LongAddIntFunction ADD_YEARS_FUNCTION = Timestamps::addYears;
 
+    public static @Nullable LongAddIntFunction lookupAddFunction(char period) {
+        switch (period) {
+            case 'u':
+            case 'U':
+                return ADD_MICROS_FUNCTION;
+            case 'T':
+                return ADD_MILLIS_FUNCTION;
+            case 's':
+                return ADD_SECONDS_FUNCTION;
+            case 'm':
+                return ADD_MINUTES_FUNCTION;
+            case 'h':
+                return ADD_HOURS_FUNCTION;
+            case 'd':
+                return ADD_DAYS_FUNCTION;
+            case 'w':
+                return ADD_WEEKS_FUNCTION;
+            case 'M':
+                return ADD_MONTHS_FUNCTION;
+            case 'y':
+                return ADD_YEARS_FUNCTION;
+            default:
+                return null;
+        }
+    }
+
     @Override
     public String getSignature() {
         return "dateadd(AIN)";
@@ -85,33 +111,8 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         return new TimestampAddFunc(periodFunc, strideFunc, argPositions.getQuick(1), timestampFunc);
     }
 
-    static @Nullable LongAddIntFunction lookupAddFunction(char period) {
-        switch (period) {
-            case 'u':
-                return ADD_MICROS_FUNCTION;
-            case 'T':
-                return ADD_MILLIS_FUNCTION;
-            case 's':
-                return ADD_SECONDS_FUNCTION;
-            case 'm':
-                return ADD_MINUTES_FUNCTION;
-            case 'h':
-                return ADD_HOURS_FUNCTION;
-            case 'd':
-                return ADD_DAYS_FUNCTION;
-            case 'w':
-                return ADD_WEEKS_FUNCTION;
-            case 'M':
-                return ADD_MONTHS_FUNCTION;
-            case 'y':
-                return ADD_YEARS_FUNCTION;
-            default:
-                return null;
-        }
-    }
-
     @FunctionalInterface
-    interface LongAddIntFunction {
+    public interface LongAddIntFunction {
         long add(long a, int b);
     }
 

@@ -25,7 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.DataUnavailableException;
-import io.questdb.std.DirectLongLongHeap;
+import io.questdb.std.DirectLongLongSortedList;
 
 import java.io.Closeable;
 
@@ -48,6 +48,10 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
                 counter.inc();
             }
         }
+    }
+
+    static long fromBool(boolean b) {
+        return b ? 1L : 0L;
     }
 
     static void skipRows(RecordCursor cursor, Counter rowCount) throws DataUnavailableException {
@@ -125,11 +129,11 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     /**
      * When supported, runs optimized top K (ORDER BY + LIMIT N) loop.
      *
-     * @param heap        min or max heap to store records
+     * @param list        min or max heap to store records
      * @param columnIndex index of order by column
      * @see RecordCursorFactory#recordCursorSupportsLongTopK()
      */
-    default void longTopK(DirectLongLongHeap heap, int columnIndex) {
+    default void longTopK(DirectLongLongSortedList list, int columnIndex) {
         throw new UnsupportedOperationException();
     }
 
@@ -143,6 +147,37 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     default SymbolTable newSymbolTable(int columnIndex) {
         throw new UnsupportedOperationException();
     }
+
+    /**
+     * Calculates a numeric representation of the cursor's pre-computed internal state,
+     * primarily for performance assertions.
+     * <p>
+     * The {@link #toTop()} method is designed to be a lightweight operation that resets the
+     * cursor to its starting position. It should not discard the cursor's internal state
+     * (e.g., cached data structures) which would cause expensive re-computation on the
+     * next iteration.
+     * <p>
+     * This method provides a way to verify that behavior. The expected usage, typically
+     * within an {@code assert} statement, is to compare the state size before and after
+     * calling {@link #toTop()}. A correct implementation will not change its state,
+     * so the values should be identical.
+     *
+     * <p><b>Usage Example (in testing):</b></p>
+     * <pre>{@code
+     * doSomeWorkWith(cursor);
+     * long stateBefore = cursor.preComputedStateSize();
+     * cursor.toTop();
+     * long stateAfter = cursor.preComputedStateSize();
+     *
+     * // Assert that resetting the cursor did not discard its state
+     * Assert.assertEquals("Cursor precomputed state should not change on toTop()", stateBefore, stateAfter);
+     * }
+     * }</pre>
+     *
+     * @return A long value representing the cursor's pre-computed state. This is not
+     * a memory size in bytes, but a stable value used to detect state changes.
+     */
+    long preComputedStateSize();
 
     /**
      * Positions record at given row id. The row id must have been previously obtained from Record instance.
@@ -177,8 +212,10 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     }
 
     /**
-     * Return the cursor to the beginning of the page frame.
-     * Sets location to first column.
+     * Returns the cursor to its top position without re-running the
+     * query or triggering heavy computations. This method is not meant to
+     * reload data from the tables, but rather for performing multiple
+     * passes over the same result set.
      */
     void toTop();
 

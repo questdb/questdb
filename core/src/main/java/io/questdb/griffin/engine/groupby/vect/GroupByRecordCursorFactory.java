@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.DataUnavailableException;
@@ -134,7 +135,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         raf.free(pRosti[k]);
                         pRosti[k] = 0;
                     }
-                    throw new OutOfMemoryError();
+                    throw CairoException.nonCritical()
+                            .put("could not allocate rosti hash table")
+                            .setOutOfMemory(true);
                 }
                 pRosti[i] = ptr;
 
@@ -261,7 +264,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private void resetRostiMemorySize() {
         for (int i = 0, n = pRosti.length; i < n; i++) {
             if (!raf.reset(pRosti[i], ROSTI_MINIMIZED_SIZE)) {
-                LOG.debug().$("Couldn't minimize rosti memory [i=").$(i).$(",current_size=").$(Rosti.getSize(pRosti[i])).I$();
+                LOG.debug().$("could not minimize rosti memory [i=").$(i).$(", currentSize=").$(Rosti.getSize(pRosti[i])).I$();
             }
         }
     }
@@ -385,6 +388,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             frameCount = 0;
             isRostiBuilt = false;
             return this;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return isRostiBuilt ? 1 : 0;
         }
 
         @Override
@@ -538,7 +546,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             if (oomCounter.get() > 0) {
                 resetRostiMemorySize();
-                throw new OutOfMemoryError();
+                throw CairoException.nonCritical()
+                        .put("could not resize rosti hash table")
+                        .setOutOfMemory(true);
             }
 
             // merge maps only when cursor was fetched successfully
@@ -568,7 +578,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                             long oldSize = Rosti.getAllocMemory(pRostiBig);
                             if (!vaf.merge(pRostiBig, pRosti[i])) {
                                 resetRostiMemorySize();
-                                throw new OutOfMemoryError();
+                                throw CairoException.nonCritical()
+                                        .put("could not merge rosti hash table")
+                                        .setOutOfMemory(true);
                             }
                             raf.updateMemoryUsage(pRostiBig, oldSize);
                         }
@@ -579,7 +591,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         long oldSize = Rosti.getAllocMemory(pRostiBig);
                         if (!vaf.wrapUp(pRostiBig)) {
                             resetRostiMemorySize();
-                            throw new OutOfMemoryError();
+                            throw CairoException.nonCritical()
+                                    .put("could not wrap up rosti hash table")
+                                    .setOutOfMemory(true);
                         }
                         raf.updateMemoryUsage(pRostiBig, oldSize);
                     }
@@ -598,7 +612,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     for (int j = 0; j < vafCount; j++) {
                         if (!vafList.getQuick(j).wrapUp(pRostiBig)) {
                             resetRostiMemorySize();
-                            throw new OutOfMemoryError();
+                            throw CairoException.nonCritical()
+                                    .put("could not wrap up rosti hash table")
+                                    .setOutOfMemory(true);
                         }
                     }
                 }

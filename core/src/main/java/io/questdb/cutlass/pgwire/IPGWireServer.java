@@ -57,5 +57,7 @@ public interface IPGWireServer extends Closeable {
     @TestOnly
     WorkerPool getWorkerPool();
 
+    boolean isListening();
+
     void resetQueryCache();
 }

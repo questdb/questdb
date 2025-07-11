@@ -80,12 +80,16 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.HTTP_RECV_BUFFER_SIZE,
             PropertyKey.HTTP_SEND_BUFFER_SIZE,
             PropertyKey.HTTP_NET_CONNECTION_LIMIT,
+            PropertyKey.LINE_HTTP_MAX_RECV_BUFFER_SIZE,
             PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT,
             PropertyKey.QUERY_TRACING_ENABLED,
             PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE,
             PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE,
             PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL,
-            PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES
+            PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES,
+            PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS,
+            PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD,
+            PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY
     ));
     private static final Function<String, ? extends ConfigPropertyKey> keyResolver = (k) -> {
         Optional<PropertyKey> prop = PropertyKey.getByString(k);

@@ -26,12 +26,20 @@ package io.questdb.griffin.engine.functions.json;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
+import io.questdb.std.Long256;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.json.SimdJsonNumberType;
 import io.questdb.std.json.SimdJsonType;
@@ -42,7 +50,7 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class JsonExtractFunction implements ScalarFunction {
+public class JsonExtractFunction implements Function {
     private static final boolean defaultBool = false;
     private final Function json;
     private final int maxSize;
@@ -83,6 +91,11 @@ public class JsonExtractFunction implements ScalarFunction {
     }
 
     @Override
+    public boolean shouldMemoize() {
+        return true;
+    }
+
+    @Override
     public void close() {
         Misc.free(stateA);
         Misc.free(stateB);
@@ -97,6 +110,11 @@ public class JsonExtractFunction implements ScalarFunction {
         if (this.stateB != null) {
             this.stateB.deflate();
         }
+    }
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -230,6 +248,11 @@ public class JsonExtractFunction implements ScalarFunction {
                 pointer,
                 stateA.simdJsonResult
         );
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

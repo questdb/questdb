@@ -26,9 +26,8 @@ package io.questdb.griffin.model;
 
 import io.questdb.griffin.engine.functions.window.DenseRankFunctionFactory;
 import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
-import io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory;
-import io.questdb.griffin.engine.functions.window.LeadDoubleFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LeadLagWindowFunctionFactoryHelper;
 import io.questdb.griffin.engine.functions.window.RankFunctionFactory;
 import io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory;
 import io.questdb.std.Chars;
@@ -62,22 +61,20 @@ public final class WindowColumn extends QueryColumn {
     private int exclusionKind = EXCLUDE_NO_OTHERS;
     private int exclusionKindPos;
     private int framingMode = FRAMING_RANGE;//default mode is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
+    private boolean ignoreNulls = false;
+    private int nullsDescPos = 0;
     private long rowsHi = Long.MAX_VALUE;
     private ExpressionNode rowsHiExpr;
     private int rowsHiExprPos;
     private long rowsHiExprTimeUnit;
-    private int rowsHiExprTimeUnitPos;
     private int rowsHiKind = CURRENT;
     private int rowsHiKindPos = 0;
     private long rowsLo = Long.MIN_VALUE;
     private ExpressionNode rowsLoExpr;
     private int rowsLoExprPos;
     private long rowsLoExprTimeUnit;
-    private int rowsLoExprTimeUnitPos;
     private int rowsLoKind = PRECEDING;
     private int rowsLoKindPos = 0;
-    private boolean ignoreNulls = false;
-    private int nullsDescPos = 0;
 
     private WindowColumn() {
     }
@@ -96,11 +93,9 @@ public final class WindowColumn extends QueryColumn {
         rowsLoExpr = null;
         rowsLoExprPos = 0;
         rowsLoExprTimeUnit = 1;
-        rowsLoExprTimeUnitPos = 0;
         rowsHiExpr = null;
         rowsHiExprPos = 0;
         rowsHiExprTimeUnit = 1;
-        rowsHiExprTimeUnitPos = 0;
         rowsLoKind = PRECEDING;
         rowsLoKindPos = 0;
         rowsHiKind = CURRENT;
@@ -124,6 +119,10 @@ public final class WindowColumn extends QueryColumn {
 
     public int getFramingMode() {
         return framingMode;
+    }
+
+    public int getNullsDescPos() {
+        return nullsDescPos;
     }
 
     public ObjList<ExpressionNode> getOrderBy() {
@@ -154,10 +153,6 @@ public final class WindowColumn extends QueryColumn {
         return rowsHiExprTimeUnit;
     }
 
-    public int getRowsHiExprTimeUnitPos() {
-        return rowsHiExprTimeUnitPos;
-    }
-
     public int getRowsHiKind() {
         return rowsHiKind;
     }
@@ -182,10 +177,6 @@ public final class WindowColumn extends QueryColumn {
         return rowsLoExprTimeUnit;
     }
 
-    public int getRowsLoExprTimeUnitPos() {
-        return rowsLoExprTimeUnitPos;
-    }
-
     public int getRowsLoKind() {
         return rowsLoKind;
     }
@@ -194,18 +185,14 @@ public final class WindowColumn extends QueryColumn {
         return rowsLoKindPos;
     }
 
-    public boolean isNonDefaultFrame() {
-        // default mode is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
-        // anything other than that is custom
-        return framingMode != FRAMING_RANGE || rowsLoKind != PRECEDING || rowsHiKind != CURRENT || rowsHiExpr != null || rowsLoExpr != null;
-    }
-
     public boolean isIgnoreNulls() {
         return ignoreNulls;
     }
 
-    public int getNullsDescPos() {
-        return nullsDescPos;
+    public boolean isNonDefaultFrame() {
+        // default mode is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
+        // anything other than that is custom
+        return framingMode != FRAMING_RANGE || rowsLoKind != PRECEDING || rowsHiKind != CURRENT || rowsHiExpr != null || rowsLoExpr != null;
     }
 
     @Override
@@ -221,6 +208,59 @@ public final class WindowColumn extends QueryColumn {
     public boolean requiresOrderBy() {
         return framingMode == FRAMING_RANGE && (rowsLoKind != PRECEDING || (rowsHiKind != CURRENT && rowsHiKind != FOLLOWING) || rowsHiExpr != null || rowsLoExpr != null) ||
                 framingMode == FRAMING_GROUPS;
+    }
+
+    public void setExclusionKind(int exclusionKind, int exclusionKindPos) {
+        this.exclusionKind = exclusionKind;
+        this.exclusionKindPos = exclusionKindPos;
+    }
+
+    public void setFramingMode(int framingMode) {
+        this.framingMode = framingMode;
+    }
+
+    public void setIgnoreNulls(boolean ignoreNulls) {
+        this.ignoreNulls = ignoreNulls;
+    }
+
+    public void setNullsDescPos(int nullsDescPos) {
+        this.nullsDescPos = nullsDescPos;
+    }
+
+    public void setRowsHi(long rowsHi) {
+        this.rowsHi = rowsHi;
+    }
+
+    public void setRowsHiExpr(ExpressionNode rowsHiExpr, int rowsHiExprPos) {
+        this.rowsHiExpr = rowsHiExpr;
+        this.rowsHiExprPos = rowsHiExprPos;
+    }
+
+    public void setRowsHiExprTimeUnit(long rowsHiExprTimeUnit) {
+        this.rowsHiExprTimeUnit = rowsHiExprTimeUnit;
+    }
+
+    public void setRowsHiKind(int rowsHiKind, int rowsHiKindPos) {
+        this.rowsHiKind = rowsHiKind;
+        this.rowsHiKindPos = rowsHiKindPos;
+    }
+
+    public void setRowsLo(long rowsLo) {
+        this.rowsLo = rowsLo;
+    }
+
+    public void setRowsLoExpr(ExpressionNode rowsLoExpr, int rowsLoExprPos) {
+        this.rowsLoExpr = rowsLoExpr;
+        this.rowsLoExprPos = rowsLoExprPos;
+    }
+
+    public void setRowsLoExprTimeUnit(long rowsLoExprTimeUnit) {
+        this.rowsLoExprTimeUnit = rowsLoExprTimeUnit;
+    }
+
+    public void setRowsLoKind(int rowsLoKind, int rowsLoKindPos) {
+        this.rowsLoKind = rowsLoKind;
+        this.rowsLoKindPos = rowsLoKindPos;
     }
 
     public boolean stopOrderByPropagate(ObjList<ExpressionNode> modelOrder, IntList modelOrderDirection) {
@@ -256,78 +296,11 @@ public final class WindowColumn extends QueryColumn {
         return stopOrderBy;
     }
 
-    public void setExclusionKind(int exclusionKind, int exclusionKindPos) {
-        this.exclusionKind = exclusionKind;
-        this.exclusionKindPos = exclusionKindPos;
-    }
-
-    public void setFramingMode(int framingMode) {
-        this.framingMode = framingMode;
-    }
-
-    public void setRowsHi(long rowsHi) {
-        this.rowsHi = rowsHi;
-    }
-
-    public void setRowsHiExpr(ExpressionNode rowsHiExpr, int rowsHiExprPos) {
-        this.rowsHiExpr = rowsHiExpr;
-        this.rowsHiExprPos = rowsHiExprPos;
-    }
-
-    public void setRowsHiExprTimeUnit(long unit) {
-        this.rowsHiExprTimeUnit = unit;
-    }
-
-    public void setRowsHiExprTimeUnit(long rowsHiExprTimeUnit, int rowsHiExprTimeUnitPos) {
-        this.rowsHiExprTimeUnit = rowsHiExprTimeUnit;
-        this.rowsHiExprTimeUnitPos = rowsHiExprTimeUnitPos;
-    }
-
-    public void setRowsHiExprTimeUnitPos(int rowsHiExprTimeUnitPos) {
-        this.rowsHiExprTimeUnitPos = rowsHiExprTimeUnitPos;
-    }
-
-    public void setRowsHiKind(int rowsHiKind, int rowsHiKindPos) {
-        this.rowsHiKind = rowsHiKind;
-        this.rowsHiKindPos = rowsHiKindPos;
-    }
-
-    public void setRowsLo(long rowsLo) {
-        this.rowsLo = rowsLo;
-    }
-
-    public void setRowsLoExpr(ExpressionNode rowsLoExpr, int rowsLoExprPos) {
-        this.rowsLoExpr = rowsLoExpr;
-        this.rowsLoExprPos = rowsLoExprPos;
-    }
-
-    public void setRowsLoExprTimeUnit(long rowsLoExprTimeUnit, int rowsLoExprTimeUnitPos) {
-        this.rowsLoExprTimeUnit = rowsLoExprTimeUnit;
-        this.rowsLoExprTimeUnitPos = rowsLoExprTimeUnitPos;
-    }
-
-    public void setRowsLoExprTimeUnitPos(int rowsLoExprTimeUnitPos) {
-        this.rowsLoExprTimeUnitPos = rowsLoExprTimeUnitPos;
-    }
-
-    public void setRowsLoKind(int rowsLoKind, int rowsLoKindPos) {
-        this.rowsLoKind = rowsLoKind;
-        this.rowsLoKindPos = rowsLoKindPos;
-    }
-
-    public void setIgnoreNulls(boolean ignoreNulls) {
-        this.ignoreNulls = ignoreNulls;
-    }
-
-    public void setNullsDescPos(int nullsDescPos) {
-        this.nullsDescPos = nullsDescPos;
-    }
-
     private static boolean isRangeFrameDependOnSubqueryOrderBy(CharSequence funName) {
         return !Chars.equalsIgnoreCase(funName, RowNumberFunctionFactory.NAME)
                 && !Chars.equalsIgnoreCase(funName, RankFunctionFactory.NAME)
                 && !Chars.equalsIgnoreCase(funName, DenseRankFunctionFactory.NAME)
-                && !Chars.equalsIgnoreCase(funName, LeadDoubleFunctionFactory.NAME)
-                && !Chars.equalsIgnoreCase(funName, LagDoubleFunctionFactory.NAME);
+                && !Chars.equalsIgnoreCase(funName, LeadLagWindowFunctionFactoryHelper.LEAD_NAME)
+                && !Chars.equalsIgnoreCase(funName, LeadLagWindowFunctionFactoryHelper.LAG_NAME);
     }
 }

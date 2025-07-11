@@ -35,6 +35,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.log.Log;
+import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -695,14 +696,17 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 try (TableReader ignored = getReader("tbl")) {
                     // In order inserts partition 1970-01-09
                     execute("insert into tbl select 4, '1970-01-09T10'");
-                    execute("insert into tbl select 4, '1970-01-09T10'");
+                    execute("insert into tbl select 4, '1970-01-09T09:59'");
 
                     // Simulate a rolled back commit, add a directory with name 1970-01-09.2
                     try {
                         execute("insert into tbl select 4, '1970-01-09T09'");
                         Assert.fail("expected file open error");
                     } catch (CairoException e) {
-                        Assert.assertTrue(e.getMessage().contains("failed and will be rolled back"));
+                        // If the message bus does not have empty slots, error message can vary
+                        if (!Chars.contains(e.getFlyweightMessage(), "could not open read-write")) {
+                            TestUtils.assertContains(e.getMessage(), "failed and will be rolled back");
+                        }
                     }
                     execute("insert into tbl select 4, '1970-01-09T10'");
                     // Close this reader so that the purge job is potentially able to delete the partition version '.0'

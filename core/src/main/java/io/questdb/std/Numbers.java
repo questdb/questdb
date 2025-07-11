@@ -824,7 +824,7 @@ public final class Numbers {
      * the return value of {@link #isFinite(double)}
      *
      * @param value to check
-     * @return true is value is "infinite", which includes {@link Double#isNaN(double)}, positive and negative
+     * @return true if value is "infinite", which includes {@link Double#isNaN(double)}, positive and negative
      * infinities that arise from division by 0.
      */
     public static boolean isNull(double value) {
@@ -879,8 +879,23 @@ public final class Numbers {
         return b < '0' || b > '9';
     }
 
+    public static byte parseByte(Utf8Sequence sequence, int p, int lim) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        short n = parseShort0(sequence.asAsciiCharSequence(), p, lim);
+        if (n < Byte.MIN_VALUE || n > Byte.MAX_VALUE) {
+            throw NumericException.INSTANCE;
+        }
+        return (byte) n;
+    }
+
     public static double parseDouble(CharSequence sequence) throws NumericException {
         return FastDoubleParser.parseDouble(sequence, true);
+    }
+
+    public static double parseDouble(CharSequence sequence, int offset, int length) throws NumericException {
+        return FastDoubleParser.parseDouble(sequence, offset, length, true);
     }
 
     public static double parseDouble(long str, int len) throws NumericException {
@@ -1813,6 +1828,13 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
         return parseShort0(sequence.asAsciiCharSequence(), 0, sequence.size());
+    }
+
+    public static short parseShort(Utf8Sequence sequence, int p, int lim) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        return parseShort0(sequence.asAsciiCharSequence(), p, lim);
     }
 
     public static short parseShort(CharSequence sequence) throws NumericException {

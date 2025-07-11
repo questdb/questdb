@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
@@ -54,7 +55,7 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      * During concurrent SQL execution it might be beneficial to split the "init" phase into per-SQL execution and
      * per-thread. For example "init" could be a heavy SQL execution itself, which would benefit from executing once and
      * copying state of this execution to clones, so that clones to not have to repeat that heavy SQL execution. The
-     * "prototype" function is the one that has already been fully initialized and it is ready to pass its state to
+     * "prototype" function is the one that has already been fully initialized, and it is ready to pass its state to
      * all the clones.
      * <p>
      * Even though the prototype will be trying to pass its state, the clones do not have to accept it and choose to
@@ -104,7 +105,11 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     default void cursorClosed() {
     }
 
-    int getArrayLength();
+    default FunctionExtension extendedOps() {
+        return null;
+    }
+
+    ArrayView getArray(Record rec);
 
     BinarySequence getBin(Record rec);
 
@@ -161,9 +166,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return getClass().getName();
     }
 
-    // function returns a record of values
-    Record getRecord(Record rec);
-
     // when function returns factory it becomes factory
     // on other words this is not a tear-away instance
     RecordCursorFactory getRecordCursorFactory();
@@ -172,15 +174,9 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     CharSequence getStrA(Record rec);
 
-    CharSequence getStrA(Record rec, int arrayIndex);
-
     CharSequence getStrB(Record rec);
 
-    CharSequence getStrB(Record rec, int arrayIndex);
-
     int getStrLen(Record rec);
-
-    int getStrLen(Record rec, int arrayIndex);
 
     CharSequence getSymbol(Record rec);
 
@@ -212,6 +208,11 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return false;
     }
 
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
+    default boolean isConstantOrRuntimeConstant() {
+        return isConstant() || isRuntimeConstant();
+    }
+
     default boolean isNonDeterministic() {
         return false;
     }
@@ -222,6 +223,10 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     // used in generic toSink implementations
     default boolean isOperator() {
+        return false;
+    }
+
+    default boolean isRandom() {
         return false;
     }
 
@@ -265,7 +270,29 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return getType() == ColumnType.UNDEFINED;
     }
 
+    /**
+     * This method is called exactly once per data row. It provides an opportunity for the function
+     * to perform heavy or volatile computations, cache the results and ensure getXXX() methods use the case instead
+     * of recomputing values.
+     *
+     * @param record the record for data access.
+     */
+    default void memoize(Record record) {
+    }
+
     default void offerStateTo(Function that) {
+    }
+
+    /**
+     * For exactly once per-row execution functions can declare themselves memoizable by
+     * returning true out of this method. Typically, this is all what's required. FunctionParser will
+     * wrap memoizable functions into type-specific Memoizers. These memoizers will implement {@see memoize} method.
+     * Caching heavy or potentially volatile computations for each data row.
+     *
+     * @return if function is memoizable
+     */
+    default boolean shouldMemoize() {
+        return false;
     }
 
     /**

@@ -43,6 +43,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
@@ -151,6 +152,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // this is used for negative limits optimisations
     private boolean allowPropagationOfOrderByAdvice = true;
     private boolean artificialStar;
+    private ExpressionNode asOfJoinTolerance = null;
     // Used to store a deep copy of the whereClause field
     // since whereClause can be changed during optimization/generation stage.
     private ExpressionNode backupWhereClause;
@@ -167,7 +169,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
     //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .
     private boolean isLimitImplemented;
-    private boolean isMatViewModel;
     // A flag to mark intermediate SELECT translation models. Such models do not contain the full list of selected
     // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
     private boolean isSelectTranslation = false;
@@ -458,7 +459,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         // TODO: replace booleans with an enum-like type: UPDATE/MAT_VIEW/INSERT_AS_SELECT/SELECT
         //  default is SELECT
         isUpdateModel = false;
-        isMatViewModel = false;
         modelType = ExecutionModel.QUERY;
         updateSetColumns.clear();
         updateTableColumnTypes.clear();
@@ -482,6 +482,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         orderDescendingByDesignatedTimestampOnly = false;
         forceBackwardScan = false;
         hintsMap.clear();
+        asOfJoinTolerance = null;
     }
 
     public void clearColumnMapStructs() {
@@ -639,7 +640,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && orderByAdviceMnemonic == that.orderByAdviceMnemonic
                 && tableId == that.tableId
                 && isUpdateModel == that.isUpdateModel
-                && isMatViewModel == that.isMatViewModel
                 && modelType == that.modelType
                 && artificialStar == that.artificialStar
                 && skipped == that.skipped
@@ -701,7 +701,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(unionModel, that.unionModel)
                 && Objects.equals(updateTableModel, that.updateTableModel)
                 && Objects.equals(updateTableToken, that.updateTableToken)
-                && Objects.equals(decls, that.decls);
+                && Objects.equals(decls, that.decls)
+                && Objects.equals(asOfJoinTolerance, that.asOfJoinTolerance);
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -728,6 +729,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean getAllowPropagationOfOrderByAdvice() {
         return allowPropagationOfOrderByAdvice;
+    }
+
+    @Nullable
+    public ExpressionNode getAsOfJoinTolerance() {
+        return asOfJoinTolerance;
     }
 
     public ObjList<QueryColumn> getBottomUpColumns() {
@@ -1069,7 +1075,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 isSelectTranslation, selectModelType, nestedModelIsSubQuery,
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
-                isUpdateModel, isMatViewModel, modelType, updateTableModel,
+                isUpdateModel, modelType, updateTableModel,
                 updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls
         );
     }
@@ -1092,10 +1098,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isLimitImplemented() {
         return isLimitImplemented;
-    }
-
-    public boolean isMatView() {
-        return isMatViewModel;
     }
 
     public boolean isNestedModelIsSubQuery() {
@@ -1128,22 +1130,21 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     /**
-     * The goal of this method is to dismiss the nested model as
-     * the layer between this and the model the nested is referencing. We do that by copying ASTs from
-     * the nested model onto the current model and also maintaining all the maps in sync.
+     * The goal of this method is to dismiss the baseModel as
+     * the layer between this and the baseModel is referencing. We do that by copying ASTs from
+     * the baseModel onto the current baseModel and also maintaining all the maps in sync.
      * <p>
-     * The caller is responsible for checking if nested model is suitable for the removal. E.g. it does not
-     * contain arithmetic expressions. Although this method does not validate if nested has arithmetic.
+     * The caller is responsible for checking if baseModel is suitable for the removal. E.g. it does not
+     * contain arithmetic expressions. Although this method does not validate if baseModel has arithmetic.
      *
-     * @param nested model containing columns mapped into the referenced model.
+     * @param baseModel baseModel containing columns mapped into the referenced baseModel.
      */
-    public void mergePartially(QueryModel nested, ObjectPool<QueryColumn> queryColumnPool) {
+    public void mergePartially(QueryModel baseModel, ObjectPool<QueryColumn> queryColumnPool) {
         for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
             QueryColumn thisColumn = bottomUpColumns.getQuick(i);
             if (thisColumn.getAst().type == ExpressionNode.LITERAL) {
-                QueryColumn thatColumn = nested.getAliasToColumnMap().get(thisColumn.getAst().token);
-
-                // We cannot mutate the column on this model, because columns might be shared between
+                QueryColumn thatColumn = baseModel.getAliasToColumnMap().get(thisColumn.getAst().token);
+                // We cannot mutate the column on this baseModel, because columns might be shared between
                 // models. The bottomUpColumns are also referenced by `aliasToColumnMap`. Typically,
                 // `thisColumn` alias should let us lookup, the column's reference
                 QueryColumn col = queryColumnPool.next();
@@ -1159,23 +1160,23 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
         }
 
-        if (nested.getOrderBy().size() > 0) {
+        if (baseModel.getOrderBy().size() > 0) {
             assert getOrderBy().size() == 0;
-            for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
-                addOrderBy(nested.getOrderBy().getQuick(i), nested.getOrderByDirection().getQuick(i));
+            for (int i = 0, n = baseModel.getOrderBy().size(); i < n; i++) {
+                addOrderBy(baseModel.getOrderBy().getQuick(i), baseModel.getOrderByDirection().getQuick(i));
             }
-            nested.getOrderBy().clear();
-            nested.getOrderByDirection().clear();
+            baseModel.getOrderBy().clear();
+            baseModel.getOrderByDirection().clear();
         }
 
-        // If nested model has limits, the outer model must not have different limits.
+        // If baseModel has limits, the outer baseModel must not have different limits.
         // We are merging models affecting "select" clause and not the row count.
-        if (nested.limitLo != null || nested.limitHi != null) {
-            limitLo = nested.limitLo;
-            limitHi = nested.limitHi;
-            limitPosition = nested.limitPosition;
-            limitAdviceLo = nested.limitAdviceLo;
-            limitAdviceHi = nested.limitAdviceHi;
+        if (baseModel.limitLo != null || baseModel.limitHi != null) {
+            limitLo = baseModel.limitLo;
+            limitHi = baseModel.limitHi;
+            limitPosition = baseModel.limitPosition;
+            limitAdviceLo = baseModel.limitAdviceLo;
+            limitAdviceHi = baseModel.limitAdviceHi;
         }
     }
 
@@ -1289,6 +1290,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.artificialStar = artificialStar;
     }
 
+    public void setAsOfJoinTolerance(ExpressionNode asOfJoinTolerance) {
+        this.asOfJoinTolerance = asOfJoinTolerance;
+    }
+
     public void setBackupWhereClause(ExpressionNode backupWhereClause) {
         this.backupWhereClause = backupWhereClause;
     }
@@ -1327,10 +1332,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setForceBackwardScan(boolean forceBackwardScan) {
         this.forceBackwardScan = forceBackwardScan;
-    }
-
-    public void setIsMatView(boolean isMatView) {
-        this.isMatViewModel = isMatView;
     }
 
     public void setIsUpdate(boolean isUpdate) {
@@ -1531,7 +1532,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     private static void aliasToSink(CharSequence alias, CharSink<?> sink) {
         sink.putAscii(' ');
-        boolean quote = Chars.indexOf(alias, ' ') != -1;
+        boolean quote = !Chars.isQuoted(alias) && Chars.indexOf(alias, ' ') != -1;
         if (quote) {
             sink.putAscii('\'').put(alias).putAscii('\'');
         } else {
@@ -1814,6 +1815,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                                 sink.putAscii(" = ");
                                 jc.bNodes.getQuick(k).toSink(sink);
                             }
+                        }
+
+                        if (model.asOfJoinTolerance != null) {
+                            assert model.joinType == JOIN_ASOF;
+                            sink.putAscii(" tolerance ");
+                            model.asOfJoinTolerance.toSink(sink);
                         }
 
                         if (model.getOuterJoinExpressionClause() != null) {

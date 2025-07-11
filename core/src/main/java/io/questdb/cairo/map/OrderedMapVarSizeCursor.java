@@ -27,7 +27,7 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.std.DirectLongLongHeap;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.Bytes;
 
@@ -92,14 +92,19 @@ class OrderedMapVarSizeCursor implements OrderedMapCursor {
     }
 
     @Override
-    public void longTopK(DirectLongLongHeap heap, Function recordFunction) {
+    public void longTopK(DirectLongLongSortedList list, Function recordFunction) {
         long addr = heapStart;
         for (int i = 0; i < size; i++) {
             recordA.of(addr);
             long v = recordFunction.getLong(recordA);
-            heap.add(addr, v);
+            list.add(addr, v);
             addr += Bytes.align8b(OrderedMap.VAR_KEY_HEADER_SIZE + recordA.keySize() + valueSize);
         }
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return 0;
     }
 
     @Override

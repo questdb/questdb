@@ -35,7 +35,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 import static io.questdb.PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT;
-import static io.questdb.PropertyKey.DEV_MODE_ENABLED;
 import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 import static org.junit.Assert.assertNull;
 
@@ -43,7 +42,6 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
-        setProperty(DEV_MODE_ENABLED, "true");
         setProperty(CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
         super.setUp();
     }
@@ -136,7 +134,10 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 createMatView("2024-10-24T17:00:15.000000Z", telemetryJob);
 
                 try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
-                    execute("2024-10-24T17:00:25.000000Z", refreshJob, telemetryJob,
+                    execute(
+                            "2024-10-24T17:00:25.000000Z",
+                            refreshJob,
+                            telemetryJob,
                             "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
                                     ",('gbpusd', 1.323, '2024-09-10T12:02')" +
                                     ",('jpyusd', 103.21, '2024-09-10T12:02')" +
@@ -161,7 +162,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                         "created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency\n" +
                                 "2024-10-24T17:00:15.000000Z\t200\t6\tnull\t\t0.0\n" +
                                 "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0\n" +
-                                "2024-10-24T17:00:33.000000Z\t202\t6\tnull\t[-105]: table does not exist [table=base_price]\t0.0\n" +
+                                "2024-10-24T17:00:33.000000Z\t202\t6\tnull\tbase table is dropped or renamed\t0.0\n" +
                                 "2024-10-24T17:00:33.000000Z\t203\t6\tnull\t[-105]: table does not exist [table=base_price]\t0.0\n",
                         "sys.telemetry_mat_view"
                 );
@@ -177,7 +178,10 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 createMatView("2024-10-24T17:00:20.000000Z", telemetryJob);
 
                 try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
-                    execute("2024-10-24T17:01:00.000000Z", refreshJob, telemetryJob,
+                    execute(
+                            "2024-10-24T17:01:00.000000Z",
+                            refreshJob,
+                            telemetryJob,
                             "insert into base_price " +
                                     "select 'gbpusd', 1.320 + x / 1000.0, timestamp_sequence('2024-09-10T12:02', 1000000*60*5) " +
                                     "from long_sequence(24 * 20 * 5)"
@@ -198,7 +202,8 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 assertSql(
                         "sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
                                 "1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z\n" +
-                                "2\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z\n",
+                                "2\t\t\n" +
+                                "3\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z\n",
                         "select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')"
                 );
 

@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.pgwire.BadProtocolException;
 import io.questdb.std.BinarySequence;
@@ -58,6 +59,28 @@ class PGUtils {
     private PGUtils() {
     }
 
+    public static int calculateArrayColBinSize(ArrayView array, int notNullCount) {
+        int headerSize = Integer.BYTES // size field (stores the number returned from this method)
+                + Integer.BYTES // dimension count
+                + Integer.BYTES // "has nulls" flag
+                + Integer.BYTES // component type
+                + array.getDimCount() * (2 * Integer.BYTES); // dimension lengths
+        return headerSize +
+                notNullCount *
+                        (Integer.BYTES // element size
+                                + Long.BYTES) + // element value
+                (array.getCardinality() - notNullCount) * // number of NULL elements
+                        Integer.BYTES; // element size, zero for NULL value
+    }
+
+    public static int calculateArrayResumeColBinSize(int notNullCount, int nullCount) {
+        return notNullCount *
+                (Integer.BYTES // element size
+                        + Long.BYTES) + // element value
+                nullCount *
+                        Integer.BYTES; // element size, zero for NULL value
+    }
+
     /**
      * Returns the size of the serialized value in bytes, or -1 if the type is not supported.
      *
@@ -67,10 +90,12 @@ class PGUtils {
             PGPipelineEntry pipelineEntry,
             Record record,
             int columnIndex,
-            int typeTag,
-            int bitFlags,
-            long maxBlobSize
+            int columnType,
+            int geohashSize,
+            long maxBlobSize,
+            int arrayResumePoint
     ) throws BadProtocolException {
+        final short typeTag = ColumnType.tagOf(columnType);
         switch (typeTag) {
             case ColumnType.NULL:
                 return Integer.BYTES;
@@ -111,13 +136,13 @@ class PGUtils {
                 final Long256 long256Value = record.getLong256A(columnIndex);
                 return Long256Impl.isNull(long256Value) ? Integer.BYTES : Integer.BYTES + Numbers.hexDigitsLong256(long256Value);
             case ColumnType.GEOBYTE:
-                return geoHashBytes(record.getGeoByte(columnIndex), bitFlags);
+                return geoHashBytes(record.getGeoByte(columnIndex), geohashSize);
             case ColumnType.GEOSHORT:
-                return geoHashBytes(record.getGeoShort(columnIndex), bitFlags);
+                return geoHashBytes(record.getGeoShort(columnIndex), geohashSize);
             case ColumnType.GEOINT:
-                return geoHashBytes(record.getGeoInt(columnIndex), bitFlags);
+                return geoHashBytes(record.getGeoInt(columnIndex), geohashSize);
             case ColumnType.GEOLONG:
-                return geoHashBytes(record.getGeoLong(columnIndex), bitFlags);
+                return geoHashBytes(record.getGeoLong(columnIndex), geohashSize);
             case ColumnType.VARCHAR:
                 final Utf8Sequence vcValue = record.getVarcharA(columnIndex);
                 return vcValue == null ? Integer.BYTES : Integer.BYTES + vcValue.size();
@@ -143,9 +168,38 @@ class PGUtils {
                                 .put(']');
                     }
                 }
+            case ColumnType.ARRAY:
+                ArrayView array = record.getArray(columnIndex, columnType);
+                if (array.isNull()) {
+                    return Integer.BYTES; // size field (will be -1 for NULL)
+                }
+                assert ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE ||
+                        ColumnType.decodeArrayElementType(columnType) == ColumnType.LONG
+                        : "implemented only for DOUBLE and LONG";
+                int notNullCount = PGUtils.countNotNull(array, arrayResumePoint);
+                return calculateArrayResumeColBinSize(notNullCount, array.getCardinality() - notNullCount);
             default:
                 assert false : "unsupported type: " + typeTag;
                 return -1;
+        }
+    }
+
+    public static int countNotNull(ArrayView array, int resumePoint) {
+        if (array.isVanilla()) {
+            switch (array.getElemType()) {
+                case ColumnType.DOUBLE:
+                    return array.flatView().countDouble(
+                            array.getFlatViewOffset() + resumePoint,
+                            array.getFlatViewLength() - resumePoint);
+                case ColumnType.LONG:
+                    return array.flatView().countLong(
+                            array.getFlatViewOffset() + resumePoint,
+                            array.getFlatViewLength() - resumePoint);
+                default:
+                    throw new AssertionError("Unsupported array element type: " + array.getElemType());
+            }
+        } else {
+            return countNotNullRecursive(array, 0, 0, resumePoint);
         }
     }
 
@@ -216,13 +270,44 @@ class PGUtils {
         }
     }
 
-    private static int geoHashBytes(long value, int bitFlags) {
+    private static int countNotNullRecursive(ArrayView array, int dim, int flatIndex, int resumePoint) {
+        int count = 0;
+        final int dimLen = array.getDimLen(dim);
+        final int stride = array.getStride(dim);
+        final boolean atDeepestDim = dim == array.getDimCount() - 1;
+        if (atDeepestDim) {
+            short elemType = array.getElemType();
+            for (int i = 0; i < dimLen; i++) {
+                if (flatIndex >= resumePoint)
+                    switch (elemType) {
+                        case ColumnType.DOUBLE:
+                            if (Numbers.isFinite(array.getDouble(flatIndex))) {
+                                count++;
+                            }
+                            break;
+                        case ColumnType.LONG:
+                            if (array.getLong(flatIndex) != Numbers.LONG_NULL) {
+                                count++;
+                            }
+                    }
+                flatIndex += stride;
+            }
+        } else {
+            for (int i = 0; i < dimLen; i++) {
+                count += countNotNullRecursive(array, dim + 1, flatIndex, resumePoint);
+                flatIndex += stride;
+            }
+        }
+        return count;
+    }
+
+    private static int geoHashBytes(long value, int size) {
         if (value == GeoHashes.NULL) {
             return Integer.BYTES;
         } else {
-            assert bitFlags > 0;
+            assert size > 0;
             // chars or bits
-            return Integer.BYTES + bitFlags;
+            return Integer.BYTES + size;
         }
     }
 }

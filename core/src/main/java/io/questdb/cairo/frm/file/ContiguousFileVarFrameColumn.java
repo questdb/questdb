@@ -24,7 +24,12 @@
 
 package io.questdb.cairo.frm.file;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeDriver;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -44,13 +49,19 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     private final boolean mixedIOFlag;
     private long appendOffsetRowCount = -1;
     private long auxFd = -1;
+    private long auxMapAddr;
+    private long auxMapSize;
+    private boolean closed = false;
     private int columnIndex;
     private long columnTop;
     private int columnType;
     private ColumnTypeDriver columnTypeDriver;
     private long dataAppendOffsetBytes = -1;
     private long dataFd = -1;
-    private RecycleBin<ContiguousFileVarFrameColumn> recycleBin;
+    private long dataMapAddr;
+    private long dataMapSize;
+    private boolean isReadOnly;
+    private RecycleBin<FrameColumn> recycleBin;
 
     public ContiguousFileVarFrameColumn(CairoConfiguration configuration) {
         this.ff = configuration.getFilesFacade();
@@ -81,21 +92,21 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
             // Map source offset file, it will be used to copy data from anyway.
             // sourceHi is exclusive
-            long srcAuxMemSize = columnTypeDriver.getAuxVectorSize(sourceHi - sourceLo);
+            long srcAuxMemSize = columnTypeDriver.getAuxVectorSize(sourceHi);
 
             final long srcAuxMemAddr = TableUtils.mapAppendColumnBuffer(
                     ff,
                     sourceColumn.getSecondaryFd(),
-                    columnTypeDriver.getAuxVectorOffset(sourceLo),
+                    0,
                     srcAuxMemSize,
                     false,
                     MEMORY_TAG
             );
 
             try {
-                long srcDataOffset = columnTypeDriver.getDataVectorOffset(srcAuxMemAddr, 0);
-                assert (sourceLo == 0 && srcDataOffset == 0) || (sourceLo > 0 && srcDataOffset > 0 && srcDataOffset < 1L << 40);
-                long srcDataSize = columnTypeDriver.getDataVectorSize(srcAuxMemAddr, 0, sourceHi - 1);
+                long srcDataOffset = columnTypeDriver.getDataVectorOffset(srcAuxMemAddr, sourceLo);
+                assert (sourceLo == 0 && srcDataOffset == 0) || (sourceLo > 0 && srcDataOffset >= columnTypeDriver.getDataVectorMinEntrySize() && srcDataOffset < 1L << 40);
+                long srcDataSize = columnTypeDriver.getDataVectorSize(srcAuxMemAddr, sourceLo, sourceHi - 1);
                 if (srcDataSize > 0) {
                     assert srcDataSize < 1L << 40;
                     TableUtils.allocateDiskSpaceToPage(ff, dataFd, targetDataOffset + srcDataSize);
@@ -144,7 +155,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                     columnTypeDriver.shiftCopyAuxVector(
                             srcDataOffset - targetDataOffset,
                             srcAuxMemAddr,
-                            0,
+                            sourceLo,
                             sourceHi - 1, // inclusive
                             dstAuxAddr,
                             srcAuxMemSize
@@ -163,7 +174,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 TableUtils.mapAppendColumnBufferRelease(
                         ff,
                         srcAuxMemAddr,
-                        columnTypeDriver.getAuxVectorOffset(sourceLo),
+                        0,
                         srcAuxMemSize,
                         MEMORY_TAG
                 );
@@ -225,19 +236,34 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
     @Override
     public void close() {
-        if (auxFd != -1) {
-            ff.close(auxFd);
-            auxFd = -1;
-        }
-        if (dataFd != -1) {
-            ff.close(dataFd);
-            dataFd = -1;
-        }
+        if (!closed) {
+            if (auxMapAddr != 0) {
+                ff.munmap(auxMapAddr, auxMapSize, MEMORY_TAG);
+                auxMapAddr = 0;
+                auxMapSize = 0;
+            }
 
-        if (recycleBin != null && !recycleBin.isClosed()) {
-            appendOffsetRowCount = 0;
-            dataAppendOffsetBytes = 0;
-            recycleBin.put(this);
+            if (dataMapAddr != 0) {
+                ff.munmap(dataMapAddr, dataMapSize, MEMORY_TAG);
+                dataMapAddr = 0;
+                dataMapSize = 0;
+            }
+
+            if (auxFd != -1) {
+                ff.close(auxFd);
+                auxFd = -1;
+            }
+            if (dataFd != -1) {
+                ff.close(dataFd);
+                dataFd = -1;
+            }
+            closed = true;
+
+            if (recycleBin != null && !recycleBin.isClosed()) {
+                appendOffsetRowCount = 0;
+                dataAppendOffsetBytes = 0;
+                recycleBin.put(this);
+            }
         }
     }
 
@@ -257,6 +283,26 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     }
 
     @Override
+    public long getContiguousAuxAddr(long rowHi) {
+        if (rowHi <= columnTop) {
+            return 0;
+        }
+
+        mapAllRows(rowHi);
+        return auxMapAddr;
+    }
+
+    @Override
+    public long getContiguousDataAddr(long rowHi) {
+        if (rowHi <= columnTop) {
+            return 0;
+        }
+
+        mapAllRows(rowHi);
+        return dataMapAddr;
+    }
+
+    @Override
     public long getPrimaryFd() {
         return dataFd;
     }
@@ -273,22 +319,27 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
     public void ofRO(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex, boolean isEmpty) {
         assert auxFd == -1;
-        this.columnType = columnType;
-        this.columnTypeDriver = ColumnType.getDriver(columnType);
-        this.columnTop = columnTop;
-        this.columnIndex = columnIndex;
-        this.appendOffsetRowCount = -1;
-
+        closed = false;
         int plen = partitionPath.size();
+
         try {
+            this.columnType = columnType;
+            this.columnTypeDriver = ColumnType.getDriver(columnType);
+            this.columnTop = columnTop;
+            this.columnIndex = columnIndex;
+            this.appendOffsetRowCount = -1;
+
             if (!isEmpty) {
                 dFile(partitionPath, columnName, columnTxn);
                 this.dataFd = TableUtils.openRO(ff, partitionPath.$(), LOG);
-
                 partitionPath.trimTo(plen);
                 iFile(partitionPath, columnName, columnTxn);
                 this.auxFd = TableUtils.openRO(ff, partitionPath.$(), LOG);
             }
+            this.isReadOnly = true;
+        } catch (Exception e) {
+            close();
+            throw e;
         } finally {
             partitionPath.trimTo(plen);
         }
@@ -296,28 +347,33 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
     public void ofRW(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, long columnTop, int columnIndex) {
         assert auxFd == -1;
-        // Negative col top means column does not exist in the partition.
-        // Create it.
-        this.columnType = columnType;
-        this.columnTypeDriver = ColumnType.getDriver(columnType);
-        this.columnTop = columnTop;
-        this.columnIndex = columnIndex;
-        this.appendOffsetRowCount = -1;
-
+        closed = false;
         int plen = partitionPath.size();
+
         try {
+            // Negative col top means column does not exist in the partition.
+            // Create it.
+            this.columnType = columnType;
+            this.columnTypeDriver = ColumnType.getDriver(columnType);
+            this.columnTop = columnTop;
+            this.columnIndex = columnIndex;
+            this.appendOffsetRowCount = -1;
+
             dFile(partitionPath, columnName, columnTxn);
             this.dataFd = TableUtils.openRW(ff, partitionPath.$(), LOG, fileOpts);
-
             partitionPath.trimTo(plen);
             iFile(partitionPath, columnName, columnTxn);
             this.auxFd = TableUtils.openRW(ff, partitionPath.$(), LOG, fileOpts);
+            this.isReadOnly = false;
+        } catch (Throwable e) {
+            close();
+            throw e;
         } finally {
             partitionPath.trimTo(plen);
         }
     }
 
-    public void setPool(RecycleBin<ContiguousFileVarFrameColumn> recycleBin) {
+    public void setRecycleBin(RecycleBin<FrameColumn> recycleBin) {
         assert this.recycleBin == null;
         this.recycleBin = recycleBin;
     }
@@ -329,5 +385,33 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             this.appendOffsetRowCount = appendOffsetRowCount;
         }
         return dataAppendOffsetBytes;
+    }
+
+    private void mapAllRows(long rowHi) {
+        if (!isReadOnly) {
+            // Writable columns are not used yet, can be easily implemented if needed
+            throw new UnsupportedOperationException("Cannot map writable column");
+        }
+
+        long newAuxMemSize = columnTypeDriver.getAuxVectorSize(rowHi - columnTop);
+        if (auxMapSize > 0) {
+            if (auxMapSize <= newAuxMemSize) {
+                // Already mapped to same or bigger size
+                return;
+            }
+
+            // We can handle remaps, but so far there was no case for it.
+            throw new UnsupportedOperationException("Remap not supported for frame columns yet");
+        }
+
+        auxMapSize = newAuxMemSize;
+        if (newAuxMemSize > 0) {
+            auxMapAddr = TableUtils.mapRO(ff, auxFd, auxMapSize, 0, MEMORY_TAG);
+        }
+
+        dataMapSize = columnTypeDriver.getDataVectorSize(auxMapAddr, 0, rowHi - columnTop - 1);
+        if (dataMapSize > 0) {
+            dataMapAddr = TableUtils.mapRO(ff, dataFd, dataMapSize, 0, MEMORY_TAG);
+        }
     }
 }

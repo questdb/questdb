@@ -69,8 +69,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short CONVERT_PARTITION_TO_PARQUET = CHANGE_COLUMN_TYPE + 1; // 18
     public final static short CONVERT_PARTITION_TO_NATIVE = CONVERT_PARTITION_TO_PARQUET + 1; // 19
     public final static short FORCE_DROP_PARTITION = CONVERT_PARTITION_TO_NATIVE + 1; // 20
-    public final static short SET_TTL_HOURS_OR_MONTHS = FORCE_DROP_PARTITION + 1; // 21
-    public final static short CHANGE_SYMBOL_CAPACITY = SET_TTL_HOURS_OR_MONTHS + 1; // 22
+    public final static short SET_TTL = FORCE_DROP_PARTITION + 1; // 21
+    public final static short CHANGE_SYMBOL_CAPACITY = SET_TTL + 1; // 22
+    public final static short SET_MAT_VIEW_REFRESH_LIMIT = CHANGE_SYMBOL_CAPACITY + 1; // 23
+    public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
+    public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -129,9 +132,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         return flags;
     }
 
-    @Override
     // todo: supply bitset to indicate which ops are supported and which arent
     //     "structural changes" doesn't cover is as "add column" is supported
+    @Override
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         final QueryRegistry queryRegistry = sqlExecutionContext != null ? sqlExecutionContext.getCairoEngine().getQueryRegistry() : null;
         keepMatViewsValid = false;
@@ -192,8 +195,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 case SET_PARAM_COMMIT_LAG:
                     applyParamO3MaxLag(svc);
                     break;
-                case SET_TTL_HOURS_OR_MONTHS:
-                    applyTtlHoursOrMonths(svc);
+                case SET_TTL:
+                    applyTtl(svc);
                     break;
                 case RENAME_TABLE:
                     applyRenameTable(svc);
@@ -216,6 +219,16 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 case CHANGE_SYMBOL_CAPACITY:
                     changeSymbolCapacity(svc);
                     break;
+                case SET_MAT_VIEW_REFRESH_LIMIT:
+                    setMatViewRefreshLimit(svc);
+                    break;
+                case SET_MAT_VIEW_REFRESH_TIMER:
+                    // legacy operation, kept for compat purposes
+                    setMatViewRefreshTimer(svc);
+                    break;
+                case SET_MAT_VIEW_REFRESH:
+                    setMatViewRefresh(svc);
+                    break;
                 default:
                     LOG.error()
                             .$("invalid alter table command [code=").$(command)
@@ -233,7 +246,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             final LogRecord log = isInfo ? LOG.info() : (isCritical ? LOG.critical() : LOG.error());
             log.$("could not alter table [table=").$(svc.getTableToken())
                     .$(", command=").$(command)
-                    .$(", msg=").$(e.getFlyweightMessage())
+                    .$(", msg=").$safe(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();
             throw e;
@@ -340,9 +353,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         if (keepMatViewsValid) {
             return null;
         }
+        // Table rename is not in the list since it's handled by the engine directly. That's because the invalidation
+        // looks up dependent views by table name which has already changed at this point, not directory name.
         switch (command) {
-            case RENAME_TABLE:
-                return "table rename operation";
             case DROP_COLUMN:
                 return "drop column operation";
             case RENAME_COLUMN:
@@ -355,10 +368,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 return "detach partition operation";
             case ATTACH_PARTITION:
                 return "attach partition operation";
-            case SET_DEDUP_ENABLE:
-                // We disallow creation of mat views with keys outside the base table's dedup columns.
-                // So, we invalidate mat views when user enables dedup on the base table, not to break this restriction.
-                return "enable deduplication operation";
             default:
                 return null;
         }
@@ -581,8 +590,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         try {
             svc.setMetaO3MaxLag(o3MaxLag);
         } catch (CairoException e) {
-            LOG.error().$("could not change o3MaxLag [table=").utf8(getTableToken().getTableName())
-                    .$(", msg=").$(e.getFlyweightMessage())
+            LOG.error().$("could not change o3MaxLag [table=").$safe(getTableToken().getTableName())
+                    .$(", msg=").$safe(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();
             throw e;
@@ -622,10 +631,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         );
     }
 
-    private void applyTtlHoursOrMonths(MetadataService svc) {
-        int ttlHoursOrMonths = (int) extraInfo.get(0);
+    private void applyTtl(MetadataService svc) {
+        final int ttlHoursOrMonths = (int) extraInfo.get(0);
         try {
-            svc.setMetaTtlHoursOrMonths(ttlHoursOrMonths);
+            svc.setMetaTtl(ttlHoursOrMonths);
             if (svc instanceof TableWriter) {
                 ((TableWriter) svc).enforceTtl();
             }
@@ -680,6 +689,52 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private boolean enableDeduplication(MetadataService svc) {
         assert extraInfo.size() > 0;
         return svc.enableDeduplicationWithUpsertKeys(extraInfo);
+    }
+
+    private void setMatViewRefresh(MetadataService svc) {
+        final int refreshType = (int) extraInfo.get(0);
+        final int timerInterval = (int) extraInfo.get(1);
+        final char timerUnit = (char) extraInfo.get(2);
+        final long timerStart = extraInfo.get(3);
+        final int periodLength = (int) extraInfo.get(4);
+        final char periodLengthUnit = (char) extraInfo.get(5);
+        final int periodDelay = (int) extraInfo.get(6);
+        final char periodDelayUnit = (char) extraInfo.get(7);
+        final CharSequence timerTimeZone = activeExtraStrInfo.getStrA(0);
+
+        svc.setMatViewRefresh(
+                refreshType,
+                timerInterval,
+                timerUnit,
+                timerStart,
+                timerTimeZone,
+                periodLength,
+                periodLengthUnit,
+                periodDelay,
+                periodDelayUnit
+        );
+    }
+
+    private void setMatViewRefreshLimit(MetadataService svc) {
+        final int limitHoursOrMonths = (int) extraInfo.get(0);
+        try {
+            svc.setMatViewRefreshLimit(limitHoursOrMonths);
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
+    }
+
+    private void setMatViewRefreshTimer(MetadataService svc) {
+        final long start = extraInfo.get(0);
+        final int interval = (int) extraInfo.get(1);
+        final char unit = (char) extraInfo.get(2);
+        try {
+            svc.setMatViewRefreshTimer(start, interval, unit);
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
     }
 
     private void squashPartitions(MetadataService svc) {

@@ -28,8 +28,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
-import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.cutlass.http.HttpRequestProcessorFactory;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
@@ -51,8 +51,8 @@ public class HttpMinTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpMinTestBuilder.class);
     private PrometheusMetricsProcessor.RequestStatePool prometheusRequestStatePool;
-    private Target target;
     private int sendBufferSize;
+    private Target target;
     private int tcpSndBufSize;
     private TemporaryFolder temp;
     private int workerCount;
@@ -60,16 +60,17 @@ public class HttpMinTestBuilder {
     public void run(HttpQueryTestBuilder.HttpClientCode code) throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
+
+            CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
+
             final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
                     .withBaseDir(temp.getRoot().getAbsolutePath())
                     .withTcpSndBufSize(tcpSndBufSize)
                     .withSendBufferSize(sendBufferSize)
                     .withWorkerCount(workerCount)
-                    .build();
+                    .build(cairoConfiguration);
 
             final WorkerPool workerPool = new TestWorkerPool(httpConfiguration.getWorkerCount());
-
-            CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
 
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration);
@@ -80,14 +81,14 @@ public class HttpMinTestBuilder {
                         ? prometheusRequestStatePool
                         : new PrometheusMetricsProcessor.RequestStatePool(httpConfiguration.getWorkerCount());
                 httpServer.registerClosable(requestStatePool);
-                httpServer.bind(new HttpRequestProcessorFactory() {
+                httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
                     public ObjList<String> getUrls() {
                         return httpConfiguration.getContextPathMetrics();
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestHandler newInstance() {
                         return new PrometheusMetricsProcessor(target, httpConfiguration, requestStatePool);
                     }
                 });
@@ -95,14 +96,14 @@ public class HttpMinTestBuilder {
                 // This `bind` for the default handler is only here to allow checking what the server behaviour is with
                 // an external web browser that would issue additional requests to `/favicon.ico`.
                 // It mirrors the setup of the min http server.
-                httpServer.bind(new HttpRequestProcessorFactory() {
+                httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
                     public ObjList<String> getUrls() {
                         return httpConfiguration.getContextPathStatus();
                     }
 
                     @Override
-                    public HttpRequestProcessor newInstance() {
+                    public HttpRequestHandler newInstance() {
                         return new HealthCheckProcessor(httpConfiguration);
                     }
                 }, true);
@@ -123,7 +124,7 @@ public class HttpMinTestBuilder {
         return this;
     }
 
-    public HttpMinTestBuilder withScrapable(Target target) {
+    public HttpMinTestBuilder withScrappable(Target target) {
         this.target = target;
         return this;
     }

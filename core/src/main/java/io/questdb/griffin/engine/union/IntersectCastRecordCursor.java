@@ -119,6 +119,11 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return isCursorBHashed ? 1 : 0;
+    }
+
+    @Override
     public void toTop() {
         cursorA.toTop();
         mapA.clear();

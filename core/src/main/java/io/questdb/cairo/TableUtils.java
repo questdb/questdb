@@ -119,23 +119,6 @@ public final class TableUtils {
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
     public static final String META_PREV_FILE_NAME = "_meta.prev";
-    /**
-     * TXN file structure
-     * struct {
-     * long txn;
-     * long transient_row_count; // rows count in last partition
-     * long fixed_row_count; // row count in table excluding count in last partition
-     * long max_timestamp; // last timestamp written to table
-     * long struct_version; // data structure version; whenever columns added or removed this version changes.
-     * long partition_version; // version that increments whenever non-current partitions are modified/added/removed
-     * long txn_check; // same as txn - sanity check for concurrent reads and writes
-     * int  map_writer_count; // symbol writer count
-     * int  map_writer_position[map_writer_count]; // position of each of map writers
-     * }
-     * <p>
-     * TableUtils.resetTxn() writes to this file, it could be using different offsets, beware
-     */
-
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     // 24-byte header left empty for possible future use
@@ -153,6 +136,7 @@ public final class TableUtils {
     public static final int TABLE_TYPE_NON_WAL = 0;
     public static final int TABLE_TYPE_WAL = 1;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
+    public static final String TODO_FILE_NAME = "_todo_";
     /**
      * TXN file structure
      * struct {
@@ -169,8 +153,6 @@ public final class TableUtils {
      * <p>
      * TableUtils.resetTxn() writes to this file, it could be using different offsets, beware
      */
-
-    public static final String TODO_FILE_NAME = "_todo_";
     public static final String TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
     // transaction file structure
@@ -249,6 +231,9 @@ public final class TableUtils {
         return TX_RECORD_HEADER_SIZE + bytesSymbols + Integer.BYTES + bytesPartitions;
     }
 
+    @SuppressWarnings("JavaExistingMethodCanBeUsed")
+    // the mig methods are deliberately standalone so that between old versions
+    // does not regress if the main code changes
     public static int calculateTxnLagChecksum(long txn, long seqTxn, int lagRowCount, long lagMinTimestamp, long lagMaxTimestamp, int lagTxnCount) {
         long checkSum = lagMinTimestamp;
         checkSum = checkSum * 31 + lagMaxTimestamp;
@@ -459,7 +444,7 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        LOG.debug().$("create table [name=").utf8(tableDir).I$();
+        LOG.debug().$("create table [name=").$safe(tableDir).I$();
         path.of(root).concat(tableDir).$();
         if (ff.isDirOrSoftLinkDir(path.$())) {
             throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(path).put(']');
@@ -750,13 +735,14 @@ public final class TableUtils {
             case ColumnType.SHORT:
                 return 0L;
             case ColumnType.SYMBOL:
-                return Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, 0);
+                return Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, SymbolTable.VALUE_IS_NULL);
             case ColumnType.FLOAT:
-                return Float.floatToIntBits(Float.NaN);
+                return Numbers.encodeLowHighInts(Float.floatToIntBits(Float.NaN), Float.floatToIntBits(Float.NaN));
             case ColumnType.DOUBLE:
                 return Double.doubleToLongBits(Double.NaN);
-            case ColumnType.LONG256:
             case ColumnType.INT:
+                return Numbers.encodeLowHighInts(Numbers.INT_NULL, Numbers.INT_NULL);
+            case ColumnType.LONG256:
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
@@ -778,6 +764,8 @@ public final class TableUtils {
                 return NULL_LEN;
             case ColumnType.STRING:
                 return Numbers.encodeLowHighInts(NULL_LEN, NULL_LEN);
+            case ColumnType.ARRAY:
+                return NULL_LEN;
             default:
                 assert false : "Invalid column type: " + columnType;
                 return 0;
@@ -869,8 +857,8 @@ public final class TableUtils {
         // This is temporary solution until we can get multiple version of metadata not overwriting each other
         if (ex.errnoFileCannotRead()) {
             if (millisecondClock.getTicks() < deadline) {
-                LOG.info().$("error reloading metadata [table=").utf8(tableName)
-                        .$(", msg=").utf8(ex.getFlyweightMessage())
+                LOG.info().$("error reloading metadata [table=").$safe(tableName)
+                        .$(", msg=").$safe(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 Os.pause();
@@ -1852,8 +1840,8 @@ public final class TableUtils {
         mem.putBool(tableStruct.isWalEnabled());
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
-        mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
+        mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;
 
         for (int i = 0; i < count; i++) {
@@ -1921,38 +1909,60 @@ public final class TableUtils {
         return true;
     }
 
-    static void buildWriterOrderMap(MemoryR newMetaMem, IntList columnOrderMap, int newColumnCount) {
-        int nameOffset = (int) TableUtils.getColumnNameOffset(newColumnCount);
-        columnOrderMap.clear();
+    /**
+     * Creates a column list from the metadata file. Each entry of the list is a struct, but
+     * Java doesn't support structs you may say! Yes, this is open-array struct, 3 elements per entry.
+     * - writer index (will explain what this is later)
+     * - column name offset - pointer at the beginning of the string list
+     * - symbol map index
+     * <p>
+     * This list will be dense, e.g., it will not have deleted columns, not will it have extra columns that
+     * have changed types. The type change is what makes this loading tricky. When a column type is changed, a new
+     * entry is added to the metadata file on the disk. This new entry will reference the old column (type change) via
+     * replace index, which is also written to the file.
+     * <p>
+     * When we read the file from disk, we don't need the "old" columns in the output. For this reason, as we read
+     * new columns from the file, we might go back to the columns we already read, and replace them.
+     * <p>
+     * Writer index is the index of the column in the metadata file. The metadata file has "sparse" column list,
+     * writer index refers to this sparse list.
+     *
+     * @param metaMem     the memory mapped metadata file
+     * @param columnCount the column count in the file
+     * @param targetList  the destination list (out parameter)
+     */
+    static void buildColumnListFromMetadataFile(MemoryR metaMem, int columnCount, IntList targetList) {
+        int nameOffset = (int) TableUtils.getColumnNameOffset(columnCount);
+        targetList.clear();
 
         int denseSymbolIndex = 0;
-        for (int i = 0; i < newColumnCount; i++) {
-            int strLen = TableUtils.getInt(newMetaMem, newMetaMem.size(), nameOffset);
+        for (int i = 0; i < columnCount; i++) {
+            int strLen = TableUtils.getInt(metaMem, metaMem.size(), nameOffset);
             if (strLen == TableUtils.NULL_LEN) {
-                throw validationException(newMetaMem).put("NULL column name at [").put(i).put(']');
+                throw validationException(metaMem).put("NULL column name at [").put(i).put(']');
             }
             if (strLen < 1 || strLen > 255) {
                 // EXT4 and many others do not allow file name length > 255 bytes
-                throw validationException(newMetaMem).put("String length of ").put(strLen).put(" is invalid at offset ").put(nameOffset);
+                throw validationException(metaMem).put("String length of ").put(strLen).put(" is invalid at offset ").put(nameOffset);
             }
             int nameLen = (int) Vm.getStorageLength(strLen);
-            int newOrderIndex = TableUtils.getReplacingColumnIndex(newMetaMem, i);
-            boolean isSymbol = ColumnType.isSymbol(TableUtils.getColumnType(newMetaMem, i));
+            int replacingColumnIndex = TableUtils.getReplacingColumnIndex(metaMem, i);
+            boolean isSymbol = ColumnType.isSymbol(TableUtils.getColumnType(metaMem, i));
 
-            if (newOrderIndex > -1 && newOrderIndex < newColumnCount - 1) {
+            if (replacingColumnIndex > -1 && replacingColumnIndex < columnCount - 1) {
                 // Replace the column index
-                columnOrderMap.set(3 * newOrderIndex, i);
-                columnOrderMap.set(3 * newOrderIndex + 1, nameOffset);
-                columnOrderMap.set(3 * newOrderIndex + 2, isSymbol ? denseSymbolIndex : -1);
+                targetList.set(3 * replacingColumnIndex, i);
+                targetList.set(3 * replacingColumnIndex + 1, nameOffset);
+                targetList.set(3 * replacingColumnIndex + 2, isSymbol ? denseSymbolIndex : -1);
 
-                columnOrderMap.add(-newOrderIndex - 1);
-                columnOrderMap.add(0);
-                columnOrderMap.add(0);
+                targetList.add(-replacingColumnIndex - 1);
+                targetList.add(0);
+                targetList.add(0);
 
             } else {
-                columnOrderMap.add(i);
-                columnOrderMap.add(nameOffset);
-                columnOrderMap.add(isSymbol ? denseSymbolIndex : -1);
+                targetList.add(i);
+                targetList.add(nameOffset);
+                targetList.add(isSymbol ? denseSymbolIndex : -1);
             }
             nameOffset += nameLen;
             if (isSymbol) {
@@ -2007,7 +2017,7 @@ public final class TableUtils {
                         // right, cannot open file for some reason?
                         LOG.error()
                                 .$("could not open swap [file=").$(path)
-                                .$(", msg=").$(e.getFlyweightMessage())
+                                .$(", msg=").$safe(e.getFlyweightMessage())
                                 .$(", errno=").$(e.getErrno())
                                 .I$();
                     }
@@ -2029,6 +2039,7 @@ public final class TableUtils {
     }
 
     static {
+        //noinspection ConstantValue
         assert TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8 <= TX_OFFSET_MAP_WRITER_COUNT_32;
     }
 }

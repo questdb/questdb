@@ -252,8 +252,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                 // This way, the state copy will never hold a txn number that is newer than what's
                                 // in the table copy (otherwise, such a situation may lead to lost view refresh data).
                                 if (tableToken.isMatView()) {
-                                    final MatViewGraph graph = engine.getMatViewGraph();
-                                    final MatViewDefinition matViewDefinition = graph.getViewDefinition(tableToken);
+                                    final MatViewGraph matViewGraph = engine.getMatViewGraph();
+                                    final MatViewDefinition matViewDefinition = matViewGraph.getViewDefinition(tableToken);
                                     if (matViewDefinition != null) {
                                         matViewFileWriter.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                                         MatViewDefinition.append(matViewDefinition, matViewFileWriter);
@@ -396,7 +396,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 final int cleanSymbolCount = txWriter.getSymbolValueCount(tableMetadata.getDenseSymbolIndex(i));
                 final String columnName = tableMetadata.getColumnName(i);
                 LOG.info().$("rebuilding symbol files [table=").$(tablePath)
-                        .$(", column=").utf8(columnName)
+                        .$(", column=").$safe(columnName)
                         .$(", count=").$(cleanSymbolCount)
                         .I$();
 

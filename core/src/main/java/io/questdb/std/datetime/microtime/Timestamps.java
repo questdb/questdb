@@ -451,6 +451,9 @@ public final class Timestamps {
     }
 
     public static long floorWW(long micros, int stride, long offset) {
+        if (offset == 0) {
+            return floorWW(micros, stride);
+        }
         if (micros < offset) {
             return offset;
         }
@@ -779,18 +782,26 @@ public final class Timestamps {
         return Math.abs(a - b) / SECOND_MICROS;
     }
 
-    public static int getStrideMultiple(CharSequence str) {
-        if (str != null && str.length() > 1) {
-            try {
-                final int multiple = Numbers.parseInt(str, 0, str.length() - 1);
-                return multiple <= 0 ? 1 : multiple;
-            } catch (NumericException ignored) {
+    public static int getStrideMultiple(CharSequence str, int position) throws SqlException {
+        if (str != null) {
+            if (Chars.equals(str, '-')) {
+                throw SqlException.position(position).put("positive number expected: ").put(str);
+            }
+            if (str.length() > 1) {
+                try {
+                    final int multiple = Numbers.parseInt(str, 0, str.length() - 1);
+                    if (multiple <= 0) {
+                        throw SqlException.position(position).put("positive number expected: ").put(str);
+                    }
+                    return multiple;
+                } catch (NumericException ignored) {
+                }
             }
         }
         return 1;
     }
 
-    public static char getStrideUnit(CharSequence str) throws SqlException {
+    public static char getStrideUnit(CharSequence str, int position) throws SqlException {
         assert str.length() > 0;
         final char unit = str.charAt(str.length() - 1);
         switch (unit) {
@@ -805,7 +816,7 @@ public final class Timestamps {
             case 'U':
                 return unit;
             default:
-                throw SqlException.position(-1).put("Invalid unit: ").put(unit);
+                throw SqlException.position(position).put("Invalid unit: ").put(str);
         }
     }
 

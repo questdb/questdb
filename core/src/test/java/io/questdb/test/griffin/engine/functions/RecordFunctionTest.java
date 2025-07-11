@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.RecordFunction;
 import org.junit.Assert;
@@ -38,8 +39,33 @@ public class RecordFunctionTest {
     };
     private static final RecordFunction function = new RecordFunction() {
         @Override
+        public FunctionExtension extendedOps() {
+            return this;
+        }
+
+        @Override
+        public int getArrayLength() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public Record getRecord(Record rec) {
             return record;
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec, int arrayIndex) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec, int arrayIndex) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getStrLen(Record rec, int arrayIndex) {
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -49,8 +75,8 @@ public class RecordFunctionTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetArrayLength() {
-        function.getArrayLength();
+    public void testGetArray() {
+        function.getArray(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -155,7 +181,7 @@ public class RecordFunctionTest {
 
     @Test
     public void testGetRecord() {
-        Assert.assertEquals(39909900999L, function.getRecord(null).getLong(0));
+        Assert.assertEquals(39909900999L, function.extendedOps().getRecord(null).getLong(0));
     }
 
     @Test(expected = UnsupportedOperationException.class)

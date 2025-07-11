@@ -136,6 +136,7 @@ public class ParallelLatestByTest extends AbstractTest {
 
     @Test
     public void testLatestByWithinParallel1() throws Exception {
+
         executeWithPool(4, 8, this::testLatestByWithin);
     }
 
@@ -207,6 +208,11 @@ public class ParallelLatestByTest extends AbstractTest {
                     @Override
                     public int getLatestByQueueCapacity() {
                         return queueCapacity;
+                    }
+
+                    @Override
+                    public boolean useWithinLatestByOptimisation() {
+                        return true;
                     }
                 };
                 execute(null, runnable, configuration);
