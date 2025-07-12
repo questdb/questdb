@@ -1225,6 +1225,13 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyArrayConstructor() throws Exception {
+        assertMemoryLeak(() -> assertException("select array[]", 13, "empty array constructor"));
+        assertMemoryLeak(() -> assertException("select array[[],[]]", 14, "empty brackets"));
+        assertMemoryLeak(() -> assertException("select array[[1],[]]", 18, "empty brackets"));
+    }
+
+    @Test
     public void testEmptyArrayToJsonDouble() {
         try (DirectArray array = new DirectArray(configuration);
              DirectUtf8Sink sink = new DirectUtf8Sink(20)

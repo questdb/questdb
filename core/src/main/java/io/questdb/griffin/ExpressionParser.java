@@ -43,6 +43,7 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.griffin.OperatorExpression.UNARY;
 
 public class ExpressionParser {
+    private static final int BRANCH_ARRAY_CONSTRUCTOR_START = 22;
     private static final int BRANCH_ARRAY_TYPE_QUALIFIER_END = 21;
     private static final int BRANCH_ARRAY_TYPE_QUALIFIER_START = 20;
     private static final int BRANCH_BETWEEN_END = 14;
@@ -189,7 +190,7 @@ public class ExpressionParser {
             int prevBranch,
             boolean exprStackUnwind
     ) throws SqlException {
-        if (node.type == ExpressionNode.OPERATION && node.token.equals(":") &&
+        if (node.type == ExpressionNode.OPERATION && Chars.equals(node.token, ':') &&
                 (argStackDepth == 1 || prevBranch == BRANCH_OPERATOR)
         ) {
             node.paramCount = 1;
@@ -343,8 +344,13 @@ public class ExpressionParser {
                         }
                         break;
                     case ',': {
-                        if (prevBranch == BRANCH_COMMA || prevBranch == BRANCH_LEFT_PARENTHESIS || prevBranch == BRANCH_LEFT_BRACKET) {
-                            throw missingArgs(lastPos);
+                        switch (prevBranch) {
+                            case BRANCH_COMMA:
+                            case BRANCH_LEFT_PARENTHESIS:
+                            case BRANCH_LEFT_BRACKET:
+                                throw missingArgs(lastPos);
+                            default:
+                                break;
                         }
                         thisBranch = BRANCH_COMMA;
 
@@ -494,6 +500,10 @@ public class ExpressionParser {
                                 throw missingArgs(lastPos);
                             case BRANCH_LEFT_PARENTHESIS:
                                 throw SqlException.$(lastPos, "syntax error");
+                            case BRANCH_LEFT_BRACKET:
+                                throw SqlException.$(lastPos, "empty brackets");
+                            case BRANCH_ARRAY_CONSTRUCTOR_START:
+                                throw SqlException.$(lastPos, "empty array constructor");
                             case BRANCH_OPERATOR: {
                                 // this would be a syntax error in regular cases, such as
                                 // "1 + ]". However, there is an edge case in array slicing:
@@ -513,6 +523,7 @@ public class ExpressionParser {
                                 scopeStack.pop();
                                 // paramCount tracks the number of preceding commas within the current brackets.
                                 // So, if the brackets are empty, arg count is zero, otherwise it's paramCount + 1
+                                assert prevBranch != BRANCH_ARRAY_CONSTRUCTOR_START;
                                 int bracketArgCount = prevBranch == BRANCH_LEFT_BRACKET ? 0 : paramCount + 1;
                                 thisBranch = BRANCH_RIGHT_BRACKET;
 
@@ -526,10 +537,9 @@ public class ExpressionParser {
                                     argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                 }
                                 assert node != null : "opStack is empty at ']'";
-                                if (node.token.equals("[")) {
-                                    if (bracketArgCount == 0) {
-                                        throw SqlException.$(lastPos, "empty brackets");
-                                    }
+                                if (Chars.equals(node.token, '[')) {
+                                    // we ensure earlier that this that empty brackets are disallowed
+                                    assert bracketArgCount != 0;
                                     node = expressionNodePool.next().of(
                                             ExpressionNode.ARRAY_ACCESS,
                                             "[]",
@@ -541,7 +551,7 @@ public class ExpressionParser {
                                     node.paramCount = bracketArgCount + 1;
                                     opStack.push(node);
                                 } else {
-                                    assert node.token.equals("[[") : "token is neither '[' nor '[['";
+                                    assert Chars.equals(node.token, "[[") : "token is neither '[' nor '[['";
                                     node = expressionNodePool.next().of(
                                             ExpressionNode.ARRAY_CONSTRUCTOR,
                                             "ARRAY",
@@ -899,7 +909,7 @@ public class ExpressionParser {
                             if (nextTok == null || !Chars.equals(nextTok, "[")) {
                                 throw SqlException.$(lexer.lastTokenPosition(), "ARRAY not followed by '['");
                             }
-                            thisBranch = BRANCH_LEFT_BRACKET;
+                            thisBranch = BRANCH_ARRAY_CONSTRUCTOR_START;
                             // entering bracketed context, push stuff onto the stacks
                             paramCountStack.push(paramCount);
                             paramCount = 0;
@@ -1226,6 +1236,7 @@ public class ExpressionParser {
                                 case BRANCH_OPERATOR:
                                 case BRANCH_LEFT_PARENTHESIS:
                                 case BRANCH_LEFT_BRACKET:
+                                case BRANCH_ARRAY_CONSTRUCTOR_START:
                                 case BRANCH_COMMA:
                                 case BRANCH_NONE:
                                 case BRANCH_CASE_CONTROL:
