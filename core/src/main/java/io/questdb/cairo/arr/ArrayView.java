@@ -218,6 +218,13 @@ public abstract class ArrayView implements QuietCloseable {
                         }
                     }
                     break;
+                case ColumnType.NULL:
+                    // The other array can only be NULL at this point. Empty array creation is disallowed by
+                    // the SQL parser. By the time we are here we would have verified that both arrays
+                    // have the same dimensionality. When this element type is NULL, it means dimensionality is 0
+                    // (e.g. empty array). The only other array that is allowed to be empty would also have
+                    // element type as NULL
+                    return true;
                 default:
                     throw new UnsupportedOperationException("Implemented only for DOUBLE and LONG");
             }

@@ -189,7 +189,7 @@ public class ExpressionParser {
             int prevBranch,
             boolean exprStackUnwind
     ) throws SqlException {
-        if (node.type == ExpressionNode.OPERATION && node.token.equals(":") &&
+        if (node.type == ExpressionNode.OPERATION && Chars.equals(node.token, ':') &&
                 (argStackDepth == 1 || prevBranch == BRANCH_OPERATOR)
         ) {
             node.paramCount = 1;
@@ -526,7 +526,7 @@ public class ExpressionParser {
                                     argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                 }
                                 assert node != null : "opStack is empty at ']'";
-                                if (node.token.equals("[")) {
+                                if (Chars.equals(node.token, '[')) {
                                     if (bracketArgCount == 0) {
                                         throw SqlException.$(lastPos, "empty brackets");
                                     }
@@ -541,7 +541,7 @@ public class ExpressionParser {
                                     node.paramCount = bracketArgCount + 1;
                                     opStack.push(node);
                                 } else {
-                                    assert node.token.equals("[[") : "token is neither '[' nor '[['";
+                                    assert Chars.equals(node.token, "[[") : "token is neither '[' nor '[['";
                                     node = expressionNodePool.next().of(
                                             ExpressionNode.ARRAY_CONSTRUCTOR,
                                             "ARRAY",
