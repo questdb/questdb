@@ -45,10 +45,11 @@ public class CreateTableTestUtils {
         TestUtils.createTable(engine, model);
     }
 
-    public static void createAllTableWithNewTypes(CairoEngine engine, int partitionBy) {
-        TableModel model = getAllTypesModelWithNewTypes(engine.getConfiguration(), partitionBy);
+    public static void createAllTableWithNewTypes(CairoEngine engine, int partitionBy, int timestampType) throws Exception {
+        TableModel model = getAllTypesModelWithNewTypes(engine.getConfiguration(), partitionBy, timestampType);
         TestUtils.createTable(engine, model);
     }
+
 
     public static void createAllTableWithTimestamp(CairoEngine engine, int partitionBy) {
         TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy).col("ts", ColumnType.TIMESTAMP).timestamp();
@@ -203,7 +204,7 @@ public class CreateTableTestUtils {
                 .col("varchar", ColumnType.VARCHAR); // 11
     }
 
-    public static TableModel getAllTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy) {
+    public static TableModel getAllTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy, int timestampType) throws Exception {
         return new TableModel(configuration, "all2", partitionBy)
                 .col("int", ColumnType.INT)
                 .col("short", ColumnType.SHORT)
@@ -221,7 +222,7 @@ public class CreateTableTestUtils {
                 .col("uuid", ColumnType.UUID)
                 .col("ipv4", ColumnType.IPv4)
                 .col("varchar", ColumnType.VARCHAR)
-                .timestamp();
+                .timestamp(timestampType);
     }
 
     public static TableModel getGeoHashTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy) {

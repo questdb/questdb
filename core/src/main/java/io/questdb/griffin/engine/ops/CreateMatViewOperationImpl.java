@@ -31,6 +31,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -56,7 +57,6 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -95,7 +95,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final String timeZone;
     private final String timeZoneOffset;
     private final int timerInterval;
-    private final long timerStart;
     private final String timerTimeZone;
     private final char timerUnit;
     private final IntList tmpColumnIndexes = new IntList();
@@ -104,6 +103,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private CreateTableOperationImpl createTableOperation;
     private long samplingInterval;
     private char samplingIntervalUnit;
+    private long timerStart;
+    private TimestampDriver timestampDriver;
 
     public CreateMatViewOperationImpl(
             @NotNull String sqlText,
@@ -273,6 +274,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     public void init(TableToken matViewToken) {
         viewDefinition.init(
                 refreshType,
+                timestampDriver.getColumnType(),
                 deferred,
                 matViewToken,
                 Chars.toString(createTableOperation.getSelectText()),
@@ -369,7 +371,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
             final int timestampType = timestampModel.getColumnType();
             // type can be -1 for create table as select because types aren't known yet
-            if (timestampType != ColumnType.TIMESTAMP && timestampType != ColumnType.UNDEFINED) {
+            if (!ColumnType.isTimestamp(timestampType) && timestampType != ColumnType.UNDEFINED) {
                 throw SqlException.position(timestampPos)
                         .put("TIMESTAMP column expected [actual=")
                         .put(ColumnType.nameOf(timestampType)).put(']');
@@ -436,26 +438,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         assert samplingInterval > 0;
         samplingIntervalUnit = interval.charAt(samplingIntervalEnd);
 
-        // Check if PARTITION BY wasn't specified in SQL, so that we need
-        // to assign it based on the sampling interval.
-        if (createTableOperation.getPartitionBy() == PartitionBy.NONE) {
-            final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(
-                    samplingInterval,
-                    samplingIntervalUnit,
-                    0
-            );
-            final long approxBucketMicros = timestampSampler.getApproxBucketSize();
-            final int partitionBy = approxBucketMicros > Timestamps.HOUR_MICROS ? PartitionBy.YEAR
-                    : approxBucketMicros > Timestamps.MINUTE_MICROS ? PartitionBy.MONTH
-                    : PartitionBy.DAY;
-            createTableOperation.setPartitionBy(partitionBy);
-            final int ttlHoursOrMonths = createTableOperation.getTtlHoursOrMonths();
-            if (ttlHoursOrMonths > 0) {
-                // Don't forget to validate TTL against PARTITION BY.
-                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, createTableOperation.getTtlPosition());
-            }
-        }
-
         CairoEngine engine = sqlExecutionContext.getCairoEngine();
         try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseTableToken)) {
             for (int i = 0, n = columns.size(); i < n; i++) {
@@ -488,6 +470,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
         }
         createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata);
+        this.timestampDriver = ColumnType.getTimestampDriver(createTableOperation.getTimestampType());
+        updateBaseTablePartitionBy();
     }
 
     private static void copyBaseTableSymbolColumnCapacity(
@@ -640,6 +624,29 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 if (tmpLiterals.contains(column.getAlias())) {
                     tmpColumnIndexes.add(i);
                 }
+            }
+        }
+    }
+
+    private void updateBaseTablePartitionBy() throws SqlException {
+        // Check if PARTITION BY wasn't specified in SQL, so that we need
+        // to assign it based on the sampling interval.
+        if (createTableOperation.getPartitionBy() == PartitionBy.NONE) {
+            final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(
+                    timestampDriver,
+                    samplingInterval,
+                    samplingIntervalUnit,
+                    0
+            );
+            final long approxBucketMicros = timestampSampler.getApproxBucketSize();
+            final int partitionBy = approxBucketMicros > timestampDriver.fromHours(1) ? PartitionBy.YEAR
+                    : approxBucketMicros > timestampDriver.fromMinutes(1) ? PartitionBy.MONTH
+                    : PartitionBy.DAY;
+            createTableOperation.setPartitionBy(partitionBy);
+            final int ttlHoursOrMonths = createTableOperation.getTtlHoursOrMonths();
+            if (ttlHoursOrMonths > 0) {
+                // Don't forget to validate TTL against PARTITION BY.
+                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, createTableOperation.getTtlPosition());
             }
         }
     }

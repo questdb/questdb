@@ -27,6 +27,7 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
@@ -37,8 +38,8 @@ import io.questdb.mp.Queue;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -55,7 +56,7 @@ public class MatViewTimerJob extends SynchronizedJob {
     private static final int INITIAL_QUEUE_CAPACITY = 16;
     private static final Log LOG = LogFactory.getLog(MatViewTimerJob.class);
     private static final Comparator<Timer> timerComparator = Comparator.comparingLong(Timer::getDeadline);
-    private final MicrosecondClock clock;
+    private final Clock clock;
     private final CairoConfiguration configuration;
     private final ObjList<Timer> expired = new ObjList<>();
     private final Predicate<Timer> filterByDirName;
@@ -135,7 +136,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         final char lengthUnit = viewDefinition.getPeriodLengthUnit();
         final TimestampSampler sampler;
         try {
-            sampler = TimestampSamplerFactory.getInstance(length, lengthUnit, -1);
+            sampler = TimestampSamplerFactory.getInstance(ColumnType.getTimestampDriver(viewDefinition.getTimestampType()), length, lengthUnit, -1);
         } catch (SqlException e) {
             throw CairoException.nonCritical().put("invalid LENGTH interval and/or unit: ").put(length)
                     .put(", ").put(lengthUnit);
@@ -172,7 +173,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         final char unit = viewDefinition.getTimerUnit();
         final TimestampSampler sampler;
         try {
-            sampler = TimestampSamplerFactory.getInstance(interval, unit, -1);
+            sampler = TimestampSamplerFactory.getInstance(ColumnType.getTimestampDriver(viewDefinition.getTimestampType()), interval, unit, -1);
         } catch (SqlException e) {
             throw CairoException.nonCritical().put("invalid EVERY interval and/or unit: ").put(interval)
                     .put(", ").put(unit);
@@ -199,7 +200,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         final long periodMs = configuration.getMatViewRefreshIntervalsUpdatePeriod();
         final TimestampSampler sampler;
         try {
-            sampler = TimestampSamplerFactory.getInstance(periodMs, 'T', -1);
+            sampler = TimestampSamplerFactory.getInstance(ColumnType.getTimestampDriver(viewDefinition.getTimestampType()), periodMs, 'T', -1);
         } catch (SqlException e) {
             throw CairoException.nonCritical().put("invalid refresh intervals update period: ").put(periodMs);
         }

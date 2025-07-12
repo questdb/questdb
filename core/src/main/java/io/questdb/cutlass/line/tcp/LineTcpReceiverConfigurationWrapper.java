@@ -27,7 +27,6 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -36,7 +35,7 @@ import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.SelectFacade;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicReference;
@@ -118,6 +117,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public short getDefaultColumnTypeForInteger() {
         return getDelegate().getDefaultColumnTypeForInteger();
+    }
+
+    @Override
+    public int getDefaultColumnTypeForTimestamp() {
+        return getDelegate().getDefaultColumnTypeForTimestamp();
     }
 
     @Override
@@ -226,7 +230,7 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
-    public MicrosecondClock getMicrosecondClock() {
+    public Clock getMicrosecondClock() {
         return getDelegate().getMicrosecondClock();
     }
 
@@ -291,8 +295,8 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
-    public LineTcpTimestampAdapter getTimestampAdapter() {
-        return getDelegate().getTimestampAdapter();
+    public byte getTimestampUnit() {
+        return getDelegate().getTimestampUnit();
     }
 
     @Override

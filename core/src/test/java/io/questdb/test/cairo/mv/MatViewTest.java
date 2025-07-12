@@ -27,6 +27,7 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -49,6 +50,8 @@ import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -73,7 +76,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
 import static io.questdb.cairo.wal.WalUtils.EVENT_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
-import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 import static io.questdb.test.tools.TestUtils.generateRandom;
 
 
@@ -125,7 +127,7 @@ public class MatViewTest extends AbstractCairoTest {
             execute("insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-10T12:01')");
             // set refresh limit
             execute("alter materialized view price_1h set refresh limit 2 hours;");
-            currentMicros = parseFloorPartialTimestamp("2024-09-10T13:00:00.000000Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-09-10T13:00:00.000000Z");
             drainQueues();
 
             // expect new limit
@@ -145,7 +147,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.323, '2024-09-01T12:02')" +
                             ",('jpyusd', 103.21, '2024-09-01T12:02')"
             );
-            currentMicros = parseFloorPartialTimestamp("2024-09-10T16:00:00.000000Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-09-10T16:00:00.000000Z");
             drainQueues();
 
             // all old timestamps should be ignored
@@ -204,7 +206,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
 
-            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-01-01T01:01:01.842574Z");
             drainQueues();
 
             // expect no limit
@@ -246,7 +248,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('jpyusd', 103.21, '2024-09-01T12:02')" +
                             ",('gbpusd', 1.321, '2024-09-10T15:02')"
             );
-            currentMicros = parseFloorPartialTimestamp("2024-09-10T16:00:00.000000Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-09-10T16:00:00.000000Z");
             drainQueues();
 
             // the older timestamps should be ignored
@@ -525,7 +527,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             // no refresh should happen as the start timestamp is in future
             final String start = "1999-01-01T01:01:01.842574Z";
-            currentMicros = parseFloorPartialTimestamp(start);
+            currentMicros = TimestampFormatUtils.parseTimestamp(start);
             final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
             drainMatViewTimerQueue(timerJob);
             drainQueues();
@@ -860,7 +862,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
 
-            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-01-01T01:01:01.842574Z");
             drainQueues();
 
             // expect default capacity
@@ -1217,7 +1219,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainQueues();
 
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            currentMicros = MicrosTimestampDriver.floor("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -1300,7 +1302,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "SAMPLE BY 1s ALIGN TO CALENDAR";
             execute("CREATE MATERIALIZED VIEW 'mv_es_ohlcv_1s' WITH BASE 'glbxmdp3_mbp1_es' as (" + viewSql + ") partition by DAY");
 
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
             execute(
@@ -1349,7 +1351,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:00')"
             );
 
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            currentMicros = MicrosTimestampDriver.floor("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -1367,8 +1369,8 @@ public class MatViewTest extends AbstractCairoTest {
             Assert.assertNotNull(baseToken);
             try (WalWriter writer = engine.getWalWriter(baseToken)) {
                 writer.commitWithParams(
-                        parseFloorPartialTimestamp("2024-09-10T00:00:00.000000Z"),
-                        parseFloorPartialTimestamp("2024-09-10T13:00"),
+                        MicrosTimestampDriver.floor("2024-09-10T00:00:00.000000Z"),
+                        MicrosTimestampDriver.floor("2024-09-10T13:00"),
                         WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
                 );
             }
@@ -1404,7 +1406,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
 
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -1416,7 +1418,7 @@ public class MatViewTest extends AbstractCairoTest {
                     null
             );
 
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-10-24T18");
             execute("rename table base_price to base_price2");
             execute("refresh materialized view 'price_1h' full;");
             drainQueues();
@@ -1437,7 +1439,7 @@ public class MatViewTest extends AbstractCairoTest {
                             "sym varchar, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY BYPASS WAL"
             );
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T19");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-10-24T19");
             execute("refresh materialized view 'price_1h' full;");
             drainQueues();
 
@@ -1470,7 +1472,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
 
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -1512,7 +1514,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T19");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-10-24T19");
             drainQueues();
 
             execute("rename table base_price to base_price2");
@@ -1553,7 +1555,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
 
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -1566,7 +1568,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             // Swap the tables with each other.
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-10-24T18:00:00.000000Z");
             execute("rename table base_price to base_price_tmp");
             execute("rename table base_price2 to base_price");
             execute("rename table base_price_tmp to base_price2");
@@ -1810,7 +1812,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
             final TableToken baseTableToken = engine.getTableTokenIfExists("base_price");
             Assert.assertNotNull(baseTableToken);
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -2106,7 +2108,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
-            currentMicros = parseFloorPartialTimestamp("2023-01-01T01:01:01.123456Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2023-01-01T01:01:01.123456Z");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -2254,17 +2256,17 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testEnableDedupWithFewerKeysDoesNotInvalidateMatViews() throws Exception {
-        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts);", false);
+        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts);");
     }
 
     @Test
     public void testEnableDedupWithMoreKeysInvalidatesMatViews() throws Exception {
-        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts, amount);", false);
+        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts, amount);");
     }
 
     @Test
     public void testEnableDedupWithSameKeysDoesNotInvalidateMatViews() throws Exception {
-        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts, sym);", false);
+        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts, sym);");
     }
 
     @Test
@@ -2285,7 +2287,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
 
-            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-01-01T01:01:01.842574Z");
             drainQueues();
 
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
@@ -2345,7 +2347,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
 
-            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-01-01T01:01:01.842574Z");
             drainQueues();
 
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
@@ -2404,7 +2406,7 @@ public class MatViewTest extends AbstractCairoTest {
             createMatView("select sym, last(price) as price, ts from base_price where npe() sample by 1h");
 
             execute("insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01');");
-            currentMicros = parseFloorPartialTimestamp("2001-01-01T01:01:01.000000Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2001-01-01T01:01:01.000000Z");
             drainQueues();
 
             // The view is expected to be invalid due to npe() in where clause.
@@ -2442,7 +2444,7 @@ public class MatViewTest extends AbstractCairoTest {
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
 
             execute("insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01');");
-            currentMicros = parseFloorPartialTimestamp("2001-01-01T01:01:01.000000Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2001-01-01T01:01:01.000000Z");
             drainQueues();
 
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
@@ -2713,7 +2715,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
 
-            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-01-01T01:01:01.842574Z");
             // this statement will notify refresh job before the WAL apply job,
             // but technically that's redundant
             execute("refresh materialized view price_1h incremental");
@@ -2760,7 +2762,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             // no refresh should happen as the start timestamp is in future
-            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-01-01T01:01:01.842574Z");
             final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
             drainMatViewTimerQueue(timerJob);
             drainQueues();
@@ -3381,7 +3383,7 @@ public class MatViewTest extends AbstractCairoTest {
     public void testManyTimerMatViews() throws Exception {
         assertMemoryLeak(() -> {
             final int views = 32;
-            final long start = parseFloorPartialTimestamp("2024-12-12T00:00:00.000000Z");
+            final long start = TimestampFormatUtils.parseTimestamp("2024-12-12T00:00:00.000000Z");
 
             execute(
                     "create table base_price (" +
@@ -3463,7 +3465,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
 
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            currentMicros = MicrosTimestampDriver.floor("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
@@ -3766,7 +3768,7 @@ public class MatViewTest extends AbstractCairoTest {
                     ",('jpyusd', 103.21, '2024-09-11T12:02')" +
                     ",('gbpusd', 1.321, '2024-09-12T13:02')";
             execute(insertOlderRows);
-            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-01-01T01:01:01.842574Z");
             drainQueues();
             assertQueryNoLeakCheck("sym\tprice\tts\n", "x_1h order by sym");
             assertQueryNoLeakCheck(
@@ -3851,7 +3853,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('jpyusd', 103.21, '2024-09-11T12:02')" +
                             ",('gbpusd', 1.321, '2024-09-12T13:02')"
             );
-            currentMicros = parseFloorPartialTimestamp("2024-09-13T00:00:00.000000Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-09-13T00:00:00.000000Z");
             drainQueues();
             final String ogExpected = "sym\tprice\tts\n" +
                     "gbpusd\t1.32\t2024-09-09T12:00:00.000000Z\n" +
@@ -4506,7 +4508,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
 
-            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-01-01T01:01:01.842574Z");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -4898,7 +4900,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('barbaz', 's1', 103.23, '2024-09-10T13:02')"
             );
 
-            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-01-01T01:01:01.842574Z");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -5113,7 +5115,7 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testTimerMatViewDeferredRefresh() throws Exception {
         assertMemoryLeak(() -> {
-            final long start = parseFloorPartialTimestamp("2024-12-12T00:00:00.000000Z");
+            final long start = TimestampFormatUtils.parseTimestamp("2024-12-12T00:00:00.000000Z");
 
             execute(
                     "create table base_price (" +
@@ -5271,7 +5273,7 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testTimerMatViewSmoke() throws Exception {
         assertMemoryLeak(() -> {
-            final long start = parseFloorPartialTimestamp("2024-12-12T00:00:00.000000Z");
+            final long start = TimestampFormatUtils.parseTimestamp("2024-12-12T00:00:00.000000Z");
 
             execute(
                     "create table base_price (" +
@@ -5385,7 +5387,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(expected, viewQuery, "ts", true, true);
             assertQueryNoLeakCheck(expected, "price_1h", "ts", true, true);
 
-            currentMicros = parseFloorPartialTimestamp("2020-01-01T01:01:01.000000Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2020-01-01T01:01:01.000000Z");
             execute("drop table base_price;");
             drainQueues();
 
@@ -5807,7 +5809,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainQueues();
 
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -5831,7 +5833,7 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
-    private void testEnableDedupWithSubsetKeys(String enableDedupSql, boolean expectInvalid) throws Exception {
+    private void testEnableDedupWithSubsetKeys(String enableDedupSql) throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE base_price (" +
@@ -5849,7 +5851,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainQueues();
 
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            currentMicros = TimestampFormatUtils.parseTimestamp("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -5865,7 +5867,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "view_name\tbase_table_name\tview_status\n" +
-                            "price_1h\tbase_price\t" + (expectInvalid ? "invalid" : "valid") + "\n",
+                            "price_1h\tbase_price\t" + ("valid") + "\n",
                     "select view_name, base_table_name, view_status from materialized_views",
                     null,
                     false
@@ -6137,7 +6139,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     private void testTimerMatViewBigJumps(String timeZone, String start, String initialClock, long clockJump) throws Exception {
         assertMemoryLeak(() -> {
-            final TimeZoneRules tzRules = timeZone != null ? Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, timeZone) : null;
+            final TimeZoneRules tzRules = timeZone != null ? Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone) : null;
 
             execute(
                     "create table base_price (" +
@@ -6166,7 +6168,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
 
-            long initialMicros = parseFloorPartialTimestamp(initialClock);
+            long initialMicros = TimestampFormatUtils.parseTimestamp(initialClock);
             if (tzRules != null) {
                 initialMicros += tzRules.getOffset(initialMicros);
             }
@@ -6213,9 +6215,9 @@ public class MatViewTest extends AbstractCairoTest {
 
     private void testTimerMatViewSmallJumps(String timeZone, String start, String every, String initialClock, long clockJump, int ticksBeforeRefresh) throws Exception {
         assertMemoryLeak(() -> {
-            final TimeZoneRules tzRules = timeZone != null ? Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, timeZone) : null;
-            final int interval = Timestamps.getStrideMultiple(every, -1);
-            final char unit = Timestamps.getStrideUnit(every, -1);
+            final TimeZoneRules tzRules = timeZone != null ? Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone) : null;
+            final int interval = CommonUtils.getStrideMultiple(every, 0);
+            final char unit = CommonUtils.getStrideUnit(every, -1);
             final String unitStr = MatViewsFunctionFactory.getIntervalUnit(unit);
 
             execute(
@@ -6245,7 +6247,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
 
-            long initialMicros = parseFloorPartialTimestamp(initialClock);
+            long initialMicros = TimestampFormatUtils.parseTimestamp(initialClock);
             if (tzRules != null) {
                 initialMicros += tzRules.getOffset(initialMicros);
             }
@@ -6330,6 +6332,14 @@ public class MatViewTest extends AbstractCairoTest {
         Assert.assertEquals(0, remainingSize);
     }
 
+    static long parseFloorPartialTimestamp(String toTs) {
+        try {
+            return MicrosTimestampDriver.floor(toTs);
+        } catch (NumericException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private static class TestRefreshParams {
         boolean deferred;
         int periodDelay;
@@ -6357,7 +6367,7 @@ public class MatViewTest extends AbstractCairoTest {
             return this;
         }
 
-        TestRefreshParams ofPeriod() throws NumericException {
+        TestRefreshParams ofPeriod() {
             refreshType = MatViewDefinition.REFRESH_TYPE_IMMEDIATE;
             this.periodLength = 12;
             this.periodLengthUnit = 'h';

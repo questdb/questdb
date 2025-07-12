@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.Telemetry;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SecurityContext;
@@ -41,7 +42,7 @@ import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.std.IntStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.CharSink;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
@@ -52,6 +53,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
+    private final Clock nanoClock;
     private final int sharedWorkerCount;
     private final AtomicBooleanCircuitBreaker simpleCircuitBreaker;
     private final Telemetry<TelemetryTask> telemetry;
@@ -64,14 +66,26 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean allowNonDeterministicFunction = true;
     private boolean cacheHit;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
-    private MicrosecondClock clock;
     private boolean cloneSymbolTables;
     private boolean columnPreTouchEnabled = true;
     private boolean columnPreTouchEnabledOverride = true;
     private boolean containsSecret;
+    private int intervalFunctionType;
     private int jitMode;
+    private Clock microClock;
     private long now;
-    private final MicrosecondClock nowClock = () -> now;
+    private int nowTimestampType;
+    private final Clock nowClock = new Clock() {
+        @Override
+        public int getClockTimestampType() {
+            return nowTimestampType;
+        }
+
+        @Override
+        public long getTicks() {
+            return now;
+        }
+    };
     private boolean parallelFilterEnabled;
     private boolean parallelGroupByEnabled;
     private boolean parallelReadParquetEnabled;
@@ -87,7 +101,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.cairoEngine = cairoEngine;
 
         cairoConfiguration = cairoEngine.getConfiguration();
-        clock = cairoConfiguration.getMicrosecondClock();
+        microClock = cairoConfiguration.getMicrosecondClock();
+        nanoClock = cairoConfiguration.getNanosecondClock();
         securityContext = DenyAllSecurityContext.INSTANCE;
         jitMode = cairoConfiguration.getSqlJitMode();
         parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled();
@@ -95,6 +110,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         parallelReadParquetEnabled = cairoConfiguration.isSqlParallelReadParquetEnabled();
         telemetry = cairoEngine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoOp;
+        nowTimestampType = cairoConfiguration.getDefaultTimestampType();
+        intervalFunctionType = ColumnType.getIntervalType(nowTimestampType);
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.simpleCircuitBreaker = new AtomicBooleanCircuitBreaker(cairoConfiguration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
@@ -190,18 +207,33 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public int getIntervalFunctionType() {
+        return intervalFunctionType;
+    }
+
+    @Override
     public int getJitMode() {
         return jitMode;
     }
 
     @Override
     public long getMicrosecondTimestamp() {
-        return clock.getTicks();
+        return microClock.getTicks();
+    }
+
+    @Override
+    public long getNanosecondTimestamp() {
+        return nanoClock.getTicks();
     }
 
     @Override
     public long getNow() {
         return now;
+    }
+
+    @Override
+    public int getNowTimestampType() {
+        return nowTimestampType;
     }
 
     @Override
@@ -246,7 +278,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public void initNow() {
-        this.now = clock.getTicks();
+        this.now = microClock.getTicks();
+        this.nowTimestampType = microClock.getClockTimestampType();
     }
 
     public boolean isCacheHit() {
@@ -340,14 +373,20 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setIntervalFunctionType(int intervalType) {
+        this.intervalFunctionType = intervalType;
+    }
+
+    @Override
     public void setJitMode(int jitMode) {
         this.jitMode = jitMode;
     }
 
     @Override
-    public void setNowAndFixClock(long now) {
+    public void setNowAndFixClock(long now, int nowTimestampType) {
         this.now = now;
-        clock = nowClock;
+        this.nowTimestampType = nowTimestampType;
+        microClock = nowClock;
     }
 
     @Override

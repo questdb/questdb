@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
@@ -37,7 +38,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.WhereClauseParser;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
@@ -260,7 +260,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp = '2015-02-23T10:00:55.000Z;30m;10;z'");
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals("[12] Not a date, use IN keyword with intervals", e.getMessage());
+            Assert.assertEquals("[12] not a timestamp, use IN keyword with intervals", e.getMessage());
         }
     }
 
@@ -280,7 +280,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp = '2015-02-23T10:00:55.0001110z;30m'");
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals("[12] Not a date, use IN keyword with intervals", e.getMessage());
+            Assert.assertEquals("[12] not a timestamp, use IN keyword with intervals", e.getMessage());
         }
     }
 
@@ -335,7 +335,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp = '2014-0x-01T12:30:00.000Z'");
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals("[12] Invalid date", e.getMessage());
+            Assert.assertEquals("[12] invalid timestamp", e.getMessage());
         }
     }
 
@@ -428,7 +428,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp = '1583077401000000'");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date");
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid timestamp");
             Assert.assertEquals(12, e.getPosition());
         }
     }
@@ -544,7 +544,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testBetweenINowAndOneDayBefore() throws SqlException, NumericException {
-        setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2014-01-03T12:30:00.000000Z"));
+        setCurrentMicros(MicrosTimestampDriver.floor("2014-01-03T12:30:00.000000Z"));
         runWhereTest("timestamp between now() and dateadd('d', -1, now())",
                 "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-03T12:30:00.000000Z}]");
     }
@@ -3743,11 +3743,11 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             }
             sink.clear(sink.length() - separator.length());
             String expression = sink.toString();
-            try (RuntimeIntrinsicIntervalModel intervalModel = modelOf(expression).buildIntervalModel()) {
+            try (RuntimeIntrinsicIntervalModel ignore = modelOf(expression).buildIntervalModel()) {
                 Assert.assertEquals(
                         "shuffled expression '" + expression + "' has unexpected result",
                         expected,
-                        intervalModel.calculateIntervals(sqlExecutionContext).toString()
+                        ignore.calculateIntervals(sqlExecutionContext).toString()
                 );
             }
         }

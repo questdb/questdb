@@ -43,6 +43,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 
+import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
+
 public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinKeyedFastRecordCursor cursor;
     private final RecordSink masterKeySink;
@@ -72,12 +74,14 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
+                masterFactory.getMetadata().getTimestampType(),
                 slaveFactory.getMetadata().getTimestampIndex(),
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
+                slaveFactory.getMetadata().getTimestampType(),
                 configuration.getSqlAsOfJoinLookAhead()
         );
         this.symbolShortCircuit = symbolShortCircuit;
-        this.toleranceInterval = toleranceInterval;
+        this.toleranceInterval = scaleTimestamp(toleranceInterval, cursor.slaveTimestampScale);
     }
 
     @Override
@@ -138,11 +142,13 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 Record nullRecord,
                 int masterTimestampIndex,
                 SingleRecordSink masterSinkTarget,
+                int masterTimestampType,
                 int slaveTimestampIndex,
                 SingleRecordSink slaveSinkTarget,
+                int slaveTimestampType,
                 int lookahead
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, masterTimestampType, slaveTimestampType, lookahead);
             this.masterSinkTarget = masterSinkTarget;
             this.slaveSinkTarget = slaveSinkTarget;
         }
@@ -168,7 +174,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(origSlaveFrameIndex, origSlaveRowId));
             }
             record.hasSlave(origHasSlave);
-            final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+            final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
             if (masterTimestamp >= lookaheadTimestamp) {
                 nextSlave(masterTimestamp);
             }
@@ -217,7 +223,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             long rowLo = timeFrame.getRowLo();
             int keyedFrameIndex = timeFrame.getFrameIndex();
             for (; ; ) {
-                long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                 if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
                     // we are past the tolerance interval, no need to traverse the slave cursor any further
                     record.hasSlave(false);

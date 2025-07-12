@@ -29,7 +29,7 @@ import io.questdb.cutlass.line.LineTcpSenderV2;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
 public class LineTCPSender03MultiTableMain {
@@ -49,7 +49,7 @@ public class LineTCPSender03MultiTableMain {
         int bufferCapacity = 4 * 1024;
 
         final Rnd rnd = new Rnd();
-        MicrosecondClock clock = new MicrosecondClockImpl();
+        Clock clock = new MicrosecondClockImpl();
         String tab = "weather" + k;
         try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
             while (true) {

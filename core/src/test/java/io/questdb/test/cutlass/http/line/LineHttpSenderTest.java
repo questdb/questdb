@@ -28,6 +28,8 @@ import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.DoubleArray;
@@ -35,15 +37,14 @@ import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.cutlass.line.http.AbstractLineHttpSender;
 import io.questdb.cutlass.line.http.LineHttpSenderV2;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
@@ -60,6 +61,7 @@ import java.time.temporal.ChronoUnit;
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
 import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 public class LineHttpSenderTest extends AbstractBootstrapTest {
 
@@ -823,7 +825,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     flushAndAssertError(
                             sender,
                             "Could not flush buffer",
-                            "error in line 1: table: tab, timestamp: -1; designated timestamp before 1970-01-01 is not allowed"
+                            "error in line 1: table: tab, timestamp: -1000; designated timestamp before 1970-01-01 is not allowed"
                     );
                 }
             }
@@ -978,6 +980,96 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testTimestampNSAutoCreateTable() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.LINE_TIMESTAMP_DEFAULT_COLUMN_TYPE.getEnvVarName(), "timestamp_ns"
+            )) {
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .build()
+                ) {
+                    long ns = NanosTimestampDriver.floor("2025-11-19T10:55:24.834129081Z");
+                    long ns1 = NanosTimestampDriver.floor("2025-11-20T10:55:24.834129082Z");
+                    sender.table("tab")
+                            .timestampColumn("ts1", ns, ChronoUnit.NANOS)
+                            .at(ns1, ChronoUnit.NANOS);
+                    sender.flush();
+                    serverMain.awaitTable("tab");
+                    serverMain.assertSql("SELECT * FROM tab", "ts1\ttimestamp\n" +
+                            "2025-11-19T10:55:24.834129081Z\t2025-11-20T10:55:24.834129082Z\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTimestampNSOverflow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.ddl("create table tab (ts timestamp_ns, ts2 timestamp_ns) timestamp(ts) partition by DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .build()
+                ) {
+                    long max = NanosTimestampDriver.floor("2262-01-31 23:59:59.999999999");
+                    sender.table("tab")
+                            .timestampColumn("ts2", max, ChronoUnit.NANOS)
+                            .at(max, ChronoUnit.NANOS);
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "designated timestamp overflow, max[9214646399999999999]"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTimestampNSUpperBounds() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.ddl("create table tab (ts timestamp_ns, ts2 timestamp_ns) timestamp(ts) partition by DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .build()
+                ) {
+                    long max = CommonUtils.MAX_TIMESTAMP;
+                    sender.table("tab")
+                            .timestampColumn("ts2", max, ChronoUnit.NANOS)
+                            .at(max, ChronoUnit.NANOS);
+                    sender.flush();
+                    serverMain.awaitTable("tab");
+                    serverMain.assertSql("SELECT * FROM tab", "ts\tts2\n" +
+                            "2261-12-31T23:59:59.999999999Z\t2261-12-31T23:59:59.999999999Z\n");
+
+                    Instant nonDsInstant = Instant.ofEpochSecond(max / 1_000_000_000, max % 1_000_000_000);
+                    Instant dsInstant = Instant.ofEpochSecond(max / 1_000_000_000, max % 1_000_000_000);
+                    sender.table("tab")
+                            .timestampColumn("ts2", nonDsInstant)
+                            .at(dsInstant);
+                    sender.flush();
+
+                    serverMain.awaitTable("tab");
+                    serverMain.assertSql("SELECT * FROM tab", "ts\tts2\n" +
+                            "2261-12-31T23:59:59.999999999Z\t2261-12-31T23:59:59.999999999Z\n" +
+                            "2261-12-31T23:59:59.999999999Z\t2261-12-31T23:59:59.999999999Z\n");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTimestampUpperBounds() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             TimestampFormatCompiler timestampFormatCompiler = new TimestampFormatCompiler();
@@ -997,8 +1089,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     // technically, we the storage layer supports dates up to 294247-01-10T04:00:54.775807Z
                     // but DateFormat does reliably support only 4 digit years. thus we use 9999-12-31T23:59:59.999Z
                     // is the maximum date that can be reliably worked with.
-                    long nonDsTs = format.parse("9999-12-31 23:59:59.999999", DateFormatUtils.EN_LOCALE);
-                    long dsTs = format.parse("9999-12-31 23:59:59.999999", DateFormatUtils.EN_LOCALE);
+                    long nonDsTs = format.parse("9999-12-31 23:59:59.999999", EN_LOCALE);
+                    long dsTs = format.parse("9999-12-31 23:59:59.999999", EN_LOCALE);
 
                     // first try with ChronoUnit
                     sender.table("tab")
@@ -1060,7 +1152,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     private static void sendIlp(String tableName, int count, ServerMain serverMain) throws NumericException {
-        long timestamp = IntervalUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
+        long timestamp = MicrosTimestampDriver.floor("2023-11-27T18:53:24.834Z");
         int i = 0;
 
         int port = serverMain.getHttpServerPort();

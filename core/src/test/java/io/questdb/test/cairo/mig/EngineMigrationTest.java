@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -38,7 +39,6 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.NumericException;
@@ -219,7 +219,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
             // Check txn file is upgraded
             try (TxReader txReader = new TxReader(config.getFilesFacade())) {
                 Path p = Path.getThreadLocal(config.getDbRoot());
-                txReader.ofRO(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+                txReader.ofRO(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
                 txReader.unsafeLoadAll();
 
                 Assert.assertNotEquals(0, txReader.getLagRowCount());
@@ -241,12 +241,12 @@ public class EngineMigrationTest extends AbstractCairoTest {
             CairoConfiguration config = engine.getConfiguration();
             try (TxWriter txWriter = new TxWriter(config.getFilesFacade(), config)) {
                 Path p = Path.getThreadLocal(config.getDbRoot());
-                txWriter.ofRW(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+                txWriter.ofRW(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
 
                 txWriter.setLagRowCount(100);
                 txWriter.setLagTxnCount(1);
-                txWriter.setLagMinTimestamp(IntervalUtils.parseFloorPartialTimestamp("2022-02-24"));
-                txWriter.setLagMaxTimestamp(IntervalUtils.parseFloorPartialTimestamp("2023-03-20"));
+                txWriter.setLagMinTimestamp(MicrosTimestampDriver.floor("2022-02-24"));
+                txWriter.setLagMaxTimestamp(MicrosTimestampDriver.floor("2023-03-20"));
 
                 txWriter.commit(new ObjList<>());
             }
@@ -255,7 +255,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
             EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
 
             // Check txn file not upgraded
-            checkTxnFile(config.getFilesFacade(), config, token, 100, 1, IntervalUtils.parseFloorPartialTimestamp("2022-02-24"), IntervalUtils.parseFloorPartialTimestamp("2023-03-20"));
+            checkTxnFile(config.getFilesFacade(), config, token, 100, 1, MicrosTimestampDriver.floor("2022-02-24"), MicrosTimestampDriver.floor("2023-03-20"));
 
             TestUtils.messTxnUnallocated(
                     config.getFilesFacade(),
@@ -396,11 +396,19 @@ public class EngineMigrationTest extends AbstractCairoTest {
         }
     }
 
-    private static void checkTxnFile(FilesFacade ff, CairoConfiguration config, TableToken tokenDef, int rowCount, int lagTxnCount, long maxValue, long minValue) {
+    private static void checkTxnFile(
+            FilesFacade ff,
+            CairoConfiguration config,
+            TableToken tokenDef,
+            int rowCount,
+            int lagTxnCount,
+            long maxValue,
+            long minValue
+    ) {
         // Check txn file is upgraded
         try (TxReader txReader = new TxReader(ff)) {
             Path p = Path.getThreadLocal(config.getDbRoot());
-            txReader.ofRO(p.concat(tokenDef).concat(TableUtils.TXN_FILE_NAME).$(), PartitionBy.DAY);
+            txReader.ofRO(p.concat(tokenDef).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
             txReader.unsafeLoadAll();
 
             Assert.assertEquals(rowCount, txReader.getLagRowCount());

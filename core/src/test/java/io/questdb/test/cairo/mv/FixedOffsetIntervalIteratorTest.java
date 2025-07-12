@@ -47,7 +47,7 @@ public class FixedOffsetIntervalIteratorTest extends AbstractIntervalIteratorTes
     @Test
     public void testBigStep() throws Exception {
         final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
         iterator.of(
                 sampler,
                 0,
@@ -69,7 +69,7 @@ public class FixedOffsetIntervalIteratorTest extends AbstractIntervalIteratorTes
     @Test
     public void testFixedOffset() throws SqlException {
         final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
         final long offset = Timestamps.HOUR_MICROS;
         iterator.of(
                 sampler,
@@ -130,7 +130,7 @@ public class FixedOffsetIntervalIteratorTest extends AbstractIntervalIteratorTes
     @Test
     public void testIntervalSingle() throws Exception {
         final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
         final LongList intervals = new LongList();
 
         final long minTs = 0;
@@ -189,7 +189,7 @@ public class FixedOffsetIntervalIteratorTest extends AbstractIntervalIteratorTes
     @Test
     public void testIntervalsEmpty() throws Exception {
         final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
         iterator.of(
                 sampler,
                 0,
@@ -208,7 +208,7 @@ public class FixedOffsetIntervalIteratorTest extends AbstractIntervalIteratorTes
     @Test
     public void testIntervalsToTop() throws Exception {
         final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
         final LongList intervals = new LongList();
 
         intervals.add(0, Timestamps.DAY_MICROS - 1);
@@ -230,7 +230,7 @@ public class FixedOffsetIntervalIteratorTest extends AbstractIntervalIteratorTes
     @Test
     public void testSmoke() throws SqlException {
         final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
-        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
         iterator.of(
                 sampler,
                 0,

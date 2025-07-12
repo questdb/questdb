@@ -67,7 +67,7 @@ public class LongSortedLightRecordCursorFactory extends AbstractRecordCursorFact
         return columnType == ColumnType.INT
                 || columnType == ColumnType.IPv4
                 || columnType == ColumnType.LONG
-                || columnType == ColumnType.TIMESTAMP
+                || ColumnType.isTimestamp(columnType)
                 || columnType == ColumnType.DATE;
     }
 

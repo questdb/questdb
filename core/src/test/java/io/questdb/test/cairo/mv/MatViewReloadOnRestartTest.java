@@ -42,7 +42,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.LongList;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
@@ -60,7 +60,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
-import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
+import static io.questdb.test.cairo.mv.MatViewTest.parseFloorPartialTimestamp;
 import static io.questdb.test.tools.TestUtils.assertContains;
 
 
@@ -932,7 +932,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         serverMain.ddl(sql);
     }
 
-    private static Bootstrap newBootstrapWithClock(MicrosecondClock microsecondClock, Map<String, String> envs) {
+    private static Bootstrap newBootstrapWithClock(Clock microsecondClock, Map<String, String> envs) {
         Map<String, String> env = new HashMap<>(System.getenv());
         env.putAll(envs);
         return new Bootstrap(
@@ -945,7 +945,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 getServerMainArgs()
         ) {
             @Override
-            public MicrosecondClock getMicrosecondClock() {
+            public Clock getMicrosecondClock() {
                 return microsecondClock != null ? microsecondClock : super.getMicrosecondClock();
             }
         };
@@ -964,7 +964,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     }
 
     @NotNull
-    private static TestServerMain startMainPortsDisabled(MicrosecondClock microsecondClock, String... extraEnvs) {
+    private static TestServerMain startMainPortsDisabled(Clock microsecondClock, String... extraEnvs) {
         assert extraEnvs.length % 2 == 0;
 
         final String[] disablePortsEnvs = new String[]{
@@ -993,7 +993,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         return startWithEnvVariables0(null, envs);
     }
 
-    private static TestServerMain startWithEnvVariables0(MicrosecondClock microsecondClock, String... envs) {
+    private static TestServerMain startWithEnvVariables0(Clock microsecondClock, String... envs) {
         assert envs.length % 2 == 0;
 
         Map<String, String> envMap = new HashMap<>();

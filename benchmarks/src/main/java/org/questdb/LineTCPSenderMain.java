@@ -27,7 +27,7 @@ package org.questdb;
 import io.questdb.client.Sender;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
 import java.time.temporal.ChronoUnit;
@@ -127,7 +127,7 @@ public class LineTCPSenderMain {
 
         final Rnd rnd = new Rnd();
         long start = System.nanoTime();
-        MicrosecondClock clock = new MicrosecondClockImpl();
+        Clock clock = new MicrosecondClockImpl();
         String tab = "quotes";
         try (Sender sender = Sender.builder(Sender.Transport.TCP)
                 .address("wet-crimson-879-30b0c6db.ilp.c7at.questdb.com:32495")

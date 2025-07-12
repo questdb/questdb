@@ -28,7 +28,7 @@ import io.questdb.FactoryProvider;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.test.cairo.Overrides;
 
 public class StaticOverrides extends Overrides {
@@ -58,7 +58,7 @@ public class StaticOverrides extends Overrides {
         return AbstractCairoTest.spinLockTimeout;
     }
 
-    public MicrosecondClock getTestMicrosClock() {
+    public Clock getTestMicrosClock() {
         return AbstractCairoTest.testMicrosClock;
     }
 

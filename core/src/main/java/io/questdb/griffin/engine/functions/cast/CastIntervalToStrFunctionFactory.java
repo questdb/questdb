@@ -59,7 +59,7 @@ public class CastIntervalToStrFunctionFactory implements FunctionFactory {
             if (Interval.NULL.equals(interval)) {
                 return StrConstant.NULL;
             }
-            interval.toSink(sink);
+            interval.toSink(sink, intervalFunc.getType());
             return new StrConstant(Chars.toString(sink));
         }
         return new Func(args.getQuick(0));
@@ -78,7 +78,7 @@ public class CastIntervalToStrFunctionFactory implements FunctionFactory {
             final Interval value = arg.getInterval(rec);
             if (!Interval.NULL.equals(value)) {
                 sinkA.clear();
-                value.toSink(sinkA);
+                value.toSink(sinkA, arg.getType());
                 return sinkA;
             }
             return null;
@@ -89,7 +89,7 @@ public class CastIntervalToStrFunctionFactory implements FunctionFactory {
             final Interval value = arg.getInterval(rec);
             if (!Interval.NULL.equals(value)) {
                 sinkB.clear();
-                value.toSink(sinkB);
+                value.toSink(sinkB, arg.getType());
                 return sinkB;
             }
             return null;
