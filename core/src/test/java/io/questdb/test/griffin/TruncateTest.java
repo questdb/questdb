@@ -812,6 +812,294 @@ public class TruncateTest extends AbstractCairoTest {
         });
     }
 
+    // Tests for IF EXISTS functionality
+    @Test
+    public void testTruncateTableIfExistsWithExistingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            assertQuery(
+                    "count\n" +
+                            "10\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(TRUNCATE, compiler.compile("truncate table if exists x", sqlExecutionContext).getType());
+            }
+
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testTruncateTableIfExistsWithNonExistingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // Try to truncate a table that doesn't exist with IF EXISTS
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(TRUNCATE, compiler.compile("truncate table if exists nonexistent_table", sqlExecutionContext).getType());
+            }
+            // Should not throw an exception
+        });
+    }
+
+    @Test
+    public void testTruncateTableIfExistsMultipleTables() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            createY();
+
+            assertQuery(
+                    "count\n" +
+                            "10\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+
+            assertQuery(
+                    "count\n" +
+                            "20\n",
+                    "select count() from y",
+                    null,
+                    false,
+                    true
+            );
+
+            // Truncate with IF EXISTS - one table exists, one doesn't
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(TRUNCATE, compiler.compile("truncate table if exists x, nonexistent_table, y", sqlExecutionContext).getType());
+            }
+
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "select count() from y",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testTruncateTableIfExistsWithKeepSymbolTables() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table keep as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
+                            " from long_sequence(3)" +
+                            ") timestamp (timestamp)"
+            );
+
+            assertQuery(
+                    "count\n" +
+                            "3\n",
+                    "select count() from keep",
+                    null,
+                    false,
+                    true
+            );
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(TRUNCATE, compiler.compile("TRUNCATE TABLE IF EXISTS keep KEEP SYMBOL MAPS;", sqlExecutionContext).getType());
+            }
+
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "select count() from keep",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testTruncateTableIfExistsWithSemicolon() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            assertQuery(
+                    "count\n" +
+                            "10\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(TRUNCATE, compiler.compile("TRUNCATE TABLE IF EXISTS x;", sqlExecutionContext).getType());
+            }
+
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testTruncateTableIfExistsExpectExistsKeyword() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                assertExceptionNoLeakCheck("truncate table if x", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(20, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "EXISTS expected");
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateTableIfExistsExpectTableName() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                assertExceptionNoLeakCheck("truncate table if exists", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(25, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "table name expected");
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateTableIfExistsExpectTableName2() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                createX();
+                assertExceptionNoLeakCheck("truncate table if exists x,", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(26, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "table name expected");
+            } finally {
+                engine.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateTableIfExistsWithQuotedTableName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table \"test table\" as (" +
+                            "select timestamp_sequence(0, 1000000000) timestamp," +
+                            " x " +
+                            " from long_sequence(5)" +
+                            ") timestamp (timestamp)"
+            );
+
+            assertQuery(
+                    "count\n" +
+                            "5\n",
+                    "select count() from \"test table\"",
+                    null,
+                    false,
+                    true
+            );
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(TRUNCATE, compiler.compile("truncate table if exists \"test table\"", sqlExecutionContext).getType());
+            }
+
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "select count() from \"test table\"",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testTruncateTableIfExistsCaseInsensitive() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            assertQuery(
+                    "count\n" +
+                            "10\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+
+            // Test case insensitivity for IF EXISTS
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(TRUNCATE, compiler.compile("TRUNCATE TABLE IF EXISTS x", sqlExecutionContext).getType());
+            }
+
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testTruncateTableIfExistsWithOnlyKeyword() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            assertQuery(
+                    "count\n" +
+                            "10\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(TRUNCATE, compiler.compile("truncate table only if exists x", sqlExecutionContext).getType());
+            }
+
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
     private void createX() throws SqlException {
         createX(10);
     }
