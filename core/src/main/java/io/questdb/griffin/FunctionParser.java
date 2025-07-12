@@ -455,23 +455,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (descriptor != null) {
             if (args != null) {
                 if (args.size() != descriptor.getSigArgCount()) {
-                    ex.put("Function '").put(node.token)
-                        .put("' expects ").put(descriptor.getSigArgCount())
-                        .put(" argument(s), but got ").put(args.size());
-                    // Add argument types for clarity
-                    ex.put(". Expected types: (");
-                    for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
-                        if (i > 0) ex.put(", ");
-                        final int typeWithFlags = descriptor.getArgTypeWithFlags(i);
-                        ex.put(ColumnType.nameOf(FunctionFactoryDescriptor.toTypeTag(typeWithFlags)));
-                    }
-                    ex.put(")");
-                    ex.put(", Provided types: (");
-                    for (int i = 0, n = args.size(); i < n; i++) {
-                        if (i > 0) ex.put(", ");
-                        ex.put(ColumnType.nameOf(args.getQuick(i).getType()));
-                    }
-                    ex.put(")");
+                    ex.put("wrong number of arguments for function `").put(node.token)
+                            .put("`; expected: ").put(descriptor.getSigArgCount())
+                            .put(", provided: ").put(args.size());
                 } else if (args.size() == 2) {
                     // Binary operator; we have overloads we could not use because argument types
                     // do not match somewhere. Throw type-specific exception, pointing out expression,
@@ -497,7 +483,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         }
                     }
                 } else {
-                    ex.put("Argument type mismatch for function '").put(node.token).put("'");
+                    ex.put("argument type mismatch for function `").put(node.token).put('`');
                     for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
                         final int typeWithFlags = descriptor.getArgTypeWithFlags(i);
                         final int expectedType = FunctionFactoryDescriptor.toTypeTag(typeWithFlags);
@@ -506,12 +492,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         final boolean actualConstant = args.getQuick(i).isConstant();
 
                         if (expectedType != actualType || (expectedConstant && !actualConstant)) {
-                            ex.put(" at argument #").put(i + 1);
-                            ex.put(" (expected: ").put(ColumnType.nameOf(expectedType));
+                            ex.put(" at #").put(i + 1);
+                            ex.put(" expected: ").put(ColumnType.nameOf(expectedType));
                             if (expectedType == actualType) {
                                 ex.put(" constant");
                             }
-                            ex.put(", actual: ").put(ColumnType.nameOf(actualType)).put(")");
+                            ex.put(", actual: ").put(ColumnType.nameOf(actualType));
                             ex.setPosition(argPositions.getQuick(i));
                             break;
                         }
@@ -521,9 +507,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 return ex;
             }
 
-            ex.put("Function '");
+            ex.put("function `");
             ex.put(node.token);
-            ex.put("' requires arguments: ");
+            ex.put("` requires arguments: ");
             ex.put(node.token);
             ex.put('(');
             for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
@@ -547,7 +533,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (op == null) {
             // function, not an operator,  is  not found
             if (args != null) {
-                ex.put("There is no matching function '").put(node.token).put("' with the argument types: (");
+                ex.put("there is no matching function `").put(node.token).put("` with the argument types: (");
                 for (int i = 0, n = args.size(); i < n; i++) {
                     if (i > 0) {
                         ex.put(", ");
@@ -556,7 +542,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 }
                 ex.put(')');
             } else {
-                ex.put("Function '").put(node.token).put("' requires arguments");
+                ex.put("function `").put(node.token).put("` requires arguments");
             }
             Misc.freeObjList(args);
             return ex;
@@ -565,7 +551,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (args != null && args.size() == 2) {
             // binary operator not found
             // function, not an operator,  is  not found
-            ex.put("There is no matching operator '").put(node.token).put("' with the argument types: ");
+            ex.put("there is no matching operator `").put(node.token).put("` with the argument types: ");
             putArgType(args, 0, ex);
             ex.put(' ');
             ex.put(node.token);
@@ -575,6 +561,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             return ex;
         }
 
+
+        assert args != null;
+
+        // Unary operator with the specific argument types not found.
+        // function, not an operator,  is  not found
+        ex.put("there is no matching operator `").put(node.token).put("` with the argument type: ");
+        putArgType(args, 0, ex);
         Misc.freeObjList(args);
         return ex;
     }
