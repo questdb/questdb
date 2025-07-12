@@ -49,8 +49,7 @@ public class FunctionParserErrorTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "select abs(ln(1,2), 4) + 10+'asdf' from long_sequence(1);",
                     11,
-                    "wrong number of arguments for function `ln`; expected: 1, provided: 2"
-
+                    "Function 'ln' expects 1 argument(s), but got 2. Expected types: (DOUBLE), Provided types: (INT, INT)"
             );
             runTestQuery();
         });
@@ -62,7 +61,31 @@ public class FunctionParserErrorTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "select abs(1,2,3,4) from long_sequence(1)",
                     7,
-                    "there is no matching function `abs` with the argument types: (INT, INT, INT, INT)"
+                    "There is no matching function 'abs' with the argument types: (INT, INT, INT, INT)"
+            );
+            runTestQuery();
+        });
+    }
+
+    @Test
+    public void testFunctionArgumentTypeMismatch() throws Exception {
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck(
+                    "select ln('string') from long_sequence(1)",
+                    7,
+                    "Argument type mismatch for function 'ln' at argument #1 (expected: DOUBLE, actual: STRING)"
+            );
+            runTestQuery();
+        });
+    }
+
+    @Test
+    public void testFunctionWrongNumberOfArguments() throws Exception {
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck(
+                    "select abs() from long_sequence(1)",
+                    7,
+                    "Function 'abs' expects 1 argument(s), but got 0. Expected types: (DOUBLE), Provided types: ()"
             );
             runTestQuery();
         });
