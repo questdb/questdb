@@ -2870,6 +2870,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "table name expected");
         }
 
+        // Check for IF EXISTS clause
+        boolean hasIfExists = false;
+        if (tok != null && isIfKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || !isExistsKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "EXISTS expected");
+            }
+            hasIfExists = true;
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
         tableWriters.clear();
         try {
             do {
@@ -2880,7 +2891,32 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (Chars.isQuoted(tok)) {
                     tok = unquote(tok);
                 }
-                final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+                
+                // Check if table exists
+                TableToken tableToken = null;
+                try {
+                    tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+                } catch (SqlException e) {
+                    if (hasIfExists) {
+                        // If IF EXISTS is specified and table doesn't exist, skip this table
+                        tok = SqlUtil.fetchNext(lexer);
+                        if (tok == null || Chars.equals(tok, ';') || isKeepKeyword(tok)) {
+                            break;
+                        }
+                        if (!Chars.equalsNc(tok, ',')) {
+                            throw SqlException.$(lexer.getPosition(), "',' or 'keep' expected");
+                        }
+                        tok = SqlUtil.fetchNext(lexer);
+                        if (tok != null && isKeepKeyword(tok)) {
+                            throw SqlException.$(lexer.getPosition(), "table name expected");
+                        }
+                        continue;
+                    } else {
+                        // Re-throw the exception if IF EXISTS is not specified
+                        throw e;
+                    }
+                }
+                
                 checkMatViewModification(tableToken);
                 executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
                 try {
@@ -2919,6 +2955,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             if (tok != null && !Chars.equals(tok, ';')) {
                 throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+            }
+
+            // If no tables were found to truncate and IF EXISTS was specified, just return
+            if (tableWriters.size() == 0 && hasIfExists) {
+                compiledQuery.ofTruncate();
+                return;
             }
 
             final long queryId = queryRegistry.register(sqlText, executionContext);
