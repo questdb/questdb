@@ -71,10 +71,10 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * and updating the provided counter. The cursor will be positioned at the end
      * after this operation completes.
      *
-     * @param cursor the record cursor to count records from
+     * @param cursor         the record cursor to count records from
      * @param circuitBreaker optional circuit breaker to check for timeouts or interruptions during counting,
      *                       may be null to disable circuit breaking
-     * @param counter the counter object to be updated with the total record count
+     * @param counter        the counter object to be updated with the total record count
      * @throws DataUnavailableException if data is temporarily unavailable (e.g., in cold storage)
      * @see #calculateSize(SqlExecutionCircuitBreaker, Counter)
      */
@@ -112,7 +112,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * stops when either the desired number of rows have been skipped or the
      * cursor reaches the end.
      *
-     * @param cursor the record cursor to skip rows in
+     * @param cursor   the record cursor to skip rows in
      * @param rowCount a counter indicating how many rows to skip; this value is
      *                 decremented as rows are actually skipped
      * @throws DataUnavailableException if data is temporarily unavailable during the skip operation
@@ -137,7 +137,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      *
      * @param circuitBreaker circuit breaker to check for timeouts or stale connections;
      *                       may be null to disable circuit breaking
-     * @param counter counter object to store the partial or complete result
+     * @param counter        counter object to store the partial or complete result
      * @throws DataUnavailableException if data is temporarily unavailable during counting
      * @see #size()
      */
@@ -216,7 +216,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * @param columnIndex the zero-based numeric index of the column
      * @return the symbol table instance for the column, or null if the column is not a symbol column
      * @throws UnsupportedOperationException if symbol tables are not supported by this cursor
-     * @throws IllegalArgumentException if the column index is invalid
+     * @throws IllegalArgumentException      if the column index is invalid
      * @see #newSymbolTable(int)
      */
     default SymbolTable getSymbolTable(int columnIndex) {
@@ -262,7 +262,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * The method is only supported by certain cursor implementations. Check
      * {@link RecordCursorFactory#recordCursorSupportsLongTopK()} before calling.
      *
-     * @param list a min or max heap (DirectLongLongSortedList) to store the top K records
+     * @param list        a min or max heap (DirectLongLongSortedList) to store the top K records
      * @param columnIndex the zero-based index of the column to order by
      * @throws UnsupportedOperationException if the cursor does not support top-K optimization
      * @see RecordCursorFactory#recordCursorSupportsLongTopK()
@@ -285,7 +285,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * @param columnIndex the zero-based numeric index of the column
      * @return a new symbol table instance, or the same instance if the table is immutable
      * @throws UnsupportedOperationException if symbol tables are not supported by this cursor
-     * @throws IllegalArgumentException if the column index is invalid
+     * @throws IllegalArgumentException      if the column index is invalid
      * @see #getSymbolTable(int)
      */
     default SymbolTable newSymbolTable(int columnIndex) {
@@ -333,9 +333,9 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * After successful positioning, the provided record object will be updated
      * to reflect the data at the specified row ID.
      *
-     * @param record the record object to position and update with the target row's data
+     * @param record  the record object to position and update with the target row's data
      * @param atRowId the row ID of the desired record, previously obtained from a Record instance
-     * @throws IllegalArgumentException if the row ID is invalid or not found
+     * @throws IllegalArgumentException      if the row ID is invalid or not found
      * @throws UnsupportedOperationException if random access is not supported by this cursor
      */
     void recordAt(Record record, long atRowId);

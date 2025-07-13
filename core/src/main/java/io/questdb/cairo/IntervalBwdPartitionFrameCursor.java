@@ -96,8 +96,8 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 timestampFinder.prepare();
 
                 // interval is wholly below partition, skip interval
-                final long partitionTimestampHi = timestampFinder.timestampAt(limitHi);
-                if (partitionTimestampHi < intervalLo) {
+                final long partitionTimestampHiExact = timestampFinder.timestampAt(limitHi);
+                if (partitionTimestampHiExact < intervalLo) {
                     skipInterval(currentInterval, limitHi + 1);
                     continue;
                 }
@@ -114,7 +114,7 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 }
 
                 final long hi;
-                if (partitionTimestampHi > intervalHi) {
+                if (partitionTimestampHiExact > intervalHi) {
                     hi = timestampFinder.findTimestamp(intervalHi, lo, limitHi) + 1;
                 } else {
                     hi = limitHi + 1;
