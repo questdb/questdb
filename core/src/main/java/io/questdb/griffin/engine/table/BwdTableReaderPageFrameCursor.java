@@ -116,27 +116,19 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             return computeNativeFrame(reenterPartitionLo, reenterPartitionHi);
         }
 
-        final PartitionFrame partitionFrame = partitionFrameCursor.next();
+        final PartitionFrame partitionFrame = partitionFrameCursor.next(skipTarget);
         if (partitionFrame != null) {
             reenterPartitionIndex = partitionFrame.getPartitionIndex();
             final long lo = partitionFrame.getRowLo();
             final long hi = partitionFrame.getRowHi();
 
-            final byte format = partitionFrame.getPartitionFormat();
-            if (format == PartitionFormat.PARQUET) {
-                clearAddresses();
-                reenterParquetDecoder = partitionFrame.getParquetDecoder();
-                reenterPageFrameRowLimit = 0;
-                return computeParquetFrame(lo, hi);
+            if (hi - lo <= skipTarget) {
+                frame.partitionIndex = reenterPartitionIndex;
+                frame.partitionLo = lo;
+                frame.partitionHi = hi;
+                return frame;
             }
-
-            assert format == PartitionFormat.NATIVE;
-            reenterParquetDecoder = null;
-            reenterPageFrameRowLimit = Math.min(
-                    pageFrameMaxRows,
-                    Math.max(pageFrameMinRows, (hi - lo) / workerCount)
-            );
-            return computeNativeFrame(lo, hi);
+            return nextSlow(partitionFrame, lo, hi);
         }
         return null;
     }
@@ -289,6 +281,24 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         frame.rowGroupHi = (int) (partitionHi - rowCount);
         frame.partitionIndex = reenterPartitionIndex;
         return frame;
+    }
+
+    private TableReaderPageFrame nextSlow(PartitionFrame partitionFrame, long lo, long hi) {
+        final byte format = partitionFrame.getPartitionFormat();
+        if (format == PartitionFormat.PARQUET) {
+            clearAddresses();
+            reenterParquetDecoder = partitionFrame.getParquetDecoder();
+            reenterPageFrameRowLimit = 0;
+            return computeParquetFrame(lo, hi);
+        }
+
+        assert format == PartitionFormat.NATIVE;
+        reenterParquetDecoder = null;
+        reenterPageFrameRowLimit = Math.min(
+                pageFrameMaxRows,
+                Math.max(pageFrameMinRows, (hi - lo) / workerCount)
+        );
+        return computeNativeFrame(lo, hi);
     }
 
     private class TableReaderPageFrame implements PageFrame {
