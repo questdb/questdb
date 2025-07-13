@@ -55,8 +55,11 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
                 frame.partitionIndex = partitionIndex;
                 frame.rowLo = 0;
                 frame.rowHi = hi;
-                partitionIndex++;
-                return hi <= skipTarget ? frame : nextSlow();
+                if (hi <= skipTarget) {
+                    partitionIndex++;
+                    return frame;
+                }
+                return nextSlow();
             }
         }
         return null;
@@ -73,8 +76,10 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     }
 
     private FullTablePartitionFrame nextSlow() {
-        reader.openPartition(frame.partitionIndex);
-
+        reader.openPartition(partitionIndex);
+        // opening partition may produce "data unavailable errors", in which case we must not
+        // change partition index prematurely
+        partitionIndex++;
         final byte format = reader.getPartitionFormat(frame.partitionIndex);
         if (format == PartitionFormat.PARQUET) {
             final long addr = reader.getParquetAddr(frame.partitionIndex);

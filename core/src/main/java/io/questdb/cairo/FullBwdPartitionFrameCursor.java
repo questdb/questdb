@@ -54,15 +54,32 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
                 frame.partitionIndex = partitionIndex;
                 frame.rowLo = 0;
                 frame.rowHi = hi;
-                partitionIndex--;
-                return hi <= skipTarget ? frame : nextSlow();
+                if (hi <= skipTarget) {
+                    partitionIndex--;
+                    return frame;
+                }
+                return nextSlow();
             }
         }
         return null;
     }
 
+    @Override
+    public boolean supportsSizeCalculation() {
+        return true;
+    }
+
+    @Override
+    public void toTop() {
+        partitionIndex = partitionHi - 1;
+    }
+
     private FullTablePartitionFrame nextSlow() {
-        reader.openPartition(frame.partitionIndex);
+        reader.openPartition(partitionIndex);
+
+        // opening partition may produce "data unavailable errors", in which case we must not
+        // change partition index prematurely
+        partitionIndex--;
 
         final byte format = reader.getPartitionFormat(frame.partitionIndex);
         if (format == PartitionFormat.PARQUET) {
@@ -83,15 +100,5 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
         frame.format = PartitionFormat.NATIVE;
         frame.parquetDecoder = null;
         return frame;
-    }
-
-    @Override
-    public boolean supportsSizeCalculation() {
-        return true;
-    }
-
-    @Override
-    public void toTop() {
-        partitionIndex = partitionHi - 1;
     }
 }
