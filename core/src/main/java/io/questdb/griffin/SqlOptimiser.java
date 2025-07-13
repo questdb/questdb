@@ -677,6 +677,17 @@ public class SqlOptimiser implements Mutable {
         return node;
     }
 
+    private void addOrderByClausesToModel(QueryModel originalModel, QueryModel targetModel) {
+        for (int i = 0; i < originalModel.getOrderBy().size(); i++) {
+            ExpressionNode aliasNode = expressionNodePool.next();
+            CharSequence truncateAlias = originalModel.getTableNameExpr() != null ?
+                    originalModel.getTableNameExpr().token + "." : originalModel.getAlias().token + ".";
+            String originalAlias = originalModel.getOrderBy().get(i).token.toString();
+            aliasNode.token = originalAlias.replace(truncateAlias, "");
+            targetModel.addOrderBy(aliasNode, originalModel.getOrderByDirection().getQuick(i));
+        }
+    }
+
     private void addOuterJoinExpression(QueryModel parent, QueryModel model, int joinIndex, ExpressionNode node) {
         model.setOuterJoinExpressionClause(concatFilters(model.getOuterJoinExpressionClause(), node));
         // add dependency to prevent previous model reordering (left joins are not symmetric)
@@ -1419,7 +1430,6 @@ public class SqlOptimiser implements Mutable {
             QueryColumn newQc = queryColumnPool.next();
             newQc.of(qc.getAlias(), qc.getAst());
             targetModel.getAliasToColumnMap().put(qc.getAlias(), qc);
-            targetModel.getColumns().add(newQc);
         }
     }
 
@@ -3417,9 +3427,6 @@ public class SqlOptimiser implements Mutable {
         */
         QueryModel level0 = targetModel.getNestedModel();
         QueryModel copyModel = level0 == null ? targetModel : level0;
-        QueryModel level1 = QueryModel.FACTORY.newInstance();
-        boolean isLevel2Needed = true;
-
 
         /*
           nested of target model is null, construct level-0 using base table
@@ -3428,11 +3435,9 @@ public class SqlOptimiser implements Mutable {
             level0 = QueryModel.FACTORY.newInstance();
             level0.setTimestamp(baseTableModel.getTimestamp());
             level0.copyColumnsFrom(copyModel, queryColumnPool, expressionNodePool);
-            if (copyModel.getTableNameExpr() != null)
-                level0.setTableNameExpr(copyModel.getTableNameExpr());
-            else if (copyModel.getAlias() != null) {
-                level0.setAlias(copyModel.getAlias());
-            }
+            //if target model has both table name and alias.
+            level0.setTableNameExpr(copyModel.getTableNameExpr() == null ? null : copyModel.getTableNameExpr());
+            level0.setAlias(copyModel.getAlias() == null ? null : copyModel.getAlias());
             for (int i = 0; i < copyModel.getModelAliasIndexes().keys().size(); i++) {
                 CharSequence alias = copyModel.getModelAliasIndexes().keys().getQuick(i);
                 ExpressionNode aliasNode = expressionNodePool.next();
@@ -3443,90 +3448,49 @@ public class SqlOptimiser implements Mutable {
         propagateTimestampColumnFromBaseModelToLevel0(baseTableModel, level0);
 
         /*
-          level-1 model is parent of level-0 model
-          It contains filters , limit , order-by clause propagated from target-model
+           level 1 is select-model-choose over level-0 model
          */
-        level1.setSelectModelType(1);
-        level1.setLimit(parentModel.getLimitLo(), null);
-        level1.setWhereClause(targetModel.getWhereClause());
-        level1.setTimestamp(baseTableModel.getTimestamp());
-
-
-        if (targetModel.getTableNameExpr() != null) {
-            ExpressionNode aliasNode = expressionNodePool.next();
-            aliasNode.token = targetModel.getAlias() != null ? targetModel.getAlias().token :
-                    targetModel.getTableNameExpr().token;
-            level1.setAlias(aliasNode);
-        }
-
-        //add query columns from copyModel to level1
-        level1.copyColumnsFrom(copyModel, queryColumnPool, expressionNodePool);
-        final ObjList<CharSequence> aliases = copyModel.getAliasToColumnMap().keys();
-        for (int i = 0, n = aliases.size(); i < n; i++) {
-            final CharSequence alias = aliases.getQuick(i);
-            QueryColumn qc = copyModel.getAliasToColumnMap().get(alias);
-            if (qc != null) {
-                QueryColumn newQc = queryColumnPool.next();
-                newQc.of(alias, qc.getAst());
-                level1.getColumns().add(newQc);
-            }
-        }
-
-        for (int i = 0; i < targetModel.getOrderBy().size(); i++) {
-            ExpressionNode aliasNode = expressionNodePool.next();
-            CharSequence truncateAlias = targetModel.getTableNameExpr() != null ?
-                    targetModel.getTableNameExpr().token + "." : targetModel.getAlias().token + ".";
-            String originalAlias = targetModel.getOrderBy().get(i).token.toString();
-            aliasNode.token = originalAlias.replace(truncateAlias, "");
-            level1.addOrderBy(aliasNode, targetModel.getOrderByDirection().getQuick(i));
-            if (i == targetModel.getOrderBy().size() - 1 && targetModel.getOrderBy().size() == 1 &&
-                    aliasNode.token.toString().contentEquals(baseTableModel.getTimestamp().token)
-                    && targetModel.getOrderByDirection().get(i) == QueryModel.ORDER_DIRECTION_ASCENDING) {
-                isLevel2Needed = false;
-            }
-        }
+        QueryModel level1 = QueryModel.FACTORY.newInstance();
+        level1.setSelectModelType(SELECT_MODEL_CHOOSE);
+        propagateColumnsFromLowerToHigherModel(level0, level1, true);
         level1.setNestedModel(level0);
 
+        /*
+           level 2 is select model none over level-1 model with order-by clauses
+         */
+        QueryModel level2 = QueryModel.FACTORY.newInstance();
+        level2.setSelectModelType(SELECT_MODEL_NONE);
+        addOrderByClausesToModel(targetModel, level2);
+        propagateColumnsFromLowerToHigherModel(level1, level2, false);
+        level2.setNestedModel(level1);
 
         /*
-          level-2 model is parent of level-1 model(optional)
-          It's only created if level-1 doesn't sort result by timestamp ASC
+           level 3 is select model choose over level-2 model with limit clause
          */
-        if (isLevel2Needed) {
-            //level 2 model to order by timestamp ASC
-            QueryModel level2 = QueryModel.FACTORY.newInstance();
-            level2.setSelectModelType(1);
-
-            //add query columns from copyModel to level2
-            level2.copyColumnsFrom(targetModel, queryColumnPool, expressionNodePool);
-            final ObjList<CharSequence> aliases0 = copyModel.getAliasToColumnMap().keys();
-            for (int i = 0, n = aliases0.size(); i < n; i++) {
-                final CharSequence alias = aliases.getQuick(i);
-                QueryColumn qc = copyModel.getAliasToColumnMap().get(alias);
-                if (qc != null) {
-                    QueryColumn newQc = queryColumnPool.next();
-                    newQc.of(alias, qc.getAst());
-                    level2.getAliasToColumnMap().put(alias, qc);
-                    level2.getBottomUpColumns().add(newQc);
-                }
-            }
-
-            //if its concrete table, then we can don't need to set timestamp
-//            if (targetModel.getTableNameExpr() == null) {
-            level2.setTimestamp(baseTableModel.getTimestamp());
-//            }
-
-            if (baseTableModel.getTimestamp() != null) {
-                final CharSequence timestampColumn = baseTableModel.getTimestamp().token;
-                final ExpressionNode timestampNode = expressionNodePool.next();
-                timestampNode.token = timestampColumn;
-                level2.addOrderBy(timestampNode, QueryModel.ORDER_DIRECTION_ASCENDING);
-            }
-            level2.setNestedModel(level1);
-            targetModel.setNestedModel(level2);
-        } else {
-            targetModel.setNestedModel(level1);
+        QueryModel level3 = QueryModel.FACTORY.newInstance();
+        level3.setSelectModelType(SELECT_MODEL_CHOOSE);
+        level3.setLimit(parentModel.getLimitLo(), null);
+        propagateColumnsFromLowerToHigherModel(level2, level3, true);
+        level3.setNestedModel(level2);
+        /*
+          level 4 is select model none over level-3 model with order by timestamp ASC
+        */
+        QueryModel level4 = QueryModel.FACTORY.newInstance();
+        level4.setSelectModelType(SELECT_MODEL_NONE);
+        level4.setTimestamp(baseTableModel.getTimestamp());
+        if (baseTableModel.getTimestamp() != null) {
+            final CharSequence timestampColumn = baseTableModel.getTimestamp().token;
+            final ExpressionNode timestampNode = expressionNodePool.next();
+            timestampNode.token = timestampColumn;
+            level4.addOrderBy(timestampNode, QueryModel.ORDER_DIRECTION_ASCENDING);
         }
+        propagateColumnsFromLowerToHigherModel(level3, level4, false);
+        level4.setNestedModel(level3);
+
+        /*
+        changes in target model
+         */
+        targetModel.setNestedModel(level4);
         targetModel.setWhereClause(null);
         if (targetModel.getTableNameExpr() != null) {
             ExpressionNode aliasNode = expressionNodePool.next();
@@ -3537,7 +3501,6 @@ public class SqlOptimiser implements Mutable {
             targetModel.setTableNameExpr(null);
             targetModel.setTimestamp(null);
         }
-
         model.setLimit(null, null);
 
     }
@@ -3775,6 +3738,23 @@ public class SqlOptimiser implements Mutable {
             } else {
                 n = sqlNodeStack.poll();
             }
+        }
+    }
+
+    private void propagateColumnsFromLowerToHigherModel(QueryModel lower, QueryModel higher, boolean addBottomUpColumns) {
+        higher.copyColumnsFrom(lower, queryColumnPool, expressionNodePool);
+        if (addBottomUpColumns) {
+            final ObjList<CharSequence> aliases = lower.getAliasToColumnMap().keys();
+            for (int i = 0, n = aliases.size(); i < n; i++) {
+                final CharSequence alias = aliases.getQuick(i);
+                QueryColumn qc = lower.getAliasToColumnMap().get(alias);
+                if (qc != null) {
+                    QueryColumn newQc = queryColumnPool.next();
+                    newQc.of(alias, qc.getAst());
+                    higher.getBottomUpColumns().add(newQc);
+                }
+            }
+
         }
     }
 
