@@ -24,6 +24,10 @@
 
 package io.questdb.std;
 
+import java.util.Arrays;
+
+import org.jetbrains.annotations.NotNull;
+
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -34,10 +38,6 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-import jdk.internal.math.FDBigInteger;
-import org.jetbrains.annotations.NotNull;
-
-import java.util.Arrays;
 
 public final class Numbers {
     public static final int BAD_NETMASK = 1;
@@ -828,7 +828,7 @@ public final class Numbers {
      * infinities that arise from division by 0.
      */
     public static boolean isNull(double value) {
-        return (Double.doubleToRawLongBits(value) & EXP_BIT_MASK) == EXP_BIT_MASK;
+        return Double.isNaN(value) || Double.isInfinite(value);
     }
 
     public static boolean isNull(float value) {
