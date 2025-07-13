@@ -371,6 +371,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
     }
 
+    public long getPartitionRowCountFromMetadata(int partitionIndex) {
+        return txFile.getPartitionSize(partitionIndex);
+    }
+
     public long getPartitionTimestampByIndex(int partitionIndex) {
         return txFile.getPartitionTimestampByIndex(partitionIndex);
     }
@@ -1069,7 +1073,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (txFile.isPartitionParquet(partitionIndex)) {
                 Path path = pathGenParquetPartition(partitionIndex, partitionNameTxn);
                 if (ff.exists(path.$())) {
-                    final long partitionSize = txFile.getPartitionSize(partitionIndex);
+                    final long partitionSize = getPartitionRowCountFromMetadata(partitionIndex);
                     if (partitionSize > -1) {
                         LOG.info()
                                 .$("open partition [path=").$substr(dbRootSize, path)
@@ -1103,7 +1107,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             } else { // native partition
                 Path path = pathGenNativePartition(partitionIndex, partitionNameTxn);
                 if (ff.exists(path.$())) {
-                    final long partitionSize = txFile.getPartitionSize(partitionIndex);
+                    final long partitionSize = getPartitionRowCountFromMetadata(partitionIndex);
                     if (partitionSize > -1) {
                         LOG.debug()
                                 .$("open partition [path=").$substr(dbRootSize, path)
@@ -1246,7 +1250,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     // partition that is not yet in memory
                     if (openPartitionSize > -1) {
                         final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
-                        final long txPartitionSize = txFile.getPartitionSize(partitionIndex);
+                        final long txPartitionSize = getPartitionRowCountFromMetadata(partitionIndex);
                         final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
 
                         if (openPartitionNameTxn == txPartitionNameTxn) {

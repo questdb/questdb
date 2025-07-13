@@ -46,9 +46,9 @@ public interface TimestampFinder {
      */
     long findTimestamp(long value, long rowLo, long rowHi);
 
-    long maxTimestamp();
+    long maxTimestampExact();
 
-    long minTimestamp();
+    long minTimestampExact();
 
     long timestampAt(long rowIndex);
 }

@@ -181,14 +181,14 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
                 final long intervalLo = intervals.getQuick(intervalsLo * 2);
                 final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);
 
-                final long partitionTimestampLo = timestampFinder.minTimestamp();
+                final long partitionTimestampLo = timestampFinder.minTimestampExact();
                 // interval is wholly above partition, skip interval
                 if (partitionTimestampLo > intervalHi) {
                     intervalsLo++;
                     continue;
                 }
 
-                final long partitionTimestampHi = timestampFinder.maxTimestamp();
+                final long partitionTimestampHi = timestampFinder.maxTimestampExact();
                 // interval is wholly below partition, skip partition
                 if (partitionTimestampHi < intervalLo) {
                     partitionLimit = 0;

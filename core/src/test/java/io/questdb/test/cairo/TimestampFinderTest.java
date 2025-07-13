@@ -123,10 +123,10 @@ public class TimestampFinderTest extends AbstractCairoTest {
                 oracleFinder.of(oracleReader, 0, 0, rowCount);
                 finder.of(reader, 0, 0);
 
-                Assert.assertEquals(minTimestamp, oracleFinder.minTimestamp());
-                Assert.assertEquals(oracleFinder.minTimestamp(), finder.minTimestamp());
-                Assert.assertEquals(maxTimestamp, oracleFinder.maxTimestamp());
-                Assert.assertEquals(oracleFinder.maxTimestamp(), finder.maxTimestamp());
+                Assert.assertEquals(minTimestamp, oracleFinder.minTimestampExact());
+                Assert.assertEquals(oracleFinder.minTimestampExact(), finder.minTimestampExact());
+                Assert.assertEquals(maxTimestamp, oracleFinder.maxTimestampExact());
+                Assert.assertEquals(oracleFinder.maxTimestampExact(), finder.maxTimestampExact());
 
                 for (int row = 0; row < rowCount; row++) {
                     Assert.assertEquals(oracleFinder.timestampAt(row), finder.timestampAt(row));

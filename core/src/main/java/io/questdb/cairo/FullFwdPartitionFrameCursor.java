@@ -45,9 +45,9 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     }
 
     @Override
-    public @Nullable PartitionFrame next() {
+    public @Nullable PartitionFrame next(long skipTarget) {
         while (partitionIndex < partitionHi) {
-            final long hi = reader.openPartition(partitionIndex);
+            final long hi = reader.getPartitionRowCountFromMetadata(partitionIndex);
             if (hi < 1) {
                 // this partition is missing, skip
                 partitionIndex++;
@@ -56,26 +56,7 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
                 frame.rowLo = 0;
                 frame.rowHi = hi;
                 partitionIndex++;
-
-                final byte format = reader.getPartitionFormat(frame.partitionIndex);
-                if (format == PartitionFormat.PARQUET) {
-                    final long addr = reader.getParquetAddr(frame.partitionIndex);
-                    assert addr != 0;
-                    final long parquetSize = reader.getParquetFileSize(frame.partitionIndex);
-                    assert parquetSize > 0;
-                    if (parquetDecoder == null) {
-                        parquetDecoder = new PartitionDecoder();
-                    }
-                    parquetDecoder.of(addr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                    frame.format = PartitionFormat.PARQUET;
-                    frame.parquetDecoder = parquetDecoder;
-                    return frame;
-                }
-
-                assert format == PartitionFormat.NATIVE;
-                frame.format = PartitionFormat.NATIVE;
-                frame.parquetDecoder = null;
-                return frame;
+                return hi <= skipTarget ? frame : nextSlow();
             }
         }
         return null;
@@ -89,5 +70,29 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     @Override
     public void toTop() {
         partitionIndex = 0;
+    }
+
+    private FullTablePartitionFrame nextSlow() {
+        reader.openPartition(frame.partitionIndex);
+
+        final byte format = reader.getPartitionFormat(frame.partitionIndex);
+        if (format == PartitionFormat.PARQUET) {
+            final long addr = reader.getParquetAddr(frame.partitionIndex);
+            assert addr != 0;
+            final long parquetSize = reader.getParquetFileSize(frame.partitionIndex);
+            assert parquetSize > 0;
+            if (parquetDecoder == null) {
+                parquetDecoder = new PartitionDecoder();
+            }
+            parquetDecoder.of(addr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            frame.format = PartitionFormat.PARQUET;
+            frame.parquetDecoder = parquetDecoder;
+            return frame;
+        }
+
+        assert format == PartitionFormat.NATIVE;
+        frame.format = PartitionFormat.NATIVE;
+        frame.parquetDecoder = null;
+        return frame;
     }
 }

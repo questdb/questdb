@@ -50,12 +50,12 @@ public class NativeTimestampFinder implements TimestampFinder, Mutable {
     }
 
     @Override
-    public long maxTimestamp() {
+    public long maxTimestampExact() {
         return column.getLong((rowCount - 1) * 8);
     }
 
     @Override
-    public long minTimestamp() {
+    public long minTimestampExact() {
         return column.getLong(0);
     }
 

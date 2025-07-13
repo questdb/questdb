@@ -47,7 +47,7 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
     }
 
     @Override
-    public PartitionFrame next() {
+    public PartitionFrame next(long skipTarget) {
         // order of logical operations is important
         // we are not calculating partition ranges when intervals are empty
         while (intervalsLo < intervalsHi && partitionLo < partitionHi) {
@@ -69,7 +69,7 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                     limitHi = partitionLimit - 1;
                 }
 
-                final long partitionTimestampLo = timestampFinder.minTimestamp();
+                final long partitionTimestampLo = timestampFinder.minTimestampExact();
 
                 LOG.debug()
                         .$("next [partition=").$(currentPartition)

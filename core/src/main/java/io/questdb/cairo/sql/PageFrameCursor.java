@@ -42,8 +42,11 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     @Override
     StaticSymbolTable getSymbolTable(int columnIndex);
 
-    @Nullable
-    PageFrame next();
+    @Nullable PageFrame next(long skipTarget);
+
+    default PageFrame next() {
+        return next(0);
+    }
 
     /**
      * @return number of rows in all page frames

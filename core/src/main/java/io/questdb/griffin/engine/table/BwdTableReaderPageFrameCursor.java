@@ -108,7 +108,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
-    public @Nullable PageFrame next() {
+    public @Nullable PageFrame next(long skipTarget) {
         if (reenterPartitionFrame) {
             if (reenterParquetDecoder != null) {
                 return computeParquetFrame(reenterPartitionLo, reenterPartitionHi);
