@@ -352,6 +352,13 @@ public class TableReader implements Closeable, SymbolTableSource {
         return (byte) openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_FORMAT);
     }
 
+    public byte getPartitionFormatFromMetadata(int partitionIndex) {
+        if (txFile.isPartitionParquet(partitionIndex)) {
+            return PartitionFormat.PARQUET;
+        }
+        return PartitionFormat.NATIVE;
+    }
+
     @TestOnly
     public int getPartitionIndex(int columnBase) {
         return columnBase >>> columnCountShl;
@@ -365,6 +372,16 @@ public class TableReader implements Closeable, SymbolTableSource {
             return (-end - 2) / PARTITIONS_SLOT_SIZE;
         }
         return end / PARTITIONS_SLOT_SIZE;
+    }
+
+    public long getPartitionMaxTimestampFromMetadata(int partitionIndex) {
+        long minTimestamp = getPartitionMinTimestampFromMetadata(partitionIndex);
+        // todo: the max timestamp must be within the given partition
+        return txFile.getNextLogicalPartitionTimestamp(minTimestamp) - 1;
+    }
+
+    public long getPartitionMinTimestampFromMetadata(int partitionIndex) {
+        return txFile.getPartitionTimestampByIndex(partitionIndex);
     }
 
     public long getPartitionRowCount(int partitionIndex) {

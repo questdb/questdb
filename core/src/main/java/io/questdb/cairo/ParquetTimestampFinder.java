@@ -42,8 +42,12 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
     private final RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
     private final RowGroupStatBuffers statBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
     private final DirectIntList timestampIdAndType = new DirectIntList(2, MemoryTag.NATIVE_DEFAULT);
+    private long maxTimestampApprox;
+    private long minTimestampApprox;
     private int partitionIndex = -1;
+    private TableReader reader;
     private TableToken tableToken;
+    private int timestampIndex;
 
     public ParquetTimestampFinder(PartitionDecoder partitionDecoder) {
         this.partitionDecoder = partitionDecoder;
@@ -123,11 +127,21 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
     }
 
     @Override
+    public long maxTimestampApprox() {
+        return maxTimestampApprox;
+    }
+
+    @Override
     public long maxTimestampExact() {
         // Read the min value from the stats to avoid decoding.
         final int rowGroupCount = partitionDecoder.metadata().rowGroupCount();
         partitionDecoder.readRowGroupStats(statBuffers, timestampIdAndType, rowGroupCount - 1);
         return statBuffers.getMaxValueLong(0);
+    }
+
+    @Override
+    public long minTimestampApprox() {
+        return minTimestampApprox;
     }
 
     @Override
@@ -139,7 +153,16 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
 
     public ParquetTimestampFinder of(TableReader reader, int partitionIndex, int timestampIndex) {
         this.partitionIndex = partitionIndex;
+        this.reader = reader;
+        this.timestampIndex = timestampIndex;
+        this.minTimestampApprox = reader.getPartitionMinTimestampFromMetadata(partitionIndex);
+        this.maxTimestampApprox = reader.getPartitionMaxTimestampFromMetadata(partitionIndex);
         tableToken = reader.getTableToken();
+        return this;
+    }
+
+    @Override
+    public void prepare() {
         partitionDecoder.of(
                 reader.getParquetAddr(partitionIndex),
                 reader.getParquetFileSize(partitionIndex),
@@ -159,8 +182,6 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
         timestampIdAndType.clear();
         timestampIdAndType.add(parquetTimestampIndex);
         timestampIdAndType.add(ColumnType.TIMESTAMP);
-
-        return this;
     }
 
     @Override

@@ -121,6 +121,7 @@ public class TimestampFinderTest extends AbstractCairoTest {
                 reader.openPartition(0);
 
                 oracleFinder.of(oracleReader, 0, 0, rowCount);
+                oracleFinder.prepare();
                 finder.of(reader, 0, 0);
 
                 Assert.assertEquals(minTimestamp, oracleFinder.minTimestampExact());

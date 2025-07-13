@@ -168,7 +168,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
             // are working with timestamp. Timestamp column cannot be added to existing table.
             long rowCount;
             try {
-                rowCount = reader.openPartition(partitionLo);
+                rowCount = reader.getPartitionRowCountFromMetadata(partitionLo);
             } catch (DataUnavailableException e) {
                 // The data is in cold storage, close the event and give up on size calculation.
                 Misc.free(e.getEvent());
@@ -181,16 +181,34 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
                 final long intervalLo = intervals.getQuick(intervalsLo * 2);
                 final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);
 
-                final long partitionTimestampLo = timestampFinder.minTimestampExact();
+                final long partitionTimestampLoApprox = timestampFinder.minTimestampApprox();
                 // interval is wholly above partition, skip interval
-                if (partitionTimestampLo > intervalHi) {
+                if (partitionTimestampLoApprox > intervalHi) {
                     intervalsLo++;
                     continue;
                 }
 
-                final long partitionTimestampHi = timestampFinder.maxTimestampExact();
+                final long partitionTimestampHiApprox = timestampFinder.maxTimestampApprox();
                 // interval is wholly below partition, skip partition
-                if (partitionTimestampHi < intervalLo) {
+                if (partitionTimestampHiApprox < intervalLo) {
+                    partitionLimit = 0;
+                    partitionLo++;
+                    continue;
+                }
+
+                reader.openPartition(partitionLo);
+                timestampFinder.prepare();
+
+                final long partitionTimestampLoExact = timestampFinder.minTimestampExact();
+                // interval is wholly above partition, skip interval
+                if (partitionTimestampLoExact > intervalHi) {
+                    intervalsLo++;
+                    continue;
+                }
+
+                final long partitionTimestampHiExact = timestampFinder.maxTimestampExact();
+                // interval is wholly below partition, skip partition
+                if (partitionTimestampHiExact < intervalLo) {
                     partitionLimit = 0;
                     partitionLo++;
                     continue;
@@ -198,7 +216,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
 
                 // calculate intersection
                 long lo;
-                if (partitionTimestampLo >= intervalLo) {
+                if (partitionTimestampLoExact >= intervalLo) {
                     lo = 0;
                 } else {
                     // intervalLo is inclusive of value. We will look for bottom index of intervalLo - 1
@@ -282,7 +300,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     protected TimestampFinder initTimestampFinder(int partitionIndex, long rowCount) {
-        if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
+        if (reader.getPartitionFormatFromMetadata(partitionIndex) == PartitionFormat.PARQUET) {
             return parquetTimestampFinder.of(reader, partitionIndex, timestampIndex);
         }
         return nativeTimestampFinder.of(reader, partitionIndex, timestampIndex, rowCount);
