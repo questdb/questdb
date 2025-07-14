@@ -46,6 +46,11 @@ public class HttpMinServerConfigurationWrapper implements HttpServerConfiguratio
     }
 
     @Override
+    public int getAcceptLoopTimeout() {
+        return getDelegate().getAcceptLoopTimeout();
+    }
+
+    @Override
     public int getBindIPv4Address() {
         return getDelegate().getBindIPv4Address();
     }

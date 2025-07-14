@@ -34,7 +34,8 @@ public interface IODispatcherConfiguration {
     int BIAS_READ = 1;
     int BIAS_WRITE = 2;
 
-    Counter listenerStateChangeCounter();
+    // millis
+    int getAcceptLoopTimeout();
 
     int getBindIPv4Address();
 
@@ -112,4 +113,6 @@ public interface IODispatcherConfiguration {
     int getTestConnectionBufferSize();
 
     long getTimeout();
+
+    Counter listenerStateChangeCounter();
 }

@@ -336,11 +336,13 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     }
 
     protected void accept(long timestamp) {
+        final long acceptEndTime = timestamp + configuration.getAcceptLoopTimeout();
         int tlConCount = connectionCount.get();
-        while (tlConCount < configuration.getLimit()) {
-            // this 'accept' is greedy, rather than to rely on epoll (or similar) to
-            // fire accept requests at us one at a time we will be actively accepting
-            // until nothing left.
+        while (tlConCount < configuration.getLimit() && acceptEndTime > clock.getTicks()) {
+            // This 'accept' is greedy.
+            // Rather than to rely on epoll (or similar) to fire accept requests at us one at
+            // a time, we will be actively accepting until nothing left, or until we reach the
+            // accept loop timeout.
 
             long fd = nf.accept(serverFd);
 
