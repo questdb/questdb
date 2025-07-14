@@ -24,12 +24,12 @@
 
 package io.questdb.cairo.mv;
 
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -97,6 +97,7 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
     }
 
     public TimeZoneIntervalIterator of(
+            TimestampDriver driver,
             @NotNull TimestampSampler sampler,
             @NotNull TimeZoneRules tzRules,
             long fixedOffset,
@@ -116,8 +117,8 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
 
         // Collect shift intervals.
         localShifts.clear();
-        final long limitTs = Timestamps.ceilYYYY(localMaxTimestamp);
-        long ts = tzRules.getNextDST(Timestamps.floorYYYY(localMinTimestamp));
+        final long limitTs = driver.ceilYYYY(localMaxTimestamp);
+        long ts = tzRules.getNextDST(driver.floorYYYY(localMinTimestamp));
         while (ts < limitTs) {
             long offsetBefore = tzRules.getOffset(ts - 1);
             long offsetAfter = tzRules.getOffset(ts);
@@ -140,8 +141,8 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
         localMinTimestamp = adjustLoBoundary(localMinTimestamp);
         localMaxTimestamp = adjustHiBoundary(localMaxTimestamp);
 
-        utcMinTimestamp = Timestamps.toUTC(localMinTimestamp, tzRules);
-        utcMaxTimestamp = Timestamps.toUTC(localMaxTimestamp, tzRules);
+        utcMinTimestamp = driver.toUTC(localMinTimestamp, tzRules);
+        utcMaxTimestamp = driver.toUTC(localMaxTimestamp, tzRules);
 
         toTop(step);
         return this;

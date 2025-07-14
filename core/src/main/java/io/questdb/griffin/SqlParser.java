@@ -1000,6 +1000,8 @@ public class SqlParser {
                 }
             }
 
+            // driver used to calc start in timer, which use microSecond precision.
+            TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
             if (isPeriodKeyword(tok)) {
                 // REFRESH ... PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
                 expectTok(lexer, "(");
@@ -1008,7 +1010,6 @@ public class SqlParser {
                 final int length = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
                 final char lengthUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
-                TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
                 final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(driver, length, lengthUnit, lexer.lastTokenPosition());
                 tok = tok(lexer, "'time zone' or 'delay' or ')'");
 
@@ -1062,7 +1063,7 @@ public class SqlParser {
                 if (isStartKeyword(tok)) {
                     tok = tok(lexer, "START timestamp");
                     try {
-                        start = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP).parseFloorLiteral(GenericLexer.unquote(tok));
+                        start = driver.parseFloorLiteral(GenericLexer.unquote(tok));
                     } catch (NumericException e) {
                         throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                     }

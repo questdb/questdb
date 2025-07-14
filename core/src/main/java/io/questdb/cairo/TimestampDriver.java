@@ -80,6 +80,8 @@ public interface TimestampDriver {
         }
     }
 
+    long ceilYYYY(long timestamp);
+
     boolean convertToVar(long fixedAddr, CharSink<?> stringSink);
 
     long dayEnd(long start);
@@ -87,6 +89,8 @@ public interface TimestampDriver {
     long dayStart(long now, int shiftDays);
 
     Interval fixInterval(Interval interval, int intervalType);
+
+    long floorYYYY(long timestamp);
 
     long from(long value, ChronoUnit unit);
 

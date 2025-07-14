@@ -49,6 +49,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
         iterator.of(
+                timestampDriver,
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "UTC"),
                 0,
@@ -73,6 +74,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
         final long offset = Timestamps.HOUR_MICROS;
         iterator.of(
+                timestampDriver,
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "UTC"),
                 offset,
@@ -146,6 +148,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
         iterator.of(
+                timestampDriver,
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "UTC"),
                 0,
@@ -173,7 +176,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
 
         // match
         intervals.add(minTs, maxTs);
-        iterator.of(sampler, tzRules, 0, intervals, minTs, maxTs, 1);
+        iterator.of(timestampDriver, sampler, tzRules, 0, intervals, minTs, maxTs, 1);
         for (int i = 0; i < 3; i++) {
             Assert.assertTrue(iterator.next());
             Assert.assertEquals(i * Timestamps.DAY_MICROS, iterator.getTimestampLo());
@@ -184,13 +187,13 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         // to the left
         intervals.clear();
         intervals.add(-2L, -1L);
-        iterator.of(sampler, tzRules, 0, intervals, minTs, maxTs, 1);
+        iterator.of(timestampDriver, sampler, tzRules, 0, intervals, minTs, maxTs, 1);
         Assert.assertFalse(iterator.next());
 
         // to the left with intersection
         intervals.clear();
         intervals.add(-2L, 0L);
-        iterator.of(sampler, tzRules, 0, intervals, minTs, maxTs, 1);
+        iterator.of(timestampDriver, sampler, tzRules, 0, intervals, minTs, maxTs, 1);
         Assert.assertTrue(iterator.next());
         Assert.assertEquals(0, iterator.getTimestampLo());
         Assert.assertEquals(Timestamps.DAY_MICROS, iterator.getTimestampHi());
@@ -199,13 +202,13 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         // to the right
         intervals.clear();
         intervals.add(maxTs + 1, maxTs + 2);
-        iterator.of(sampler, tzRules, 0, intervals, minTs, maxTs, 1);
+        iterator.of(timestampDriver, sampler, tzRules, 0, intervals, minTs, maxTs, 1);
         Assert.assertFalse(iterator.next());
 
         // to the right with intersection
         intervals.clear();
         intervals.add(maxTs, maxTs + 2);
-        iterator.of(sampler, tzRules, 0, intervals, minTs, maxTs, 1);
+        iterator.of(timestampDriver, sampler, tzRules, 0, intervals, minTs, maxTs, 1);
         Assert.assertTrue(iterator.next());
         Assert.assertEquals(2 * Timestamps.DAY_MICROS, iterator.getTimestampLo());
         Assert.assertEquals(3 * Timestamps.DAY_MICROS, iterator.getTimestampHi());
@@ -214,7 +217,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         // middle
         intervals.clear();
         intervals.add(Timestamps.DAY_MICROS + 1, 2 * Timestamps.DAY_MICROS - 1);
-        iterator.of(sampler, tzRules, 0, intervals, minTs, maxTs, 1);
+        iterator.of(timestampDriver, sampler, tzRules, 0, intervals, minTs, maxTs, 1);
         Assert.assertTrue(iterator.next());
         Assert.assertEquals(Timestamps.DAY_MICROS, iterator.getTimestampLo());
         Assert.assertEquals(2 * Timestamps.DAY_MICROS, iterator.getTimestampHi());
@@ -229,7 +232,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final LongList intervals = new LongList();
 
         intervals.add(0, Timestamps.DAY_MICROS - 1);
-        iterator.of(sampler, tzRules, 0, intervals, 0, 3 * Timestamps.DAY_MICROS - 1, 1);
+        iterator.of(timestampDriver, sampler, tzRules, 0, intervals, 0, 3 * Timestamps.DAY_MICROS - 1, 1);
 
         Assert.assertTrue(iterator.next());
         Assert.assertEquals(0, iterator.getTimestampLo());
@@ -249,6 +252,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
         iterator.of(
+                timestampDriver,
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "UTC"),
                 0,
@@ -274,6 +278,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 2, 'h', 0);
         iterator.of(
+                timestampDriver,
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin"),
                 0,
@@ -307,6 +312,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 75, 'm', 0);
         iterator.of(
+                timestampDriver,
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin"),
                 0,
@@ -340,6 +346,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 15, 'm', 0);
         iterator.of(
+                timestampDriver,
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin"),
                 0,
@@ -365,6 +372,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 15, 'm', 0);
         iterator.of(
+                timestampDriver,
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin"),
                 0,
@@ -409,6 +417,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 30, 'm', 0);
         iterator.of(
+                timestampDriver,
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin"),
                 0,
@@ -454,6 +463,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 30, 'm', 0);
         iterator.of(
+                timestampDriver,
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/London"),
                 0,
@@ -478,6 +488,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 30, 'm', 0);
         iterator.of(
+                timestampDriver,
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/London"),
                 0,
@@ -502,6 +513,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
         iterator.of(
+                timestampDriver,
                 sampler,
                 Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "GMT+00:30"),
                 0,
@@ -539,6 +551,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     ) {
         Assert.assertNotNull(tzRules);
         return new TimeZoneIntervalIterator().of(
+                timestampDriver,
                 sampler,
                 tzRules,
                 offset,

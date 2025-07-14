@@ -280,6 +280,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long ceilYYYY(long timestamp) {
+        return Timestamps.ceilYYYY(timestamp);
+    }
+
+    @Override
     public boolean convertToVar(long fixedAddr, CharSink<?> sink) {
         long value = Unsafe.getUnsafe().getLong(fixedAddr);
         if (value != Numbers.LONG_NULL) {
@@ -307,6 +312,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
             interval.of(lo, hi);
         }
         return interval;
+    }
+
+    @Override
+    public long floorYYYY(long timestamp) {
+        return Timestamps.floorYYYY(timestamp);
     }
 
     @Override

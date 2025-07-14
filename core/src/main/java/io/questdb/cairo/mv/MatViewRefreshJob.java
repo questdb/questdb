@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -833,6 +834,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
 
         return timeZoneIterator.of(
+                MicrosTimestampDriver.INSTANCE,
                 sampler,
                 tzRules,
                 fixedOffset,

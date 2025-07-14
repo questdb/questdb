@@ -279,6 +279,11 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long ceilYYYY(long timestamp) {
+        return Nanos.ceilYYYY(timestamp);
+    }
+
+    @Override
     public boolean convertToVar(long fixedAddr, CharSink<?> sink) {
         long value = Unsafe.getUnsafe().getLong(fixedAddr);
         if (value != Numbers.LONG_NULL) {
@@ -306,6 +311,11 @@ public class NanosTimestampDriver implements TimestampDriver {
             interval.of(lo, hi);
         }
         return interval;
+    }
+
+    @Override
+    public long floorYYYY(long timestamp) {
+        return Nanos.floorYYYY(timestamp);
     }
 
     @Override

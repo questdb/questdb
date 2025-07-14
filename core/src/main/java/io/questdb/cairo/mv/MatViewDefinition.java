@@ -349,7 +349,7 @@ public class MatViewDefinition implements Mutable {
         this.periodSampler = periodSampler;
     }
 
-    
+
     public void updateBaseTableTimestampType(int baseTableTimestampType) {
         this.baseTableTimestampType = baseTableTimestampType;
     }
@@ -657,7 +657,6 @@ public class MatViewDefinition implements Mutable {
         this.periodLengthUnit = periodLengthUnit;
         this.periodDelay = periodDelay;
         this.periodDelayUnit = periodDelayUnit;
-
         if (timerTimeZone != null) {
             try {
                 this.timerRules = ColumnType.getTimestampDriver(baseTableTimestampType).getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);

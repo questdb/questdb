@@ -95,7 +95,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final String timeZone;
     private final String timeZoneOffset;
     private final int timerInterval;
-    private final long timerStart;
     private final String timerTimeZone;
     private final char timerUnit;
     private final IntList tmpColumnIndexes = new IntList();
@@ -105,6 +104,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private CreateTableOperationImpl createTableOperation;
     private long samplingInterval;
     private char samplingIntervalUnit;
+    private long timerStart;
 
     public CreateMatViewOperationImpl(
             @NotNull String sqlText,
@@ -472,6 +472,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata);
         updateMatViewTablePartitionBy(createTableOperation.getTimestampType());
         this.baseTableTimestampType = baseTableMetadata.getTimestampType();
+        this.timerStart = ColumnType.getTimestampDriver(this.baseTableTimestampType).from(timerStart, ColumnType.TIMESTAMP_MICRO);
     }
 
     private static void copyBaseTableSymbolColumnCapacity(

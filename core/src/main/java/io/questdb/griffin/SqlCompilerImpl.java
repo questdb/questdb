@@ -43,7 +43,6 @@ import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.MapWriter;
 import io.questdb.cairo.MetadataCacheReader;
-import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
@@ -134,7 +133,6 @@ import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -1753,6 +1751,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             tok = SqlUtil.fetchNext(lexer);
                         }
 
+                        TimestampDriver driver = ColumnType.getTimestampDriver(viewDefinition.getBaseTableTimestampType());
                         if (tok != null && isPeriodKeyword(tok)) {
                             // REFRESH ... PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
                             expectKeyword(lexer, "(");
@@ -1761,7 +1760,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             length = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
                             lengthUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                             SqlParser.validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
-                            final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(MicrosTimestampDriver.INSTANCE, length, lengthUnit, lexer.lastTokenPosition());
+                            final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(driver, length, lengthUnit, lexer.lastTokenPosition());
                             tok = expectToken(lexer, "'time zone' or 'delay' or ')'");
 
                             if (isTimeKeyword(tok)) {
@@ -1772,7 +1771,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 }
                                 tz = unquote(tok).toString();
                                 try {
-                                    tzRules = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
+                                    tzRules = driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
                                 } catch (NumericException e) {
                                     throw SqlException.position(lexer.lastTokenPosition()).put("invalid timezone: ").put(tz);
                                 }
@@ -1802,7 +1801,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 // REFRESH EVERY <interval> [START '<datetime>' [TIME ZONE '<timezone>']]
                                 tok = expectToken(lexer, "START timestamp");
                                 try {
-                                    start = MicrosTimestampDriver.floor(unquote(tok));
+                                    start = driver.parseFloorLiteral(unquote(tok));
                                 } catch (NumericException e) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                                 }
@@ -1814,7 +1813,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     tz = unquote(tok).toString();
                                     // validate time zone
                                     try {
-                                        Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
+                                        driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
                                     } catch (NumericException e) {
                                         throw SqlException.position(lexer.lastTokenPosition()).put("invalid timezone: ").put(tz);
                                     }
