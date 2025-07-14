@@ -2811,6 +2811,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (!matViewToken.isMatView()) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got table name");
         }
+        final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
+        MatViewState state = matViewStateStore.getViewState(matViewToken);
+        if (state == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "materialized view does not exist or is not ready for refresh");
+        }
+        int baseTableTimestampType = state.getViewDefinition().getBaseTableTimestampType();
+        TimestampDriver driver = ColumnType.getTimestampDriver(baseTableTimestampType);
 
         tok = expectToken(lexer, "'full' or 'incremental' or 'range'");
         final boolean fullRefresh = isFullKeyword(tok);
@@ -2820,14 +2827,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             expectKeyword(lexer, "from");
             tok = expectToken(lexer, "FROM timestamp");
             try {
-                from = MicrosTimestampDriver.floor(unquote(tok));
+                from = driver.parseFloorLiteral(unquote(tok));
             } catch (NumericException e) {
                 throw SqlException.$(lexer.lastTokenPosition(), "invalid FROM timestamp value");
             }
             expectKeyword(lexer, "to");
             tok = expectToken(lexer, "TO timestamp");
             try {
-                to = MicrosTimestampDriver.floor(unquote(tok));
+                to = driver.parseFloorLiteral(unquote(tok));
             } catch (NumericException e) {
                 throw SqlException.$(lexer.lastTokenPosition(), "invalid TO timestamp value");
             }
@@ -2843,7 +2850,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to refresh materialized view");
         }
 
-        final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
         executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
         if (fullRefresh) {
             matViewStateStore.enqueueFullRefresh(matViewToken);

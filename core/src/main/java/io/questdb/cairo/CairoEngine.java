@@ -352,17 +352,13 @@ public class CairoEngine implements Closeable, WriterSource {
                         MatViewDefinition viewDefinition = matViewGraph.getViewDefinition(tableToken);
                         if (viewDefinition == null) {
                             viewDefinition = new MatViewDefinition();
-                            int timestampType;
-                            try (TableMetadata metadata = getTableMetadata(tableToken)) {
-                                timestampType = metadata.getTimestampType();
-                            }
                             MatViewDefinition.readFrom(
+                                    this,
                                     viewDefinition,
                                     reader,
                                     path,
                                     pathLen,
-                                    tableToken,
-                                    timestampType
+                                    tableToken
                             );
                             if (matViewGraph.addView(viewDefinition)) {
                                 matViewStateStore.createViewState(viewDefinition);

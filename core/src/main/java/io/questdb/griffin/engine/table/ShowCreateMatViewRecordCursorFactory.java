@@ -156,12 +156,12 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
             }
             try {
                 MatViewDefinition.readFrom(
+                        executionContext.getCairoEngine(),
                         viewDefinition,
                         reader,
                         path,
                         pathLen,
-                        tableToken,
-                        this.table.getTimestampType()
+                        tableToken
                 );
             } catch (CairoException e) {
                 throw SqlException.$(tokenPosition, "could not read materialized view definition [table=").put(tableToken)

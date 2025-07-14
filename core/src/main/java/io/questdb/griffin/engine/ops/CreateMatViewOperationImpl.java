@@ -95,16 +95,16 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final String timeZone;
     private final String timeZoneOffset;
     private final int timerInterval;
+    private final long timerStart;
     private final String timerTimeZone;
     private final char timerUnit;
     private final IntList tmpColumnIndexes = new IntList();
     private final LowerCaseCharSequenceHashSet tmpLiterals = new LowerCaseCharSequenceHashSet();
     private final MatViewDefinition viewDefinition = new MatViewDefinition();
+    private int baseTableTimestampType;
     private CreateTableOperationImpl createTableOperation;
     private long samplingInterval;
     private char samplingIntervalUnit;
-    private long timerStart;
-    private TimestampDriver timestampDriver;
 
     public CreateMatViewOperationImpl(
             @NotNull String sqlText,
@@ -274,7 +274,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     public void init(TableToken matViewToken) {
         viewDefinition.init(
                 refreshType,
-                timestampDriver.getColumnType(),
+                baseTableTimestampType,
                 deferred,
                 matViewToken,
                 Chars.toString(createTableOperation.getSelectText()),
@@ -470,8 +470,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
         }
         createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata);
-        this.timestampDriver = ColumnType.getTimestampDriver(createTableOperation.getTimestampType());
-        updateBaseTablePartitionBy();
+        updateMatViewTablePartitionBy(createTableOperation.getTimestampType());
+        this.baseTableTimestampType = baseTableMetadata.getTimestampType();
     }
 
     private static void copyBaseTableSymbolColumnCapacity(
@@ -628,19 +628,20 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         }
     }
 
-    private void updateBaseTablePartitionBy() throws SqlException {
+    private void updateMatViewTablePartitionBy(int timestampType) throws SqlException {
         // Check if PARTITION BY wasn't specified in SQL, so that we need
         // to assign it based on the sampling interval.
         if (createTableOperation.getPartitionBy() == PartitionBy.NONE) {
+            TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
             final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(
                     timestampDriver,
                     samplingInterval,
                     samplingIntervalUnit,
                     0
             );
-            final long approxBucketMicros = timestampSampler.getApproxBucketSize();
-            final int partitionBy = approxBucketMicros > timestampDriver.fromHours(1) ? PartitionBy.YEAR
-                    : approxBucketMicros > timestampDriver.fromMinutes(1) ? PartitionBy.MONTH
+            final long approxBucket = timestampSampler.getApproxBucketSize();
+            final int partitionBy = approxBucket > timestampDriver.fromHours(1) ? PartitionBy.YEAR
+                    : approxBucket > timestampDriver.fromMinutes(1) ? PartitionBy.MONTH
                     : PartitionBy.DAY;
             createTableOperation.setPartitionBy(partitionBy);
             final int ttlHoursOrMonths = createTableOperation.getTtlHoursOrMonths();

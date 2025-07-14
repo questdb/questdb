@@ -261,6 +261,24 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long approxPartitionTimestamps(int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.HOUR:
+                return Nanos.HOUR_NANOS;
+            case PartitionBy.DAY:
+                return Nanos.DAY_NANOS;
+            case PartitionBy.WEEK:
+                return Nanos.WEEK_NANOS;
+            case PartitionBy.MONTH:
+                return Nanos.MONTH_NANOS_APPROX;
+            case PartitionBy.YEAR:
+                return Nanos.YEAR_NANOS_NONLEAP;
+            default:
+                throw new UnsupportedOperationException("unexpected partition by: " + partitionBy);
+        }
+    }
+
+    @Override
     public boolean convertToVar(long fixedAddr, CharSink<?> sink) {
         long value = Unsafe.getUnsafe().getLong(fixedAddr);
         if (value != Numbers.LONG_NULL) {
@@ -1342,11 +1360,6 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public long toNanosScale() {
-        return 1;
-    }
-
-    @Override
     public long toHours(long timestamp) {
         return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Nanos.HOUR_NANOS;
     }
@@ -1354,6 +1367,11 @@ public class NanosTimestampDriver implements TimestampDriver {
     @Override
     public long toMinutes(long timestamp) {
         return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Nanos.MINUTE_NANOS;
+    }
+
+    @Override
+    public long toNanosScale() {
+        return 1;
     }
 
     @Override

@@ -1567,12 +1567,12 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     final int rootLen = path.size();
                     MatViewDefinition actualDefinition = new MatViewDefinition();
                     MatViewDefinition.readFrom(
+                            engine,
                             actualDefinition,
                             reader,
                             path,
                             rootLen,
-                            matViewToken,
-                            ColumnType.TIMESTAMP_MICRO
+                            matViewToken
                     );
                     Assert.fail("exception expected");
                 } catch (CairoException e) {
@@ -1599,12 +1599,12 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     final int rootLen = path.size();
                     MatViewDefinition actualDefinition = new MatViewDefinition();
                     MatViewDefinition.readFrom(
+                            engine,
                             actualDefinition,
                             reader,
                             path,
                             rootLen,
-                            matViewToken,
-                            ColumnType.TIMESTAMP_MICRO
+                            matViewToken
                     );
                     Assert.fail("exception expected");
                 } catch (CairoException e) {
@@ -1646,12 +1646,12 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     final int rootLen = path.size();
                     MatViewDefinition actualDefinition = new MatViewDefinition();
                     MatViewDefinition.readFrom(
+                            engine,
                             actualDefinition,
                             reader,
                             path,
                             rootLen,
-                            matViewToken,
-                            ColumnType.TIMESTAMP_MICRO
+                            matViewToken
                     );
 
                     assertEquals(matViewDefinition.getMatViewSql(), actualDefinition.getMatViewSql());
@@ -1949,12 +1949,12 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     final int rootLen = path.size();
                     try {
                         MatViewDefinition.readFrom(
+                                engine,
                                 new MatViewDefinition(),
                                 reader,
                                 path,
                                 rootLen,
-                                matViewToken,
-                                ColumnType.TIMESTAMP_MICRO
+                                matViewToken
                         );
                         Assert.fail();
                     } catch (CairoException e) {
@@ -2150,12 +2150,12 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     final int rootLen = path.size();
                     MatViewDefinition actualDefinition = new MatViewDefinition();
                     MatViewDefinition.readFrom(
+                            engine,
                             actualDefinition,
                             reader,
                             path,
                             rootLen,
-                            matViewToken,
-                            ColumnType.TIMESTAMP_MICRO
+                            matViewToken
                     );
                     Assert.fail("exception expected");
                 } catch (CairoException e) {
@@ -2278,12 +2278,12 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final int rootLen = path.size();
             MatViewDefinition matViewDefinition = new MatViewDefinition();
             MatViewDefinition.readFrom(
+                    engine,
                     matViewDefinition,
                     reader,
                     path,
                     rootLen,
-                    matViewToken,
-                    ColumnType.TIMESTAMP_MICRO
+                    matViewToken
             );
 
             assertEquals(refreshType, matViewDefinition.getRefreshType());

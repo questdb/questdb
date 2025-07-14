@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -126,31 +125,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return processNotifications();
     }
 
-    private static long approxPartitionMicros(int partitionBy) {
-        switch (partitionBy) {
-            case PartitionBy.HOUR:
-                return Timestamps.HOUR_MICROS;
-            case PartitionBy.DAY:
-                return Timestamps.DAY_MICROS;
-            case PartitionBy.WEEK:
-                return Timestamps.WEEK_MICROS;
-            case PartitionBy.MONTH:
-                return Timestamps.MONTH_MICROS_APPROX;
-            case PartitionBy.YEAR:
-                return Timestamps.YEAR_MICROS_NONLEAP;
-            default:
-                throw new UnsupportedOperationException("unexpected partition by: " + partitionBy);
-        }
-    }
-
     /**
      * Estimates density of rows per SAMPLE BY bucket. The estimate is not very precise as
      * it doesn't use exact min/max timestamps for each partition, but it should do the job
      * of splitting large refresh table scans into multiple smaller scans.
      */
-    private static long estimateRowsPerBucket(@NotNull TableReader baseTableReader, long bucketMicros) {
+    private static long estimateRowsPerBucket(TimestampDriver driver, @NotNull TableReader baseTableReader, long bucketMicros) {
         final long rows = baseTableReader.size();
-        final long partitionMicros = approxPartitionMicros(baseTableReader.getPartitionedBy());
+        final long partitionMicros = driver.approxPartitionTimestamps(baseTableReader.getPartitionedBy());
         final int partitionCount = baseTableReader.getPartitionCount();
         if (partitionCount > 0) {
             return Math.max(1, (rows * bucketMicros) / (partitionMicros * partitionCount));
@@ -297,7 +279,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long lastTxn = baseTableReader.getSeqTxn();
         final TableToken baseTableToken = baseTableReader.getTableToken();
         final TableToken viewToken = viewDefinition.getMatViewToken();
-        TimestampDriver driver = ColumnType.getTimestampDriver(viewDefinition.getTimestampType());
+        TimestampDriver driver = ColumnType.getTimestampDriver(viewDefinition.getBaseTableTimestampType());
 
         final long now = microsecondClock.getTicks();
         final boolean rangeRefresh = rangeTo != Numbers.LONG_NULL;
@@ -453,7 +435,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 );
             }
 
-            final long rowsPerBucket = estimateRowsPerBucket(baseTableReader, timestampSampler.getApproxBucketSize());
+            final long rowsPerBucket = estimateRowsPerBucket(driver, baseTableReader, timestampSampler.getApproxBucketSize());
             final int rowsPerQuery = configuration.getMatViewRowsPerQueryEstimate();
             final int step = Math.max(1, (int) (rowsPerQuery / rowsPerBucket));
 
@@ -535,6 +517,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // call, so that all of them are at the same txn.
                 engine.detachReader(baseTableReader);
                 refreshSqlExecutionContext.of(baseTableReader);
+                // Update the base table timestamp type to handle cases where the base table timestamp type
+                // has changed since the materialized view was created. This ensures that the view's
+                // timestamp sampler and drivers use the correct type.
+                viewDefinition.updateBaseTableTimestampType(baseTableReader.getMetadata().getTimestampType());
                 try {
                     walWriter.truncateSoft();
                     resetInvalidState(viewState, walWriter);

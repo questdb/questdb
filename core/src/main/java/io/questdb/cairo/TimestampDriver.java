@@ -70,6 +70,8 @@ public interface TimestampDriver {
 
     PlanSink appendTypeToPlan(PlanSink sink);
 
+    long approxPartitionTimestamps(int partitionBy);
+
     default long castStr(CharSequence value, int tupleIndex, int fromType, int toType) {
         try {
             return parseFloorLiteral(value);
