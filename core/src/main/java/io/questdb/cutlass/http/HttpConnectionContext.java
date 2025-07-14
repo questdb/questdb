@@ -1008,7 +1008,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     @Override
     protected void doInit() {
-        // The context is obtained from the pool, so we should initialize the memory.
+        // the context is obtained from the pool, so we should initialize the memory
         if (recvBuffer == 0) {
             // re-read recv buffer size in case the config was reloaded
             recvBufferSize = configuration.getRecvBufferSize();
