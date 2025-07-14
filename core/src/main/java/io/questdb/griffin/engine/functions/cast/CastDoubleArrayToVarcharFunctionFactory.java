@@ -74,7 +74,7 @@ public class CastDoubleArrayToVarcharFunctionFactory implements FunctionFactory 
                 return null;
             }
             sink.clear();
-            ArrayTypeDriver.arrayToJson(arrayView, sink, NoopArrayWriteState.INSTANCE, false);
+            ArrayTypeDriver.arrayToJson(arrayView, sink, NoopArrayWriteState.INSTANCE);
             return sink;
         }
     }
