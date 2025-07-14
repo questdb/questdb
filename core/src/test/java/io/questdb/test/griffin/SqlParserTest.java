@@ -2507,6 +2507,26 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateMatViewsWithInvalidColumnNameShouldFail() throws Exception {
+        TableModel model = new TableModel(configuration, "tab", PartitionBy.DAY)
+                .timestamp()
+                .col("a", ColumnType.DOUBLE)
+                .wal();
+
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertSyntaxError("create materialized view x as select timestamp, sum(a) from tab sample by 1h",
+                25,
+                "invalid column name [name=sum(a), position=1]",
+                model
+        );
+        assertSyntaxError("create materialized view x as select timestamp, sum(a) \"a,b\" from tab sample by 1h",
+                25,
+                "invalid column name [name=a,b, position=1]",
+                model
+        );
+    }
+
+    @Test
     public void testCreateNameDot() throws Exception {
         assertSyntaxError(
                 "create table . as ( select a, b, c from tab )",
@@ -3934,6 +3954,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (gh GEOHASH(12s), t TIMESTAMP) timestamp(t) partition by DAY",
                 26, "invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits"
+        );
+    }
+
+    @Test
+    public void testCreateTableWithInvalidColumnNameShouldFail() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertSyntaxError("create table x as (select rnd_str('a', 'b', 'c') from long_sequence(10))",
+                13,
+                "invalid column name [name=rnd_str('a', 'b', 'c'), position=0]"
+        );
+        assertSyntaxError("create table x as (select 1 \"rnd_str('a', 'b', 'c')\" from long_sequence(10))",
+                13,
+                "invalid column name [name=rnd_str('a', 'b', 'c'), position=0]"
         );
     }
 
@@ -9252,7 +9285,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM '2020-09-10T20:00:00.000000Z';",
                     75,
                     "'to' expected"
@@ -9265,7 +9298,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to",
                     78,
                     "TO timestamp expected"
@@ -9278,7 +9311,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to 'foobar'",
                     79,
                     "invalid TO timestamp value"
@@ -9291,7 +9324,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to '2020-09-10T19:00:00.000000Z'",
                     79,
                     "TO timestamp must not be earlier than FROM timestamp"
@@ -9344,7 +9377,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' foobar",
                     35,
                     "'full' or 'incremental' or 'range' expected"
@@ -9357,7 +9390,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' INCREMENTAL foobar",
                     47,
                     "unexpected token"
@@ -9370,7 +9403,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' RANGE;",
                     40,
                     "'from' expected"
@@ -9383,7 +9416,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM",
                     45,
                     "FROM timestamp expected"
@@ -9396,7 +9429,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM foobar;",
                     46,
                     "invalid FROM timestamp value"
@@ -12134,39 +12167,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "with x as (select * from tab) select * from x union with " +
                         " y as (select * from tab) select * from y",
                 modelOf("tab").col("a", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testCreateTableWithInvalidColumnNameShouldFail() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
-        assertSyntaxError("create table x as (select rnd_str('a', 'b', 'c') from long_sequence(10))",
-                13,
-                "invalid column name [name=rnd_str('a', 'b', 'c'), position=0]"
-        );
-        assertSyntaxError("create table x as (select 1 \"rnd_str('a', 'b', 'c')\" from long_sequence(10))",
-                13,
-                "invalid column name [name=rnd_str('a', 'b', 'c'), position=0]"
-        );
-    }
-
-    @Test
-    public void testCreateMatViewsWithInvalidColumnNameShouldFail() throws Exception {
-        TableModel model = new TableModel(configuration, "tab", PartitionBy.DAY)
-                .timestamp()
-                .col("a", ColumnType.DOUBLE)
-                .wal();
-
-        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
-        assertSyntaxError("create materialized view x as select timestamp, sum(a) from tab sample by 1h",
-                25,
-                "invalid column name [name=sum(a), position=1]",
-                model
-        );
-        assertSyntaxError("create materialized view x as select timestamp, sum(a) \"a,b\" from tab sample by 1h",
-                25,
-                "invalid column name [name=a,b, position=1]",
-                model
         );
     }
 

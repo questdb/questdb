@@ -34,6 +34,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
@@ -102,6 +103,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Path;
@@ -164,6 +166,18 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     };
     protected static Clock testMicrosClock = defaultMicrosecondClock;
+    protected static final Clock defaultNanosecondClock = new Clock() {
+        @Override
+        public int getClockTimestampType() {
+            return ColumnType.TIMESTAMP_NANO;
+        }
+
+        @Override
+        public long getTicks() {
+            return currentMicros != -1 ? currentMicros * 1000L : NanosecondClockImpl.INSTANCE.getTicks();
+        }
+    };
+    protected static Clock testNanoClock = defaultNanosecondClock;
     protected static CairoEngine engine;
     protected static TestCairoEngineFactory engineFactory;
     protected static FactoryProvider factoryProvider;
@@ -557,6 +571,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         bindVariableService = node1.getBindVariableService();
         sqlExecutionContext = node1.getSqlExecutionContext();
         ((MicrosTimestampDriver) MicrosTimestampDriver.INSTANCE).setTicker(testMicrosClock);
+        ((NanosTimestampDriver) NanosTimestampDriver.INSTANCE).setTicker(testMicrosClock);
         ColumnType.makeUtf8DefaultString();
     }
 
