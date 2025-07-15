@@ -6119,7 +6119,7 @@ public class SqlOptimiser implements Mutable {
                             // (when we know the other column aliases) to alter it if a duplicate has occurred.
                             if (groupByModel.getAliasToColumnMap().contains(qc.getAlias())) {
                                 CharSequence newAlias = createColumnAlias(qc.getAst(), groupByModel);
-                                qc.setAlias(newAlias);
+                                qc.setAlias(newAlias, QueryColumn.SYNTHESIZED_ALIAS_POSITION);
                             }
 
                             // check what this column would reference to establish the priority
