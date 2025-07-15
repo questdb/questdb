@@ -33,7 +33,6 @@ import io.questdb.ServerMain;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
 import io.questdb.network.Socket;
-import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
