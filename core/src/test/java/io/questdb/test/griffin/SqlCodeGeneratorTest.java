@@ -519,6 +519,18 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnAliasCaseSensitivity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades (symbol SYMBOL)");
+            execute("insert into trades values ('USD'), ('EUR')");
+            assertSql(
+                    "SYMBOL\nUSD\nEUR\n",
+                    "SELECT symbol AS SYMBOL FROM trades"
+            );
+        });
+    }
+
+    @Test
     public void testCreateTableAsSelectUsesQueryTimestamp() throws Exception {
         assertQuery(
                 "a\tb\tt\n" +
@@ -8516,18 +8528,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "pickup_datetime",
                     true,
                     true
-            );
-        });
-    }
-
-    @Test
-    public void testColumnAliasCaseSensitivity() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table trades (symbol SYMBOL)");
-            execute("insert into trades values ('USD'), ('EUR')");
-            assertSql(
-            "SYMBOL\nUSD\nEUR\n",
-                    "SELECT symbol AS SYMBOL FROM trades"
             );
         });
     }
