@@ -24,26 +24,31 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.DataIDUtils;
+import io.questdb.cairo.DataID;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Rnd;
+import io.questdb.std.Uuid;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class DataIDUtilsTest extends AbstractCairoTest {
+public class DataIDTest extends AbstractCairoTest {
     @Test
     public void testOpenDataID() throws Exception {
         assertMemoryLeak(() -> {
-            Long256 id = DataIDUtils.read(configuration);
+            DataID id = DataID.open(configuration);
             Assert.assertNotNull(id);
             Rnd rnd = new Rnd(configuration.getMicrosecondClock().getTicks(), configuration.getMillisecondClock().getTicks());
-            Long256Impl currentId = new Long256Impl();
-            currentId.fromRnd(rnd);
-            DataIDUtils.set(configuration, currentId);
-            id = DataIDUtils.read(configuration);
-            Assert.assertEquals(currentId, id);
+            Uuid currentId = new Uuid();
+            currentId.of(rnd.nextLong(), rnd.nextLong());
+            id.set(currentId);
+            Assert.assertEquals(id.getLo(), currentId.getLo());
+            Assert.assertEquals(id.getHi(), currentId.getHi());
+
+            DataID updatedId = DataID.open(configuration);
+            Assert.assertEquals(updatedId.getLo(), currentId.getLo());
+            Assert.assertEquals(updatedId.getHi(), currentId.getHi());
         });
     }
 }

@@ -108,12 +108,10 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
-import io.questdb.std.Rnd;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -149,7 +147,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final DatabaseCheckpointAgent checkpointAgent;
     private final CopyContext copyContext;
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
-    private final Long256 dataID;
+    private final DataID dataID;
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
     private final MatViewGraph matViewGraph;
@@ -213,7 +211,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.matViewTimerQueue = createMatViewTimerQueue();
             this.matViewGraph = new MatViewGraph();
             this.frameFactory = new FrameFactory(configuration);
-            this.dataID = readOrInitDataID(configuration);
+            this.dataID = DataID.open(configuration);
 
             settingsStore = new SettingsStore(configuration);
             settingsStore.init();
@@ -666,7 +664,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return copyContext;
     }
 
-    public Long256 getDataID() {
+    public DataID getDataID() {
         return dataID;
     }
 
@@ -1586,19 +1584,6 @@ public class CairoEngine implements Closeable, WriterSource {
             default:
                 throw SqlException.$(0, "use ddl()");
         }
-    }
-
-    private static Long256 readOrInitDataID(CairoConfiguration configuration) {
-        Long256 dataID = DataIDUtils.read(configuration);
-        if (dataID != null) {
-            return dataID;
-        }
-
-        Rnd rnd = new Rnd(configuration.getMicrosecondClock().getTicks(), configuration.getMillisecondClock().getTicks());
-        Long256Impl newId = new Long256Impl();
-        newId.fromRnd(rnd);
-        DataIDUtils.set(configuration, newId);
-        return DataIDUtils.read(configuration);
     }
 
     // caller has to acquire the lock before this method is called and release the lock after the call
