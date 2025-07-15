@@ -100,7 +100,7 @@ public class AbstractTest {
     }
 
     protected static MatViewRefreshJob createMatViewRefreshJob(CairoEngine engine) {
-        return new MatViewRefreshJob(0, engine);
+        return new MatViewRefreshJob(0, engine, 0);
     }
 
     protected static ApplyWal2TableJob createWalApplyJob(CairoEngine engine) {

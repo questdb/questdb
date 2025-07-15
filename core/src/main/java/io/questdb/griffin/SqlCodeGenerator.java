@@ -1020,14 +1020,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private @Nullable ObjList<Function> compileWorkerFilterConditionally(
             SqlExecutionContext executionContext,
             @Nullable Function filter,
-            int workerCount,
+            int sharedQueryWorkerCount,
             @Nullable ExpressionNode filterExpr,
             RecordMetadata metadata
     ) throws SqlException {
-        if (filter != null && !filter.isThreadSafe() && workerCount > 0) {
+        if (filter != null && !filter.isThreadSafe() && sharedQueryWorkerCount > 0) {
             assert filterExpr != null;
             ObjList<Function> workerFilters = new ObjList<>();
-            for (int i = 0; i < workerCount; i++) {
+            for (int i = 0; i < sharedQueryWorkerCount; i++) {
                 restoreWhereClause(filterExpr); // restore original filters in node query models
                 Function workerFilter = compileBooleanFilter(filterExpr, metadata, executionContext);
                 workerFilters.extendAndSet(i, workerFilter);

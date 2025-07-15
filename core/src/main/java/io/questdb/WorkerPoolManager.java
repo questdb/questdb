@@ -60,7 +60,7 @@ public abstract class WorkerPoolManager implements Target {
         config.getMetrics().addScrapable(this);
     }
 
-    public WorkerPool getInstanceNetwork(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
+    public WorkerPool getSharedNetworkPool(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
         return getWorkerPool(config, requester, sharedPoolNetwork);
     }
 

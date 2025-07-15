@@ -4947,7 +4947,7 @@ public class MatViewTest extends AbstractCairoTest {
                     () -> {
                         started.countDown();
                         try {
-                            try (MatViewRefreshJob job = new MatViewRefreshJob(0, engine)) {
+                            try (MatViewRefreshJob job = new MatViewRefreshJob(0, engine, 0)) {
                                 refreshed.set(job.run(0));
                             }
                         } finally {
