@@ -758,7 +758,7 @@ public class CopyTest extends AbstractCairoTest {
     @Test
     public void testSerialCopyCancelChecksImportId() throws Exception {
         assertMemoryLeak(() -> {
-            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine,1)) {
+            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
                 // decrease smaller buffer otherwise the whole file imported in one go without ever checking the circuit breaker
                 setProperty(PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 1024);
                 String copyID = runAndFetchCopyID("copy x from 'test-import.csv' with header true delimiter ',' " +
