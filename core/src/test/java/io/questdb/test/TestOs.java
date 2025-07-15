@@ -82,7 +82,13 @@ public class TestOs {
                 // Remove forward /
                 absolutePathPreCompiled = absolutePathPreCompiled.substring(1);
             }
-            String sourcesPath = absolutePathPreCompiled.substring(0, absolutePathPreCompiled.indexOf("/target/"));
+            int targetIndex = absolutePathPreCompiled.indexOf("/target/");
+            String sourcesPath;
+            if (targetIndex == -1) {
+                sourcesPath = System.getProperty("user.dir");
+            } else {
+                sourcesPath = absolutePathPreCompiled.substring(0, targetIndex);
+            }
             Path absoluteDevReleasePath = Paths.get(sourcesPath + "/rust/qdb-sqllogictest/target/release/" + rustLibName).toAbsolutePath();
             Path absoluteDevDebugPath = Paths.get(sourcesPath + "/rust/qdb-sqllogictest/target/debug/" + rustLibName).toAbsolutePath();
             Path absolutePrdPath = Paths.get(absolutePathPreCompiled);
