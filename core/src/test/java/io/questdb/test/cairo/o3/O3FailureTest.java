@@ -618,7 +618,7 @@ public class O3FailureTest extends AbstractO3Test {
                     @Override
                     public boolean truncate(long fd, long size) {
                         // First two calls to truncate are for varchar column
-                        if (size == 0 && counter.getAndIncrement() == 2) {
+                        if (size == 0 && counter.getAndIncrement() == 3) {
                             return false;
                         }
                         return super.truncate(fd, size);
