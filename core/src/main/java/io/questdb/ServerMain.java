@@ -350,7 +350,7 @@ public class ServerMain implements Closeable {
 
                             // wal apply job in the shared pool when there is no dedicated pool
                             if (walApplyEnabled && !config.getWalApplyPoolConfiguration().isEnabled()) {
-                                setupWalApplyJob(sharedPoolWrite, engine, sharedPoolWrite.getWorkerCount());
+                                setupWalApplyJob(sharedPoolWrite, engine, sharedPoolQuery.getWorkerCount());
                             }
                         }
 
@@ -367,7 +367,7 @@ public class ServerMain implements Closeable {
                         }
 
                         if (matViewEnabled && !config.getMatViewRefreshPoolConfiguration().isEnabled()) {
-                            setupMatViewJobs(sharedPoolWrite, engine, sharedPoolWrite.getWorkerCount());
+                            setupMatViewJobs(sharedPoolWrite, engine, sharedPoolQuery.getWorkerCount());
                         }
                     }
 
