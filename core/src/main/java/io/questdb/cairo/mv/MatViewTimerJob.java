@@ -27,7 +27,6 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
@@ -136,7 +135,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         final char lengthUnit = viewDefinition.getPeriodLengthUnit();
         final TimestampSampler sampler;
         try {
-            sampler = TimestampSamplerFactory.getInstance(ColumnType.getTimestampDriver(viewDefinition.getBaseTableTimestampType()), length, lengthUnit, -1);
+            sampler = TimestampSamplerFactory.getInstance(viewDefinition.getBaseTableTimestampDriver(), length, lengthUnit, -1);
         } catch (SqlException e) {
             throw CairoException.nonCritical().put("invalid LENGTH interval and/or unit: ").put(length)
                     .put(", ").put(lengthUnit);
@@ -173,7 +172,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         final char unit = viewDefinition.getTimerUnit();
         final TimestampSampler sampler;
         try {
-            sampler = TimestampSamplerFactory.getInstance(ColumnType.getTimestampDriver(viewDefinition.getBaseTableTimestampType()), interval, unit, -1);
+            sampler = TimestampSamplerFactory.getInstance(viewDefinition.getBaseTableTimestampDriver(), interval, unit, -1);
         } catch (SqlException e) {
             throw CairoException.nonCritical().put("invalid EVERY interval and/or unit: ").put(interval)
                     .put(", ").put(unit);
@@ -200,7 +199,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         final long periodMs = configuration.getMatViewRefreshIntervalsUpdatePeriod();
         final TimestampSampler sampler;
         try {
-            sampler = TimestampSamplerFactory.getInstance(ColumnType.getTimestampDriver(viewDefinition.getBaseTableTimestampType()), periodMs, 'T', -1);
+            sampler = TimestampSamplerFactory.getInstance(viewDefinition.getBaseTableTimestampDriver(), periodMs, 'T', -1);
         } catch (SqlException e) {
             throw CairoException.nonCritical().put("invalid refresh intervals update period: ").put(periodMs);
         }

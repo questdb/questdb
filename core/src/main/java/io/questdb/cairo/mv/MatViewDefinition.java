@@ -64,6 +64,7 @@ public class MatViewDefinition implements Mutable {
     public static final int REFRESH_TYPE_TIMER = 1;
     private static final Log LOG = LogFactory.getLog(MatViewDefinition.class);
     private String baseTableName;
+    private TimestampDriver baseTableTimestampDriver;
     private int baseTableTimestampType = -1;
     private boolean deferred;
     // Not persisted, parsed from timeZoneOffset.
@@ -201,8 +202,8 @@ public class MatViewDefinition implements Mutable {
         return baseTableName;
     }
 
-    public int getBaseTableTimestampType() {
-        return baseTableTimestampType;
+    public TimestampDriver getBaseTableTimestampDriver() {
+        return baseTableTimestampDriver;
     }
 
     public long getFixedOffset() {
@@ -352,6 +353,7 @@ public class MatViewDefinition implements Mutable {
 
     public void updateBaseTableTimestampType(int baseTableTimestampType) {
         this.baseTableTimestampType = baseTableTimestampType;
+        this.baseTableTimestampDriver = ColumnType.getTimestampDriver(baseTableTimestampType);
     }
 
     public MatViewDefinition updateRefreshLimit(int refreshLimitHoursOrMonths) {
@@ -514,6 +516,9 @@ public class MatViewDefinition implements Mutable {
         }
         int baseTableTimestampType = 0;
         TableToken baseTable = engine.getTableTokenIfExists(baseTableNameStr);
+        // It's safe not to set baseTableTimestampType when the base table doesn't exist.
+        // When the materialized view is full refresh, the baseTableTimestampType
+        // will be updated again from the actual base table.
         if (baseTable != null) {
             try (TableMetadata metadata = engine.getTableMetadata(baseTable)) {
                 baseTableTimestampType = metadata.getTimestampType();
@@ -602,11 +607,11 @@ public class MatViewDefinition implements Mutable {
         this.timeZone = timeZone;
         this.timeZoneOffset = timeZoneOffset;
         this.baseTableTimestampType = timestampType;
-        TimestampDriver driver = ColumnType.getTimestampDriver(baseTableTimestampType);
+        this.baseTableTimestampDriver = ColumnType.getTimestampDriver(baseTableTimestampType);
 
         try {
             this.timestampSampler = TimestampSamplerFactory.getInstance(
-                    driver,
+                    baseTableTimestampDriver,
                     samplingInterval,
                     samplingIntervalUnit,
                     0
@@ -618,7 +623,7 @@ public class MatViewDefinition implements Mutable {
 
         if (timeZone != null) {
             try {
-                this.rules = driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone);
+                this.rules = baseTableTimestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone);
             } catch (NumericException e) {
                 throw CairoException.critical(0).put("invalid timezone: ").put(timeZone);
             }
@@ -631,7 +636,7 @@ public class MatViewDefinition implements Mutable {
             if (val == Numbers.LONG_NULL) {
                 throw CairoException.critical(0).put("invalid offset: ").put(timeZoneOffset);
             }
-            this.fixedOffset = driver.fromMinutes(Numbers.decodeLowInt(val));
+            this.fixedOffset = baseTableTimestampDriver.fromMinutes(Numbers.decodeLowInt(val));
         } else {
             this.fixedOffset = 0;
         }
@@ -659,7 +664,7 @@ public class MatViewDefinition implements Mutable {
         this.periodDelayUnit = periodDelayUnit;
         if (timerTimeZone != null) {
             try {
-                this.timerRules = ColumnType.getTimestampDriver(baseTableTimestampType).getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);
+                this.timerRules = baseTableTimestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);
             } catch (NumericException e) {
                 throw CairoException.critical(0).put("invalid timer timezone: ").put(timerTimeZone);
             }

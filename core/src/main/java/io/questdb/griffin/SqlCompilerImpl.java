@@ -1751,7 +1751,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             tok = SqlUtil.fetchNext(lexer);
                         }
 
-                        TimestampDriver driver = ColumnType.getTimestampDriver(viewDefinition.getBaseTableTimestampType());
+                        TimestampDriver driver = viewDefinition.getBaseTableTimestampDriver();
                         if (tok != null && isPeriodKeyword(tok)) {
                             // REFRESH ... PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
                             expectKeyword(lexer, "(");
@@ -2815,8 +2815,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (state == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view does not exist or is not ready for refresh");
         }
-        int baseTableTimestampType = state.getViewDefinition().getBaseTableTimestampType();
-        TimestampDriver driver = ColumnType.getTimestampDriver(baseTableTimestampType);
+        TimestampDriver driver = state.getViewDefinition().getBaseTableTimestampDriver();
 
         tok = expectToken(lexer, "'full' or 'incremental' or 'range'");
         final boolean fullRefresh = isFullKeyword(tok);
