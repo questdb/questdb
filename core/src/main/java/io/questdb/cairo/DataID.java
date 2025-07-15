@@ -92,6 +92,7 @@ public final class DataID implements Sinkable {
 
     /**
      * Returns whether the data id has been initialized or not.
+     *
      * @return true if the data id is initialized.
      */
     public boolean isInitialized() {
