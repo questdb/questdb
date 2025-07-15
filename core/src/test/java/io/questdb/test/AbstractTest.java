@@ -104,7 +104,7 @@ public class AbstractTest {
     }
 
     protected static ApplyWal2TableJob createWalApplyJob(CairoEngine engine) {
-        return new ApplyWal2TableJob(engine, 1, 1);
+        return new ApplyWal2TableJob(engine, 0);
     }
 
     @SuppressWarnings("StatementWithEmptyBody")

@@ -333,7 +333,6 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                                         return new JsonQueryProcessor(
                                                 configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration(),
                                                 cairoEngine,
-                                                workerPool.getWorkerCount(),
                                                 sharedQueryWorkerCount
                                         ) {
                                             @Override

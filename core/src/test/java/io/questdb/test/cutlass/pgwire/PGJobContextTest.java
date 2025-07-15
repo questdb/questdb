@@ -12263,7 +12263,7 @@ create table tab as (
                     engine,
                     workerPool,
                     registry,
-                    createPGSqlExecutionContextFactory(workerCount, workerCount, null, queryScheduledCount)
+                    createPGSqlExecutionContextFactory(null, queryScheduledCount)
             );
         } catch (Throwable t) {
             Misc.free(registry);
@@ -12273,12 +12273,10 @@ create table tab as (
     }
 
     private ObjectFactory<SqlExecutionContextImpl> createPGSqlExecutionContextFactory(
-            int workerCount,
-            int sharedQueryWorkerCount,
             SOCountDownLatch queryStartedCount,
             SOCountDownLatch queryScheduledCount
     ) {
-        return () -> new SqlExecutionContextImpl(engine, workerCount, sharedQueryWorkerCount) {
+        return () -> new SqlExecutionContextImpl(engine, 0) {
             @Override
             public QueryFutureUpdateListener getQueryFutureUpdateListener() {
                 return new QueryFutureUpdateListener() {
@@ -12379,7 +12377,7 @@ create table tab as (
                             engine,
                             pool,
                             registry,
-                            createPGSqlExecutionContextFactory(workerCount, workerCount, queryStartedCountDownLatch, null)
+                            createPGSqlExecutionContextFactory(queryStartedCountDownLatch, null)
                     )
             ) {
                 Assert.assertNotNull(server);

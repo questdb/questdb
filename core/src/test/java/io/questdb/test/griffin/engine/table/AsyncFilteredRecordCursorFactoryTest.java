@@ -1001,7 +1001,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                                 }
 
                                                 @Override
-                                                public int getWorkerCount() {
+                                                public int getSharedQueryWorkerCount() {
                                                     return sharedPoolWorkerCount;
                                                 }
                                             }
@@ -1064,11 +1064,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                 @Override
                                 public int getSharedQueryWorkerCount() {
                                     return sharedQueryWorkerCount;
-                                }
-
-                                @Override
-                                public int getWorkerCount() {
-                                    return workerCount;
                                 }
                             }
                     );
@@ -1205,11 +1200,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public WindowContext getWindowContext() {
             return sqlExecutionContext.getWindowContext();
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return sqlExecutionContext.getWorkerCount();
         }
 
         @Override

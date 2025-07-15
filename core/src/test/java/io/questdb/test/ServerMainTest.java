@@ -167,7 +167,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     final ServerMain serverMain = new ServerMain(getServerMainArgs());
-                    final SqlExecutionContext executionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1, 1)
+                    final SqlExecutionContext executionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 0)
             ) {
                 serverMain.start();
 

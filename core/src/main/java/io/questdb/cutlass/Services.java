@@ -109,7 +109,6 @@ public class Services {
         HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
-                workerPool.getWorkerCount(),
                 sharedQueryWorkerCount
         );
 
@@ -124,7 +123,6 @@ public class Services {
                 server,
                 serverConfiguration,
                 cairoEngine,
-                workerPool,
                 sharedQueryWorkerCount,
                 jsonQueryProcessorBuilder,
                 ilpV2WriteProcessorBuilder
@@ -272,7 +270,6 @@ public class Services {
                 registry,
                 () -> new SqlExecutionContextImpl(
                         cairoEngine,
-                        workerPool.getWorkerCount(),
                         workerPoolManager.getSharedQueryWorkerCount()
                 )
         );

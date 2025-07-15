@@ -89,11 +89,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final WalTxnRangeLoader txnRangeLoader;
     private final int workerId;
 
-    public MatViewRefreshJob(int workerId, CairoEngine engine, int workerCount, int sharedQueryWorkerCount) {
+    public MatViewRefreshJob(int workerId, CairoEngine engine, int sharedQueryWorkerCount) {
         try {
             this.workerId = workerId;
             this.engine = engine;
-            this.refreshSqlExecutionContext = new MatViewRefreshSqlExecutionContext(engine, workerCount, sharedQueryWorkerCount);
+            this.refreshSqlExecutionContext = new MatViewRefreshSqlExecutionContext(engine, sharedQueryWorkerCount);
             this.graph = engine.getMatViewGraph();
             this.stateStore = engine.getMatViewStateStore();
             this.configuration = engine.getConfiguration();
@@ -107,7 +107,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     @TestOnly
     public MatViewRefreshJob(int workerId, CairoEngine engine) {
-        this(workerId, engine, 1, 1);
+        this(workerId, engine, 1);
     }
 
     @Override

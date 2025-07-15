@@ -139,7 +139,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
                 cairoEngine,
                 workerPool,
                 registry,
-                () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
+                () -> new SqlExecutionContextImpl(cairoEngine, 0)
         );
     }
 

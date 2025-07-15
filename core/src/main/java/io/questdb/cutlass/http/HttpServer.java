@@ -146,7 +146,6 @@ public class HttpServer implements Closeable {
             HttpServer server,
             ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
-            WorkerPool workerPool,
             int sharedQueryWorkerCount,
             HttpRequestHandlerBuilder jsonQueryProcessorBuilder,
             HttpRequestHandlerBuilder ilpWriteProcessorBuilderV2
@@ -245,7 +244,6 @@ public class HttpServer implements Closeable {
                 return new TextQueryProcessor(
                         httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                         cairoEngine,
-                        workerPool.getWorkerCount(),
                         sharedQueryWorkerCount
                 );
             }

@@ -58,7 +58,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final TelemetryFacade telemetryFacade;
     private final IntStack timestampRequiredStack = new IntStack();
     private final WindowContextImpl windowContext = new WindowContextImpl();
-    private final int workerCount;
     protected BindVariableService bindVariableService;
     protected SecurityContext securityContext;
     private boolean allowNonDeterministicFunction = true;
@@ -79,9 +78,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long requestFd = -1;
     private boolean useSimpleCircuitBreaker;
 
-    public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedQueryWorkerCount) {
-        assert workerCount > 0;
-        this.workerCount = workerCount;
+    public SqlExecutionContextImpl(CairoEngine cairoEngine, int sharedQueryWorkerCount) {
         assert sharedQueryWorkerCount >= 0;
         this.sharedQueryWorkerCount = sharedQueryWorkerCount;
         this.cairoEngine = cairoEngine;
@@ -98,10 +95,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.simpleCircuitBreaker = new AtomicBooleanCircuitBreaker(cairoConfiguration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
-    }
-
-    public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
-        this(cairoEngine, workerCount, workerCount);
     }
 
     @Override
@@ -237,11 +230,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public WindowContext getWindowContext() {
         return windowContext;
-    }
-
-    @Override
-    public int getWorkerCount() {
-        return workerCount;
     }
 
     @Override

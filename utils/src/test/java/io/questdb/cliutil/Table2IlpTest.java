@@ -161,7 +161,7 @@ public class Table2IlpTest {
                 engine,
                 workerPool,
                 registry,
-                () -> new SqlExecutionContextImpl(engine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
+                () -> new SqlExecutionContextImpl(engine, 0)
         );
 
         receiver = new LineTcpReceiver(new DefaultLineTcpReceiverConfiguration(configuration) {
@@ -278,7 +278,7 @@ public class Table2IlpTest {
         );
         new Table2IlpCopier().copyTable(params);
 
-        ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 1, 1);
+        ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 0);
         job.run(0);
         TestUtils.assertEquals(engine, sqlExecutionContext, tableNameSrc, tableNameDst);
     }
@@ -507,7 +507,6 @@ public class Table2IlpTest {
         HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
-                workerPool.getWorkerCount(),
                 sharedQueryWorkerCount
         );
 
@@ -522,7 +521,6 @@ public class Table2IlpTest {
                 server,
                 serverConfiguration,
                 cairoEngine,
-                workerPool,
                 sharedQueryWorkerCount,
                 jsonQueryProcessorBuilder,
                 ilpV2WriteProcessorBuilder
