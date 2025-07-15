@@ -29,6 +29,8 @@ import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
@@ -165,7 +167,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testMatViewsRefreshIntervalsReloadOnServerStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final long now = TimestampFormatUtils.parseUTCTimestamp("2024-01-01T01:01:01.000001Z");
-            final TestMicrosecondClock testClock = new TestMicrosecondClock(now);
+            final TestClock testClock = new TestClock(now, ColumnType.TIMESTAMP_MICRO);
 
             final LongList expectedIntervals = new LongList();
             expectedIntervals.add(parseFloorPartialTimestamp("2024-09-11T12:01"), parseFloorPartialTimestamp("2024-09-11T12:02"));
@@ -688,7 +690,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testPeriodMatViewsReloadOnServerStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final long start = TimestampFormatUtils.parseUTCTimestamp("2024-12-12T00:00:00.000000Z");
-            final TestMicrosecondClock testClock = new TestMicrosecondClock(start);
+            final TestClock testClock = new TestClock(start, ColumnType.TIMESTAMP_MICRO);
 
             final String firstExpected = "sym\tprice\tts\n" +
                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
@@ -753,7 +755,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             final String startStr = "2024-12-12T00:00:00.000000Z";
             final long start = TimestampFormatUtils.parseUTCTimestamp(startStr);
-            final TestMicrosecondClock testClock = new TestMicrosecondClock(start);
+            final TestClock testClock = new TestClock(start, ColumnType.TIMESTAMP_MICRO);
 
             final String firstExpected = "sym\tprice\tts\n" +
                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
@@ -859,7 +861,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             final String startStr = "2024-12-12T00:00:00.000000Z";
             final long start = TimestampFormatUtils.parseUTCTimestamp(startStr);
             // Set the clock to an earlier timestamp.
-            final TestMicrosecondClock testClock = new TestMicrosecondClock(start - Timestamps.DAY_MICROS);
+            final TestClock testClock = new TestClock(start - Timestamps.DAY_MICROS, ColumnType.TIMESTAMP_MICRO);
 
             // Timer refresh should not kick in during the first server start.
             final String firstExpected = "sym\tprice\tts\n";
@@ -966,6 +968,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     @NotNull
     private static TestServerMain startMainPortsDisabled(Clock microsecondClock, String... extraEnvs) {
         assert extraEnvs.length % 2 == 0;
+        ((MicrosTimestampDriver) (MicrosTimestampDriver.INSTANCE)).setTicker(microsecondClock);
 
         final String[] disablePortsEnvs = new String[]{
                 PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",

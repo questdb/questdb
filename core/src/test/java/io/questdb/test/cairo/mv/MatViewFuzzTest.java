@@ -314,7 +314,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, SPIN_LOCK_TIMEOUT);
         spinLockTimeout = 100_000_000;
 
-        final TestMicrosecondClock testClock = new TestMicrosecondClock(MicrosTimestampDriver.floor("2000-01-01T00:00:00.000000Z"));
+        final TestClock testClock = new TestClock(MicrosTimestampDriver.floor("2000-01-01T00:00:00.000000Z"), ColumnType.TIMESTAMP_MICRO);
         testMicrosClock = testClock;
 
         assertMemoryLeak(() -> {
@@ -452,7 +452,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "10ms");
         spinLockTimeout = 100_000_000;
 
-        final TestMicrosecondClock testClock = new TestMicrosecondClock(parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z"));
+        final TestClock testClock = new TestClock(parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z"), ColumnType.TIMESTAMP_MICRO);
         testMicrosClock = testClock;
 
         assertMemoryLeak(() -> {

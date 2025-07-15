@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
-import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -61,7 +60,6 @@ import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -282,7 +280,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final TableToken viewToken = viewDefinition.getMatViewToken();
         TimestampDriver driver = viewDefinition.getBaseTableTimestampDriver();
 
-        final long now = microsecondClock.getTicks();
+        final long now = driver.getTicks();
         final boolean rangeRefresh = rangeTo != Numbers.LONG_NULL;
         final boolean incrementalRefresh = lastRefreshTxn != Numbers.LONG_NULL;
 
@@ -362,7 +360,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
                 periodSampler.setStart(viewDefinition.getTimerStart());
 
-                final long delay = MatViewTimerJob.periodDelayMicros(viewDefinition.getPeriodDelay(), viewDefinition.getPeriodDelayUnit());
+                final long delay = MatViewTimerJob.periodDelay(driver, viewDefinition.getPeriodDelay(), viewDefinition.getPeriodDelayUnit());
                 long nowLocal = viewDefinition.getTimerTzRules() != null
                         ? now + viewDefinition.getTimerTzRules().getOffset(now)
                         : now;
@@ -407,9 +405,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             final int refreshLimitHoursOrMonths = viewDefinition.getRefreshLimitHoursOrMonths();
             if (refreshLimitHoursOrMonths != 0) {
                 if (refreshLimitHoursOrMonths > 0) { // hours
-                    minTs = Math.max(minTs, now - Timestamps.HOUR_MICROS * refreshLimitHoursOrMonths);
+                    minTs = Math.max(minTs, now - driver.fromHours(refreshLimitHoursOrMonths));
                 } else { // months
-                    minTs = Math.max(minTs, Timestamps.addMonths(now, refreshLimitHoursOrMonths));
+                    minTs = Math.max(minTs, driver.addMonths(now, refreshLimitHoursOrMonths));
                 }
                 intersectIntervals(refreshIntervals, minTs, Long.MAX_VALUE);
             }
@@ -442,6 +440,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
             // there are no concurrent accesses to the sampler at this point as we've locked the state
             final SampleByIntervalIterator intervalIterator = intervalIterator(
+                    driver,
                     timestampSampler,
                     viewDefinition.getTzRules(),
                     viewDefinition.getFixedOffset(),
@@ -724,12 +723,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                         try (RecordCursor cursor = factory.getCursor(refreshSqlExecutionContext)) {
                             final Record record = cursor.getRecord();
+                            TimestampDriver driver = ColumnType.getTimestampDriver(viewDefinition.getBaseTableTimestampType());
                             while (cursor.hasNext()) {
                                 long timestamp = record.getTimestamp(cursorTimestampIndex);
                                 assert timestamp >= replacementTimestampLo && timestamp < replacementTimestampHi
-                                        : "timestamp out of range [expected: " + Timestamps.toUSecString(replacementTimestampLo) + ", "
-                                        + Timestamps.toUSecString(replacementTimestampHi) + "), actual: "
-                                        + Timestamps.toUSecString(timestamp);
+                                        : "timestamp out of range [expected: " + driver.toString(replacementTimestampLo) + ", "
+                                        + driver.toString(replacementTimestampHi) + "), actual: "
+                                        + driver.toString(timestamp);
                                 TableWriter.Row row = walWriter.newRow(timestamp);
                                 copier.copy(record, row);
                                 row.append();
@@ -813,6 +813,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private SampleByIntervalIterator intervalIterator(
+            TimestampDriver driver,
             @NotNull TimestampSampler sampler,
             @Nullable TimeZoneRules tzRules,
             long fixedOffset,
@@ -834,7 +835,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
 
         return timeZoneIterator.of(
-                MicrosTimestampDriver.INSTANCE,
+                driver,
                 sampler,
                 tzRules,
                 fixedOffset,

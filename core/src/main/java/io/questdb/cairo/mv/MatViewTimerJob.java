@@ -27,7 +27,9 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
@@ -39,7 +41,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -54,7 +55,7 @@ import java.util.function.Predicate;
 public class MatViewTimerJob extends SynchronizedJob {
     private static final int INITIAL_QUEUE_CAPACITY = 16;
     private static final Log LOG = LogFactory.getLog(MatViewTimerJob.class);
-    private static final Comparator<Timer> timerComparator = Comparator.comparingLong(Timer::getDeadline);
+    private static final Comparator<Timer> timerComparator = Comparator.comparingLong(Timer::getDeadlineMicros);
     private final Clock clock;
     private final CairoConfiguration configuration;
     private final ObjList<Timer> expired = new ObjList<>();
@@ -75,24 +76,25 @@ public class MatViewTimerJob extends SynchronizedJob {
         this.filterByDirName = this::filterByDirName;
     }
 
-    public static long periodDelayMicros(int periodDelay, char periodDelayUnit) {
+    public static long periodDelay(TimestampDriver driver, int periodDelay, char periodDelayUnit) {
         switch (periodDelayUnit) {
             case 'm':
-                return periodDelay * Timestamps.MINUTE_MICROS;
+                return driver.fromMinutes(periodDelay);
             case 'h':
-                return periodDelay * Timestamps.HOUR_MICROS;
+                return driver.fromHours(periodDelay);
             case 'd':
-                return periodDelay * Timestamps.DAY_MICROS;
+                return driver.fromDays(periodDelay);
         }
         return 0;
     }
 
-    private void addTimers(TableToken viewToken, long now) {
+    private void addTimers(TableToken viewToken) {
         final MatViewDefinition viewDefinition = matViewGraph.getViewDefinition(viewToken);
         if (viewDefinition == null) {
             LOG.info().$("materialized view definition not found [view=").$(viewToken).I$();
             return;
         }
+        long now = viewDefinition.getBaseTableTimestampDriver().getTicks();
         try {
             if (viewDefinition.getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
                 // The refresh is not immediate, i.e. it's either manual or timer.
@@ -142,7 +144,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         }
         final int delay = viewDefinition.getPeriodDelay();
         final char delayUnit = viewDefinition.getPeriodDelayUnit();
-        final long delayMicros = periodDelayMicros(delay, delayUnit);
+        final long delayMicros = periodDelay(viewDefinition.getBaseTableTimestampDriver(), delay, delayUnit);
         final Timer periodTimer = new Timer(
                 Timer.PERIOD_REFRESH_TYPE,
                 viewToken,
@@ -150,7 +152,8 @@ public class MatViewTimerJob extends SynchronizedJob {
                 viewDefinition.getTimerTzRules(),
                 delayMicros,
                 start,
-                now
+                now,
+                viewDefinition.getBaseTableTimestampType()
         );
         timerQueue.add(periodTimer);
         LOG.info().$("created period timer for materialized view [view=").$(viewToken)
@@ -184,7 +187,8 @@ public class MatViewTimerJob extends SynchronizedJob {
                 timerTzRules,
                 0,
                 timerStart,
-                now
+                now,
+                viewDefinition.getBaseTableTimestampType()
         );
         timerQueue.add(timer);
         LOG.info().$("created timer for materialized view [view=").$(viewToken)
@@ -210,7 +214,8 @@ public class MatViewTimerJob extends SynchronizedJob {
                 null,
                 0,
                 now, // the timer should start immediately
-                now
+                now,
+                viewDefinition.getBaseTableTimestampType()
         );
         timerQueue.add(timer);
         LOG.info().$("created refresh intervals update timer for materialized view [view=").$(viewToken)
@@ -223,11 +228,11 @@ public class MatViewTimerJob extends SynchronizedJob {
         return filteredDirName != null && filteredDirName.equals(timer.getMatViewToken().getDirName());
     }
 
-    private boolean processExpiredTimers(long now) {
+    private boolean processExpiredTimers(long microNow) {
         expired.clear();
         boolean ran = false;
         Timer timer;
-        while ((timer = timerQueue.peek()) != null && timer.getDeadline() <= now) {
+        while ((timer = timerQueue.peek()) != null && timer.getDeadlineMicros() <= microNow) {
             timer = timerQueue.poll();
             expired.add(timer);
             final TableToken viewToken = timer.getMatViewToken();
@@ -301,20 +306,19 @@ public class MatViewTimerJob extends SynchronizedJob {
     @Override
     protected boolean runSerially() {
         boolean ran = false;
-        final long now = clock.getTicks();
         // check created/dropped event queue
         while (timerTaskQueue.tryDequeue(timerTask)) {
             final TableToken viewToken = timerTask.getMatViewToken();
             switch (timerTask.getOperation()) {
                 case MatViewTimerTask.ADD:
-                    addTimers(viewToken, now);
+                    addTimers(viewToken);
                     break;
                 case MatViewTimerTask.REMOVE:
                     removeTimers(viewToken);
                     break;
                 case MatViewTimerTask.UPDATE:
                     if (removeTimers(viewToken)) {
-                        addTimers(viewToken, now);
+                        addTimers(viewToken);
                     }
                     break;
                 default:
@@ -322,7 +326,7 @@ public class MatViewTimerJob extends SynchronizedJob {
             }
             ran = true;
         }
-        ran |= processExpiredTimers(now);
+        ran |= processExpiredTimers(clock.getTicks());
         return ran;
     }
 
@@ -336,10 +340,12 @@ public class MatViewTimerJob extends SynchronizedJob {
         private final long delay; // used in period timers
         private final TableToken matViewToken;
         private final TimestampSampler sampler;
+        private final int timestampType;
         private final byte type;
         private final TimeZoneRules tzRules;
         private long deadlineLocal; // used for sampler interaction only
         private long deadlineUtc;
+        private long deadlineUtcMicro;
         // Holds refresh sequence number for "normal" timers
         // or caching sequence for refresh intervals update timers.
         private long knownSeq = -1;
@@ -351,13 +357,15 @@ public class MatViewTimerJob extends SynchronizedJob {
                 @Nullable TimeZoneRules tzRules,
                 long delay,
                 long start,
-                long now
+                long now,
+                int timestampType
         ) {
             this.type = type;
             this.matViewToken = matViewToken;
             this.sampler = sampler;
             this.tzRules = tzRules;
             this.delay = delay;
+            this.timestampType = timestampType;
             sampler.setStart(start);
             final long nowLocal = toLocal(now, tzRules);
             switch (type) {
@@ -375,10 +383,11 @@ public class MatViewTimerJob extends SynchronizedJob {
                     throw new IllegalStateException("unexpected timer type: " + type);
             }
             deadlineUtc = toUtc(deadlineLocal, tzRules);
+            deadlineUtcMicro = MicrosTimestampDriver.INSTANCE.from(deadlineUtc + delay, timestampType);
         }
 
-        public long getDeadline() {
-            return deadlineUtc + delay;
+        public long getDeadlineMicros() {
+            return deadlineUtcMicro;
         }
 
         public long getKnownSeq() {
@@ -413,6 +422,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         private void nextDeadline() {
             deadlineLocal = sampler.nextTimestamp(deadlineLocal);
             deadlineUtc = toUtc(deadlineLocal, tzRules);
+            deadlineUtcMicro = MicrosTimestampDriver.INSTANCE.from(deadlineUtc + delay, timestampType);
         }
     }
 }

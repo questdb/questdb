@@ -24,21 +24,21 @@
 
 package io.questdb.test.cairo.mv;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.std.datetime.Clock;
 
 import java.util.concurrent.atomic.AtomicLong;
 
-class TestMicrosecondClock implements Clock {
+class TestClock implements Clock {
     AtomicLong micros;
+    int type;
 
-    public TestMicrosecondClock(long micros) {
+    public TestClock(long micros, int type) {
         this.micros = new AtomicLong(micros);
     }
 
     @Override
     public int getClockTimestampType() {
-        return ColumnType.TIMESTAMP_MICRO;
+        return type;
     }
 
     @Override

@@ -206,6 +206,10 @@ public class MatViewDefinition implements Mutable {
         return baseTableTimestampDriver;
     }
 
+    public int getBaseTableTimestampType() {
+        return baseTableTimestampType;
+    }
+
     public long getFixedOffset() {
         return fixedOffset;
     }
