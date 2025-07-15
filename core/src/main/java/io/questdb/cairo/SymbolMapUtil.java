@@ -29,7 +29,11 @@ import io.questdb.cairo.vm.api.MemoryCMOR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Hash;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
@@ -52,6 +56,26 @@ public class SymbolMapUtil {
             long columnNameTxn,
             int symbolCount,
             int symbolCapacity
+    ) {
+        rebuildSymbolFiles(
+                configuration,
+                path,
+                name,
+                columnNameTxn,
+                symbolCount,
+                symbolCapacity,
+                0
+        );
+    }
+
+    public void rebuildSymbolFiles(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            int symbolCount,
+            int symbolCapacity,
+            int indexBlockCapacity
     ) {
         final int plen = path.size();
         try {
@@ -85,7 +109,8 @@ public class SymbolMapUtil {
             if (this.indexWriter == null) {
                 this.indexWriter = new BitmapIndexWriter(configuration);
             }
-            this.indexWriter.of(path.trimTo(plen), name, columnNameTxn);
+            int indexBlockCap = Math.max(TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE, indexBlockCapacity);
+            this.indexWriter.of(path.trimTo(plen), name, columnNameTxn, indexBlockCap);
 
             // clean the files, except .c file
             truncate(symbolCapacity);
