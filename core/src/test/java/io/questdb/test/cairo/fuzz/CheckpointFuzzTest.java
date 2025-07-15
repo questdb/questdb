@@ -359,8 +359,6 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         boolean testHardLinkCheckpoint = rnd.nextBoolean();
 
         assertMemoryLeak(() -> {
-            int size = rnd.nextInt(16 * 1024 * 1024);
-            node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
             if (testHardLinkCheckpoint) {
                 node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "100G");
             }

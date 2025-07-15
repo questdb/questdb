@@ -1283,9 +1283,9 @@ public class SqlOptimiser implements Mutable {
      * ordering. But the ordered column is not visible to the user and hidden by the select model.
      * - Multiplexing joined tables.
      * <p>
-     * It is conceivable that the optimiser creates degenerate cases of "chose" models:
+     * It is conceivable that the optimiser creates degenerate cases of "choose" models:
      * - Column renaming
-     * - No op, e.g. selecting the exact same columns as the nested models.
+     * - No-op, e.g. selecting the exact same columns as the nested models
      * - Choose model stacking, e.g. choose->choose->group by
      * <p>
      * This particular method implementation deals with stacked models.
@@ -6119,7 +6119,7 @@ public class SqlOptimiser implements Mutable {
                             // (when we know the other column aliases) to alter it if a duplicate has occurred.
                             if (groupByModel.getAliasToColumnMap().contains(qc.getAlias())) {
                                 CharSequence newAlias = createColumnAlias(qc.getAst(), groupByModel);
-                                qc.setAlias(newAlias);
+                                qc.setAlias(newAlias, QueryColumn.SYNTHESIZED_ALIAS_POSITION);
                             }
 
                             // check what this column would reference to establish the priority

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.mv;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
@@ -48,12 +49,14 @@ import java.util.function.Predicate;
 
 /**
  * A scheduler for mat views with timer refresh.
+ * Also, runs special timers for period views and for updating refresh intervals for manual/timer views.
  */
 public class MatViewTimerJob extends SynchronizedJob {
     private static final int INITIAL_QUEUE_CAPACITY = 16;
     private static final Log LOG = LogFactory.getLog(MatViewTimerJob.class);
     private static final Comparator<Timer> timerComparator = Comparator.comparingLong(Timer::getDeadline);
     private final MicrosecondClock clock;
+    private final CairoConfiguration configuration;
     private final ObjList<Timer> expired = new ObjList<>();
     private final Predicate<Timer> filterByDirName;
     private final MatViewGraph matViewGraph;
@@ -64,7 +67,8 @@ public class MatViewTimerJob extends SynchronizedJob {
     private String filteredDirName; // temporary value used by filterByDirName
 
     public MatViewTimerJob(CairoEngine engine) {
-        this.clock = engine.getConfiguration().getMicrosecondClock();
+        this.configuration = engine.getConfiguration();
+        this.clock = configuration.getMicrosecondClock();
         this.timerTaskQueue = engine.getMatViewTimerQueue();
         this.matViewGraph = engine.getMatViewGraph();
         this.matViewStateStore = engine.getMatViewStateStore();
@@ -90,40 +94,22 @@ public class MatViewTimerJob extends SynchronizedJob {
             return;
         }
         try {
+            if (viewDefinition.getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
+                // The refresh is not immediate, i.e. it's either manual or timer.
+                // Create a special timer that will enqueue refresh intervals update tasks.
+                // We could cache the intervals right in the refresh job when there is a new base table commit,
+                // but that might create many redundant WAL MAT_VIEW_INVALIDATE transactions with mat view state
+                // values. To throttle refresh intervals caching, we have this special timer.
+                // The end goal of this caching is unblocking WalPurgeJob to delete old WAL segments.
+                createUpdateRefreshIntervalsTimer(viewDefinition, now);
+            }
+
             long timerStart = viewDefinition.getTimerStart();
             TimeZoneRules timerTzRules = viewDefinition.getTimerTzRules();
 
             if (viewDefinition.getPeriodLength() > 0) {
                 // It's a period mat view, so first add the period timer.
-                final long start = viewDefinition.getTimerStart();
-                final int periodLength = viewDefinition.getPeriodLength();
-                final char periodLengthUnit = viewDefinition.getPeriodLengthUnit();
-                final TimestampSampler periodSampler;
-                try {
-                    periodSampler = TimestampSamplerFactory.getInstance(periodLength, periodLengthUnit, -1);
-                } catch (SqlException e) {
-                    throw CairoException.critical(0).put("invalid LENGTH interval and/or unit: ").put(periodLength)
-                            .put(", ").put(periodLengthUnit);
-                }
-                final int periodDelay = viewDefinition.getPeriodDelay();
-                final char periodDelayUnit = viewDefinition.getPeriodDelayUnit();
-                final long delay = periodDelayMicros(periodDelay, periodDelayUnit);
-                final Timer periodTimer = new Timer(
-                        Timer.PERIOD_REFRESH_TYPE,
-                        viewToken,
-                        periodSampler,
-                        viewDefinition.getTimerTzRules(),
-                        delay,
-                        start,
-                        now
-                );
-                timerQueue.add(periodTimer);
-                LOG.info().$("registered period timer for materialized view [view=").$(viewToken)
-                        .$(", start=").$ts(start)
-                        .$(", tz=").$(viewDefinition.getTimerTimeZone())
-                        .$(", length=").$(periodLength).$(periodLengthUnit)
-                        .$(", delay=").$(periodDelay).$(periodDelayUnit)
-                        .I$();
+                createPeriodTimer(viewDefinition, now);
 
                 // "Normal" timer start is volatile in case of period mat views.
                 timerStart = now;
@@ -132,37 +118,105 @@ public class MatViewTimerJob extends SynchronizedJob {
 
             if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_TIMER) {
                 // The view has timer refresh, so add a "normal" timer for it.
-                final int timerInterval = viewDefinition.getTimerInterval();
-                final char timerUnit = viewDefinition.getTimerUnit();
-                final TimestampSampler timerSampler;
-                try {
-                    timerSampler = TimestampSamplerFactory.getInstance(timerInterval, timerUnit, -1);
-                } catch (SqlException e) {
-                    throw CairoException.critical(0).put("invalid EVERY interval and/or unit: ").put(timerInterval)
-                            .put(", ").put(timerUnit);
-                }
-                final Timer timer = new Timer(
-                        Timer.INCREMENTAL_REFRESH_TYPE,
-                        viewToken,
-                        timerSampler,
-                        timerTzRules,
-                        0,
-                        timerStart,
-                        now
-                );
-                timerQueue.add(timer);
-                LOG.info().$("registered timer for materialized view [view=").$(viewToken)
-                        .$(", start=").$ts(timerStart)
-                        .$(", tz=").$(viewDefinition.getTimerTimeZone())
-                        .$(", interval=").$(timerInterval).$(timerUnit)
-                        .I$();
+                createTimer(viewDefinition, timerStart, timerTzRules, now);
             }
         } catch (Throwable th) {
-            LOG.critical()
+            LOG.error()
                     .$("could not initialize timer for materialized view [view=").$(viewToken)
                     .$(", ex=").$(th)
                     .I$();
         }
+    }
+
+    private void createPeriodTimer(@NotNull MatViewDefinition viewDefinition, long now) {
+        final TableToken viewToken = viewDefinition.getMatViewToken();
+        final long start = viewDefinition.getTimerStart();
+        final int length = viewDefinition.getPeriodLength();
+        final char lengthUnit = viewDefinition.getPeriodLengthUnit();
+        final TimestampSampler sampler;
+        try {
+            sampler = TimestampSamplerFactory.getInstance(length, lengthUnit, -1);
+        } catch (SqlException e) {
+            throw CairoException.nonCritical().put("invalid LENGTH interval and/or unit: ").put(length)
+                    .put(", ").put(lengthUnit);
+        }
+        final int delay = viewDefinition.getPeriodDelay();
+        final char delayUnit = viewDefinition.getPeriodDelayUnit();
+        final long delayMicros = periodDelayMicros(delay, delayUnit);
+        final Timer periodTimer = new Timer(
+                Timer.PERIOD_REFRESH_TYPE,
+                viewToken,
+                sampler,
+                viewDefinition.getTimerTzRules(),
+                delayMicros,
+                start,
+                now
+        );
+        timerQueue.add(periodTimer);
+        LOG.info().$("created period timer for materialized view [view=").$(viewToken)
+                .$(", start=").$ts(start)
+                .$(", tz=").$(viewDefinition.getTimerTimeZone())
+                .$(", length=").$(length).$(lengthUnit)
+                .$(", delay=").$(delay).$(delayUnit)
+                .I$();
+    }
+
+    private void createTimer(
+            @NotNull MatViewDefinition viewDefinition,
+            long timerStart,
+            @Nullable TimeZoneRules timerTzRules,
+            long now
+    ) {
+        final TableToken viewToken = viewDefinition.getMatViewToken();
+        final int interval = viewDefinition.getTimerInterval();
+        final char unit = viewDefinition.getTimerUnit();
+        final TimestampSampler sampler;
+        try {
+            sampler = TimestampSamplerFactory.getInstance(interval, unit, -1);
+        } catch (SqlException e) {
+            throw CairoException.nonCritical().put("invalid EVERY interval and/or unit: ").put(interval)
+                    .put(", ").put(unit);
+        }
+        final Timer timer = new Timer(
+                Timer.INCREMENTAL_REFRESH_TYPE,
+                viewToken,
+                sampler,
+                timerTzRules,
+                0,
+                timerStart,
+                now
+        );
+        timerQueue.add(timer);
+        LOG.info().$("created timer for materialized view [view=").$(viewToken)
+                .$(", start=").$ts(timerStart)
+                .$(", tz=").$(viewDefinition.getTimerTimeZone())
+                .$(", interval=").$(interval).$(unit)
+                .I$();
+    }
+
+    private void createUpdateRefreshIntervalsTimer(@NotNull MatViewDefinition viewDefinition, long now) {
+        final TableToken viewToken = viewDefinition.getMatViewToken();
+        final long periodMs = configuration.getMatViewRefreshIntervalsUpdatePeriod();
+        final TimestampSampler sampler;
+        try {
+            sampler = TimestampSamplerFactory.getInstance(periodMs, 'T', -1);
+        } catch (SqlException e) {
+            throw CairoException.nonCritical().put("invalid refresh intervals update period: ").put(periodMs);
+        }
+        final Timer timer = new Timer(
+                Timer.UPDATE_REFRESH_INTERVALS_TYPE,
+                viewToken,
+                sampler,
+                null,
+                0,
+                now, // the timer should start immediately
+                now
+        );
+        timerQueue.add(timer);
+        LOG.info().$("created refresh intervals update timer for materialized view [view=").$(viewToken)
+                .$(", start=").$ts(now)
+                .$(", interval=").$(periodMs).$('T')
+                .I$();
     }
 
     private boolean filterByDirName(Timer timer) {
@@ -190,14 +244,23 @@ public class MatViewTimerJob extends SynchronizedJob {
                             // Check if the view has refreshed since the last timer expiration.
                             // If not, don't schedule refresh to avoid unbounded growth of the queue.
                             final long refreshSeq = state.getRefreshSeq();
-                            if (timer.getKnownRefreshSeq() != refreshSeq) {
+                            if (timer.getKnownSeq() != refreshSeq) {
                                 matViewStateStore.enqueueIncrementalRefresh(viewToken);
-                                timer.setKnownRefreshSeq(refreshSeq);
+                                timer.setKnownSeq(refreshSeq);
                             }
                             break;
                         case Timer.PERIOD_REFRESH_TYPE:
                             // range hi boundary is inclusive
                             matViewStateStore.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, timer.getPeriodHi() - 1);
+                            break;
+                        case Timer.UPDATE_REFRESH_INTERVALS_TYPE:
+                            // Enqueue refresh intervals update only if the base table had new transactions
+                            // since the last caching.
+                            final long refreshIntervalsSeq = state.getRefreshIntervalsSeq();
+                            if (timer.getKnownSeq() != refreshIntervalsSeq) {
+                                matViewStateStore.enqueueUpdateRefreshIntervals(viewToken);
+                                timer.setKnownSeq(refreshIntervalsSeq);
+                            }
                             break;
                         default:
                             LOG.error().$("unexpected timer type [view=").$(viewToken)
@@ -223,7 +286,7 @@ public class MatViewTimerJob extends SynchronizedJob {
     private boolean removeTimers(TableToken viewToken) {
         filteredDirName = viewToken.getDirName();
         try {
-            // Remove both incremental refresh and period refresh timers for the given view, if any.
+            // Remove all timers for the given view, if any.
             if (timerQueue.removeIf(filterByDirName)) {
                 LOG.info().$("unregistered timers for materialized view [view=").$(viewToken).I$();
                 return true;
@@ -269,6 +332,7 @@ public class MatViewTimerJob extends SynchronizedJob {
     private static class Timer {
         private static final byte INCREMENTAL_REFRESH_TYPE = 0;
         private static final byte PERIOD_REFRESH_TYPE = 1;
+        private static final byte UPDATE_REFRESH_INTERVALS_TYPE = 2;
         private final long delay; // used in period timers
         private final TableToken matViewToken;
         private final TimestampSampler sampler;
@@ -276,7 +340,9 @@ public class MatViewTimerJob extends SynchronizedJob {
         private final TimeZoneRules tzRules;
         private long deadlineLocal; // used for sampler interaction only
         private long deadlineUtc;
-        private long knownRefreshSeq = -1;
+        // Holds refresh sequence number for "normal" timers
+        // or caching sequence for refresh intervals update timers.
+        private long knownSeq = -1;
 
         public Timer(
                 byte type,
@@ -296,6 +362,7 @@ public class MatViewTimerJob extends SynchronizedJob {
             final long nowLocal = toLocal(now, tzRules);
             switch (type) {
                 case INCREMENTAL_REFRESH_TYPE:
+                case UPDATE_REFRESH_INTERVALS_TYPE:
                     // It's fine if the timer triggers immediately.
                     deadlineLocal = nowLocal > start ? sampler.nextTimestamp(sampler.round(nowLocal - 1)) : start;
                     break;
@@ -314,8 +381,8 @@ public class MatViewTimerJob extends SynchronizedJob {
             return deadlineUtc + delay;
         }
 
-        public long getKnownRefreshSeq() {
-            return knownRefreshSeq;
+        public long getKnownSeq() {
+            return knownSeq;
         }
 
         public TableToken getMatViewToken() {
@@ -331,8 +398,8 @@ public class MatViewTimerJob extends SynchronizedJob {
             return type;
         }
 
-        public void setKnownRefreshSeq(long knownRefreshSeq) {
-            this.knownRefreshSeq = knownRefreshSeq;
+        public void setKnownSeq(long knownSeq) {
+            this.knownSeq = knownSeq;
         }
 
         private static long toLocal(long utcTime, TimeZoneRules tzRules) {

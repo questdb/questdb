@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -68,7 +69,7 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
             final double value = Vect.sumDouble(address, frameRowCount);
-            if (value == value) {
+            if (Numbers.isFinite(value)) {
                 this.sum[workerId * SUM_PADDING] += value;
                 this.count[workerId * COUNT_PADDING]++;
             }
