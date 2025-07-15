@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.DataID;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.Uuid;
 import io.questdb.test.AbstractCairoTest;
@@ -39,14 +40,20 @@ public class DataIDTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             DataID id = DataID.open(configuration);
             Assert.assertNotNull(id);
+            Assert.assertFalse(id.isInitialized());
+            Assert.assertEquals(Numbers.LONG_NULL, id.getLo());
+            Assert.assertEquals(Numbers.LONG_NULL, id.getHi());
+
             Rnd rnd = new Rnd(configuration.getMicrosecondClock().getTicks(), configuration.getMillisecondClock().getTicks());
             Uuid currentId = new Uuid();
             currentId.of(rnd.nextLong(), rnd.nextLong());
             id.set(currentId);
+            Assert.assertTrue(id.isInitialized());
             Assert.assertEquals(id.getLo(), currentId.getLo());
             Assert.assertEquals(id.getHi(), currentId.getHi());
 
             DataID updatedId = DataID.open(configuration);
+            Assert.assertTrue(updatedId.isInitialized());
             Assert.assertEquals(updatedId.getLo(), currentId.getLo());
             Assert.assertEquals(updatedId.getHi(), currentId.getHi());
         });
