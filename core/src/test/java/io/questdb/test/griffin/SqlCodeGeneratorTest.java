@@ -8520,6 +8520,18 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testColumnAliasCaseSensitivity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades (symbol SYMBOL)");
+            execute("insert into trades values ('USD'), ('EUR')");
+            assertSql(
+            "SYMBOL\nUSD\nEUR\n",
+                    "SELECT symbol AS SYMBOL FROM trades"
+            );
+        });
+    }
+
     private static void printExpectedUnionCastMatrix(int[][] expected) {
         System.err.println("    private static final int[][] UNION_CAST_MATRIX = new int[][]{");
         for (int i = 0; i < expected.length; ++i) {
