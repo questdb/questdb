@@ -252,11 +252,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public BitmapIndexReader getBitmapIndexReader(int partitionIndex, int columnIndex, int direction) {
-        int columnBase = getColumnBase(partitionIndex);
-        return getBitmapIndexReader(partitionIndex, columnBase, columnIndex, direction);
-    }
-
-    public BitmapIndexReader getBitmapIndexReader(int partitionIndex, int columnBase, int columnIndex, int direction) {
+        final int columnBase = getColumnBase(partitionIndex);
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
         final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
@@ -264,15 +260,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
         BitmapIndexReader reader = bitmapIndexes.getQuick(direction == BitmapIndexReader.DIR_BACKWARD ? index : index + 1);
         if (reader != null) {
-            // make sure to reload the reader
-            final String columnName = metadata.getColumnName(columnIndex);
-            final long columnTop = getColumnTop(columnBase, columnIndex);
-            Path path = pathGenNativePartition(partitionIndex);
-            try {
-                reader.of(configuration, path, columnName, columnNameTxn, columnTop);
-            } finally {
-                path.trimTo(rootLen);
-            }
+            reader.reloadConditionally();
             return reader;
         }
         return createBitmapIndexReaderAt(index, columnBase, columnIndex, columnNameTxn, direction, partitionTxn);
@@ -763,7 +751,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartitionCount--;
             return -1;
         }
-        pathGenNativePartition(partitionIndex);
+        long nameTxn = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_NAME_TXN);
+        //noinspection resource
+        pathGenNativePartition(partitionIndex, nameTxn);
         return newSize;
     }
 
@@ -1178,11 +1168,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                 symbolMapReaders.set(i, newSymbolMapReader(metadata.getDenseSymbolIndex(i), i));
             }
         }
-    }
-
-    private Path pathGenNativePartition(int partitionIndex) {
-        long nameTxn = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_NAME_TXN);
-        return pathGenNativePartition(partitionIndex, nameTxn);
     }
 
     private Path pathGenNativePartition(int partitionIndex, long nameTxn) {
