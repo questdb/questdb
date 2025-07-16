@@ -44,7 +44,6 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.test.AbstractCairoTest;
@@ -58,6 +57,7 @@ import org.junit.Test;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.test.cairo.mv.MatViewTest.parseFloorPartialTimestamp;
 import static org.junit.Assert.*;
 
 public class CreateMatViewTest extends AbstractCairoTest {
@@ -1299,8 +1299,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            currentMicros = TimestampFormatUtils.parseTimestamp("2002-01-01T23:01:00.000000Z");
-            final long expectedStart = TimestampFormatUtils.parseTimestamp("2002-01-02T00:00:00.000000Z");
+            currentMicros = parseFloorPartialTimestamp("2002-01-01T23:01:00.000000Z");
+            final long expectedStart = parseFloorPartialTimestamp("2002-01-02T00:00:00.000000Z");
             final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 30s";
             execute(
                     "CREATE MATERIALIZED VIEW test REFRESH EVERY 6h PERIOD (LENGTH 1d TIME ZONE 'Europe/Berlin' DELAY 3h) AS (" +
@@ -1323,8 +1323,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            currentMicros = TimestampFormatUtils.parseTimestamp("2002-01-01T12:00:00.000000Z");
-            final long expectedStart = TimestampFormatUtils.parseTimestamp("2002-01-01T12:00:00.000000Z");
+            currentMicros = parseFloorPartialTimestamp("2002-01-01T12:00:00.000000Z");
+            final long expectedStart = parseFloorPartialTimestamp("2002-01-01T12:00:00.000000Z");
             final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 60s";
             execute(
                     "CREATE MATERIALIZED VIEW test REFRESH MANUAL PERIOD (LENGTH 12h) AS (" +
@@ -1447,7 +1447,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE1);
 
             final String start = "2002-01-01T00:00:00.000000Z";
-            final long startEpoch = TimestampFormatUtils.parseTimestamp(start);
+            final long startEpoch = parseFloorPartialTimestamp(start);
             final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 30s";
             execute(
                     "CREATE MATERIALIZED VIEW test REFRESH EVERY 5m START '" + start + "' TIME ZONE 'Europe/Berlin' AS (" +
@@ -1471,7 +1471,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE1);
 
             final String start = "2002-01-01T00:00:00.000000Z";
-            final long startEpoch = TimestampFormatUtils.parseTimestamp(start);
+            final long startEpoch = parseFloorPartialTimestamp(start);
             final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 30s";
             currentMicros = startEpoch;
             execute(
@@ -1489,7 +1489,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             }
 
             final String start2 = "2001-02-03T00:00:00.000000Z";
-            final long startEpoch2 = TimestampFormatUtils.parseTimestamp(start2);
+            final long startEpoch2 = parseFloorPartialTimestamp(start2);
             currentMicros = startEpoch2;
             execute("ALTER MATERIALIZED VIEW test SET REFRESH EVERY 15d;");
             drainWalQueue();

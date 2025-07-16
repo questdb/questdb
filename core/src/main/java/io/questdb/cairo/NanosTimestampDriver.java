@@ -139,6 +139,9 @@ public class NanosTimestampDriver implements TimestampDriver {
     private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(FLOOR_YYYY, YEAR_FORMAT);
     private Clock clock = NanosecondClockImpl.INSTANCE;
 
+    private NanosTimestampDriver() {
+    }
+
     public static CairoException expectedPartitionDirNameFormatCairoException(CharSequence partitionName, int lo, int hi, int partitionBy) {
         final CairoException ee = CairoException.critical(0).put('\'');
         switch (partitionBy) {
@@ -356,8 +359,7 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public long fromDate(long date) {
-        return date == Numbers.LONG_NULL ? Numbers.LONG_NULL : date * 1000_000L;
-
+        return date == Numbers.LONG_NULL ? Numbers.LONG_NULL : date * Nanos.MILLI_NANOS;
     }
 
     @Override
@@ -372,7 +374,7 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public long fromMicros(long micros) {
-        return micros * Nanos.MICRO_NANOS;
+        return micros == Numbers.LONG_NULL ? Numbers.LONG_NULL : micros * Nanos.MICRO_NANOS;
     }
 
     @Override
@@ -1373,6 +1375,11 @@ public class NanosTimestampDriver implements TimestampDriver {
     @Override
     public long toHours(long timestamp) {
         return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Nanos.HOUR_NANOS;
+    }
+
+    @Override
+    public long toMicros(long timestamp) {
+        return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Nanos.MICRO_NANOS;
     }
 
     @Override

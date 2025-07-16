@@ -443,6 +443,8 @@ public interface TimestampDriver {
 
     long toHours(long timestamp);
 
+    long toMicros(long timestamp);
+
     long toMinutes(long timestamp);
 
     long toNanosScale();
