@@ -28,25 +28,29 @@ import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * DataID handles the mapping of the _data_id.d file located at the root of the database.
- * Its role is to store a unique id (consisting of a randomly generated 256 bits number)
- * that is replicated among the database cluster.
+ * DataID handles the mapping of the .data_id file located at the root of the database.
+ * Its role is to store a unique id (consisting of a randomly generated 128-bit UUID)
+ * to uniquely "tag" a `db` directory so the contained tables can be uniquely identified
+ * across backups and enterprise replication.
  * <p>
  * One shouldn't modify the data id in an unblank database as it may cause data loss.
  * </p>
  */
 public final class DataID implements Sinkable {
-    public static final CharSequence FILENAME = "_data_id.d";
-    public static long FILE_SIZE = 4 + 36 * 2;
+
+    /**
+     * The file that contains the serialized DataID value has a name that starts with a `.`
+     * as this avoids a name clash with a potentially valid table name.
+     */
+    public static final CharSequence FILENAME = ".data_id";
+    public static long FILE_SIZE = Long.SIZE * 2;  // Storing UUID as binary
     private final CairoConfiguration configuration;
     private final Uuid id;
 
@@ -56,30 +60,29 @@ public final class DataID implements Sinkable {
     }
 
     /**
-     * Read the `_data_id.d` file (or creates it if it doesn't exist yet with zero value) and returns its current value.
+     * Read the `.data_id` file (or creates it if it doesn't exist yet with zero value) and returns its current value.
      *
      * @param configuration the configuration that is used to provide the FileFacade and DbRoot.
      * @return a new data id instance.
      */
     public static DataID open(CairoConfiguration configuration) throws CairoException {
-        try (MemoryCMARWImpl mem = openDataIDFile(configuration)) {
-            CharSequence sq = mem.getStrA(0);
-            if (sq.length() == 0) {
-                // The _data_id.d file has not been initialized yet.
-                return new DataID(configuration, new Uuid(Numbers.LONG_NULL, Numbers.LONG_NULL));
-            }
+        long lo = Numbers.LONG_NULL;
+        long hi = Numbers.LONG_NULL;
 
-            Uuid id = new Uuid();
-            try {
-                id.of(sq);
-                return new DataID(configuration, id);
-            } catch (NumericException e) {
-                throw CairoException.critical(CairoException.METADATA_VALIDATION)
-                        .put("Invalid data id [id=")
-                        .put(sq)
-                        .put("]");
+        // N.B.: This will create a new empty file of null `FILE_SIZE` bytes if it doesn't exist.
+        try (MemoryCMARWImpl mem = openDataIDFile(configuration)) {
+            if (mem.size() >= FILE_SIZE) {
+                lo = mem.getLong(0);
+                hi = mem.getLong(Long.BYTES);
+
+                // If we've just created the file, it will still have empty bytes.
+                // We need to represent this as a null UUID - our "uninitialized" state.
+                if ((lo == 0) && (hi == 0)) {
+                    lo = hi = Numbers.LONG_NULL;
+                }
             }
         }
+        return new DataID(configuration, new Uuid(lo, hi));
     }
 
     public long getHi() {
@@ -100,23 +103,22 @@ public final class DataID implements Sinkable {
     }
 
     /**
-     * Set the data id to a new value and writes it to `_data_id.d`.
-     * This function should be used with care as it may lead with data losses from restore/replication.
+     * Set the data id to a new value and writes it to `.data_id`.
+     * This function should be used with care as it may lead to data losses from restore/replication.
      *
-     * @param id the new id to use.
+     * @param lo The low bits of the UUID value
+     * @param hi The high bits of the UUID value
      */
-    public void set(Uuid id) {
-        if (this.id.equals(id)) {
+    public void set(long lo, long hi) {
+        if ((lo == id.getLo()) && (hi == id.getHi())) {
             return;
         }
-
-        this.id.of(id.getLo(), id.getHi());
         try (MemoryCMARWImpl mem = openDataIDFile(configuration)) {
-            StringSink ds = new StringSink();
-            id.toSink(ds);
-            mem.putStr(ds);
+            mem.putLong(lo);
+            mem.putLong(hi);
             mem.sync(false);
         }
+        this.id.of(lo, hi);
     }
 
     @Override

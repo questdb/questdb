@@ -47,7 +47,7 @@ public class DataIDTest extends AbstractCairoTest {
             Rnd rnd = new Rnd(configuration.getMicrosecondClock().getTicks(), configuration.getMillisecondClock().getTicks());
             Uuid currentId = new Uuid();
             currentId.of(rnd.nextLong(), rnd.nextLong());
-            id.set(currentId);
+            id.set(currentId.getLo(), currentId.getHi());
             Assert.assertTrue(id.isInitialized());
             Assert.assertEquals(id.getLo(), currentId.getLo());
             Assert.assertEquals(id.getHi(), currentId.getHi());

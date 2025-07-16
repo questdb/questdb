@@ -44,7 +44,7 @@ public class CurrentDataIDFunctionFactoryTest extends AbstractCairoTest {
         newID.of(rnd.nextLong(), rnd.nextLong());
         sink.clear();
         newID.toSink(sink);
-        engine.getDataID().set(newID);
+        engine.getDataID().set(newID.getLo(), newID.getHi());
         final String id = sink.toString();
         assertSql("current_data_id\n" + id + "\n",
                 "select current_data_id();");
