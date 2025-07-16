@@ -36,7 +36,7 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLargeNegScale() throws SqlException {
         assertSqlWithTypes("round\n" +
-                        "[NaN]:DOUBLE[]\n",
+                        "[null]:DOUBLE[]\n",
                 "select round(array[14.7778], -18)");
     }
 
@@ -44,14 +44,14 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLargePosScale() throws SqlException {
         assertSqlWithTypes("round\n" +
-                        "[NaN]:DOUBLE[]\n",
+                        "[null]:DOUBLE[]\n",
                 "select round(array[14.7778], 17)");
     }
 
     @Test
     public void testLeftNan() throws SqlException {
         assertSqlWithTypes("round\n" +
-                        "[NaN]:DOUBLE[]\n",
+                        "[null]:DOUBLE[]\n",
                 "select round(array[NaN], 5)");
     }
 
@@ -59,7 +59,7 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
     public void testMultiDimensional() throws SqlException {
         assertSqlWithTypes("round\n" +
                         "[[1.2000000000000002,4.6000000000000005],[7.9,10.100000000000001]]:DOUBLE[][]\n",
-                "select round(array [ [ 1.23, 4.56 ], [ 7.89, 10.1112 ] ], 1)");
+                "select round(array[ [ 1.23, 4.56 ], [ 7.89, 10.1112 ] ], 1)");
     }
 
     @Test
@@ -175,9 +175,9 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
                                 sql,
                                 sink,
                                 "sym\tround\n" +
-                                        "a\t14085.95\n" +
-                                        "b\t14270.12\n" +
-                                        "v\t14056.25\n"
+                                        "a\t9688.69\n" +
+                                        "b\t9938.03\n" +
+                                        "v\t9898.59\n"
                         );
 
                         TestUtils.assertSql(
@@ -208,7 +208,7 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRightNan() throws SqlException {
         assertSqlWithTypes("round\n" +
-                        "[NaN]:DOUBLE[]\n",
+                        "[null]:DOUBLE[]\n",
                 "select round(array[123.65], null)");
     }
 

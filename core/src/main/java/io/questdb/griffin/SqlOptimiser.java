@@ -4387,6 +4387,8 @@ public class SqlOptimiser implements Mutable {
                 // move model attributes to the wrapper
                 wrapperModel.setAlias(model.getAlias());
                 wrapperModel.setTimestamp(model.getTimestamp());
+                wrapperNested.setAlias(model.getAlias());
+                wrapperNested.setTimestamp(model.getTimestamp());
 
                 // before dispatching our rewrite, make sure our sub-query has also been re-written
                 // the immediate "nested" model is part of the "distinct" pair or model, we skip rewriting that
@@ -6119,7 +6121,7 @@ public class SqlOptimiser implements Mutable {
                             // (when we know the other column aliases) to alter it if a duplicate has occurred.
                             if (groupByModel.getAliasToColumnMap().contains(qc.getAlias())) {
                                 CharSequence newAlias = createColumnAlias(qc.getAst(), groupByModel);
-                                qc.setAlias(newAlias);
+                                qc.setAlias(newAlias, QueryColumn.SYNTHESIZED_ALIAS_POSITION);
                             }
 
                             // check what this column would reference to establish the priority
