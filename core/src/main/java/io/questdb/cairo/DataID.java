@@ -66,20 +66,17 @@ public final class DataID implements Sinkable {
      * @return a new data id instance.
      */
     public static DataID open(CairoConfiguration configuration) throws CairoException {
-        long lo = Numbers.LONG_NULL;
-        long hi = Numbers.LONG_NULL;
+        long lo, hi;
 
         // N.B.: This will create a new empty file of null `FILE_SIZE` bytes if it doesn't exist.
         try (MemoryCMARWImpl mem = openDataIDFile(configuration)) {
-            if (mem.size() >= FILE_SIZE) {
-                lo = mem.getLong(0);
-                hi = mem.getLong(Long.BYTES);
+            lo = mem.getLong(0);
+            hi = mem.getLong(Long.BYTES);
 
-                // If we've just created the file, it will still have empty bytes.
-                // We need to represent this as a null UUID - our "uninitialized" state.
-                if ((lo == 0) && (hi == 0)) {
-                    lo = hi = Numbers.LONG_NULL;
-                }
+            // If we've just created the file, it will still have empty bytes.
+            // We need to represent this as a null UUID - our "uninitialized" state.
+            if ((lo == 0) && (hi == 0)) {
+                lo = hi = Numbers.LONG_NULL;
             }
         }
         return new DataID(configuration, new Uuid(lo, hi));
