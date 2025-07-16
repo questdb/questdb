@@ -193,9 +193,15 @@ public class TableTransactionLog implements Closeable {
         if (newStructureVersion != txnMetaMemIndex.getAppendOffset() / Long.BYTES) {
             if (instance instanceof AlterOperation) {
                 throw CairoException.nonCritical().put("possible corruption in transaction metadata [table=")
-                        .put(((AlterOperation) instance).getTableToken()).put(']');
+                        .put(((AlterOperation) instance).getTableToken())
+                        .put(", offset=").put(txnMetaMemIndex.getAppendOffset())
+                        .put(", newVersion=").put(newStructureVersion)
+                        .put(']');
             }
-            throw CairoException.nonCritical().put("possible corruption in transaction metadata");
+            throw CairoException.nonCritical().put("possible corruption in transaction metadata [offset=")
+                    .put(txnMetaMemIndex.getAppendOffset())
+                    .put(", newVersion=").put(newStructureVersion)
+                    .put(']');
         }
 
         txnLogFile.beginMetadataChangeEntry(newStructureVersion, serializer, instance, timestamp);
