@@ -121,9 +121,23 @@ public class TimestampFinderTest extends AbstractCairoTest {
                 reader.openPartition(0);
 
                 oracleFinder.of(oracleReader, 0, 0, 1000);
-                oracleFinder.prepare();
                 finder.of(reader, 0, 0);
+
+                // assert approx timestamps for both finders
+                Assert.assertTrue(oracleFinder.minTimestampApprox() <= oracleFinder.maxTimestampApprox());
+                Assert.assertTrue(finder.minTimestampApprox() <= finder.maxTimestampApprox());
+
+                // prepare() must be called before accessing exact timestamps
+                oracleFinder.prepare();
                 finder.prepare();
+
+                // assert approx vs. exact timestamps
+                Assert.assertTrue(oracleFinder.minTimestampApprox() <= oracleFinder.minTimestampExact());
+                Assert.assertTrue(finder.minTimestampApprox() <= finder.minTimestampExact());
+                Assert.assertTrue(oracleFinder.maxTimestampApprox() >= oracleFinder.maxTimestampExact());
+                Assert.assertTrue(finder.maxTimestampApprox() >= finder.maxTimestampExact());
+
+                // assert exact timestamps
                 Assert.assertEquals(minTimestamp, oracleFinder.minTimestampExact());
                 Assert.assertEquals(oracleFinder.minTimestampExact(), finder.minTimestampExact());
                 Assert.assertEquals(maxTimestamp, oracleFinder.maxTimestampExact());
