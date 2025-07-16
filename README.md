@@ -251,6 +251,7 @@ and contact information.
 - [Official Docker image](https://questdb.io/docs/get-started/docker)
 - [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean)
 - [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)
+- [Kubernetes Liveness & Readiness Probes](docs/guides/kubernetes-probes.md)
 
 ## Contribute
 
