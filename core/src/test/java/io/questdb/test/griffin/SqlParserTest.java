@@ -2515,13 +2515,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
         assertSyntaxError("create materialized view x as select timestamp, sum(a) from tab sample by 1h",
-                25,
-                "invalid column name [name=sum(a), position=1]",
+                48,
+                "column 'sum(a)' requires an explicit alias. Use: sum(a) AS your_column_name",
                 model
         );
         assertSyntaxError("create materialized view x as select timestamp, sum(a) \"a,b\" from tab sample by 1h",
-                25,
-                "invalid column name [name=a,b, position=1]",
+                55,
+                "column alias 'a,b' contains unsupported characters",
                 model
         );
     }
