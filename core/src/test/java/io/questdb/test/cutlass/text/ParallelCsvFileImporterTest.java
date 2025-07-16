@@ -132,7 +132,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testFindChunkBoundariesForFileWithLongLines() throws Exception {
         executeWithPool(
                 3, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
-                        assertChunkBoundariesFor("test-quotes-small.csv", list(0, 0, 90, 2, 185, 3, 256, 5), sqlExecutionContext)
+                        assertChunkBoundariesFor("test-quotes-small.csv", list(0, 0, 90, 2, 185, 3, 256, 5), 3)
         );
     }
 
@@ -140,7 +140,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testFindChunkBoundariesForFileWithNoQuotes() throws Exception {
         executeWithPool(
                 3, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
-                        assertChunkBoundariesFor("test-import.csv", list(0, 0, 4565, 44, 9087, 87, 13612, 130), sqlExecutionContext)
+                        assertChunkBoundariesFor("test-import.csv", list(0, 0, 4565, 44, 9087, 87, 13612, 130), 3)
         );
     }
 
@@ -148,7 +148,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testFindChunkBoundariesInFileWithOneLongLine() throws Exception {
         executeWithPool(
                 2, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
-                        assertChunkBoundariesFor("test-quotes-oneline.csv", list(0, 0, 252, 2), sqlExecutionContext)
+                        assertChunkBoundariesFor("test-quotes-oneline.csv", list(0, 0, 252, 2), 2)
         );
     }
 
@@ -156,7 +156,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testFindChunkBoundariesInFileWithOneLongLineWithManyWorkers() throws Exception {
         executeWithPool(
                 7, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
-                        assertChunkBoundariesFor("test-quotes-oneline.csv", list(0, 0, 252, 2), sqlExecutionContext)
+                        assertChunkBoundariesFor("test-quotes-oneline.csv", list(0, 0, 252, 2), 7)
         );
     }
 
@@ -164,7 +164,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testFindChunkBoundariesInLargerCsv() throws Exception {
         executeWithPool(
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
-                        assertChunkBoundariesFor("test-quotes-big.csv", list(0, 0, 16797, 254, 33514, 503, 50216, 752, 66923, 1002), sqlExecutionContext)
+                        assertChunkBoundariesFor("test-quotes-big.csv", list(0, 0, 16797, 254, 33514, 503, 50216, 752, 66923, 1002), 4)
         );
     }
 
@@ -172,7 +172,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testFindChunkBoundariesWith1WorkerForFileWithLongLines() throws Exception {
         executeWithPool(
                 1, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
-                        assertChunkBoundariesFor("test-quotes-small.csv", list(0, 0, 256, 0), sqlExecutionContext)
+                        assertChunkBoundariesFor("test-quotes-small.csv", list(0, 0, 256, 0), 1)
         );
     }
 
@@ -2741,10 +2741,10 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 .anyMatch(stackTraceElement -> stackTraceElement.getClassName().endsWith(klass));
     }
 
-    private void assertChunkBoundariesFor(String fileName, LongList expectedBoundaries, SqlExecutionContext sqlExecutionContext) throws TextImportException {
+    private void assertChunkBoundariesFor(String fileName, LongList expectedBoundaries, int workerCount) throws TextImportException {
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
         try (Path path = new Path().of(inputRoot).slash().concat(fileName);
-             ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 1)) {
+             ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, workerCount)) {
             importer.setMinChunkSize(1);
             importer.of("table", fileName, 1, PartitionBy.DAY, (byte) ',', "unknown", null, false);
 
@@ -2821,12 +2821,12 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         executeWithPool(
                 workerCount, 8,
                 (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
-                        assertIndexChunksFor(sqlExecutionContext, dateFormat, partitionBy, fileName, expectedChunks)
+                        assertIndexChunksFor(sqlExecutionContext, workerCount, dateFormat, partitionBy, fileName, expectedChunks)
         );
     }
 
     private void assertIndexChunksFor(
-            SqlExecutionContext sqlExecutionContext, String format, int partitionBy,
+            SqlExecutionContext sqlExecutionContext, int workerCount, String format, int partitionBy,
             String fileName, IndexChunk... expectedChunks
     ) {
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
@@ -2834,7 +2834,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
         try (
                 Path path = new Path().of(inputRoot).concat(fileName);
-                ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 1)
+                ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, workerCount)
         ) {
             importer.setMinChunkSize(1);
             importer.of("tableName", fileName, 1, partitionBy, (byte) ',', "ts", format, false);
