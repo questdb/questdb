@@ -282,7 +282,7 @@ public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(query,
                     "LatestByAllIndexed\n" +
-                            "    Async index backward scan on: sym workers: 1\n" +
+                            "    Async index backward scan on: sym workers: 2\n" +
                             "      filter: pickup_geohash within(\"011001011100101000000000000000000000000000000000000000000000\")\n" +
                             "    Frame backward scan on: trips\n");
 
