@@ -40,7 +40,8 @@ import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_NANOS;
-import static io.questdb.std.datetime.microtime.Timestamps.*;
+import static io.questdb.std.datetime.microtime.Timestamps.SECOND_MILLIS;
+import static io.questdb.std.datetime.microtime.Timestamps.monthOfYearMicros;
 
 public final class Nanos {
 
@@ -54,6 +55,7 @@ public final class Nanos {
     public static final long SECOND_NANOS = 1_000_000_000;
     public static final long WEEK_NANOS = DAY_NANOS * 7L; // DAY_NANOS * 7
     public static final long YEAR_NANOS_NONLEAP = 365 * DAY_NANOS;
+    private static final int DAYS_0000_TO_1970 = 719527;
     private static final long YEAR_NANOS_LEAP = 366 * DAY_NANOS;
 
     private Nanos() {
@@ -1110,7 +1112,22 @@ public final class Nanos {
     }
 
     public static long yearNanos(int year, boolean leap) {
-        return yearMicros(year, leap) * MICRO_NANOS;
+        int leapYears = year / 100;
+        if (year < 0) {
+            leapYears = ((year + 3) >> 2) - leapYears + ((leapYears + 3) >> 2) - 1;
+        } else {
+            leapYears = (year >> 2) - leapYears + (leapYears >> 2);
+            if (leap) {
+                leapYears--;
+            }
+        }
+
+        long days = year * 365L + (leapYears - DAYS_0000_TO_1970);
+        long nanos = days * DAY_NANOS;
+        if (days < 0 & nanos > 0) {
+            return Long.MIN_VALUE;
+        }
+        return nanos;
     }
 
     private static long getTimeNanos(long nanos) {

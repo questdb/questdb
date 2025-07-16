@@ -571,7 +571,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         bindVariableService = node1.getBindVariableService();
         sqlExecutionContext = node1.getSqlExecutionContext();
         ((MicrosTimestampDriver) MicrosTimestampDriver.INSTANCE).setTicker(testMicrosClock);
-        ((NanosTimestampDriver) NanosTimestampDriver.INSTANCE).setTicker(testMicrosClock);
+        ((NanosTimestampDriver) NanosTimestampDriver.INSTANCE).setTicker(testNanoClock);
         ColumnType.makeUtf8DefaultString();
     }
 

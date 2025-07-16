@@ -434,6 +434,10 @@ public class FuzzRunner {
         return createInitialTable(tableName, true, initialRowCount);
     }
 
+    public TableToken createInitialTableWal(String tableName, String timestampType) throws SqlException {
+        return createInitialTable(tableName, true, initialRowCount, timestampType);
+    }
+
     public TableToken createInitialTableWal(String tableName, int initialRowCount) throws SqlException {
         return createInitialTable(tableName, true, initialRowCount);
     }
@@ -781,6 +785,45 @@ public class FuzzRunner {
                             "select x as c1, " +
                             " rnd_symbol('AB', 'BC', 'CD') c2, " +
                             " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                            " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
+                            " cast(x as int) c3," +
+                            " rnd_bin() c4," +
+                            " to_long128(3 * x, 6 * x) c5," +
+                            " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk')," +
+                            " rnd_boolean() bool1 " +
+                            " from long_sequence(" + rowCount + ")" +
+                            ")",
+                    sqlExecutionContext
+            );
+        }
+
+        if (engine.getTableTokenIfExists(tableName) == null) {
+            engine.execute(
+                    "create atomic table " + tableName + " as (" +
+                            "select * from data_temp" +
+                            "), index(sym2) timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"),
+                    sqlExecutionContext
+            );
+            // force few column tops
+            engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
+        }
+        return engine.verifyTableName(tableName);
+    }
+
+    private TableToken createInitialTable(String tableName, boolean isWal, int rowCount, String timestampType) throws SqlException {
+        SharedRandom.RANDOM.set(new Rnd());
+        TableToken tempTable = engine.getTableTokenIfExists("data_temp");
+
+        if (tempTable == null) {
+            engine.execute(
+                    "create atomic table data_temp as (" +
+                            "select x as c1, " +
+                            " rnd_symbol('AB', 'BC', 'CD') c2, " +
+                            " timestamp_sequence('2022-02-24'::" + timestampType + ", 1000000L) ts, " +
                             " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
                             " cast(x as int) c3," +
                             " rnd_bin() c4," +

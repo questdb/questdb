@@ -65,6 +65,7 @@ import static io.questdb.std.datetime.microtime.TimestampFormatUtils.*;
 
 public class NanosTimestampDriver implements TimestampDriver {
     public static final TimestampDriver INSTANCE = new NanosTimestampDriver();
+    public static final int MAX_NANO_YEAR = 2261;
     private static final PartitionAddMethod ADD_DD = Nanos::addDays;
     private static final PartitionAddMethod ADD_HH = Nanos::addHours;
     private static final PartitionAddMethod ADD_MM = Nanos::addMonths;

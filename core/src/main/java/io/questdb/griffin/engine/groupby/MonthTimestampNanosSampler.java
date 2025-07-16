@@ -52,12 +52,20 @@ public class MonthTimestampNanosSampler implements TimestampSampler {
 
     @Override
     public long nextTimestamp(long timestamp) {
-        return addMonth(timestamp, stepMonths);
+        try {
+            return addMonth(timestamp, stepMonths);
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
     }
 
     @Override
     public long nextTimestamp(long timestamp, int numSteps) {
-        return addMonth(timestamp, numSteps * stepMonths);
+        try {
+            return addMonth(timestamp, Math.multiplyExact(numSteps, stepMonths));
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
     }
 
     @Override
@@ -124,12 +132,13 @@ public class MonthTimestampNanosSampler implements TimestampSampler {
                 _d = maxDay;
             }
         }
-        return Nanos.toNanos(_y, _m, _d)
-                + startHour * Nanos.HOUR_NANOS
-                + startMin * Nanos.MINUTE_NANOS
-                + startSec * Nanos.SECOND_NANOS
-                + startMillis * Nanos.MILLI_NANOS
-                + startMicros * Nanos.MICRO_NANOS
-                + startNanos;
+        long result = Nanos.toNanos(_y, _m, _d);
+        result = Math.addExact(result, Math.multiplyExact(startHour, Nanos.HOUR_NANOS));
+        result = Math.addExact(result, Math.multiplyExact(startMin, Nanos.MINUTE_NANOS));
+        result = Math.addExact(result, Math.multiplyExact(startSec, Nanos.SECOND_NANOS));
+        result = Math.addExact(result, Math.multiplyExact(startMillis, Nanos.MILLI_NANOS));
+        result = Math.addExact(result, Math.multiplyExact(startMicros, Nanos.MICRO_NANOS));
+        result = Math.addExact(result, startNanos);
+        return result;
     }
 }

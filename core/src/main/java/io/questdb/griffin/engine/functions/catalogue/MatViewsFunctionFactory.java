@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -212,7 +213,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             }
                         }
 
-                        final long lastPeriodHi = viewStateReader.getLastPeriodHi();
+                        final long lastPeriodHi = MicrosTimestampDriver.INSTANCE.from(viewStateReader.getLastPeriodHi(), viewDefinition.getBaseTableTimestampType());
                         final long lastRefreshedBaseTxn = viewStateReader.getLastRefreshBaseTxn();
                         final long lastRefreshTimestamp = viewStateReader.getLastRefreshTimestamp();
 
@@ -231,7 +232,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         int timerInterval = 0;
                         char timerIntervalUnit = 0;
                         if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_TIMER || periodLength > 0) {
-                            timerStart = viewDefinition.getTimerStart();
+                            // record use timestamp_micro for timer start
+                            timerStart = MicrosTimestampDriver.INSTANCE.from(viewDefinition.getTimerStart(), viewDefinition.getBaseTableTimestampType());
                             timerInterval = viewDefinition.getTimerInterval();
                             timerIntervalUnit = viewDefinition.getTimerUnit();
                         }

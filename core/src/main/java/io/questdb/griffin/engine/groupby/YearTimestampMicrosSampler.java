@@ -50,12 +50,20 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
 
     @Override
     public long nextTimestamp(long timestamp) {
-        return addYears(timestamp, stepYears);
+        try {
+            return addYears(timestamp, stepYears);
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
     }
 
     @Override
     public long nextTimestamp(long timestamp, int numSteps) {
-        return addYears(timestamp, numSteps * stepYears);
+        try {
+            return addYears(timestamp, Math.multiplyExact(numSteps, stepYears));
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
     }
 
     @Override

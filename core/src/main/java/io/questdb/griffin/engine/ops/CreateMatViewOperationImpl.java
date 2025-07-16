@@ -472,7 +472,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata);
         updateMatViewTablePartitionBy(createTableOperation.getTimestampType());
         this.baseTableTimestampType = baseTableMetadata.getTimestampType();
-        this.timerStart = ColumnType.getTimestampDriver(this.baseTableTimestampType).from(timerStart, ColumnType.TIMESTAMP_MICRO);
+        this.timerStart = ColumnType.getTimestampDriver(this.baseTableTimestampType).fromMicros(timerStart);
     }
 
     private static void copyBaseTableSymbolColumnCapacity(

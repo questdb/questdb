@@ -47,12 +47,20 @@ public class BaseTimestampSampler implements TimestampSampler {
 
     @Override
     public long nextTimestamp(long timestamp) {
-        return timestamp + bucket;
+        try {
+            return Math.addExact(timestamp, bucket);
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
     }
 
     @Override
     public long nextTimestamp(long timestamp, int numSteps) {
-        return timestamp + numSteps * bucket;
+        try {
+            return Math.addExact(timestamp, Math.multiplyExact(numSteps, bucket));
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
     }
 
     @Override

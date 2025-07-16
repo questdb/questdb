@@ -55,6 +55,7 @@ import static io.questdb.test.cairo.mv.MatViewTest.parseFloorPartialTimestamp;
 
 public class MatViewFuzzTest extends AbstractFuzzTest {
     private static final int SPIN_LOCK_TIMEOUT = 100_000_000;
+    private static String[] timestampTypes = new String[]{"timestamp", "timestamp_ns"};
 
     @Test
     public void test2LevelDependencyView() throws Exception {
@@ -552,7 +553,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private ObjList<FuzzTransaction> createTransactionsAndMv(Rnd rnd, String tableNameBase, String matViewName, String viewSql) throws SqlException, NumericException {
-        fuzzer.createInitialTableWal(tableNameBase);
+        fuzzer.createInitialTableWal(tableNameBase, timestampTypes[rnd.nextInt(10) % 2]);
         final boolean deferred = rnd.nextBoolean();
         createMatView(viewSql, matViewName, deferred);
 
@@ -572,7 +573,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             int length,
             char lengthUnit
     ) throws SqlException {
-        fuzzer.createInitialTableWal(tableNameBase);
+        fuzzer.createInitialTableWal(tableNameBase, timestampTypes[rnd.nextInt(10) % 2]);
         final boolean deferred = rnd.nextBoolean();
         createPeriodMatView(viewSql, matViewName, start, length, lengthUnit, deferred);
 
@@ -592,7 +593,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             int interval,
             char intervalUnit
     ) throws SqlException {
-        fuzzer.createInitialTableWal(tableNameBase);
+        fuzzer.createInitialTableWal(tableNameBase, timestampTypes[rnd.nextInt(10) % 2]);
         final boolean deferred = rnd.nextBoolean();
         createTimerMatView(viewSql, matViewName, start, interval, intervalUnit, deferred);
 
@@ -967,7 +968,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
     private void testMvFuzz(Rnd rnd, String baseTableName, long start, String... mvNamesAndSqls) throws Exception {
         assertMemoryLeak(() -> {
-            fuzzer.createInitialTableWal(baseTableName);
+            fuzzer.createInitialTableWal(baseTableName, timestampTypes[rnd.nextInt(10) % 2]);
 
             for (int i = 0, n = mvNamesAndSqls.length / 2; i < n; i += 2) {
                 final String mvName = mvNamesAndSqls[i];

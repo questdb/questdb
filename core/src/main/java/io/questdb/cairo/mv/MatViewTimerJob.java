@@ -192,7 +192,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         );
         timerQueue.add(timer);
         LOG.info().$("created timer for materialized view [view=").$(viewToken)
-                .$(", start=").$ts(timerStart)
+                .$(", start=").$ts(viewDefinition.getBaseTableTimestampDriver(), timerStart)
                 .$(", tz=").$(viewDefinition.getTimerTimeZone())
                 .$(", interval=").$(interval).$(unit)
                 .I$();
@@ -200,12 +200,13 @@ public class MatViewTimerJob extends SynchronizedJob {
 
     private void createUpdateRefreshIntervalsTimer(@NotNull MatViewDefinition viewDefinition, long now) {
         final TableToken viewToken = viewDefinition.getMatViewToken();
-        final long periodMs = configuration.getMatViewRefreshIntervalsUpdatePeriod();
+        final long period = configuration.getMatViewRefreshIntervalsUpdatePeriod();
         final TimestampSampler sampler;
+        TimestampDriver driver = viewDefinition.getBaseTableTimestampDriver();
         try {
-            sampler = TimestampSamplerFactory.getInstance(viewDefinition.getBaseTableTimestampDriver(), periodMs, 'T', -1);
+            sampler = TimestampSamplerFactory.getInstance(driver, period, 'T', -1);
         } catch (SqlException e) {
-            throw CairoException.nonCritical().put("invalid refresh intervals update period: ").put(periodMs);
+            throw CairoException.nonCritical().put("invalid refresh intervals update period: ").put(period);
         }
         final Timer timer = new Timer(
                 Timer.UPDATE_REFRESH_INTERVALS_TYPE,
@@ -219,8 +220,8 @@ public class MatViewTimerJob extends SynchronizedJob {
         );
         timerQueue.add(timer);
         LOG.info().$("created refresh intervals update timer for materialized view [view=").$(viewToken)
-                .$(", start=").$ts(now)
-                .$(", interval=").$(periodMs).$('T')
+                .$(", start=").$ts(driver, now)
+                .$(", interval=").$(period).$('T')
                 .I$();
     }
 

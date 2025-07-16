@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.CharSink;
@@ -51,12 +52,20 @@ public class YearTimestampNanosSampler implements TimestampSampler {
 
     @Override
     public long nextTimestamp(long timestamp) {
-        return addYears(timestamp, stepYears);
+        try {
+            return addYears(timestamp, stepYears);
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
     }
 
     @Override
     public long nextTimestamp(long timestamp, int numSteps) {
-        return addYears(timestamp, numSteps * stepYears);
+        try {
+            return addYears(timestamp, numSteps * stepYears);
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
     }
 
     @Override
@@ -105,16 +114,18 @@ public class YearTimestampNanosSampler implements TimestampSampler {
             return timestamp;
         }
         final int y = Nanos.getYear(timestamp);
-        final boolean leap = CommonUtils.isLeapYear(y + numYears);
+        final int newYear = Math.min(y + numYears, NanosTimestampDriver.MAX_NANO_YEAR + 1);
+        final boolean leap = CommonUtils.isLeapYear(newYear);
         final int maxDay = Math.min(startDay, CommonUtils.getDaysPerMonth(startMonth, leap)) - 1;
-        return Nanos.yearNanos(y + numYears, leap)
-                + Nanos.monthOfYearNanos(startMonth, leap)
-                + maxDay * Nanos.DAY_NANOS
-                + startHour * Nanos.HOUR_NANOS
-                + startMin * Nanos.MINUTE_NANOS
-                + startSec * Nanos.SECOND_NANOS
-                + startMillis * Nanos.MILLI_NANOS
-                + startMicros * Nanos.MICRO_NANOS
-                + startNanos;
+        long result = Nanos.yearNanos(newYear, leap);
+        result = Math.addExact(result, Nanos.monthOfYearNanos(startMonth, leap));
+        result = Math.addExact(result, Math.multiplyExact(maxDay, Nanos.DAY_NANOS));
+        result = Math.addExact(result, Math.multiplyExact(startHour, Nanos.HOUR_NANOS));
+        result = Math.addExact(result, Math.multiplyExact(startMin, Nanos.MINUTE_NANOS));
+        result = Math.addExact(result, Math.multiplyExact(startSec, Nanos.SECOND_NANOS));
+        result = Math.addExact(result, Math.multiplyExact(startMillis, Nanos.MILLI_NANOS));
+        result = Math.addExact(result, Math.multiplyExact(startMicros, Nanos.MICRO_NANOS));
+        result = Math.addExact(result, startNanos);
+        return result;
     }
 }

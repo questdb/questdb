@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
@@ -969,6 +970,17 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     private static TestServerMain startMainPortsDisabled(Clock microsecondClock, String... extraEnvs) {
         assert extraEnvs.length % 2 == 0;
         ((MicrosTimestampDriver) (MicrosTimestampDriver.INSTANCE)).setTicker(microsecondClock);
+        ((NanosTimestampDriver) (NanosTimestampDriver.INSTANCE)).setTicker(new Clock() {
+            @Override
+            public int getClockTimestampType() {
+                return ColumnType.TIMESTAMP_NANO;
+            }
+
+            @Override
+            public long getTicks() {
+                return NanosTimestampDriver.INSTANCE.fromMicros(microsecondClock.getTicks());
+            }
+        });
 
         final String[] disablePortsEnvs = new String[]{
                 PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",

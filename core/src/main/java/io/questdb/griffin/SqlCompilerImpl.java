@@ -567,6 +567,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    // todo, remove before merge, exists for benchmarking purposes
     private static long copyOrdered0(
             TableWriterAPI writer,
             RecordCursor cursor,
@@ -1791,10 +1792,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             }
 
                             // Period timer start is at the boundary of the current period.
-                            final long now = configuration.getMicrosecondClock().getTicks();
+                            final long now = driver.getTicks();
                             final long nowLocal = tzRules != null ? now + tzRules.getOffset(now) : now;
                             start = periodSampler.round(nowLocal);
-
                             tok = SqlUtil.fetchNext(lexer);
                         } else if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
                             if (tok != null && isStartKeyword(tok)) {
