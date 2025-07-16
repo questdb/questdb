@@ -146,6 +146,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final DatabaseCheckpointAgent checkpointAgent;
     private final CopyContext copyContext;
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
+    private final DataID dataID;
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
     private final MatViewGraph matViewGraph;
@@ -209,6 +210,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.matViewTimerQueue = createMatViewTimerQueue();
             this.matViewGraph = new MatViewGraph();
             this.frameFactory = new FrameFactory(configuration);
+            this.dataID = DataID.open(configuration);
 
             settingsStore = new SettingsStore(configuration);
             settingsStore.init();
@@ -659,6 +661,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public CopyContext getCopyContext() {
         return copyContext;
+    }
+
+    public DataID getDataID() {
+        return dataID;
     }
 
     public @NotNull DdlListener getDdlListener(TableToken tableToken) {
