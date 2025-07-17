@@ -1059,7 +1059,7 @@ public final class TableUtils {
             }
         }
 
-        long fd = ff.openRW(path, CairoConfiguration.O_NONE);
+        long fd = ff.openRWNoCache(path, CairoConfiguration.O_NONE);
         if (fd == -1) {
             if (verbose) {
                 LOG.error().$("cannot open '").$(path).$("' to lock [errno=").$(ff.errno()).I$();
@@ -1271,7 +1271,7 @@ public final class TableUtils {
         throw CairoException.critical(ff.errno()).put("could not open append [file=").put(path).put(']');
     }
 
-    public static long openFileRWOrFail(FilesFacade ff, LPSZ path, long opts) {
+    public static long openFileRWOrFail(FilesFacade ff, LPSZ path, int opts) {
         return openRW(ff, path, LOG, opts);
     }
 
@@ -1311,7 +1311,7 @@ public final class TableUtils {
         throw CairoException.critical(errno).put("could not open read-only [file=").put(path).put(']');
     }
 
-    public static long openRW(FilesFacade ff, LPSZ path, Log log, long opts) {
+    public static long openRW(FilesFacade ff, LPSZ path, Log log, int opts) {
         final long fd = ff.openRW(path, opts);
         if (fd > -1) {
             log.debug().$("open [file=").$(path).$(", fd=").$(fd).I$();

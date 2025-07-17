@@ -113,7 +113,7 @@ public class FdCache {
         return uniqROFd;
     }
 
-    public synchronized long openRWCached(LPSZ lpsz, long opts) {
+    public synchronized long openRWCached(LPSZ lpsz, int opts) {
         final FdCacheRecord holder = getFdCacheRecord(lpsz, opts | Files.O_CREAT);
         if (holder == null) {
             // Failed to open
@@ -150,7 +150,7 @@ public class FdCache {
     }
 
     @Nullable
-    private FdCacheRecord getFdCacheRecord(LPSZ lpsz, long opts) {
+    private FdCacheRecord getFdCacheRecord(LPSZ lpsz, int opts) {
         int keyIndex = openFdMap.keyIndex(lpsz);
         final FdCacheRecord holder;
         if (keyIndex > -1) {

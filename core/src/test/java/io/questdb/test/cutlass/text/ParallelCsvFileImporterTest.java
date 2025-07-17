@@ -699,7 +699,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFailsOnFileOpenInBuildSymbolIndexPhase() throws Exception {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "line.v") && stackContains("PhaseBuildSymbolIndex")) {
                     return -1;
                 }
@@ -745,7 +745,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFailsOnFileOpenInSymbolKeysUpdatePhase() throws Exception {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "line.r") && stackContains("PhaseUpdateSymbolKeys")) {
                     return -1;
                 }

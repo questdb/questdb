@@ -370,8 +370,13 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long openRW(LPSZ name, long opts) {
+    public long openRW(LPSZ name, int opts) {
         return Files.openRW(name, opts);
+    }
+
+    @Override
+    public long openRWNoCache(LPSZ name, int opts) {
+        return Files.openRWNoCache(name, opts);
     }
 
     @Override

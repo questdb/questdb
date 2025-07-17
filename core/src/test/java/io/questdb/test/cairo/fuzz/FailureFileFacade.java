@@ -362,11 +362,19 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     @Override
-    public long openRW(LPSZ name, long opts) {
+    public long openRW(LPSZ name, int opts) {
         if (checkForFailure()) {
             return -1;
         }
         return ff.openRW(name, opts);
+    }
+
+    @Override
+    public long openRWNoCache(LPSZ name, int opts) {
+        if (checkForFailure()) {
+            return -1;
+        }
+        return ff.openRWNoCache(name, opts);
     }
 
     @Override

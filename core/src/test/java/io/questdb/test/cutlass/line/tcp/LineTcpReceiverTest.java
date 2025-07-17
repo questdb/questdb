@@ -362,7 +362,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private int count = 1;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (
                         Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
                                 && Utf8s.containsAscii(name, weather)
@@ -700,7 +700,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private final AtomicInteger count = new AtomicInteger(1);
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (
                         Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
                                 && count.decrementAndGet() == 0
@@ -756,7 +756,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private int count = 1;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (
                         Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
                                 && Utf8s.containsAscii(name, weather)

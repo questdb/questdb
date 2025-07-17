@@ -134,7 +134,9 @@ public interface FilesFacade {
 
     long openRO(LPSZ name);
 
-    long openRW(LPSZ name, long opts);
+    long openRW(LPSZ name, int opts);
+
+    long openRWNoCache(LPSZ name, int opts);
 
     long read(long fd, long buf, long size, long offset);
 

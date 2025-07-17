@@ -53,7 +53,7 @@ public final class Files {
     public static final int MAP_RO = 1;
     public static final int MAP_RW = 2;
     public static final int NFS_MAGIC = 0x6969;
-    public static final long O_CREAT = 0x00000200;
+    public static final int O_CREAT = 0x00000200;
     public static final long PAGE_SIZE;
     public static final int POSIX_FADV_RANDOM;
     public static final int POSIX_FADV_SEQUENTIAL;
@@ -410,8 +410,12 @@ public final class Files {
         return fdCache.openRWCached(lpsz, 0);
     }
 
-    public static long openRW(LPSZ lpsz, long opts) {
+    public static long openRW(LPSZ lpsz, int opts) {
         return fdCache.openRWCached(lpsz, opts);
+    }
+
+    public static long openRWNoCache(LPSZ lpsz, int opts) {
+        return fdCache.createUniqueFdNonCached(openRWOpts(lpsz.ptr(), opts));
     }
 
     public static long read(long fd, long address, long len, long offset) {
@@ -684,9 +688,9 @@ public final class Files {
 
     private native static int openRW(long lpszName);
 
-    private native static int openRWOpts(long lpszName, long opts);
+    private native static int openRWOpts(long lpszName, int opts);
 
-    native static int openRWOptsNoCreate(long lpszName, long opts);
+    native static int openRWOptsNoCreate(long lpszName, int opts);
 
     private native static long read(int fd, long address, long len, long offset);
 

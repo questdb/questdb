@@ -137,7 +137,7 @@ public class TableWriterTest extends AbstractCairoTest {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         class X extends TestFilesFacadeImpl {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -354,7 +354,7 @@ public class TableWriterTest extends AbstractCairoTest {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         testAddColumnUnrecoverableFault(new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -368,7 +368,7 @@ public class TableWriterTest extends AbstractCairoTest {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.k";
         testAddColumnUnrecoverableFault(new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -384,7 +384,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 1;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -404,7 +404,7 @@ public class TableWriterTest extends AbstractCairoTest {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         testAddColumnUnrecoverableFault(new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -421,7 +421,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int toCount = 5;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -480,7 +480,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int counter = 2;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
                     counter = 1;
                     return -1;
@@ -529,7 +529,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int counter = 2;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 // Cannot write to _meta.swp
                 if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
                     counter = 1;
@@ -933,7 +933,7 @@ public class TableWriterTest extends AbstractCairoTest {
         ff = new TestFilesFacadeImpl() {
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "2013-03-04") && Utf8s.endsWithAscii(name, "category.k")) {
                     return this.fd = super.openRW(name, opts);
                 }
@@ -1313,7 +1313,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 boolean ran = false;
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     if (Utf8s.endsWithAscii(name, PRODUCT_FS + ".lock")) {
                         ran = true;
                         return -1;
@@ -1356,7 +1356,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, TableUtils.TXN_FILE_NAME) && --count == 0) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1369,7 +1369,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testCannotOpenColumnFile() throws Exception {
         testConstructor(new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "productName.i")) {
                     return -1;
                 }
@@ -1398,7 +1398,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int counter = 1;
 
             @Override
-            public long openRW(LPSZ path, long opts) {
+            public long openRW(LPSZ path, int opts) {
                 if (Utf8s.endsWithAscii(path, TableUtils.TODO_FILE_NAME) && --counter == 0) {
                     return -1;
                 }
@@ -1413,7 +1413,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 1;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, TableUtils.TXN_FILE_NAME) && --count == 0) {
                     return -1;
                 }
@@ -1438,7 +1438,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "supplier.d")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1462,7 +1462,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "productName.i")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1487,7 +1487,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "productName.i")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1511,7 +1511,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "price.d")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1551,7 +1551,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "price.d")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1590,7 +1590,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "price.d")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1953,7 +1953,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testMetaFileDoesNotExist() throws Exception {
         testConstructor(new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
@@ -2245,7 +2245,7 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean hit = false;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
                     hit = true;
                     return -1;
@@ -2480,7 +2480,7 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean hit = false;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
                     hit = true;
                     return -1;
@@ -4216,7 +4216,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     if (Utf8s.endsWithAscii(name, "bin.i")) {
                         return fd = super.openRW(name, opts);
                     }
