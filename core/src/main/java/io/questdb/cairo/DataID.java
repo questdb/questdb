@@ -105,17 +105,20 @@ public final class DataID implements Sinkable {
      *
      * @param lo The low bits of the UUID value
      * @param hi The high bits of the UUID value
+     *
+     * @return true if the value was changed, or false if it could not be changed
+     * because it was already set.
      */
-    public void set(long lo, long hi) {
-        if ((lo == id.getLo()) && (hi == id.getHi())) {
-            return;
-        }
+    public synchronized boolean set(long lo, long hi) {
+        if (isInitialized())
+            return false;
         try (MemoryCMARWImpl mem = openDataIDFile(configuration)) {
             mem.putLong(lo);
             mem.putLong(hi);
             mem.sync(false);
         }
         this.id.of(lo, hi);
+        return true;
     }
 
     @Override

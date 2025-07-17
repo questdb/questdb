@@ -111,6 +111,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -211,6 +212,10 @@ public class CairoEngine implements Closeable, WriterSource {
             this.matViewGraph = new MatViewGraph();
             this.frameFactory = new FrameFactory(configuration);
             this.dataID = DataID.open(configuration);
+            if (!configuration.isReadOnlyReplica() && !this.dataID.isInitialized()) {
+                final Rnd rnd = configuration.getRandom();
+                this.dataID.set(rnd.nextLong(), rnd.nextLong());
+            }
 
             settingsStore = new SettingsStore(configuration);
             settingsStore.init();

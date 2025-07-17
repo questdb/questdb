@@ -708,6 +708,10 @@ public interface CairoConfiguration {
 
     boolean isReadOnlyInstance();
 
+    default boolean isReadOnlyReplica() {
+        return false;
+    }
+
     boolean isSqlJitDebugEnabled();
 
     boolean isSqlOrderBySortEnabled();

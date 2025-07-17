@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 use crate::col_type::ColumnType;
-use crate::error::{fmt_err, CoreErrorExt, CoreResult};
+use crate::error::{CoreErrorExt, CoreResult, fmt_err};
 use memmap2::Mmap;
 use std::borrow::Cow;
 use std::fs::File;
@@ -148,7 +148,7 @@ mod tests {
             "int_col1",
             ColumnTypeTag::Int.into_type(),
         )
-            .unwrap();
+        .unwrap();
         assert_eq!(mapped.col_type, ColumnTypeTag::Int.into_type());
         assert_eq!(mapped.col_name, "int_col1");
         assert_eq!(mapped.parent_path, parent_path);
@@ -163,7 +163,7 @@ mod tests {
             "non_existant_col",
             ColumnTypeTag::Int.into_type(),
         )
-            .unwrap_err();
+        .unwrap_err();
         let msg = err.to_string();
         assert!(msg.starts_with("Could not open data file for column"));
     }
