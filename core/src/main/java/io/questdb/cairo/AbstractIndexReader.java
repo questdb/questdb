@@ -138,9 +138,6 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
             // Resize key memory eagerly to avoid doing that when searching keys.
             keyMem.extend(BitmapIndexUtils.getKeyEntryOffset(this.keyCount));
-
-            this.blockCapacity = (blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
-            this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
             this.valueMem.of(
                     configuration.getFilesFacade(),
                     BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn),
@@ -178,6 +175,8 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
                     this.valueMemSize = valueMemSize;
                     this.keyCount = keyCount;
                     this.blockValueCountMod = blockValueCountMod;
+                    this.blockCapacity = (blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
+                    this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
                     break;
                 }
             }

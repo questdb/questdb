@@ -258,7 +258,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
         final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);
 
-        BitmapIndexReader reader = bitmapIndexes.getQuick(direction == BitmapIndexReader.DIR_BACKWARD ? index : index + 1);
+        final int indexIndex = direction == BitmapIndexReader.DIR_BACKWARD ? index : index + 1;
+        BitmapIndexReader reader = bitmapIndexes.getQuick(indexIndex);
         if (reader != null) {
             reader.reloadConditionally();
             return reader;
