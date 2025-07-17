@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
@@ -41,6 +42,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
+
+import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
 /**
  * Splice join compares time series that do not always align on timestamp. Consider
@@ -89,6 +92,8 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
                     columnSplit,
                     masterFactory.getMetadata().getTimestampIndex(),
                     slaveFactory.getMetadata().getTimestampIndex(),
+                    masterFactory.getMetadata().getTimestampType(),
+                    slaveFactory.getMetadata().getTimestampType(),
                     NullRecordFactory.getInstance(masterFactory.getMetadata()),
                     NullRecordFactory.getInstance(slaveFactory.getMetadata())
             );
@@ -151,10 +156,12 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
     private class SpliceJoinLightRecordCursor extends AbstractJoinCursor {
         private final Map joinKeyMap;
         private final int masterTimestampIndex;
+        private final long masterTimestampScale;
         private final Record nullMasterRecord;
         private final Record nullSlaveRecord;
         private final JoinRecord record;
         private final int slaveTimestampIndex;
+        private final long slaveTimestampScale;
         private boolean dualRecord;
         private boolean fetchMaster = true;
         private boolean fetchSlave = true;
@@ -177,6 +184,8 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
                 int columnSplit,
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
+                int masterTimestampType,
+                int slaveTimestampType,
                 Record nullMasterRecord,
                 Record nullSlaveRecord
         ) {
@@ -188,6 +197,12 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
             this.nullMasterRecord = nullMasterRecord;
             this.nullSlaveRecord = nullSlaveRecord;
             isOpen = true;
+            if (masterTimestampType == slaveTimestampType) {
+                masterTimestampScale = slaveTimestampScale = 1L;
+            } else {
+                masterTimestampScale = ColumnType.getTimestampDriver(masterTimestampType).toNanosScale();
+                slaveTimestampScale = ColumnType.getTimestampDriver(slaveTimestampType).toNanosScale();
+            }
         }
 
         @Override
@@ -230,7 +245,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
                         value.putLong(VAL_MASTER_PREV, value.getLong(VAL_MASTER_NEXT));
                     }
                     value.putLong(VAL_MASTER_NEXT, masterRecord.getRowId());
-                    masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+                    masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 } else {
                     masterTimestamp = Long.MAX_VALUE;
                 }
@@ -254,7 +269,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
                         value.putLong(VAL_SLAVE_PREV, value.getLong(VAL_SLAVE_NEXT));
                     }
                     value.putLong(VAL_SLAVE_NEXT, slaveRecord.getRowId());
-                    slaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
+                    slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                 } else {
                     slaveTimestamp = Long.MAX_VALUE;
                 }

@@ -30,6 +30,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Utf8Sequence;
 
 public class CommonUtils {
@@ -190,7 +191,7 @@ public class CommonUtils {
 
     public static long microsToNanos(long micros) {
         try {
-            return scaleTimestamp(micros, 1000L);
+            return micros == Numbers.LONG_NULL ? Numbers.LONG_NULL : Math.multiplyExact(micros, Timestamps.MICRO_NANOS);
         } catch (ArithmeticException e) {
             throw ImplicitCastException.inconvertibleValue(micros, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO);
         }
@@ -213,10 +214,6 @@ public class CommonUtils {
                 throw NumericException.INSTANCE;
         }
         return tzSign;
-    }
-
-    public static long scaleTimestamp(long ts, long scales) {
-        return ts == Numbers.LONG_NULL ? Numbers.LONG_NULL : Math.multiplyExact(ts, scales);
     }
 
     public static int tenPow(int i) throws NumericException {

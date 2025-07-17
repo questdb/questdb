@@ -7082,7 +7082,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     ") timestamp(k) partition by NONE"
             );
 
-            CairoConfiguration configuration = createMmapFailingConfiguration(4);
+            CairoConfiguration configuration = createMmapFailingConfiguration(5);
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
