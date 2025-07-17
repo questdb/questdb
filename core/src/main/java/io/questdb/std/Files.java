@@ -39,8 +39,6 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.ParanoiaState.FD_PARANOIA_MODE;
-
 public final class Files {
     // The default varies across kernel versions and distros, so we use the same value as for vm.max_map_count.
     public static final long DEFAULT_FILE_LIMIT = 65536;
@@ -66,12 +64,12 @@ public final class Files {
     public static final char SEPARATOR;
     public static final Charset UTF_8;
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
-    private static final AtomicInteger OPEN_FILE_COUNT = new AtomicInteger();
+    static final AtomicInteger OPEN_FILE_COUNT = new AtomicInteger();
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
     private static final AtomicInteger fdCounter = new AtomicInteger();
-    private static final LongHashSet openFds = new LongHashSet();
     // To be set in tests to check every call for using OPEN file descriptor
     public static boolean VIRTIO_FS_DETECTED = false;
+    private final static FdCache fdCache = new FdCache();
 
     private Files() {
         // Prevent construction.
@@ -92,13 +90,8 @@ public final class Files {
     public static int close(long fd) {
         // do not close `stdin` and `stdout`
         int osFd;
-        if (fd > 0 && (osFd = toOsFd(fd)) > 2) {
-            auditClose(fd);
-            int res = close0(osFd);
-            if (res == 0) {
-                OPEN_FILE_COUNT.decrementAndGet();
-            }
-            return res;
+        if (fd > 0 && toOsFd(fd) > 2) {
+            return fdCache.close(fd);
         }
         // failed to close
         return -1;
@@ -118,9 +111,7 @@ public final class Files {
 
     public static long createUniqueFd(int fd) {
         if (fd != -1) {
-            long uniqueFd = auditOpen(fd);
-            OPEN_FILE_COUNT.incrementAndGet();
-            return uniqueFd;
+            return fdCache.createUniqueFdNonCached(fd);
         }
         return fd;
     }
@@ -129,8 +120,7 @@ public final class Files {
         int osFd = toOsFd(fd);
         // do not detach `stdin` and `stdout`
         if (osFd > 1) {
-            auditClose(fd);
-            OPEN_FILE_COUNT.decrementAndGet();
+            fdCache.detach(fd);
             return osFd;
         }
         return -1;
@@ -243,7 +233,7 @@ public final class Files {
     public native static long getMapCountLimit();
 
     public static String getOpenFdDebugInfo() {
-        return openFds.toString();
+        return fdCache.getOpenFdDebugInfo();
     }
 
     public static long getOpenFileCount() {
@@ -261,9 +251,7 @@ public final class Files {
 
     public synchronized static long getStdOutFdInternal() {
         int stdoutFd = getStdOutFd();
-        long uniqueFd = Numbers.encodeLowHighInts(0, stdoutFd);
-        openFds.add(uniqueFd);
-        return uniqueFd;
+        return fdCache.createUniqueFdNonCachedStdOut(stdoutFd);
     }
 
     public static native int hardLink(long lpszSrc, long lpszHardLink);
@@ -402,29 +390,29 @@ public final class Files {
     }
 
     public static long openAppend(LPSZ lpsz) {
-        return createUniqueFd(openAppend(lpsz.ptr()));
+        return fdCache.createUniqueFdNonCached(openAppend(lpsz.ptr()));
     }
 
     public static long openCleanRW(LPSZ lpsz, long size) {
-        return createUniqueFd(openCleanRW(lpsz.ptr(), size));
+        return fdCache.createUniqueFdNonCached(openCleanRW(lpsz.ptr(), size));
     }
 
     public native static int openCleanRW(long lpszName, long size);
 
     public static long openRO(LPSZ lpsz) {
-        return createUniqueFd(openRO(lpsz.ptr()));
+        return fdCache.openROCached(lpsz);
     }
 
     public static long openRW(LPSZ lpsz) {
-        return createUniqueFd(openRW(lpsz.ptr()));
+        return fdCache.openRWCached(lpsz, 0);
     }
 
     public static long openRW(LPSZ lpsz, long opts) {
-        return createUniqueFd(openRWOpts(lpsz.ptr(), opts));
+        return fdCache.openRWCached(lpsz, opts);
     }
 
     public static long read(long fd, long address, long len, long offset) {
-        return read(toOsFd(fd), address, len, offset);
+        return read(fdCache.toOsFd(fd), address, len, offset);
     }
 
     public static long readIntAsUnsignedLong(long fd, long offset) {
@@ -473,11 +461,19 @@ public final class Files {
     }
 
     public static boolean remove(LPSZ lpsz) {
-        return remove(lpsz.ptr());
+        if (remove(lpsz.ptr())) {
+            fdCache.remove(lpsz);
+            return true;
+        }
+        return false;
     }
 
     public static int rename(LPSZ oldName, LPSZ newName) {
-        return rename(oldName.ptr(), newName.ptr());
+        int retCode = rename(oldName.ptr(), newName.ptr());
+        if (retCode == 0) {
+            fdCache.remove(oldName);
+        }
+        return retCode;
     }
 
     /**
@@ -545,13 +541,7 @@ public final class Files {
     public static native int sync();
 
     public static int toOsFd(long fd) {
-        if (FD_PARANOIA_MODE && fd != -1) {
-            checkFdOpen(fd);
-        }
-        int osFd = Numbers.decodeHighInt(fd);
-        // 0 FD can be closed, but no other operation is allowed
-        assert fd == -1 || osFd > 0;
-        return osFd;
+        return fdCache.toOsFd(fd);
     }
 
     public static boolean touch(LPSZ lpsz) {
@@ -632,29 +622,7 @@ public final class Files {
 
     private native static long append(int fd, long address, long len);
 
-    private static synchronized void auditClose(long fd) {
-        if (openFds.remove(fd) == -1) {
-            throw new IllegalStateException("fd " + fd + " is already closed!");
-        }
-    }
-
-    private static synchronized long auditOpen(int fd) {
-        if (fd < 0) {
-            throw new IllegalStateException("Invalid fd " + fd);
-        }
-        int index = fdCounter.getAndIncrement();
-        long uniqueFd = Numbers.encodeLowHighInts(index, fd);
-        openFds.add(uniqueFd);
-        return uniqueFd;
-    }
-
-    private static synchronized void checkFdOpen(long fd) {
-        if (!openFds.contains(fd)) {
-            throw new IllegalStateException("fd " + fd + " is not open!");
-        }
-    }
-
-    private native static int close0(int fd);
+    native static int close0(int fd);
 
     private static native int copy(long from, long to);
 
@@ -715,6 +683,8 @@ public final class Files {
 
     private native static int openRWOpts(long lpszName, long opts);
 
+    private native static int openRWOptsNoCreate(long lpszName, long opts);
+
     private native static long read(int fd, long address, long len, long offset);
 
     private native static long readIntAsUnsignedLong(int fd, long offset);
@@ -740,6 +710,18 @@ public final class Files {
     private native static boolean truncate(int fd, long size);
 
     private native static long write(int fd, long address, long len, long offset);
+
+    static int openRO0(long lpszName) {
+        return openRO(lpszName);
+    }
+
+    static int openRW0(long lpszName) {
+        return openRW(lpszName);
+    }
+
+    static int openRWOpts0(long lpszName, long opts) {
+        return openRWOpts(lpszName, opts);
+    }
 
     static {
         Os.init();
