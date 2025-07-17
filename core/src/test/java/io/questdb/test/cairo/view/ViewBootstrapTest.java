@@ -503,19 +503,55 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
         final String query2 = "select ts, k2, max(v) as v_max from " + TABLE1 + " where v > 6";
         assertSqlFailureViaPG(
                 "create view " + VIEW2 + " as (" + query2 + ")",
-                "views are disabled"
+                "views are disabled, set 'cairo.view.enabled=true' in the config to enable them"
         );
 
-        // cannot create new view via HTTP
+        // cannot compile existing view via PG
+        assertSqlFailureViaPG(
+                "compile view " + VIEW1,
+                "views are disabled, set 'cairo.view.enabled=true' in the config to enable them"
+        );
+
+        // cannot drop existing view via PG
+        assertSqlFailureViaPG(
+                "drop view " + VIEW1,
+                "views are disabled, set 'cairo.view.enabled=true' in the config to enable them"
+        );
+
         try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+            // cannot create new view via HTTP
             assertExecRequest(
                     httpClient,
                     "create view " + VIEW2 + " as (" + query2 + ")",
                     HTTP_BAD_REQUEST,
                     "{" +
                             "\"query\":\"create view view2 as (select ts, k2, max(v) as v_max from table1 where v > 6)\"," +
-                            "\"error\":\"views are disabled\"," +
-                            "\"position\":0" +
+                            "\"error\":\"views are disabled, set 'cairo.view.enabled=true' in the config to enable them\"," +
+                            "\"position\":7" +
+                            "}"
+            );
+
+            // cannot compile existing view via PG
+            assertExecRequest(
+                    httpClient,
+                    "compile view " + VIEW1,
+                    HTTP_BAD_REQUEST,
+                    "{" +
+                            "\"query\":\"compile view view1\"," +
+                            "\"error\":\"views are disabled, set 'cairo.view.enabled=true' in the config to enable them\"," +
+                            "\"position\":8" +
+                            "}"
+            );
+
+            // cannot drop existing view via PG
+            assertExecRequest(
+                    httpClient,
+                    "drop view " + VIEW1,
+                    HTTP_BAD_REQUEST,
+                    "{" +
+                            "\"query\":\"drop view view1\"," +
+                            "\"error\":\"views are disabled, set 'cairo.view.enabled=true' in the config to enable them\"," +
+                            "\"position\":5" +
                             "}"
             );
         }

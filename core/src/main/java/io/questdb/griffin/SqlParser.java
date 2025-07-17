@@ -776,7 +776,7 @@ public class SqlParser {
     private ExecutionModel parseCompileView(GenericLexer lexer) throws SqlException {
         expectTok(lexer, "view");
         if (!configuration.isViewEnabled()) {
-            throw SqlException.$(0, "views are disabled");
+            throw SqlException.$(lexer.lastTokenPosition(), "views are disabled, set 'cairo.view.enabled=true' in the config to enable them");
         }
 
         CharSequence tok = tok(lexer, "view name");
@@ -902,7 +902,7 @@ public class SqlParser {
         final CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized' or 'view'");
         if (isViewKeyword(tok)) {
             if (!configuration.isViewEnabled()) {
-                throw SqlException.$(0, "views are disabled");
+                throw SqlException.$(lexer.lastTokenPosition(), "views are disabled, set 'cairo.view.enabled=true' in the config to enable them");
             }
             return parseCreateView(lexer, executionContext, sqlParserCallback);
         }

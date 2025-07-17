@@ -2254,6 +2254,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 compiledQuery.ofDrop(dropOperationBuilder.build());
                 // DROP VIEW [ IF EXISTS ] name [;]
             } else if (isViewKeyword(tok)) {
+                if (!configuration.isViewEnabled()) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "views are disabled, set 'cairo.view.enabled=true' in the config to enable them");
+                }
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null) {
                     throw SqlException.$(lexer.getPosition(), "expected ").put("[IF EXISTS] view-name");
