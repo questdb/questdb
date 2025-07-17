@@ -43,10 +43,12 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     protected int blockCapacity;
     protected int blockValueCountMod;
     protected MillisecondClock clock;
+    protected long columnTop;
     protected int keyCount;
     protected long spinLockTimeoutMs;
-    protected long columnTop;
     private int keyCountIncludingNulls;
+    private long keyFileSequence = -1;
+    private long valueMemSize = -1;
 
     @Override
     public void close() {
@@ -54,6 +56,10 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         // Failures in opening should have memories closed as well.
         Misc.free(keyMem);
         Misc.free(valueMem);
+    }
+
+    public long getColumnTop() {
+        return columnTop;
     }
 
     public long getKeyBaseAddress() {
@@ -67,10 +73,6 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
     public long getKeyMemorySize() {
         return keyMem.size();
-    }
-
-    public long getColumnTop() {
-        return columnTop;
     }
 
     public long getValueBaseAddress() {
@@ -89,27 +91,6 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     public boolean isOpen() {
         return keyMem.getFd() != -1;
     }
-
-    /**
-     * Reloads index by extending value memory. There are several assumptions here:
-     * - index reader is open and memory objects are not null
-     * - memory object can be read
-     * - key file sequence value and "value memory size" are both updated
-     * - we can resize key memory using only keyCount
-     * - we can resize value memory using the "value memory size" we read from the key header
-     */
-    public void reloadConditionally() {
-        long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK);
-        if (seq != keyFileSequence) {
-            readIndexMetadataAtomically();
-            // extend memory objects
-            this.keyMem.extend(BitmapIndexUtils.getKeyEntryOffset(keyCount));
-            this.valueMem.extend(valueMemSize);
-        }
-    }
-
-    private long keyFileSequence = -1;
-    private long valueMemSize = -1;
 
     @Override
     public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, long columnTop) {
@@ -153,6 +134,54 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         }
     }
 
+    /**
+     * Reloads index by extending value memory. There are several assumptions here:
+     * - index reader is open and memory objects are not null
+     * - memory object can be read
+     * - key file sequence value and "value memory size" are both updated
+     * - we can resize key memory using only keyCount
+     * - we can resize value memory using the "value memory size" we read from the key header
+     */
+    public void reloadConditionally() {
+        long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK);
+        if (seq != keyFileSequence) {
+            readIndexMetadataAtomically();
+            // extend memory objects
+            this.keyMem.extend(BitmapIndexUtils.getKeyEntryOffset(keyCount));
+            this.valueMem.extend(valueMemSize);
+        }
+    }
+
+    public void updateKeyCount() {
+        int keyCount;
+        final long deadline = clock.getTicks() + spinLockTimeoutMs;
+        while (true) {
+            long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
+
+            Unsafe.getUnsafe().loadFence();
+            if (keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
+                keyCount = keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+
+                Unsafe.getUnsafe().loadFence();
+                if (seq == keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
+                    break;
+                }
+            }
+
+            if (clock.getTicks() > deadline) {
+                this.keyCount = 0;
+                LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms]").$();
+                throw CairoException.critical(0).put(INDEX_CORRUPT);
+            }
+            Os.pause();
+        }
+
+        if (keyCount > this.keyCount) {
+            this.keyCount = keyCount;
+            this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
+        }
+    }
+
     private void readIndexMetadataAtomically() {
         // Triple check atomic read. We read first and last sequences. If they match - there is a chance at stable
         // read. Confirm start sequence hasn't changed after values read. If it has changed - retry the whole thing.
@@ -187,36 +216,6 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
             }
 
             Os.pause();
-        }
-    }
-
-    public void updateKeyCount() {
-        int keyCount;
-        final long deadline = clock.getTicks() + spinLockTimeoutMs;
-        while (true) {
-            long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
-
-            Unsafe.getUnsafe().loadFence();
-            if (keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
-                keyCount = keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
-
-                Unsafe.getUnsafe().loadFence();
-                if (seq == keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
-                    break;
-                }
-            }
-
-            if (clock.getTicks() > deadline) {
-                this.keyCount = 0;
-                LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms]").$();
-                throw CairoException.critical(0).put(INDEX_CORRUPT);
-            }
-            Os.pause();
-        }
-
-        if (keyCount > this.keyCount) {
-            this.keyCount = keyCount;
-            this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
         }
     }
 }

@@ -84,7 +84,7 @@ public interface BitmapIndexReader extends Closeable {
             @Transient Path path,
             CharSequence columnName,
             long columnNameTxn,
-            long unIndexedNullCount
+            long columnTop
     );
 
     void reloadConditionally();
