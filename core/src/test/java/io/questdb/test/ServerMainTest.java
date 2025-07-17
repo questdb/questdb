@@ -179,7 +179,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                             "(show parameters) where property_path not in (" +
                                     "'cairo.root', 'cairo.sql.backup.root', 'cairo.sql.copy.root', 'cairo.sql.copy.work.root', " +
                                     "'cairo.writer.misc.append.page.size', 'line.tcp.io.worker.count', " +
-                                    "'wal.apply.worker.count', 'mat.view.refresh.worker.count', 'view.refresh.worker.count'" +
+                                    "'wal.apply.worker.count', 'mat.view.refresh.worker.count', 'view.compiler.worker.count'" +
                                     ") order by 1",
                             actualSink
                     );
