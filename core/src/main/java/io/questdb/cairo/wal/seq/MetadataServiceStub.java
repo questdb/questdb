@@ -31,6 +31,7 @@ import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public interface MetadataServiceStub extends MetadataService {
 
@@ -108,12 +109,27 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default void setMetaMatViewRefreshLimit(int limitHoursOrMonths) {
+    default void setMatViewRefresh(
+            int refreshType,
+            int timerInterval,
+            char timerUnit,
+            long timerStart,
+            @Nullable CharSequence timerTimeZone,
+            int periodLength,
+            char periodLengthUnit,
+            int periodDelay,
+            char periodDelayUnit
+    ) {
+        throw CairoException.critical(0).put("change of materialized view refresh settings does not update sequencer metadata");
+    }
+
+    @Override
+    default void setMatViewRefreshLimit(int limitHoursOrMonths) {
         throw CairoException.critical(0).put("change of materialized view refresh limit does not update sequencer metadata");
     }
 
     @Override
-    default void setMetaMatViewRefreshTimer(long start, int interval, char unit) {
+    default void setMatViewRefreshTimer(long start, int interval, char unit) {
         throw CairoException.critical(0).put("change of materialized view refresh timer does not update sequencer metadata");
     }
 

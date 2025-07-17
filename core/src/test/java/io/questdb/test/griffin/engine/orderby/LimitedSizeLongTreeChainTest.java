@@ -441,6 +441,11 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             ((TestRecord) record).value = values.get((int) atRowId);
             ((TestRecord) record).position = atRowId;

@@ -41,6 +41,7 @@ import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.LongList;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -57,9 +58,9 @@ import org.junit.Test;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 import static io.questdb.test.tools.TestUtils.assertContains;
 
 
@@ -157,6 +158,126 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 "cannot modify materialized view [view=price_1h]\r\n" +
                                 "00\r\n"
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testMatViewsRefreshIntervalsReloadOnServerStart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long now = TimestampFormatUtils.parseUTCTimestamp("2024-01-01T01:01:01.000001Z");
+            final TestMicrosecondClock testClock = new TestMicrosecondClock(now);
+
+            final LongList expectedIntervals = new LongList();
+            expectedIntervals.add(parseFloorPartialTimestamp("2024-09-11T12:01"), parseFloorPartialTimestamp("2024-09-11T12:02"));
+            expectedIntervals.add(parseFloorPartialTimestamp("2024-09-12T03:01"), parseFloorPartialTimestamp("2024-09-12T23:02"));
+
+            try (final TestServerMain main1 = startMainPortsDisabled(
+                    testClock,
+                    PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD.getEnvVarName(), "10s"
+            )) {
+                execute(
+                        main1,
+                        "create table base_price (" +
+                                "sym varchar, price double, ts timestamp" +
+                                ") timestamp(ts) partition by DAY WAL"
+                );
+
+                execute(
+                        main1,
+                        "create materialized view price_1h refresh manual as " +
+                                "select sym, last(price) as price, ts from base_price sample by 1h;"
+                );
+
+                execute(
+                        main1,
+                        "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                                ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                                ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                                ",('gbpusd', 1.321, '2024-09-10T13:02')"
+                );
+
+                final MatViewTimerJob timerJob = new MatViewTimerJob(main1.getEngine());
+                drainMatViewTimerQueue(timerJob);
+
+                final TableToken viewToken = main1.getEngine().getTableTokenIfExists("price_1h");
+                Assert.assertNotNull(viewToken);
+                final MatViewState viewState = main1.getEngine().getMatViewStateStore().getViewState(viewToken);
+                Assert.assertNotNull(viewState);
+
+                try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
+
+                    // nothing is cached after a successful refresh
+                    Assert.assertEquals(-1, viewState.getRefreshIntervalsBaseTxn());
+                    Assert.assertEquals(0, viewState.getRefreshIntervals().size());
+
+                    assertSql(
+                            main1,
+                            "sym\tprice\tts\n" +
+                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                            "price_1h order by ts, sym"
+                    );
+
+                    execute(
+                            main1,
+                            "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-11T12:01')" +
+                                    ",('jpyusd', 103.21, '2024-09-11T12:02')"
+                    );
+                    execute(
+                            main1,
+                            "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-12T13:01')" +
+                                    ",('jpyusd', 103.21, '2024-09-12T13:02')"
+                    );
+                    execute(
+                            main1,
+                            "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-12T03:01')" +
+                                    ",('jpyusd', 103.21, '2024-09-12T23:02')"
+                    );
+                    // tick timer job to enqueue caching task
+                    testClock.micros.addAndGet(Timestamps.MINUTE_MICROS);
+                    drainMatViewTimerQueue(timerJob);
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
+
+                    // the newly inserted intervals should be in the cache
+                    Assert.assertEquals(4, viewState.getRefreshIntervalsBaseTxn());
+                    TestUtils.assertEquals(expectedIntervals, viewState.getRefreshIntervals());
+
+                    // range refresh shouldn't mess up txn intervals
+                    execute(main1, "refresh materialized view price_1h range from '2024-09-11' to '2024-09-12';");
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
+                }
+            }
+
+            try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
+                final TableToken viewToken = main2.getEngine().getTableTokenIfExists("price_1h");
+                Assert.assertNotNull(viewToken);
+                final MatViewState viewState = main2.getEngine().getMatViewStateStore().getViewState(viewToken);
+                Assert.assertNotNull(viewState);
+
+                // the txn intervals should stay as they are
+                Assert.assertEquals(4, viewState.getRefreshIntervalsBaseTxn());
+                TestUtils.assertEquals(expectedIntervals, viewState.getRefreshIntervals());
+
+                execute(main2, "refresh materialized view price_1h incremental;");
+
+                drainWalAndMatViewQueues(main2.getEngine());
+
+                final String expected = "sym\tprice\tts\n" +
+                        "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                        "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                        "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                        "gbpusd\t1.32\t2024-09-11T12:00:00.000000Z\n" +
+                        "jpyusd\t103.21\t2024-09-11T12:00:00.000000Z\n" +
+                        "gbpusd\t1.32\t2024-09-12T03:00:00.000000Z\n" +
+                        "gbpusd\t1.32\t2024-09-12T13:00:00.000000Z\n" +
+                        "jpyusd\t103.21\t2024-09-12T13:00:00.000000Z\n" +
+                        "jpyusd\t103.21\t2024-09-12T23:00:00.000000Z\n";
+
+                assertSql(main2, expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                assertSql(main2, expected, "price_1h order by ts, sym");
             }
         });
     }
@@ -369,7 +490,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 drainMatViewQueue(main2.getEngine());
                 assertSql(
                         main2,
-                        "count\n" +
+                        "count()\n" +
                                 "0\n",
                         "select count() from materialized_views();"
                 );
@@ -565,6 +686,70 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testPeriodMatViewsReloadOnServerStart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long start = TimestampFormatUtils.parseUTCTimestamp("2024-12-12T00:00:00.000000Z");
+            final TestMicrosecondClock testClock = new TestMicrosecondClock(start);
+
+            final String firstExpected = "sym\tprice\tts\n" +
+                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n";
+
+            try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
+                execute(
+                        main1,
+                        "create table base_price (" +
+                                "sym varchar, price double, ts timestamp" +
+                                ") timestamp(ts) partition by DAY WAL"
+                );
+
+                execute(
+                        main1,
+                        "create materialized view price_1h refresh incremental period(length 1d) as " +
+                                "select sym, last(price) as price, ts from base_price sample by 1h;"
+                );
+
+                execute(
+                        main1,
+                        "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                                ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                                ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                                ",('gbpusd', 1.321, '2024-09-10T13:02')"
+                );
+
+                try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
+                    final MatViewTimerJob timerJob = new MatViewTimerJob(main1.getEngine());
+                    drainMatViewTimerQueue(timerJob);
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
+
+                    assertSql(
+                            main1,
+                            firstExpected,
+                            "price_1h order by ts, sym"
+                    );
+                }
+            }
+
+            try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
+                assertSql(main2, firstExpected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                assertSql(main2, firstExpected, "price_1h order by ts, sym");
+
+                assertSql(
+                        main2,
+                        "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\tinvalidation_reason\trefresh_period_hi\trefresh_base_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
+                                "price_1h\timmediate\tbase_price\t\t2024-12-12T00:00:00.000000Z\tvalid\t\t2024-12-12T00:00:00.000000Z\t1\t\t2024-12-12T00:00:00.000000Z\t0\t\t1\tDAY\t0\t\n",
+                        "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                                "view_status, invalidation_reason, refresh_period_hi, refresh_base_table_txn, " +
+                                "timer_time_zone, timer_start, timer_interval, timer_interval_unit, " +
+                                "period_length, period_length_unit, period_delay, period_delay_unit " +
+                                "from materialized_views();"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testTimerMatViewsReloadOnServerStart1() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String startStr = "2024-12-12T00:00:00.000000Z";
@@ -592,7 +777,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                 execute(
                         main1,
-                        "create materialized view price_1h_t refresh start '" + startStr + "' every 1h as " +
+                        "create materialized view price_1h_t refresh every 1h start '" + startStr + "' as " +
                                 "select sym, last(price) as price, ts from base_price sample by 1h"
                 );
 
@@ -613,7 +798,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                             "price_1h order by ts, sym"
                     );
 
-                    MatViewTimerJob timerJob = new MatViewTimerJob(main1.getEngine());
+                    final MatViewTimerJob timerJob = new MatViewTimerJob(main1.getEngine());
                     drainMatViewTimerQueue(timerJob);
                     drainWalAndMatViewQueues(refreshJob, main1.getEngine());
 
@@ -627,6 +812,19 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
             testClock.micros.addAndGet(Timestamps.HOUR_MICROS);
             try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
+                assertSql(
+                        main2,
+                        "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\tinvalidation_reason\trefresh_period_hi\trefresh_base_table_txn\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\n" +
+                                "price_1h\timmediate\tbase_price\t\t2024-12-12T00:00:00.000000Z\tvalid\t\t\t1\t\t\t0\t\t0\t\t0\t\n" +
+                                "price_1h_t\ttimer\tbase_price\t\t2024-12-12T00:00:00.000000Z\tvalid\t\t\t1\t\t2024-12-12T00:00:00.000000Z\t1\tHOUR\t0\t\t0\t\n",
+                        "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                                "view_status, invalidation_reason, refresh_period_hi, refresh_base_table_txn, " +
+                                "timer_time_zone, timer_start, timer_interval, timer_interval_unit, " +
+                                "period_length, period_length_unit, period_delay, period_delay_unit " +
+                                "from materialized_views() " +
+                                "order by view_name;"
+                );
+
                 assertSql(main2, firstExpected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
                 assertSql(main2, firstExpected, "price_1h order by ts, sym");
                 assertSql(main2, firstExpected, "price_1h_t order by ts, sym");
@@ -646,7 +844,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                 assertSql(main2, secondExpected, "price_1h order by ts, sym");
 
-                MatViewTimerJob timerJob = new MatViewTimerJob(main2.getEngine());
+                final MatViewTimerJob timerJob = new MatViewTimerJob(main2.getEngine());
                 drainMatViewTimerQueue(timerJob);
                 drainWalAndMatViewQueues(main2.getEngine());
 
@@ -677,7 +875,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                 execute(
                         main1,
-                        "create materialized view price_1h refresh start '" + startStr + "' every 1h as (" +
+                        "create materialized view price_1h refresh every 1h deferred start '" + startStr + "' as (" +
                                 "select sym, last(price) as price, ts from base_price sample by 1h" +
                                 ") partition by DAY"
                 );
@@ -691,7 +889,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
 
                 try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
-                    MatViewTimerJob timerJob = new MatViewTimerJob(main1.getEngine());
+                    final MatViewTimerJob timerJob = new MatViewTimerJob(main1.getEngine());
                     drainMatViewTimerQueue(timerJob);
                     drainWalAndMatViewQueues(refreshJob, main1.getEngine());
 
@@ -708,7 +906,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
                 assertSql(main2, firstExpected, "price_1h order by ts, sym");
 
-                MatViewTimerJob timerJob = new MatViewTimerJob(main2.getEngine());
+                final MatViewTimerJob timerJob = new MatViewTimerJob(main2.getEngine());
                 drainMatViewTimerQueue(timerJob);
                 drainWalAndMatViewQueues(main2.getEngine());
 
@@ -767,16 +965,29 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     }
 
     @NotNull
-    private static TestServerMain startMainPortsDisabled(MicrosecondClock microsecondClock) {
-        return startWithEnvVariables0(
-                microsecondClock,
+    private static TestServerMain startMainPortsDisabled(MicrosecondClock microsecondClock, String... extraEnvs) {
+        assert extraEnvs.length % 2 == 0;
+
+        final String[] disablePortsEnvs = new String[]{
                 PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
                 PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
                 PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "false",
                 PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
                 PropertyKey.HTTP_ENABLED.getEnvVarName(), "false",
                 PropertyKey.PG_ENABLED.getEnvVarName(), "false"
-        );
+        };
+
+        final String[] envs = new String[disablePortsEnvs.length + extraEnvs.length];
+        for (int i = 0; i < extraEnvs.length; i += 2) {
+            envs[i] = extraEnvs[i];
+            envs[i + 1] = extraEnvs[i + 1];
+        }
+        for (int i = disablePortsEnvs.length; i < envs.length; i += 2) {
+            envs[i] = disablePortsEnvs[i - disablePortsEnvs.length];
+            envs[i + 1] = disablePortsEnvs[i + 1 - disablePortsEnvs.length];
+        }
+
+        return startWithEnvVariables0(microsecondClock, envs);
     }
 
     private static TestServerMain startWithEnvVariables0(String... envs) {
@@ -853,18 +1064,5 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         HTTP,
         UDP,
         TCP
-    }
-
-    private static class TestMicrosecondClock implements MicrosecondClock {
-        AtomicLong micros;
-
-        public TestMicrosecondClock(long micros) {
-            this.micros = new AtomicLong(micros);
-        }
-
-        @Override
-        public long getTicks() {
-            return micros.get();
-        }
     }
 }

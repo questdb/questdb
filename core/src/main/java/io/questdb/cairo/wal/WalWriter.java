@@ -95,6 +95,7 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.validateDesignatedTimestampBounds;
@@ -146,12 +147,14 @@ public class WalWriter implements TableWriterAPI {
     private boolean distressed;
     private boolean isCommittingData;
     private byte lastDedupMode = WAL_DEDUP_MODE_DEFAULT;
-    private long lastRefreshBaseTxn;
-    private long lastRefreshTimestamp;
+    private long lastMatViewPeriodHi = WAL_DEFAULT_LAST_PERIOD_HI;
+    private long lastMatViewRefreshBaseTxn = WAL_DEFAULT_BASE_TABLE_TXN;
+    private long lastMatViewRefreshTimestamp = WAL_DEFAULT_LAST_REFRESH_TIMESTAMP;
     private long lastReplaceRangeHiTs = 0;
     private long lastReplaceRangeLowTs = 0;
     private int lastSegmentTxn = -1;
     private long lastSeqTxn = NO_TXN;
+    private byte lastTxnType = WalTxnType.DATA;
     private boolean open;
     private boolean rollSegmentOnNextRow = false;
     private int segmentId = -1;
@@ -315,7 +318,15 @@ public class WalWriter implements TableWriterAPI {
     @Override
     public void commit() {
         // plain old commit
-        commit0(WAL_DEFAULT_BASE_TABLE_TXN, WAL_DEFAULT_LAST_REFRESH_TIMESTAMP, 0, 0, WAL_DEDUP_MODE_DEFAULT);
+        commit0(
+                WalTxnType.DATA,
+                WAL_DEFAULT_BASE_TABLE_TXN,
+                WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
+                WAL_DEFAULT_LAST_PERIOD_HI,
+                0,
+                0,
+                WAL_DEDUP_MODE_DEFAULT
+        );
     }
 
     /**
@@ -324,18 +335,35 @@ public class WalWriter implements TableWriterAPI {
      *
      * @param lastRefreshBaseTxn    the base table seqTxn the mat view is refreshed at
      * @param lastRefreshTimestamp  the wall clock timestamp when the refresh is done
+     * @param lastPeriodHi          the period high boundary timestamp the mat view is refreshed at
      * @param lastReplaceRangeLowTs the low timestamp of the range to be replaced, inclusive
      * @param lastReplaceRangeHiTs  the high timestamp of the range to be replaced, exclusive
      */
-    public void commitMatView(long lastRefreshBaseTxn, long lastRefreshTimestamp, long lastReplaceRangeLowTs, long lastReplaceRangeHiTs) {
+    public void commitMatView(long lastRefreshBaseTxn, long lastRefreshTimestamp, long lastPeriodHi, long lastReplaceRangeLowTs, long lastReplaceRangeHiTs) {
         assert lastReplaceRangeLowTs < lastReplaceRangeHiTs;
         assert txnMinTimestamp >= lastReplaceRangeLowTs;
         assert txnMaxTimestamp <= lastReplaceRangeHiTs;
-        commit0(lastRefreshBaseTxn, lastRefreshTimestamp, lastReplaceRangeLowTs, lastReplaceRangeHiTs, WAL_DEDUP_MODE_REPLACE_RANGE);
+        commit0(
+                WalTxnType.MAT_VIEW_DATA,
+                lastRefreshBaseTxn,
+                lastRefreshTimestamp,
+                lastPeriodHi,
+                lastReplaceRangeLowTs,
+                lastReplaceRangeHiTs,
+                WAL_DEDUP_MODE_REPLACE_RANGE
+        );
     }
 
     public void commitWithParams(long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
-        commit0(WAL_DEFAULT_BASE_TABLE_TXN, WAL_DEFAULT_LAST_REFRESH_TIMESTAMP, replaceRangeLowTs, replaceRangeHiTs, dedupMode);
+        commit0(
+                WalTxnType.DATA,
+                WAL_DEFAULT_BASE_TABLE_TXN,
+                WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
+                WAL_DEFAULT_LAST_PERIOD_HI,
+                replaceRangeLowTs,
+                replaceRangeHiTs,
+                dedupMode
+        );
     }
 
     public void doClose(boolean truncate) {
@@ -503,10 +531,21 @@ public class WalWriter implements TableWriterAPI {
             long lastRefreshBaseTxn,
             long lastRefreshTimestamp,
             boolean invalid,
-            @Nullable CharSequence invalidationReason
+            @Nullable CharSequence invalidationReason,
+            long lastPeriodHi,
+            @Nullable LongList refreshIntervals,
+            long refreshIntervalsBaseTxn
     ) {
         try {
-            lastSegmentTxn = events.appendMatViewInvalidate(lastRefreshBaseTxn, lastRefreshTimestamp, invalid, invalidationReason);
+            lastSegmentTxn = events.appendMatViewInvalidate(
+                    lastRefreshBaseTxn,
+                    lastRefreshTimestamp,
+                    invalid,
+                    invalidationReason,
+                    lastPeriodHi,
+                    refreshIntervals,
+                    refreshIntervalsBaseTxn
+            );
             getSequencerTxn();
         } catch (Throwable th) {
             rollback();
@@ -665,6 +704,11 @@ public class WalWriter implements TableWriterAPI {
             distressed = true;
             throw th;
         }
+    }
+
+    @TestOnly
+    public void setLegacyMatViewFormat(boolean legacyMatViewFormat) {
+        events.setLegacyMatViewFormat(legacyMatViewFormat);
     }
 
     @Override
@@ -971,19 +1015,31 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private void commit0(long lastRefreshBaseTxn, long lastRefreshTimestamp, long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
+    private void commit0(
+            byte txnType,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            long lastPeriodHi,
+            long replaceRangeLowTs,
+            long replaceRangeHiTs,
+            byte dedupMode
+    ) {
         checkDistressed();
         try {
             if (inTransaction() || dedupMode == WAL_DEDUP_MODE_REPLACE_RANGE) {
-                isCommittingData = true;
                 final long rowsToCommit = getUncommittedRowCount();
-                lastReplaceRangeLowTs = replaceRangeLowTs;
-                lastReplaceRangeHiTs = replaceRangeHiTs;
-                lastDedupMode = dedupMode;
-                this.lastRefreshBaseTxn = lastRefreshBaseTxn;
-                this.lastRefreshTimestamp = lastRefreshTimestamp;
+
+                this.isCommittingData = true;
+                this.lastTxnType = txnType;
+                this.lastReplaceRangeLowTs = replaceRangeLowTs;
+                this.lastReplaceRangeHiTs = replaceRangeHiTs;
+                this.lastDedupMode = dedupMode;
+                this.lastMatViewRefreshBaseTxn = lastRefreshBaseTxn;
+                this.lastMatViewRefreshTimestamp = lastRefreshTimestamp;
+                this.lastMatViewPeriodHi = lastPeriodHi;
 
                 lastSegmentTxn = events.appendData(
+                        txnType,
                         currentTxnStartRowNum,
                         segmentRowCount,
                         txnMinTimestamp,
@@ -991,6 +1047,7 @@ public class WalWriter implements TableWriterAPI {
                         txnOutOfOrder,
                         lastRefreshBaseTxn,
                         lastRefreshTimestamp,
+                        lastPeriodHi,
                         replaceRangeLowTs,
                         replaceRangeHiTs,
                         dedupMode
@@ -1612,13 +1669,15 @@ public class WalWriter implements TableWriterAPI {
             // When current transaction is not a data transaction but a column add transaction
             // there is no need to add a record about it to the new segment event file.
             lastSegmentTxn = events.appendData(
+                    lastTxnType,
                     0,
                     uncommittedRows,
                     txnMinTimestamp,
                     txnMaxTimestamp,
                     txnOutOfOrder,
-                    lastRefreshBaseTxn,
-                    lastRefreshTimestamp,
+                    lastMatViewRefreshBaseTxn,
+                    lastMatViewRefreshTimestamp,
+                    lastMatViewPeriodHi,
                     lastReplaceRangeLowTs,
                     lastReplaceRangeHiTs,
                     lastDedupMode

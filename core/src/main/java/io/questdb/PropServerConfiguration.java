@@ -134,6 +134,8 @@ import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String ACL_ENABLED = "acl.enabled";
+    public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT = 64;
+    public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_MINIMUM = 4;
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
@@ -168,6 +170,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceRowIdListCapacity;
     private final int cairoPageFrameReduceShardCount;
     private final int cairoSQLCopyIdSupplier;
+    private final boolean cairoSqlColumnAliasExpressionEnabled;
     private final int cairoSqlCopyLogRetentionDays;
     private final int cairoSqlCopyQueueCapacity;
     private final String cairoSqlCopyRoot;
@@ -292,9 +295,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final TimeZoneRules logTimestampTimezoneRules;
     private final boolean matViewEnabled;
     private final long matViewInsertAsSelectBatchSize;
+    private final int matViewMaxRefreshIntervals;
     private final int matViewMaxRefreshRetries;
     private final long matViewMinRefreshInterval;
     private final boolean matViewParallelExecutionEnabled;
+    private final long matViewRefreshIntervalsUpdatePeriod;
     private final long matViewRefreshOomRetryTimeout;
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewRefreshPoolConfiguration();
     private final long matViewRefreshSleepTimeout;
@@ -305,7 +310,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewRefreshWorkerSleepThreshold;
     private final long matViewRefreshWorkerYieldThreshold;
     private final int matViewRowsPerQueryEstimate;
-    private final long matViewTimerStartEpsilon;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
     private final double maxRequiredDelimiterStdDev;
@@ -374,7 +378,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sharedWorkerYieldThreshold;
     private final String snapshotInstanceId;
     private final long spinLockTimeout;
+    private final int sqlAsOfJoinEvacuationThreshold;
     private final int sqlAsOfJoinLookahead;
+    private final int sqlAsOfJoinShortCircuitCacheCapacity;
     private final int sqlBindVariablePoolSize;
     private final int sqlCharacterStoreCapacity;
     private final int sqlCharacterStoreSequencePoolCapacity;
@@ -458,6 +464,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlWindowTreeKeyMaxPages;
     private final int sqlWindowTreeKeyPageSize;
     private final int sqlWithClauseModelPoolCapacity;
+    private final long symbolTableAppendPageSize;
     private final int systemO3ColumnMemorySize;
     private final String systemTableNamePrefix;
     private final long systemWalWriterDataAppendPageSize;
@@ -533,6 +540,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
     protected long walSegmentRolloverSize;
+    private int cairoSqlColumnAliasGeneratedMaxSize;
     private long cairoSqlCopyMaxIndexChunkSize;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
@@ -780,6 +788,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         // instead cairo.wal.enabled.default=true is added to the config, so only new QuestDB installations have WAL enabled by default
         this.walEnabledDefault = getBoolean(properties, env, PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
         this.walPurgeInterval = getMillis(properties, env, PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 30_000);
+        this.matViewRefreshIntervalsUpdatePeriod = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, walPurgeInterval / 2);
         this.walPurgeWaitBeforeDelete = getInt(properties, env, PropertyKey.DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE, 0);
         this.walTxnNotificationQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4096);
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
@@ -1272,7 +1281,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgInsertCacheEnabled = getBoolean(properties, env, PropertyKey.PG_INSERT_CACHE_ENABLED, true);
                 this.pgInsertCacheBlockCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_BLOCK_COUNT, 4);
                 this.pgInsertCacheRowCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_ROW_COUNT, 4);
-                this.pgLegacyModeEnabled = getBoolean(properties, env, PropertyKey.PG_LEGACY_MODE_ENABLED, false);
+                // making it harder to pick legacy mode before legacy code is removed from the codebase
+                // diehards that have this set to "true" will automatically be upgraded to the new protocol implementation.
+                // If issues still persist we want to hear about them and this provides the thank you fallback mechanism
+                this.pgLegacyModeEnabled = "!true".equals(getString(properties, env, PropertyKey.PG_LEGACY_MODE_ENABLED, "false"));
                 this.pgUpdateCacheEnabled = getBoolean(properties, env, PropertyKey.PG_UPDATE_CACHE_ENABLED, true);
                 this.pgUpdateCacheBlockCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_BLOCK_COUNT, 4);
                 this.pgUpdateCacheRowCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_ROW_COUNT, 4);
@@ -1299,7 +1311,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
             this.matViewRefreshOomRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 200);
             this.matViewMinRefreshInterval = getMicros(properties, env, PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL, Timestamps.MINUTE_MICROS);
-            this.matViewTimerStartEpsilon = getMicros(properties, env, PropertyKey.CAIRO_MAT_VIEW_TIMER_START_EPSILON, Timestamps.MINUTE_MICROS);
             this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
             this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
             this.matViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
@@ -1359,6 +1370,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlHashJoinLightValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 128 * 1024);
             this.sqlHashJoinLightValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlAsOfJoinLookahead = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, 100);
+            this.sqlAsOfJoinShortCircuitCacheCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY, 10_000_000);
+            this.sqlAsOfJoinEvacuationThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD, 10_000_000);
             this.useFastAsOfJoin = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_FAST, true);
             this.sqlSortValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 16777216);
             this.sqlSortValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
@@ -1376,6 +1389,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlInsertModelBatchSize = getLong(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_BATCH_SIZE, 1_000_000);
             this.matViewInsertAsSelectBatchSize = getLong(properties, env, PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, sqlInsertModelBatchSize);
             this.matViewRowsPerQueryEstimate = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+            this.matViewMaxRefreshIntervals = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS, 100);
             this.sqlCompileViewModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COMPILE_VIEW_MODEL_POOL_CAPACITY, 8);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
@@ -1392,6 +1406,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.writerDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 16 * Numbers.SIZE_1MB));
             this.systemWriterDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE, 256 * 1024));
             this.writerMiscAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_MISC_APPEND_PAGE_SIZE, Files.PAGE_SIZE));
+            this.symbolTableAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYMBOL_TABLE_APPEND_PAGE_SIZE, 256 * 1024));
 
             this.sqlSampleByIndexSearchPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 0);
             this.sqlSampleByDefaultAlignment = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR, true);
@@ -1720,6 +1735,20 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         // compatibility switch, to be removed in future
         this.sqlSampleByValidateFillType = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_VALIDATE_FILL_TYPE, true);
+
+        this.cairoSqlColumnAliasExpressionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, true);
+        this.cairoSqlColumnAliasGeneratedMaxSize = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE, COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT);
+        if (this.cairoSqlColumnAliasGeneratedMaxSize < COLUMN_ALIAS_GENERATED_MAX_SIZE_MINIMUM) {
+            log.info()
+                    .$("expected a column alias truncate length superior or equal to ")
+                    .$(COLUMN_ALIAS_GENERATED_MAX_SIZE_MINIMUM)
+                    .$(" but got ")
+                    .$(cairoSqlColumnAliasGeneratedMaxSize)
+                    .$(". Using ")
+                    .$(COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT)
+                    .$(" instead").$();
+            this.cairoSqlColumnAliasGeneratedMaxSize = COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT;
+        }
     }
 
     public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
@@ -2709,6 +2738,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getColumnAliasGeneratedMaxSize() {
+            return cairoSqlColumnAliasGeneratedMaxSize;
+        }
+
+        @Override
         public int getColumnIndexerQueueCapacity() {
             return columnIndexerQueueCapacity;
         }
@@ -3017,6 +3051,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getMatViewMaxRefreshIntervals() {
+            return matViewMaxRefreshIntervals;
+        }
+
+        @Override
         public int getMatViewMaxRefreshRetries() {
             return matViewMaxRefreshRetries;
         }
@@ -3027,6 +3066,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getMatViewRefreshIntervalsUpdatePeriod() {
+            return matViewRefreshIntervalsUpdatePeriod;
+        }
+
+        @Override
         public long getMatViewRefreshOomRetryTimeout() {
             return matViewRefreshOomRetryTimeout;
         }
@@ -3034,11 +3078,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMatViewRowsPerQueryEstimate() {
             return matViewRowsPerQueryEstimate;
-        }
-
-        @Override
-        public long getMatViewTimerStartEpsilon() {
-            return matViewTimerStartEpsilon;
         }
 
         @Override
@@ -3284,6 +3323,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlAsOfJoinLookAhead() {
             return sqlAsOfJoinLookahead;
+        }
+
+        @Override
+        public int getSqlAsOfJoinMapEvacuationThreshold() {
+            return sqlAsOfJoinEvacuationThreshold;
+        }
+
+        @Override
+        public int getSqlAsOfJoinShortCircuitCacheCapacity() {
+            return sqlAsOfJoinShortCircuitCacheCapacity;
         }
 
         @Override
@@ -3572,6 +3621,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getSymbolTableAppendPageSize() {
+            return symbolTableAppendPageSize;
+        }
+
+        @Override
         public long getSystemDataAppendPageSize() {
             return systemWriterDataAppendPageSize;
         }
@@ -3774,6 +3828,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isCheckpointRecoveryEnabled() {
             return checkpointRecoveryEnabled;
+        }
+
+        @Override
+        public boolean isColumnAliasExpressionEnabled() {
+            return cairoSqlColumnAliasExpressionEnabled;
         }
 
         @Override

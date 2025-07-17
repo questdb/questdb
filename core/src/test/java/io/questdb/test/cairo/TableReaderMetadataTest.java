@@ -514,7 +514,6 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         Assert.assertEquals(expected.getMaxUncommittedRows(), actual.getMaxUncommittedRows());
         Assert.assertEquals(expected.getO3MaxLag(), actual.getO3MaxLag());
         Assert.assertEquals(expected.getTtlHoursOrMonths(), actual.getTtlHoursOrMonths());
-        Assert.assertEquals(expected.getMatViewRefreshLimitHoursOrMonths(), actual.getMatViewRefreshLimitHoursOrMonths());
         Assert.assertEquals(expected.getColumnCount(), actual.getColumnCount());
 
         for (int i = 0, n = expected.getColumnCount(); i < n; i++) {

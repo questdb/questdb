@@ -63,7 +63,7 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
     public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
             double value = Vect.avgDoubleAcc(address, frameRowCount, countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
-            if (value == value) {
+            if (Numbers.isFinite(value)) {
                 final long count = Unsafe.getUnsafe().getLong(countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
                 // we have to include "weight" of this avg value in the formula,
                 // which calculates final result

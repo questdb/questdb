@@ -50,12 +50,11 @@ final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
     }
 
     @Override
-    public void appendToMemFlat(MemoryA mem) {
-        int size = this.flatViewLength;
+    public void appendToMemFlat(MemoryA mem, int offset, int length) {
         switch (ColumnType.decodeArrayElementType(type)) {
             case ColumnType.LONG:
             case ColumnType.DOUBLE:
-                for (int i = 0; i < size; i++) {
+                for (int i = 0; i < length; i++) {
                     mem.putLong(getLong(i));
                 }
                 break;
@@ -162,7 +161,7 @@ final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
 
         // Check client is not misbehaving. Buggy clients can send arrays with wrong size. see: https://github.com/pgjdbc/pgjdbc/issues/3567
         // Important: We have to validate that the array size is as expected only after we have checked for null elements.
-        // Since a presence of nulls also affects the size of the array and we want to report null elements to user
+        // Since a presence of nulls also affects the size of the array, and we want to report null elements to user
         // since that's more likely than a buggy client.
         long totalExpectedSizeBytes = (long) (expectedElementSize + Integer.BYTES) * flatViewLength;
         if (hi - lo != totalExpectedSizeBytes) {

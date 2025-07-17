@@ -671,7 +671,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                         if (Math.abs(timestamp - ts) >= minDiff) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            if (Double.isNaN(oldMax) || comparator.compare(val, oldMax)) {
+                            if (Numbers.isNull(oldMax) || comparator.compare(val, oldMax)) {
                                 oldMax = val;
                             }
 
@@ -907,7 +907,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 } else {
                     double max = value.getDouble(2);
                     if (Numbers.isFinite(hiValue)) {
-                        if (Double.isNaN(max) || comparator.compare(hiValue, max)) {
+                        if (Numbers.isNull(max) || comparator.compare(hiValue, max)) {
                             max = hiValue;
                             value.putDouble(2, max);
                         }
@@ -1191,7 +1191,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                     if (Math.abs(timestamp - ts) >= minDiff) {
                         double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        if (Double.isNaN(this.maxMin) || comparator.compare(val, this.maxMin)) {
+                        if (Numbers.isNull(this.maxMin) || comparator.compare(val, this.maxMin)) {
                             this.maxMin = val;
                         }
                         frameSize++;
@@ -1376,7 +1376,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     dequeMemory.putDouble(dequeEndIndex % dequeBufferSize * Double.BYTES, hiValue);
                     dequeEndIndex++;
                 } else {
-                    if (Double.isNaN(maxMin) || comparator.compare(hiValue, maxMin)) {
+                    if (Numbers.isNull(maxMin) || comparator.compare(hiValue, maxMin)) {
                         maxMin = hiValue;
                     }
                 }
@@ -1578,7 +1578,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void computeNext(Record record) {
             double d = arg.getDouble(record);
-            if (Numbers.isFinite(d) && (Double.isNaN(maxMin) || comparator.compare(d, maxMin))) {
+            if (Numbers.isFinite(d) && (Numbers.isNull(maxMin) || comparator.compare(d, maxMin))) {
                 maxMin = d;
             }
         }
@@ -1652,7 +1652,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             double d = arg.getDouble(record);
-            if (Numbers.isFinite(d) && (Double.isNaN(maxMin) || comparator.compare(d, maxMin))) {
+            if (Numbers.isFinite(d) && (Numbers.isNull(maxMin) || comparator.compare(d, maxMin))) {
                 maxMin = d;
             }
         }

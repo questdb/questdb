@@ -152,6 +152,73 @@ public class SqlUtil {
         } while (m != null);
     }
 
+    public static CharSequence createExprColumnAlias(
+            CharacterStore store,
+            CharSequence base,
+            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
+            int maxLength
+    ) {
+        return createExprColumnAlias(store, base, aliasToColumnMap, maxLength, false);
+    }
+
+    public static CharSequence createExprColumnAlias(
+            CharacterStore store,
+            CharSequence base,
+            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
+            int maxLength,
+            boolean nonLiteral
+    ) {
+        // We need to wrap disallowed aliases with double quotes to avoid later conflicts.
+        final boolean quote = nonLiteral && !Chars.isDoubleQuoted(base) && (
+                Chars.indexOf(base, '.') > -1 || disallowedAliases.contains(base)
+        );
+
+        int len = base.length();
+        // early exit for simple cases
+        if (!quote && aliasToColumnMap.excludes(base) && len > 0 && len <= maxLength && base.charAt(len - 1) != ' ') {
+            return base;
+        }
+
+        final CharacterStoreEntry entry = store.newEntry();
+        final int entryLen = entry.length();
+        if (quote) {
+            entry.put('"');
+            len += 2;
+        }
+        entry.put(base);
+
+        int sequence = 1;
+        int seqSize = 0;
+        while (true) {
+            if (sequence > 1) {
+                seqSize = (int) Math.log10(sequence) + 2; // Remember the _
+            }
+            len = Math.min(len, maxLength - seqSize - (quote ? 1 : 0));
+
+            // We don't want the alias to finish with a space.
+            if (!quote && len > 0 && base.charAt(len - 1) == ' ') {
+                final int lastSpace = Chars.lastIndexOfDifferent(base, 0, len, ' ');
+                if (lastSpace > 0) {
+                    len = lastSpace + 1;
+                }
+            }
+
+            entry.trimTo(entryLen + len - (quote ? 1 : 0));
+            if (sequence > 1) {
+                entry.put('_');
+                entry.put(sequence);
+            }
+            if (quote) {
+                entry.put('"');
+            }
+            CharSequence alias = entry.toImmutable();
+            if (len > 0 && aliasToColumnMap.excludes(alias)) {
+                return alias;
+            }
+            sequence++;
+        }
+    }
+
     // used by Copier assembler
     @SuppressWarnings("unused")
     public static long dateToTimestamp(long millis) {
@@ -967,26 +1034,83 @@ public class SqlUtil {
         return pool.next().of(exprNodeType, token, 0, position);
     }
 
-    public static int parseArrayDimensionality(GenericLexer lexer) throws SqlException {
+    public static int parseArrayDimensionality(GenericLexer lexer, int typeTag, int typeTagPosition) throws SqlException {
+        if (typeTag == ColumnType.ARRAY) {
+            throw SqlException.position(typeTagPosition).put("the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE. More types incoming.");
+        }
+        boolean hasNumericDimensionality = false;
+        int dimensionalityFirstPos = -1;
         int dim = 0;
         do {
             CharSequence tok = fetchNext(lexer);
             if (Chars.equalsNc(tok, '[')) {
+                // Check for whitespace before '[' in array type declaration
+                int openBracketPosition = lexer.lastTokenPosition();
+                if (openBracketPosition > 0 && Character.isWhitespace(lexer.getContent().charAt(openBracketPosition - 1))) {
+                    throw SqlException.position(openBracketPosition)
+                            .put("array type requires no whitespace between type and brackets");
+                }
+
                 // could be a start of array type
                 tok = fetchNext(lexer);
 
                 if (Chars.equalsNc(tok, ']')) {
                     dim++;
                 } else {
-                    // we do not expect anything between [], but lets try to be helpful to user and ask them
-                    // to remove things between brackets
-                    throw SqlException.$(lexer.lastTokenPosition(), "']' expected");
+                    // check if someone is trying to specify numeric dimensionality, e.g. double[1]
+                    try {
+                        Numbers.parseInt(tok);
+                        hasNumericDimensionality = true;
+                        if (dimensionalityFirstPos == -1) {
+                            dimensionalityFirstPos = lexer.lastTokenPosition();
+                        }
+                        continue;
+                    } catch (NumericException ignore) {
+                        // never mind
+                    }
+
+                    // we are looking at something like `type[something` right now, lets consume the rest of the
+                    // lexer until we hit one of the following: `]`, `,` or `)` to get the complete picture of
+                    // what the user provide. We will show what we see and offer what we expect to see.
+
+                    // we will fail here regardless, so we do not care about the state of the parser
+                    int stopPos;
+                    do {
+                        int p = lexer.lastTokenPosition();
+                        tok = fetchNext(lexer);
+                        if (tok == null || Chars.equals(tok, ']') || Chars.equals(tok, ',') || Chars.equals(tok, ')')) {
+                            if (!Chars.equalsNc(tok, ']')) {
+                                stopPos = p;
+                            } else {
+                                stopPos = lexer.lastTokenPosition();
+                            }
+                            break;
+                        }
+                    } while (true);
+
+                    SqlException e = SqlException.position(openBracketPosition)
+                            .put("syntax error at column type definition, expected array type: '")
+                            .put(ColumnType.nameOf(typeTag));
+
+                    // add dimensionality we found so far
+                    for (int i = 0, n = dim + 1; i < n; i++) {
+                        e.put("[]");
+                    }
+                    e.put("...', but found: '")
+                            .put(lexer.getContent(), typeTagPosition, stopPos)
+                            .put('\'');
+
+                    throw e;
                 }
             } else {
                 lexer.unparseLast();
                 break;
             }
         } while (true);
+
+        if (hasNumericDimensionality) {
+            throw SqlException.$(dimensionalityFirstPos, "arrays do not have a fixed size, remove the number");
+        }
         return dim;
     }
 

@@ -608,15 +608,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 break;
             case ColumnType.DOUBLE:
                 double d = rec.getDouble(columnIndex);
-                //noinspection ExpressionComparedToItself
-                if (d == d) {
+                if (Numbers.isFinite(d)) {
                     response.put(d);
                 }
                 break;
             case ColumnType.FLOAT:
                 float f = rec.getFloat(columnIndex);
-                //noinspection ExpressionComparedToItself
-                if (f == f) {
+                if (Numbers.isFinite(f)) {
                     response.put(f);
                 }
                 break;

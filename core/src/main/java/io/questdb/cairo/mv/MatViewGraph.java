@@ -40,6 +40,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 
 /**
@@ -47,46 +48,42 @@ import java.util.function.Function;
  * This object is always in-use, even when mat views are disabled or the node is a read-only replica.
  */
 public class MatViewGraph implements Mutable {
+    private static final java.lang.ThreadLocal<MatViewDefinition> tlDefinitionTask = new java.lang.ThreadLocal<>();
     private static final ThreadLocal<LowerCaseCharSequenceHashSet> tlSeen = new ThreadLocal<>(LowerCaseCharSequenceHashSet::new);
     private static final ThreadLocal<ArrayDeque<CharSequence>> tlStack = new ThreadLocal<>(ArrayDeque::new);
-    private static final ThreadLocal<MatViewTimerTask> tlTimerTask = new ThreadLocal<>(MatViewTimerTask::new);
     private final Function<CharSequence, ViewDependencyList> createDependencyList;
     private final ConcurrentHashMap<MatViewDefinition> definitionsByTableDirName = new ConcurrentHashMap<>();
     // Note: this map is grow-only, i.e. keys are never removed.
     private final ConcurrentHashMap<ViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
-    private final Queue<MatViewTimerTask> timerTaskQueue;
+    private final BiFunction<CharSequence, MatViewDefinition, MatViewDefinition> updateDefinitionRef;
 
-    public MatViewGraph(Queue<MatViewTimerTask> timerTaskQueue) {
+    public MatViewGraph() {
         this.createDependencyList = name -> new ViewDependencyList();
-        this.timerTaskQueue = timerTaskQueue;
+        this.updateDefinitionRef = this::updateDefinition;
     }
 
     public boolean addView(MatViewDefinition viewDefinition) {
-        final TableToken matViewToken = viewDefinition.getMatViewToken();
-        final MatViewDefinition prevDefinition = definitionsByTableDirName.putIfAbsent(matViewToken.getDirName(), viewDefinition);
+        final TableToken viewToken = viewDefinition.getMatViewToken();
+        final MatViewDefinition prevDefinition = definitionsByTableDirName.putIfAbsent(viewToken.getDirName(), viewDefinition);
         // WAL table directories are unique, so we don't expect previous value
         if (prevDefinition != null) {
             return false;
         }
 
         synchronized (this) {
-            if (hasDependencyLoop(viewDefinition.getBaseTableName(), matViewToken)) {
+            if (hasDependencyLoop(viewDefinition.getBaseTableName(), viewToken)) {
                 throw CairoException.critical(0)
-                        .put("circular dependency detected for materialized view [view=").put(matViewToken.getTableName())
+                        .put("circular dependency detected for materialized view [view=").put(viewToken.getTableName())
                         .put(", baseTable=").put(viewDefinition.getBaseTableName())
                         .put(']');
             }
             final ViewDependencyList list = getOrCreateDependentViews(viewDefinition.getBaseTableName());
             final ObjList<TableToken> matViews = list.lockForWrite();
             try {
-                matViews.add(matViewToken);
+                matViews.add(viewToken);
             } finally {
                 list.unlockAfterWrite();
             }
-        }
-        if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
-            final MatViewTimerTask timerTask = tlTimerTask.get();
-            timerTaskQueue.enqueue(timerTask.ofAdd(matViewToken));
         }
         return true;
     }
@@ -118,13 +115,6 @@ public class MatViewGraph implements Mutable {
         }
     }
 
-    public void onAlterRefreshTimer(TableToken matViewToken) {
-        final MatViewDefinition viewDefinition = definitionsByTableDirName.get(matViewToken.getDirName());
-        assert viewDefinition == null || viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE;
-        final MatViewTimerTask timerTask = tlTimerTask.get();
-        timerTaskQueue.enqueue(timerTask.ofUpdate(matViewToken));
-    }
-
     /**
      * Writes all table tokens to the destination list in order, so that dependent materialized views
      * go first followed by their base tables (or materialized views).
@@ -148,8 +138,8 @@ public class MatViewGraph implements Mutable {
         }
     }
 
-    public void removeView(TableToken matViewToken) {
-        final MatViewDefinition viewDefinition = definitionsByTableDirName.remove(matViewToken.getDirName());
+    public void removeView(TableToken viewToken) {
+        final MatViewDefinition viewDefinition = definitionsByTableDirName.remove(viewToken.getDirName());
         if (viewDefinition != null) {
             final CharSequence baseTableName = viewDefinition.getBaseTableName();
             final ViewDependencyList dependentViews = dependentViewsByTableName.get(baseTableName);
@@ -158,7 +148,7 @@ public class MatViewGraph implements Mutable {
                 try {
                     for (int i = 0, n = matViews.size(); i < n; i++) {
                         final TableToken matView = matViews.get(i);
-                        if (matView.equals(matViewToken)) {
+                        if (matView.equals(viewToken)) {
                             matViews.remove(i);
                             break;
                         }
@@ -166,10 +156,6 @@ public class MatViewGraph implements Mutable {
                 } finally {
                     dependentViews.unlockAfterWrite();
                 }
-            }
-            if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_TIMER_REFRESH_TYPE) {
-                final MatViewTimerTask timerTask = tlTimerTask.get();
-                timerTaskQueue.enqueue(timerTask.ofDrop(matViewToken));
             }
         }
     }
@@ -192,6 +178,13 @@ public class MatViewGraph implements Mutable {
                     viewList.unlockAfterWrite();
                 }
             }
+        }
+    }
+
+    public void updateViewDefinition(@NotNull TableToken viewToken, @NotNull MatViewDefinition newDefinition) {
+        tlDefinitionTask.set(newDefinition);
+        if (definitionsByTableDirName.computeIfPresent(viewToken.getDirName(), updateDefinitionRef) == null) {
+            throw CairoException.nonCritical().put("previous view definition was not found: ").put(viewToken.getTableName());
         }
     }
 
@@ -277,5 +270,16 @@ public class MatViewGraph implements Mutable {
                 stack.pop();
             }
         }
+    }
+
+    private MatViewDefinition updateDefinition(CharSequence tableDirName, MatViewDefinition existingDefinition) {
+        if (existingDefinition == null) {
+            return null;
+        }
+        MatViewDefinition newDefinition = tlDefinitionTask.get();
+        assert newDefinition != null;
+        // no, this won't produce a mem leak since we don't spawn short-lived threads in runtime
+        tlDefinitionTask.set(null);
+        return newDefinition;
     }
 }

@@ -87,6 +87,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_MAX_PAGES("cairo.sql.hash.join.light.value.max.pages"),
     CAIRO_SQL_ASOF_JOIN_LOOKAHEAD("cairo.sql.asof.join.lookahead"),
     CAIRO_SQL_ASOF_JOIN_FAST("cairo.sql.asof.join.fast"),
+    CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY("cairo.sql.asof.join.short.circuit.cache.capacity"),
+    CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD("cairo.sql.asof.join.evacuation.threshold"),
     CAIRO_SQL_SORT_VALUE_PAGE_SIZE("cairo.sql.sort.value.page.size"),
     CAIRO_SQL_SORT_VALUE_MAX_PAGES("cairo.sql.sort.value.max.pages"),
     CAIRO_WORK_STEAL_TIMEOUT_NANOS("cairo.work.steal.timeout.nanos"),
@@ -129,6 +131,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_WRITER_DATA_APPEND_PAGE_SIZE("cairo.writer.data.append.page.size"),
     CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE("cairo.system.writer.data.append.page.size"),
     CAIRO_WRITER_MISC_APPEND_PAGE_SIZE("cairo.writer.misc.append.page.size"),
+    CAIRO_SYMBOL_TABLE_APPEND_PAGE_SIZE("cairo.symbol.table.append.page.size"),
     CAIRO_WRITER_COMMAND_QUEUE_SLOT_SIZE("cairo.writer.command.queue.slot.size"),
     CAIRO_SQL_SAMPLEBY_PAGE_SIZE("cairo.sql.sampleby.page.size"),
     CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR("cairo.sql.sampleby.default.alignment.calendar"),
@@ -179,7 +182,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE("cairo.mat.view.insert.as.select.batch.size"),
     CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE("cairo.mat.view.rows.per.query.estimate"),
     CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED("cairo.mat.view.parallel.sql.enabled"),
-    CAIRO_MAT_VIEW_TIMER_START_EPSILON("cairo.mat.view.timer.start.epsilon"),
+    CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS("cairo.mat.view.max.refresh.intervals"),
+    CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD("cairo.mat.view.refresh.intervals.update.period"),
     CAIRO_ATTACH_PARTITION_SUFFIX("cairo.attach.partition.suffix"),
     CAIRO_ATTACH_PARTITION_COPY("cairo.attach.partition.copy"),
     CAIRO_COMMIT_LATENCY("cairo.commit.latency"),
@@ -568,7 +572,9 @@ public enum PropertyKey implements ConfigPropertyKey {
     VIEW_REFRESH_WORKER_SLEEP_TIMEOUT("view.refresh.worker.sleep.timeout"),
     VIEW_REFRESH_WORKER_YIELD_THRESHOLD("view.refresh.worker.yield.threshold"),
     CAIRO_TXN_SCOREBOARD_FORMAT("cairo.txn.scoreboard.format"),
-    DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY("debug.wal.apply.block.failure.no.retry", false, true);
+    DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY("debug.wal.apply.block.failure.no.retry", false, true),
+    CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED("cairo.sql.column.alias.expression.enabled"),
+    CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE("cairo.sql.column.alias.generated.max.size");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

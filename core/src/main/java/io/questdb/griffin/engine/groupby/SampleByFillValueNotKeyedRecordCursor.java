@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.ObjList;
 
-public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualRecordSampleByCursor {
+public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillRecordCursor {
     private final SimpleMapValuePeeker peeker;
     private final SimpleMapValue simpleMapValue;
     private boolean endFill = false;
@@ -137,6 +137,8 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         super.of(baseCursor, executionContext);
         endFill = false;
         upperBound = Long.MAX_VALUE;
+        firstRun = true;
+        peeker.clear();
     }
 
     @Override
@@ -144,6 +146,8 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         super.toTop();
         endFill = false;
         upperBound = Long.MAX_VALUE;
+        firstRun = true;
+        peeker.clear();
     }
 
     private boolean setActiveA(long expectedLocalEpoch) {

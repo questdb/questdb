@@ -404,7 +404,7 @@ public class InsertTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAsWith_string() throws Exception {
-        assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456Z\n", "with x as (select 1, '123456') insert atomic into tab select * from x", null, false);
+        assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456Z\n", "with x as (select 1, '123456'::string) insert atomic into tab select * from x", null, false);
     }
 
     @Test

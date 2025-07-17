@@ -175,6 +175,11 @@ public class ViewsFunctionFactory implements FunctionFactory {
             }
 
             @Override
+            public long preComputedStateSize() {
+                return viewTokens.size();
+            }
+
+            @Override
             public long size() throws DataUnavailableException {
                 return -1;
             }

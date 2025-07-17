@@ -56,7 +56,7 @@ public abstract class AbstractIntervalIteratorTest {
             TimestampSampler sampler,
             @Nullable TimeZoneRules tzRules,
             long offset,
-            @Nullable LongList txnIntervals,
+            @Nullable LongList intervals,
             long minTs,
             long maxTs,
             int step
@@ -81,29 +81,29 @@ public abstract class AbstractIntervalIteratorTest {
 
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(interval, timeUnit, 0);
 
-        LongList txnIntervals = null;
+        LongList intervals = null;
         if (rnd.nextBoolean()) {
             // generate a few txn min-max timestamp intervals
             final int count = 1 + rnd.nextInt(10);
             final long maxSize = Math.max((end - start) / count, 1);
-            txnIntervals = new LongList(2 * count);
+            intervals = new LongList(2 * count);
             long lo;
             long hi = start;
             for (int i = 0; i < count; i++) {
                 lo = Math.min(end, hi + rnd.nextLong(maxSize));
                 hi = Math.min(end, lo + rnd.nextLong(maxSize));
-                unionInPlace(txnIntervals, lo, hi);
+                unionInPlace(intervals, lo, hi);
             }
             // txn interval must have start and end as the outer boundaries
-            txnIntervals.setQuick(0, start);
-            txnIntervals.setQuick(txnIntervals.size() - 1, end);
+            intervals.setQuick(0, start);
+            intervals.setQuick(intervals.size() - 1, end);
         }
 
         final SampleByIntervalIterator iterator = createIterator(
                 sampler,
                 tzRules,
                 offset,
-                txnIntervals,
+                intervals,
                 start,
                 end,
                 step
@@ -113,14 +113,14 @@ public abstract class AbstractIntervalIteratorTest {
         final long maxTs = iterator.getMaxTimestamp();
         Assert.assertTrue(minTs < maxTs);
 
-        LongList intervals = null;
-        LongList remainingTxnIntervals = null;
-        if (txnIntervals != null) {
+        LongList intervalsB = null;
+        LongList remainingIntervals = null;
+        if (intervals != null) {
             // used for intersection calculation, etc.
-            intervals = new LongList(txnIntervals.capacity() + 2);
-            // holds remaining txn intervals intersected with [min_ts,max_ts)
-            remainingTxnIntervals = new LongList(txnIntervals);
-            intersectInPlace(remainingTxnIntervals, minTs, maxTs - 1);
+            intervalsB = new LongList(intervals.capacity() + 2);
+            // holds remaining intervals intersected with [min_ts,max_ts)
+            remainingIntervals = new LongList(intervals);
+            intersectInPlace(remainingIntervals, minTs, maxTs - 1);
         }
 
         long minObservedTs = Long.MAX_VALUE;
@@ -130,16 +130,16 @@ public abstract class AbstractIntervalIteratorTest {
             final long lo = iterator.getTimestampLo();
             final long hi = iterator.getTimestampHi();
             Assert.assertTrue(lo < hi);
-            if (txnIntervals != null) {
+            if (intervals != null) {
                 // assert that the iterated bucket has an intersection with txn min-max timestamp intervals
-                intervals.clear();
-                intervals.addAll(txnIntervals);
-                intersectInPlace(intervals, lo, hi - 1);
-                Assert.assertTrue(intervals.size() > 0);
+                intervalsB.clear();
+                intervalsB.addAll(intervals);
+                intersectInPlace(intervalsB, lo, hi - 1);
+                Assert.assertTrue(intervalsB.size() > 0);
                 // at this point, at least one interval should remain
-                Assert.assertTrue(remainingTxnIntervals.size() > 0);
+                Assert.assertTrue(remainingIntervals.size() > 0);
                 // subtract the bucket from the remaining intervals
-                subtractInPlace(remainingTxnIntervals, lo, hi - 1);
+                subtractInPlace(remainingIntervals, lo, hi - 1);
             } else {
                 if (prevTsHi != Long.MIN_VALUE) {
                     Assert.assertEquals(prevTsHi, lo);
@@ -150,9 +150,9 @@ public abstract class AbstractIntervalIteratorTest {
             maxObservedTs = Math.max(maxObservedTs, hi);
         }
 
-        if (txnIntervals != null) {
+        if (intervals != null) {
             // we should have seen all buckets that intersect with txn intervals
-            Assert.assertEquals(0, remainingTxnIntervals.size());
+            Assert.assertEquals(0, remainingIntervals.size());
             Assert.assertTrue(minObservedTs >= minTs);
             Assert.assertTrue(maxObservedTs <= maxTs);
         } else {

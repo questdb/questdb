@@ -67,14 +67,12 @@ public final class WindowColumn extends QueryColumn {
     private ExpressionNode rowsHiExpr;
     private int rowsHiExprPos;
     private long rowsHiExprTimeUnit;
-    private int rowsHiExprTimeUnitPos;
     private int rowsHiKind = CURRENT;
     private int rowsHiKindPos = 0;
     private long rowsLo = Long.MIN_VALUE;
     private ExpressionNode rowsLoExpr;
     private int rowsLoExprPos;
     private long rowsLoExprTimeUnit;
-    private int rowsLoExprTimeUnitPos;
     private int rowsLoKind = PRECEDING;
     private int rowsLoKindPos = 0;
 
@@ -95,11 +93,9 @@ public final class WindowColumn extends QueryColumn {
         rowsLoExpr = null;
         rowsLoExprPos = 0;
         rowsLoExprTimeUnit = 1;
-        rowsLoExprTimeUnitPos = 0;
         rowsHiExpr = null;
         rowsHiExprPos = 0;
         rowsHiExprTimeUnit = 1;
-        rowsHiExprTimeUnitPos = 0;
         rowsLoKind = PRECEDING;
         rowsLoKindPos = 0;
         rowsHiKind = CURRENT;
@@ -157,10 +153,6 @@ public final class WindowColumn extends QueryColumn {
         return rowsHiExprTimeUnit;
     }
 
-    public int getRowsHiExprTimeUnitPos() {
-        return rowsHiExprTimeUnitPos;
-    }
-
     public int getRowsHiKind() {
         return rowsHiKind;
     }
@@ -183,10 +175,6 @@ public final class WindowColumn extends QueryColumn {
 
     public long getRowsLoExprTimeUnit() {
         return rowsLoExprTimeUnit;
-    }
-
-    public int getRowsLoExprTimeUnitPos() {
-        return rowsLoExprTimeUnitPos;
     }
 
     public int getRowsLoKind() {
@@ -248,17 +236,8 @@ public final class WindowColumn extends QueryColumn {
         this.rowsHiExprPos = rowsHiExprPos;
     }
 
-    public void setRowsHiExprTimeUnit(long unit) {
-        this.rowsHiExprTimeUnit = unit;
-    }
-
-    public void setRowsHiExprTimeUnit(long rowsHiExprTimeUnit, int rowsHiExprTimeUnitPos) {
+    public void setRowsHiExprTimeUnit(long rowsHiExprTimeUnit) {
         this.rowsHiExprTimeUnit = rowsHiExprTimeUnit;
-        this.rowsHiExprTimeUnitPos = rowsHiExprTimeUnitPos;
-    }
-
-    public void setRowsHiExprTimeUnitPos(int rowsHiExprTimeUnitPos) {
-        this.rowsHiExprTimeUnitPos = rowsHiExprTimeUnitPos;
     }
 
     public void setRowsHiKind(int rowsHiKind, int rowsHiKindPos) {
@@ -275,13 +254,8 @@ public final class WindowColumn extends QueryColumn {
         this.rowsLoExprPos = rowsLoExprPos;
     }
 
-    public void setRowsLoExprTimeUnit(long rowsLoExprTimeUnit, int rowsLoExprTimeUnitPos) {
+    public void setRowsLoExprTimeUnit(long rowsLoExprTimeUnit) {
         this.rowsLoExprTimeUnit = rowsLoExprTimeUnit;
-        this.rowsLoExprTimeUnitPos = rowsLoExprTimeUnitPos;
-    }
-
-    public void setRowsLoExprTimeUnitPos(int rowsLoExprTimeUnitPos) {
-        this.rowsLoExprTimeUnitPos = rowsLoExprTimeUnitPos;
     }
 
     public void setRowsLoKind(int rowsLoKind, int rowsLoKindPos) {

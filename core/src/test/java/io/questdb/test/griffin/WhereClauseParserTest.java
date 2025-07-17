@@ -735,12 +735,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testConstVsLambda() throws Exception {
-        runWhereSymbolTest("sym in (1,2) and ex in (select * from xyz)", "sym in (1,2)");
+        runWhereSymbolTest("sym in (1, 2) and ex in (select * from xyz)", "sym in (1, 2)");
     }
 
     @Test
     public void testConstVsLambda2() throws Exception {
-        runWhereSymbolTest("ex in (1,2) and ex in (select * from xyz)", "ex in (1,2)");
+        runWhereSymbolTest("ex in (1, 2) and ex in (select * from xyz)", "ex in (1, 2)");
     }
 
     @Test
@@ -2307,7 +2307,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("timestamp in [\"2014-01-01T12:30:00.000Z\"]");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "too few arg");
+            TestUtils.assertContains(e.getFlyweightMessage(), "'[' is unexpected here");
         }
     }
 
@@ -2416,7 +2416,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testLambdaVsConst() throws Exception {
-        runWhereSymbolTest("ex in (select a from xyz) and sym in (1,2)", "sym in (1,2)");
+        runWhereSymbolTest("ex in (select a from xyz) and sym in (1, 2)", "sym in (1, 2)");
     }
 
     @Test
@@ -2734,7 +2734,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("not (timestamp in ['2015-05-11T15:00:00.000Z']) and timestamp IN '2015-05-11'");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "too few");
+            TestUtils.assertContains(e.getFlyweightMessage(), "'[' is unexpected here");
         }
     }
 
@@ -3427,15 +3427,15 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testUnindexedEqualsVarchar() throws SqlException {
         IntrinsicModel m = unindexedModelOf("sym = 'ABC'::varchar", null);
         Assert.assertNull(m.keyColumn);
-        TestUtils.assertEquals("sym = cast('ABC',varchar)", GriffinParserTestUtils.toRpn(m.filter));
+        TestUtils.assertEquals("sym = 'ABC'::varchar", GriffinParserTestUtils.toRpn(m.filter));
         TestUtils.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
     public void testUnindexedIn() throws SqlException {
-        IntrinsicModel m = unindexedModelOf("sym in (1,2)", null);
+        IntrinsicModel m = unindexedModelOf("sym in (1, 2)", null);
         Assert.assertNull(m.keyColumn);
-        TestUtils.assertEquals("sym in (1,2)", GriffinParserTestUtils.toRpn(m.filter));
+        TestUtils.assertEquals("sym in (1, 2)", GriffinParserTestUtils.toRpn(m.filter));
         TestUtils.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
@@ -3475,7 +3475,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testUnindexedPreferredInVsIndexedVarchar() throws SqlException {
         IntrinsicModel m = unindexedModelOf("sym in (1,2) and ex in ('XYZ'::varchar)", "sym");
         TestUtils.assertEquals("sym", m.keyColumn);
-        TestUtils.assertEquals("ex in cast('XYZ',varchar)", GriffinParserTestUtils.toRpn(m.filter));
+        TestUtils.assertEquals("ex in 'XYZ'::varchar", GriffinParserTestUtils.toRpn(m.filter));
         TestUtils.assertEquals("[1,2]", keyValueFuncsToString(m.keyValueFuncs));
     }
 

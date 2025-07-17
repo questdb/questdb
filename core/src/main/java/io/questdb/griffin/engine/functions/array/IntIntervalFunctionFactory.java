@@ -89,5 +89,10 @@ public class IntIntervalFunctionFactory implements FunctionFactory {
         public boolean isOperator() {
             return true;
         }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
     }
 }

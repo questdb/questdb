@@ -26,6 +26,7 @@ package io.questdb.griffin.model;
 
 import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.OperatorRegistry;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -208,6 +209,13 @@ public class ExpressionNode implements Mutable, Sinkable {
     public void toSink(@NotNull CharSink<?> sink) {
         // note: it's safe to take any registry (new or old) because we don't use precedence here
         OperatorRegistry registry = OperatorExpression.getRegistry();
+        char openBracket = '(';
+        char closeBracket = ')';
+        if (token != null && SqlKeywords.isArrayKeyword(token)) {
+            openBracket = '[';
+            closeBracket = ']';
+        }
+
         switch (paramCount) {
             case 0:
                 if (queryModel != null) {
@@ -221,24 +229,69 @@ public class ExpressionNode implements Mutable, Sinkable {
                 break;
             case 1:
                 sink.put(token);
-                sink.putAscii('(');
+                sink.putAscii(openBracket);
                 toSink(sink, rhs);
-                sink.putAscii(')');
+                sink.putAscii(closeBracket);
                 break;
             case 2:
                 if (registry.isOperator(token)) {
+                    // an operator child might have an higher precedence than the parent
+                    // if it was wrapped in parentheses.
+                    final boolean lhsParent = lhs.type == OPERATION && lhs.precedence > precedence;
+                    if (lhsParent) {
+                        sink.putAscii('(');
+                    }
                     toSink(sink, lhs);
+                    if (lhsParent) {
+                        sink.putAscii(')');
+                    }
                     sink.putAscii(' ');
                     sink.put(token);
                     sink.putAscii(' ');
+                    final boolean rhsParent = rhs.type == OPERATION && rhs.precedence >= precedence;
+                    if (rhsParent) {
+                        sink.putAscii('(');
+                    }
                     toSink(sink, rhs);
+                    if (rhsParent) {
+                        sink.putAscii(')');
+                    }
+                } else if (token.length() == 2 && token.charAt(0) == '[' && token.charAt(1) == ']') {
+                    // for array dereference we want to display them as lhs[rhs] instead of [](lhs, rhs)
+                    sink.put(lhs);
+                    sink.put('[');
+                    sink.put(rhs);
+                    sink.put(']');
+                } else if (SqlKeywords.isCaseKeyword(token)) {
+                    // for case we want to display them as 'case when lhs then rhs end' instead of case(lhs, rhs)
+                    sink.put("case when ");
+                    sink.put(lhs);
+                    sink.put(" then ");
+                    sink.put(rhs);
+                    sink.put(" end");
+                } else if (SqlKeywords.isCastKeyword(token)) {
+                    // for cast we want to display them as lhs::rhs instead of cast(lhs, rhs)
+                    // in some cases the casted parameter may contains space which makes it hard to understand when the
+                    // cast is applied, in such case we wrap lhs in parentheses.
+                    final boolean parent = lhs.type == OPERATION || SqlKeywords.isCaseKeyword(lhs.token) || SqlKeywords.isBetweenKeyword(lhs.token);
+                    if (parent) {
+                        sink.put('(');
+                        sink.put(lhs);
+                        sink.put(')');
+                    } else {
+                        sink.put(lhs);
+                    }
+                    sink.put(':');
+                    sink.put(':');
+                    sink.put(rhs);
                 } else {
                     sink.put(token);
-                    sink.putAscii('(');
+                    sink.putAscii(openBracket);
                     toSink(sink, lhs);
                     sink.putAscii(',');
+                    sink.putAscii(' ');
                     toSink(sink, rhs);
-                    sink.putAscii(')');
+                    sink.putAscii(closeBracket);
                 }
                 break;
             default:
@@ -253,20 +306,36 @@ public class ExpressionNode implements Mutable, Sinkable {
                     for (int i = n - 2; i > -1; i--) {
                         if (i < n - 2) {
                             sink.putAscii(',');
+                            sink.putAscii(' ');
                         }
                         toSink(sink, args.getQuick(i));
                     }
                     sink.putAscii(')');
+                } else if (SqlKeywords.isCaseKeyword(token)) {
+                    // For the case keyword we want to display it as 'case [when x then x-1] [else x] end'.
+                    sink.put("case");
+                    for (int i = n - 1; i > 0; i -= 2) {
+                        sink.put(" when ");
+                        sink.put(args.getQuick(i));
+                        sink.put(" then ");
+                        toSink(sink, args.getQuick(i - 1));
+                    }
+                    if (n % 2 == 1) {
+                        sink.put(" else ");
+                        toSink(sink, args.getQuick(0));
+                    }
+                    sink.put(" end");
                 } else {
                     sink.put(token);
-                    sink.putAscii('(');
+                    sink.putAscii(openBracket);
                     for (int i = n - 1; i > -1; i--) {
                         if (i < n - 1) {
                             sink.putAscii(',');
+                            sink.putAscii(' ');
                         }
                         toSink(sink, args.getQuick(i));
                     }
-                    sink.putAscii(')');
+                    sink.putAscii(closeBracket);
                 }
                 break;
         }

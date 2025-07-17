@@ -54,6 +54,7 @@ import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -572,7 +573,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         txnDetails.getMatViewRefreshTxn(s),
                                         txnDetails.getMatViewRefreshTimestamp(s),
                                         false,
-                                        null
+                                        null,
+                                        txnDetails.getMatViewPeriodHi(s),
+                                        // Mat view data commit means that cached intervals were applied and should be evicted.
+                                        null,
+                                        -1
                                 );
                             } catch (CairoException e) {
                                 LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
@@ -580,13 +585,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         .$(", errno=").$(e.getErrno())
                                         .I$();
                             }
-                            break;
+                            break; // we've found the latest mat view state, not need to check earlier transactions
                         }
                     }
                 }
 
                 return (int) (writer.getAppliedSeqTxn() - seqTxn + 1);
-
             case SQL:
                 try (WalEventReader eventReader = walEventReader) {
                     final WalEventCursor walEventCursor = eventReader.of(walPath, segmentTxn);
@@ -597,7 +601,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     lastCommittedRows = 0;
                     return 1;
                 }
-
             case TRUNCATE:
                 long txn = writer.getTxn();
                 writer.setSeqTxn(seqTxn);
@@ -646,13 +649,16 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     int tablePathLen = path.size();
                     path.slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                     final WalEventCursor walEventCursor = eventReader.of(path, segmentTxn);
-                    final WalEventCursor.MatViewInvalidationInfo info = walEventCursor.getMvInvalidationInfo();
+                    final WalEventCursor.MatViewInvalidationInfo info = walEventCursor.getMatViewInvalidationInfo();
                     updateMatViewRefreshState(
                             path.trimTo(tablePathLen),
                             info.getLastRefreshBaseTableTxn(),
                             info.getLastRefreshTimestamp(),
                             info.isInvalid(),
-                            info.getInvalidationReason()
+                            info.getInvalidationReason(),
+                            info.getLastPeriodHi(),
+                            info.getRefreshIntervals(),
+                            info.getRefreshIntervalsBaseTxn()
                     );
                 } catch (CairoException e) {
                     LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
@@ -771,16 +777,21 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             long lastRefreshBaseTxn,
             long lastRefreshTimestamp,
             boolean invalid,
-            @Nullable CharSequence invalidationReason
+            @Nullable CharSequence invalidationReason,
+            long lastPeriodHi,
+            @Nullable LongList refreshIntervals,
+            long refreshIntervalsBaseTxn
     ) {
         try (BlockFileWriter stateWriter = viewStateWriter) {
             stateWriter.of(tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
-
             MatViewState.append(
                     lastRefreshTimestamp,
                     lastRefreshBaseTxn,
                     invalid,
                     invalidationReason,
+                    lastPeriodHi,
+                    refreshIntervals,
+                    refreshIntervalsBaseTxn,
                     stateWriter
             );
         }
