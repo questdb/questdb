@@ -95,9 +95,12 @@ public class FdCache {
         return sb.toString();
     }
 
+    public synchronized void markPathRemoved(LPSZ lpsz) {
+        openFdMap.remove(lpsz);
+    }
+
     public synchronized long openROCached(LPSZ lpsz) {
-        int keyIndex = openFdMap.keyIndex(lpsz);
-        final FdCacheRecord holder = getFdCacheRecord(lpsz, 0, keyIndex);
+        final FdCacheRecord holder = getFdCacheRecord(lpsz, 0);
         if (holder == null) {
             // Failed to open
             return -1;
@@ -110,13 +113,26 @@ public class FdCache {
         return uniqROFd;
     }
 
-    public synchronized void remove(LPSZ lpsz) {
-        openFdMap.remove(lpsz);
+    public synchronized long openRWCached(LPSZ lpsz, long opts) {
+        final FdCacheRecord holder = getFdCacheRecord(lpsz, opts | Files.O_CREAT);
+        if (holder == null) {
+            // Failed to open
+            return -1;
+        }
+
+        holder.count++;
+        long uniqROFd = createUniqueFdRW(holder.osFd);
+        openFdMapByFd.put(uniqROFd, holder);
+
+        return uniqROFd;
     }
 
     public int toOsFd(long fd) {
-        if (FD_PARANOIA_MODE && fd != -1 && openFdMapByFd.keyIndex(fd) < 0) {
-            assert false : "Invalid fd: " + fd + ", not found in cache";
+        if (FD_PARANOIA_MODE && fd != -1) {
+            synchronized (this) {
+                int keyIndex = openFdMapByFd.keyIndex(fd);
+                assert keyIndex < 0 : "Invalid fd: " + fd + ", not found in cache";
+            }
         }
         int osFd = Numbers.decodeHighInt(fd);
         assert fd == -1 || osFd > -1;
@@ -134,10 +150,11 @@ public class FdCache {
     }
 
     @Nullable
-    private FdCacheRecord getFdCacheRecord(LPSZ lpsz, long opts, int keyIndex) {
+    private FdCacheRecord getFdCacheRecord(LPSZ lpsz, long opts) {
+        int keyIndex = openFdMap.keyIndex(lpsz);
         final FdCacheRecord holder;
         if (keyIndex > -1) {
-            int roFd = Files.openRWOpts0(lpsz.ptr(), opts);
+            int roFd = Files.openRWOptsNoCreate(lpsz.ptr(), opts);
             if (roFd < 0) {
                 // Failed to open
                 holder = null;
@@ -160,25 +177,11 @@ public class FdCache {
             int fdRecIndex = openFdMap.keyIndex(fdCacheRecord.path);
             if (fdRecIndex < 0) {
                 // If the record is the same object, we can remove it
-                assert openFdMap.valueAt(fdRecIndex) == fdCacheRecord;
-                openFdMap.removeAt(fdRecIndex);
+                if (openFdMap.valueAt(fdRecIndex) == fdCacheRecord) {
+                    openFdMap.removeAt(fdRecIndex);
+                }
             }
         }
-    }
-
-    synchronized long openRWCached(LPSZ lpsz, long opts) {
-        int keyIndex = openFdMap.keyIndex(lpsz);
-        final FdCacheRecord holder = getFdCacheRecord(lpsz, opts, keyIndex);
-        if (holder == null) {
-            // Failed to open
-            return -1;
-        }
-
-        holder.count++;
-        long uniqROFd = createUniqueFdRW(holder.osFd);
-        openFdMapByFd.put(uniqROFd, holder);
-
-        return uniqROFd;
     }
 
     private static class FdCacheRecord {

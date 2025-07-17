@@ -1468,7 +1468,7 @@ public class WalWriter implements TableWriterAPI {
             if (Os.isWindows() || commitMode == CommitMode.NOSYNC) {
                 dirFd = -1;
             } else {
-                dirFd = TableUtils.openRO(ff, path.$(), LOG);
+                dirFd = TableUtils.openRODir(ff, path.$(), LOG);
             }
 
             for (int i = 0; i < columnCount; i++) {

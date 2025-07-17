@@ -533,6 +533,14 @@ public class FailureFileFacade implements FilesFacade {
         return ff.write(fd, address, len, offset);
     }
 
+    @Override
+    public long openRODir(LPSZ path) {
+        if (checkForFailure()) {
+            return -1;
+        }
+        return ff.openRODir(path);
+    }
+
     private boolean checkForFailure() {
         boolean fail = osCallsCount.decrementAndGet() == 0;
         if (fail) {

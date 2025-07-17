@@ -177,4 +177,6 @@ public interface FilesFacade {
     void walk(Path src, FindVisitor func);
 
     long write(long fd, long address, long len, long offset);
+
+    long openRODir(LPSZ path);
 }

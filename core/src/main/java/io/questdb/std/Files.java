@@ -53,6 +53,7 @@ public final class Files {
     public static final int MAP_RO = 1;
     public static final int MAP_RW = 2;
     public static final int NFS_MAGIC = 0x6969;
+    public static final long O_CREAT = 0x00000200;
     public static final long PAGE_SIZE;
     public static final int POSIX_FADV_RANDOM;
     public static final int POSIX_FADV_SEQUENTIAL;
@@ -66,7 +67,6 @@ public final class Files {
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
     static final AtomicInteger OPEN_FILE_COUNT = new AtomicInteger();
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
-    private static final AtomicInteger fdCounter = new AtomicInteger();
     // To be set in tests to check every call for using OPEN file descriptor
     public static boolean VIRTIO_FS_DETECTED = false;
     private final static FdCache fdCache = new FdCache();
@@ -89,7 +89,6 @@ public final class Files {
 
     public static int close(long fd) {
         // do not close `stdin` and `stdout`
-        int osFd;
         if (fd > 0 && toOsFd(fd) > 2) {
             return fdCache.close(fd);
         }
@@ -403,6 +402,10 @@ public final class Files {
         return fdCache.openROCached(lpsz);
     }
 
+    public static long openRODir(LPSZ path) {
+        return fdCache.createUniqueFdNonCached(openRO(path.ptr()));
+    }
+
     public static long openRW(LPSZ lpsz) {
         return fdCache.openRWCached(lpsz, 0);
     }
@@ -462,7 +465,7 @@ public final class Files {
 
     public static boolean remove(LPSZ lpsz) {
         if (remove(lpsz.ptr())) {
-            fdCache.remove(lpsz);
+            fdCache.markPathRemoved(lpsz);
             return true;
         }
         return false;
@@ -471,7 +474,7 @@ public final class Files {
     public static int rename(LPSZ oldName, LPSZ newName) {
         int retCode = rename(oldName.ptr(), newName.ptr());
         if (retCode == 0) {
-            fdCache.remove(oldName);
+            fdCache.markPathRemoved(oldName);
         }
         return retCode;
     }
@@ -683,7 +686,7 @@ public final class Files {
 
     private native static int openRWOpts(long lpszName, long opts);
 
-    private native static int openRWOptsNoCreate(long lpszName, long opts);
+    native static int openRWOptsNoCreate(long lpszName, long opts);
 
     private native static long read(int fd, long address, long len, long offset);
 
@@ -710,18 +713,6 @@ public final class Files {
     private native static boolean truncate(int fd, long size);
 
     private native static long write(int fd, long address, long len, long offset);
-
-    static int openRO0(long lpszName) {
-        return openRO(lpszName);
-    }
-
-    static int openRW0(long lpszName) {
-        return openRW(lpszName);
-    }
-
-    static int openRWOpts0(long lpszName, long opts) {
-        return openRWOpts(lpszName, opts);
-    }
 
     static {
         Os.init();

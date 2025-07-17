@@ -509,6 +509,11 @@ public class FilesFacadeImpl implements FilesFacade {
         return Files.write(fd, address, len, offset);
     }
 
+    @Override
+    public long openRODir(LPSZ path) {
+        return Files.openRODir(path);
+    }
+
     private long computeMapPageSize() {
         long pageSize = getPageSize();
         long mapPageSize = pageSize * pageSize;
