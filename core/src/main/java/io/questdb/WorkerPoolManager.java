@@ -150,7 +150,7 @@ public abstract class WorkerPoolManager implements Target {
         LINE_TCP_WRITER("line-tcp-writer"),
         OTHER("other"),
         WAL_APPLY("wal-apply"),
-        VIEW_REFRESH("view-refresh"),
+        VIEW_COMPILER("view-compiler"),
         MAT_VIEW_REFRESH("mat-view-refresh");
 
         private final String requester;

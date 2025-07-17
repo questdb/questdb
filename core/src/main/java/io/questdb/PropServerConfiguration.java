@@ -488,14 +488,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PropertyValidator validator;
     private final int vectorAggregateQueueCapacity;
     private final WorkerPoolConfiguration viewCompilerPoolConfiguration = new PropViewCompilerPoolConfiguration();
+    private final long viewCompilerSleepTimeout;
+    private final int[] viewCompilerWorkerAffinity;
+    private final int viewCompilerWorkerCount;
+    private final boolean viewCompilerWorkerHaltOnError;
+    private final long viewCompilerWorkerNapThreshold;
+    private final long viewCompilerWorkerSleepThreshold;
+    private final long viewCompilerWorkerYieldThreshold;
     private final boolean viewEnabled;
-    private final long viewRefreshSleepTimeout;
-    private final int[] viewRefreshWorkerAffinity;
-    private final int viewRefreshWorkerCount;
-    private final boolean viewRefreshWorkerHaltOnError;
-    private final long viewRefreshWorkerNapThreshold;
-    private final long viewRefreshWorkerSleepThreshold;
-    private final long viewRefreshWorkerYieldThreshold;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
     private final boolean walApplyEnabled;
     private final int walApplyLookAheadTransactionCount;
@@ -1319,13 +1319,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewRefreshSleepTimeout = getMillis(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT, 10);
             this.matViewRefreshWorkerYieldThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
 
-            this.viewRefreshWorkerCount = getInt(properties, env, PropertyKey.VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
-            this.viewRefreshWorkerNapThreshold = getLong(properties, env, PropertyKey.VIEW_REFRESH_WORKER_NAP_THRESHOLD, 7_000);
-            this.viewRefreshWorkerSleepThreshold = getLong(properties, env, PropertyKey.VIEW_REFRESH_WORKER_SLEEP_THRESHOLD, 10_000);
-            this.viewRefreshSleepTimeout = getMillis(properties, env, PropertyKey.VIEW_REFRESH_WORKER_SLEEP_TIMEOUT, 10);
-            this.viewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.VIEW_REFRESH_WORKER_AFFINITY, viewRefreshWorkerCount);
-            this.viewRefreshWorkerYieldThreshold = getLong(properties, env, PropertyKey.VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
-            this.viewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
+            this.viewCompilerWorkerCount = getInt(properties, env, PropertyKey.VIEW_COMPILER_WORKER_COUNT, cpuWalApplyWorkers);
+            this.viewCompilerWorkerNapThreshold = getLong(properties, env, PropertyKey.VIEW_COMPILER_WORKER_NAP_THRESHOLD, 7_000);
+            this.viewCompilerWorkerSleepThreshold = getLong(properties, env, PropertyKey.VIEW_COMPILER_WORKER_SLEEP_THRESHOLD, 10_000);
+            this.viewCompilerSleepTimeout = getMillis(properties, env, PropertyKey.VIEW_COMPILER_WORKER_SLEEP_TIMEOUT, 10);
+            this.viewCompilerWorkerAffinity = getAffinity(properties, env, PropertyKey.VIEW_COMPILER_WORKER_AFFINITY, viewCompilerWorkerCount);
+            this.viewCompilerWorkerYieldThreshold = getLong(properties, env, PropertyKey.VIEW_COMPILER_WORKER_YIELD_THRESHOLD, 1000);
+            this.viewCompilerWorkerHaltOnError = getBoolean(properties, env, PropertyKey.VIEW_COMPILER_WORKER_HALT_ON_ERROR, false);
 
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
@@ -5639,7 +5639,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public long getNapThreshold() {
-            return viewRefreshWorkerNapThreshold;
+            return viewCompilerWorkerNapThreshold;
         }
 
         @Override
@@ -5649,37 +5649,37 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public long getSleepThreshold() {
-            return viewRefreshWorkerSleepThreshold;
+            return viewCompilerWorkerSleepThreshold;
         }
 
         @Override
         public long getSleepTimeout() {
-            return viewRefreshSleepTimeout;
+            return viewCompilerSleepTimeout;
         }
 
         @Override
         public int[] getWorkerAffinity() {
-            return viewRefreshWorkerAffinity;
+            return viewCompilerWorkerAffinity;
         }
 
         @Override
         public int getWorkerCount() {
-            return viewRefreshWorkerCount;
+            return viewCompilerWorkerCount;
         }
 
         @Override
         public long getYieldThreshold() {
-            return viewRefreshWorkerYieldThreshold;
+            return viewCompilerWorkerYieldThreshold;
         }
 
         @Override
         public boolean haltOnError() {
-            return viewRefreshWorkerHaltOnError;
+            return viewCompilerWorkerHaltOnError;
         }
 
         @Override
         public boolean isEnabled() {
-            return viewRefreshWorkerCount > 0;
+            return viewCompilerWorkerCount > 0;
         }
     }
 

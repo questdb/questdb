@@ -405,12 +405,12 @@ public class ServerMain implements Closeable {
         }
 
         if (viewEnabled && !isReadOnly && config.getViewCompilerPoolConfiguration().isEnabled()) {
-            // create dedicated worker pool for view refresh
-            WorkerPool viewRefreshWorkerPool = workerPoolManager.getInstance(
+            // create dedicated worker pool for view compiler
+            WorkerPool viewCompilerWorkerPool = workerPoolManager.getInstance(
                     config.getViewCompilerPoolConfiguration(),
-                    WorkerPoolManager.Requester.VIEW_REFRESH
+                    WorkerPoolManager.Requester.VIEW_COMPILER
             );
-            setupViewJobs(viewRefreshWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
+            setupViewJobs(viewCompilerWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
         }
 
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
