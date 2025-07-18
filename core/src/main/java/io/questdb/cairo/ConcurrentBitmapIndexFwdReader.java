@@ -77,12 +77,12 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
             assert cursor.owner() == this;
         }
 
-        if (key == 0 && unindexedNullCount > 0 && minValue < unindexedNullCount) {
+        if (key == 0 && columnTop > 0 && minValue < columnTop) {
             // we need to return some nulls and the whole set of actual index values
             if (cursor == null) {
                 cursor = new Cursor();
             }
-            cursor.of(key, minValue, maxValue, keyCount, minValue, unindexedNullCount);
+            cursor.of(key, minValue, maxValue, keyCount, minValue, columnTop);
             return cursor;
         }
 
