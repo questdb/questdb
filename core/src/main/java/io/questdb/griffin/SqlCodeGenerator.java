@@ -5680,7 +5680,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     myMeta.setTimestampIndex(myMeta.getColumnCount() - 1);
 
                     columnIndexes.add(readerTimestampIndex);
-                    columnSizeShifts.add((Numbers.msb(metadata.getColumnType(readerTimestampIndex))));
+                    columnSizeShifts.add(Numbers.msb(TIMESTAMP));
                 }
             }
         } finally {

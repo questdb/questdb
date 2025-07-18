@@ -129,12 +129,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * it doesn't use exact min/max timestamps for each partition, but it should do the job
      * of splitting large refresh table scans into multiple smaller scans.
      */
-    private static long estimateRowsPerBucket(TimestampDriver driver, @NotNull TableReader baseTableReader, long bucketMicros) {
+    private static long estimateRowsPerBucket(TimestampDriver driver, @NotNull TableReader baseTableReader, long bucket) {
         final long rows = baseTableReader.size();
-        final long partitionMicros = driver.approxPartitionTimestamps(baseTableReader.getPartitionedBy());
+        final long partitionTimestamps = driver.approxPartitionTimestamps(baseTableReader.getPartitionedBy());
         final int partitionCount = baseTableReader.getPartitionCount();
         if (partitionCount > 0) {
-            return Math.max(1, (rows * bucketMicros) / (partitionMicros * partitionCount));
+            return Math.max(1, (rows * bucket) / (partitionTimestamps * partitionCount));
         }
         return 1;
     }
@@ -456,9 +456,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$(", baseTable=").$(baseTableToken)
                     .$(", fromTxn=").$(lastRefreshTxn)
                     .$(", toTxn=").$(refreshContext.toBaseTxn)
-                    .$(", periodHi=").$ts(refreshContext.periodHi)
-                    .$(", iteratorMinTs>=").$ts(iteratorMinTs)
-                    .$(", iteratorMaxTs<").$ts(iteratorMaxTs)
+                    .$(", periodHi=").$ts(driver, refreshContext.periodHi)
+                    .$(", iteratorMinTs>=").$ts(driver, iteratorMinTs)
+                    .$(", iteratorMaxTs<").$ts(driver, iteratorMaxTs)
                     .I$();
 
             refreshContext.intervalIterator = intervalIterator;
@@ -467,7 +467,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$(", baseTable=").$(baseTableToken)
                     .$(", fromTxn=").$(lastRefreshTxn)
                     .$(", toTxn=").$(refreshContext.toBaseTxn)
-                    .$(", periodHi=").$ts(refreshContext.periodHi)
+                    .$(", periodHi=").$ts(driver, refreshContext.periodHi)
                     .I$();
         }
 

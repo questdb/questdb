@@ -42,8 +42,8 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
      *                       edges.
      * @param timestampIndex index of timestamp column in the readr that is used by this cursor
      */
-    public IntervalBwdPartitionFrameCursor(RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex) {
-        super(intervalModel, timestampIndex);
+    public IntervalBwdPartitionFrameCursor(RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex, TimestampDriver timestampDriver) {
+        super(intervalModel, timestampIndex, timestampDriver);
     }
 
     @Override
@@ -73,9 +73,9 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
 
                 LOG.debug()
                         .$("next [partition=").$(currentPartition)
-                        .$(", intervalLo=").microTime(intervalLo)
-                        .$(", intervalHi=").microTime(intervalHi)
-                        .$(", partitionLo=").microTime(partitionTimestampLo)
+                        .$(", intervalLo=").$ts(timestampDriver, intervalLo)
+                        .$(", intervalHi=").$ts(timestampDriver, intervalHi)
+                        .$(", partitionLo=").$ts(timestampDriver, partitionTimestampLo)
                         .$(", limitHi=").$(limitHi)
                         .$(", rowCount=").$(rowCount)
                         .$(", currentInterval=").$(currentInterval)
