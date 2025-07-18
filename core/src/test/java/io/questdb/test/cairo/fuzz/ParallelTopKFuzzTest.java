@@ -131,6 +131,20 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testParallelTopKThreadUnsafeOrderByExpression() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        // The query won't use the parallel factory due to virtual base factory.
+        testParallelTopK(
+                "SELECT * FROM tab ORDER BY concat(key, 'foobar'), ts DESC LIMIT 3;",
+                "ts\tkey\tprice\tquantity\tcolTop\n" +
+                        "1970-02-10T12:00:00.000000Z\tk0\t4050.0\t4050\t4050.0\n" +
+                        "1970-02-10T10:48:00.000000Z\tk0\t4045.0\t4045\t4045.0\n" +
+                        "1970-02-10T09:36:00.000000Z\tk0\t4040.0\t4040\t4040.0\n"
+        );
+    }
+
     private void testParallelTopK(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
