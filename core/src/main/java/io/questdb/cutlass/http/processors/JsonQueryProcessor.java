@@ -71,7 +71,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -96,25 +95,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
 
-    @TestOnly
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            int workerCount
-    ) {
-        this(configuration, engine, workerCount, workerCount);
-    }
-
-    public JsonQueryProcessor(
-            JsonQueryProcessorConfiguration configuration,
-            CairoEngine engine,
-            int workerCount,
-            int sharedWorkerCount
+            int sharedQueryWorkerCount
     ) {
         this(
                 configuration,
                 engine,
-                new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount)
+                new SqlExecutionContextImpl(engine, sharedQueryWorkerCount)
         );
     }
 
