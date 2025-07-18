@@ -228,7 +228,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 final long valueBaseAddress = indexReader.getValueBaseAddress();
                 final long valuesMemorySize = indexReader.getValueMemorySize();
                 final int valueBlockCapacity = indexReader.getValueBlockCapacity();
-                final long unIndexedNullCount = indexReader.getUnIndexedNullCount();
+                final long unIndexedNullCount = indexReader.getColumnTop();
 
                 doneLatch.reset();
 
