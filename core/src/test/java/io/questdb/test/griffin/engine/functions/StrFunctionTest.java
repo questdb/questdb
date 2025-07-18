@@ -25,12 +25,12 @@
 package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.tools.TestUtils;
@@ -394,7 +394,7 @@ public class StrFunctionTest {
 
     @Test
     public void testCastToTimestamp() throws NumericException {
-        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-09-10T10:12:33.887889Z"), new StrConstant("2021-09-10T10:12:33.887889").getTimestamp(null));
+        Assert.assertEquals(NanosTimestampDriver.INSTANCE.parseFloorLiteral("2021-09-10T10:12:33.887889Z"), new StrConstant("2021-09-10T10:12:33.887889").getTimestamp(null));
     }
 
     @Test
@@ -403,7 +403,7 @@ public class StrFunctionTest {
             new StrConstant("").getTimestamp(null);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `` [STRING -> TIMESTAMP]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `` [STRING -> TIMESTAMP_NS]");
         }
     }
 

@@ -204,6 +204,7 @@ public class TextPlanSink extends BasePlanSink {
         return this;
     }
 
+
     public PlanSink valLong256(long long0, long long1, long long2, long long3) {
         Numbers.appendLong256(long0, long1, long2, long3, sink);
         return this;

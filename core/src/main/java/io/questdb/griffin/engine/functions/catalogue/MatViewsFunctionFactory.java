@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -212,7 +213,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             }
                         }
 
-                        final long lastPeriodHi = viewStateReader.getLastPeriodHi();
+                        final long lastPeriodHi = MicrosTimestampDriver.INSTANCE.from(viewStateReader.getLastPeriodHi(), viewDefinition.getBaseTableTimestampType());
                         final long lastRefreshedBaseTxn = viewStateReader.getLastRefreshBaseTxn();
                         final long lastRefreshTimestamp = viewStateReader.getLastRefreshTimestamp();
 
@@ -231,7 +232,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         int timerInterval = 0;
                         char timerIntervalUnit = 0;
                         if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_TIMER || periodLength > 0) {
-                            timerStart = viewDefinition.getTimerStart();
+                            // record use timestamp_micro for timer start
+                            timerStart = MicrosTimestampDriver.INSTANCE.from(viewDefinition.getTimerStart(), viewDefinition.getBaseTableTimestampType());
                             timerInterval = viewDefinition.getTimerInterval();
                             timerIntervalUnit = viewDefinition.getTimerUnit();
                         }
@@ -443,19 +445,19 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("view_name", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("refresh_type", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("base_table_name", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("last_refresh_start_timestamp", ColumnType.TIMESTAMP));
-            metadata.add(new TableColumnMetadata("last_refresh_finish_timestamp", ColumnType.TIMESTAMP));
+            metadata.add(new TableColumnMetadata("last_refresh_start_timestamp", ColumnType.TIMESTAMP_MICRO));
+            metadata.add(new TableColumnMetadata("last_refresh_finish_timestamp", ColumnType.TIMESTAMP_MICRO));
             metadata.add(new TableColumnMetadata("view_sql", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("view_table_dir_name", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("invalidation_reason", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("view_status", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("refresh_period_hi", ColumnType.TIMESTAMP));
+            metadata.add(new TableColumnMetadata("refresh_period_hi", ColumnType.TIMESTAMP_MICRO));
             metadata.add(new TableColumnMetadata("refresh_base_table_txn", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("base_table_txn", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("refresh_limit", ColumnType.INT));
             metadata.add(new TableColumnMetadata("refresh_limit_unit", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("timer_time_zone", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("timer_start", ColumnType.TIMESTAMP));
+            metadata.add(new TableColumnMetadata("timer_start", ColumnType.TIMESTAMP_MICRO));
             metadata.add(new TableColumnMetadata("timer_interval", ColumnType.INT));
             metadata.add(new TableColumnMetadata("timer_interval_unit", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("period_length", ColumnType.INT));

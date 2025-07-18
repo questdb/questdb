@@ -95,7 +95,7 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                                 .doubleColumn("f", rnd.nextFloat())
                                 .doubleColumn("d", rnd.nextDouble())
                                 .stringColumn("v", rnd.nextString(50))
-                                .timestampColumn("tss", Instant.ofEpochMilli(rnd.nextLong()))
+                                .timestampColumn("tss", Instant.ofEpochMilli(rnd.nextLong() / 1000))
                                 .at(rnd.nextLong(numPartitions * hourAsMillis), ChronoUnit.MILLIS);
                     }
                     sender.flush();

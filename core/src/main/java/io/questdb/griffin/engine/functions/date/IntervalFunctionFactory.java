@@ -26,6 +26,8 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
@@ -60,32 +62,46 @@ public class IntervalFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final Function loFunc = args.getQuick(0);
         final Function hiFunc = args.getQuick(1);
+        int leftTimestampType = ColumnType.getTimestampType(loFunc.getType(), configuration);
+        int rightTimestampType = ColumnType.getTimestampType(hiFunc.getType(), configuration);
+        int timestampType = Math.max(leftTimestampType, rightTimestampType);
+        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        int intervalType = ColumnType.getIntervalType(timestampType);
         if (loFunc.isConstant() && hiFunc.isConstant()) {
-            long lo = loFunc.getTimestamp(null);
-            long hi = hiFunc.getTimestamp(null);
+            long lo = driver.from(loFunc.getTimestamp(null), leftTimestampType);
+            long hi = driver.from(hiFunc.getTimestamp(null), rightTimestampType);
             if (lo == Numbers.LONG_NULL || hi == Numbers.LONG_NULL) {
-                return IntervalConstant.NULL;
+                return driver.getIntervalConstantNull();
             }
             if (lo > hi) {
                 throw SqlException.position(position).put("invalid interval boundaries");
             }
-            return IntervalConstant.newInstance(lo, hi);
+            return IntervalConstant.newInstance(lo, hi, intervalType);
         }
         if ((loFunc.isConstant() || loFunc.isRuntimeConstant())
                 || (hiFunc.isConstant() || hiFunc.isRuntimeConstant())) {
-            return new RuntimeConstFunc(position, loFunc, hiFunc);
+            return new RuntimeConstFunc(position, loFunc, hiFunc, intervalType, driver, leftTimestampType, rightTimestampType);
         }
-        return new Func(loFunc, hiFunc);
+        if (leftTimestampType == rightTimestampType) {
+            return new Func(loFunc, hiFunc, intervalType, driver);
+        } else if (leftTimestampType < rightTimestampType) {
+            return new LeftConvert(loFunc, hiFunc, intervalType, driver, leftTimestampType);
+        } else {
+            return new RightConvert(loFunc, hiFunc, intervalType, driver, rightTimestampType);
+        }
     }
 
     private static class Func extends IntervalFunction implements BinaryFunction, FunctionExtension {
-        private final Function hiFunc;
-        private final Interval interval = new Interval();
-        private final Function loFunc;
+        protected final Function hiFunc;
+        protected final Interval interval = new Interval();
+        protected final Function loFunc;
+        protected final TimestampDriver timestampDriver;
 
-        public Func(Function loFunc, Function hiFunc) {
+        public Func(Function loFunc, Function hiFunc, int timestampType, TimestampDriver timestampDriver) {
+            super(timestampType);
             this.loFunc = loFunc;
             this.hiFunc = hiFunc;
+            this.timestampDriver = timestampDriver;
         }
 
         @Override
@@ -147,16 +163,67 @@ public class IntervalFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class LeftConvert extends Func {
+        private final int leftFunctionType;
+
+        public LeftConvert(Function loFunc, Function hiFunc, int timestampType, TimestampDriver timestampDriver, int leftFunctionType) {
+            super(loFunc, hiFunc, timestampType, timestampDriver);
+            this.leftFunctionType = leftFunctionType;
+        }
+
+        @Override
+        public @NotNull Interval getInterval(Record rec) {
+            long l = timestampDriver.from(loFunc.getTimestamp(rec), leftFunctionType);
+            long r = hiFunc.getTimestamp(rec);
+            if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
+                return Interval.NULL;
+            }
+            if (l > r) {
+                throw CairoException.nonCritical().put("invalid interval boundaries");
+            }
+            return interval.of(l, r);
+        }
+    }
+
+    private static class RightConvert extends Func {
+        private final int rightFunctionType;
+
+        public RightConvert(Function loFunc, Function hiFunc, int timestampType, TimestampDriver timestampDriver, int rightFunctionType) {
+            super(loFunc, hiFunc, timestampType, timestampDriver);
+            this.rightFunctionType = rightFunctionType;
+        }
+
+        @Override
+        public @NotNull Interval getInterval(Record rec) {
+            long l = loFunc.getTimestamp(rec);
+            long r = timestampDriver.from(hiFunc.getTimestamp(rec), rightFunctionType);
+            if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
+                return Interval.NULL;
+            }
+            if (l > r) {
+                throw CairoException.nonCritical().put("invalid interval boundaries");
+            }
+            return interval.of(l, r);
+        }
+    }
+
     private static class RuntimeConstFunc extends IntervalFunction implements BinaryFunction, FunctionExtension {
+        private final TimestampDriver driver;
         private final Function hiFunc;
         private final Interval interval = new Interval();
+        private final int leftFunctionType;
         private final Function loFunc;
         private final int position;
+        private final int rightFunctionType;
 
-        public RuntimeConstFunc(int position, Function loFunc, Function hiFunc) {
+        public RuntimeConstFunc(int position, Function loFunc, Function hiFunc, int intervalType, TimestampDriver driver, int leftFunctionType, int rightFunctionType) {
+            super(intervalType);
             this.position = position;
             this.loFunc = loFunc;
             this.hiFunc = hiFunc;
+            this.driver = driver;
+            this.leftFunctionType = leftFunctionType;
+            this.rightFunctionType = rightFunctionType;
         }
 
         @Override
@@ -212,8 +279,8 @@ public class IntervalFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             BinaryFunction.super.init(symbolTableSource, executionContext);
-            long lo = loFunc.getTimestamp(null);
-            long hi = hiFunc.getTimestamp(null);
+            long lo = driver.from(loFunc.getTimestamp(null), leftFunctionType);
+            long hi = driver.from(hiFunc.getTimestamp(null), rightFunctionType);
             if (lo == Numbers.LONG_NULL || hi == Numbers.LONG_NULL) {
                 interval.of(Interval.NULL.getLo(), Interval.NULL.getHi());
             }

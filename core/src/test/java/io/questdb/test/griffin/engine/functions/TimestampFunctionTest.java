@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
@@ -35,7 +36,7 @@ import org.junit.Test;
 public class TimestampFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final TimestampFunction function = new TimestampFunction() {
+    private static final TimestampFunction function = new TimestampFunction(ColumnType.TIMESTAMP_MICRO) {
         @Override
         public long getTimestamp(Record rec) {
             return 145000L;
@@ -154,7 +155,7 @@ public class TimestampFunctionTest {
 
     @Test
     public void testGetNullDate() {
-        final TimestampFunction function = new TimestampFunction() {
+        final TimestampFunction function = new TimestampFunction(ColumnType.TIMESTAMP_MICRO) {
             @Override
             public long getTimestamp(Record rec) {
                 return Numbers.LONG_NULL;

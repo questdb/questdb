@@ -85,6 +85,7 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
                 parseTargetType(position, args.getQuick(2)),
                 json,
                 path,
+                configuration.getDefaultTimestampType(),
                 configuration.getStrFunctionMaxBufferLength()
         );
     }
@@ -95,7 +96,7 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
         // Therefore, we have to validate type input to provide user with actionable error message.
         if (targetTypeFn != null && targetTypeFn.isConstant()) {
             final int targetType = targetTypeFn.getInt(null);
-            if (isIntrusivelyOptimized(targetType)) {
+            if (isIntrusivelyOptimized(ColumnType.tagOf(targetType))) {
                 return targetType;
             }
         }

@@ -84,7 +84,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testAllIntervalsAfterTableByDay() throws Exception {
         // day partition
-        // two hour interval between timestamps
+        // two-hour interval between timestamps
         long increment = 1000000L * 3600 * 2;
         // 3 days
         int N = 36;
@@ -108,7 +108,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
         Assume.assumeFalse(convertToParquet);
 
         // day partition
-        // two hour interval between timestamps
+        // two-hour interval between timestamps
         long increment = 1000000L * 3600 * 2;
         // 3 days
         int N = 36;
@@ -130,7 +130,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testAllIntervalsBeforeTableByDay() throws Exception {
         // day partition
-        // two hour interval between timestamps
+        // two-hour interval between timestamps
         long increment = 1000000L * 3600 * 2;
         // 3 days
         int N = 36;
@@ -154,7 +154,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
         Assume.assumeFalse(convertToParquet);
 
         // day partition
-        // two hour interval between timestamps
+        // two-hour interval between timestamps
         long increment = 1000000L * 3600 * 2;
         // 3 days
         int N = 36;
@@ -178,7 +178,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
         Assume.assumeFalse(convertToParquet);
 
         // day partition
-        // two hour interval between timestamps
+        // two-hour interval between timestamps
         long increment = 1000000L * 3600 * 2;
         // 3 days
         int N = 36;
@@ -213,7 +213,14 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             TableReader reader = newOffPoolReader(configuration, "x");
             IntervalBwdPartitionFrameCursor cursor = new IntervalBwdPartitionFrameCursor(
-                    new RuntimeIntervalModel(intervals), reader.getMetadata().getTimestampIndex());
+                    new RuntimeIntervalModel(
+                            ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()),
+                            reader.getPartitionedBy(),
+                            intervals
+                    ),
+                    reader.getMetadata().getTimestampIndex(),
+                    ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType())
+            );
             cursor.of(reader, null);
             cursor.close();
             Assert.assertFalse(reader.isOpen());
@@ -225,7 +232,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testExactMatch() throws Exception {
         // day partition
-        // two hour interval between timestamps
+        // two-hour interval between timestamps
         long increment = 1000000L * 3600 * 2;
         // 3 days
         int N = 36;
@@ -246,7 +253,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testFallsBelow() throws Exception {
         // day partition
-        // two hour interval between timestamps
+        // two-hour interval between timestamps
         long increment = 1000000L * 3600 * 2;
         // 3 days
         int N = 36;
@@ -257,7 +264,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
         intervals.add(TimestampFormatUtils.parseTimestamp("1980-01-02T20:00:00.000Z"));
 
         // interval falls below active partition
-        // previous interval must not be on the edge of partition
+        // the previous interval must not be on the edge of partition
         intervals.add(TimestampFormatUtils.parseTimestamp("1980-01-02T22:30:00.000Z"));
         intervals.add(TimestampFormatUtils.parseTimestamp("1980-01-02T22:35:00.000Z"));
 
@@ -285,7 +292,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testNegativeReloadByDay() throws Exception {
         // day partition
-        // two hour interval between timestamps
+        // two-hour interval between timestamps
         long increment = 1000000L * 3600 * 2;
         // 3 days
         int N = 36;
@@ -312,13 +319,13 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 "1980-01-02T04:00:00.000000Z\n" +
                 "1980-01-02T02:00:00.000000Z\n";
 
-        testReload(PartitionBy.DAY, increment, intervals, N, expected, null);
+        testReload(increment, intervals, N, expected, null);
     }
 
     @Test
     public void testPartitionCull() throws Exception {
         // day partition
-        // two hour interval between timestamps
+        // two-hour interval between timestamps
         long increment = 1000000L * 3600 * 2;
         // 3 days
         int N = 36;
@@ -352,7 +359,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testPositiveReloadByDay() throws Exception {
         // day partition
-        // two hour interval between timestamps
+        // two-hour interval between timestamps
         long increment = 1000000L * 3600 * 2;
         // 3 days
         int N = 36;
@@ -416,7 +423,11 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                     final IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(
                             tableToken,
                             0,
-                            new RuntimeIntervalModel(intervals),
+                            new RuntimeIntervalModel(
+                                    ColumnType.getTimestampDriver(metadata.getTimestampType()),
+                                    partitionBy,
+                                    intervals
+                            ),
                             timestampIndex,
                             metadata,
                             ORDER_DESC
@@ -482,7 +493,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testSingleIntervalWholeTable() throws Exception {
         // day partition
-        // two hour interval between timestamps
+        // two-hour interval between timestamps
         long increment = 1000000L * 3600 * 2;
         // 3 days
         int N = 36;
@@ -569,7 +580,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private static void assertIndexRowsMatchSymbol(PartitionFrameCursor cursor, TestTableReaderRecord record, int columnIndex, long expectedCount) {
-        // SymbolTable is table at table scope, so it will be the same for every
+        // SymbolTable is a table at table scope, so it will be the same for every
         // partition frame here. Get its instance outside of partition frame loop.
         StaticSymbolTable symbolTable = record.getReader().getSymbolTable(columnIndex);
 
@@ -694,8 +705,13 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
             try (
                     TableReader reader = newOffPoolReader(configuration, "x");
                     IntervalBwdPartitionFrameCursor cursor = new IntervalBwdPartitionFrameCursor(
-                            new RuntimeIntervalModel(intervals),
-                            reader.getMetadata().getTimestampIndex()
+                            new RuntimeIntervalModel(
+                                    ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()),
+                                    reader.getPartitionedBy(),
+                                    intervals
+                            ),
+                            reader.getMetadata().getTimestampIndex(),
+                            ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType())
                     )
             ) {
                 final TestTableReaderRecord record = new TestTableReaderRecord();
@@ -713,6 +729,105 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
                 cursor.toTop();
                 assertEqualTimestamps(expected, record, cursor);
+            }
+        });
+    }
+
+    private void testReload(
+            long increment,
+            LongList intervals,
+            int rowCount,
+            CharSequence expected1,
+            CharSequence expected2
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken;
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
+                    col("a", ColumnType.SYMBOL).indexed(true, 4).
+                    col("b", ColumnType.SYMBOL).indexed(true, 4).
+                    timestamp();
+            tableToken = AbstractCairoTest.create(model);
+
+            final Rnd rnd = new Rnd();
+            long timestamp = TimestampFormatUtils.parseTimestamp("1980-01-01T00:00:00.000Z");
+
+            GenericRecordMetadata metadata;
+            final int timestampIndex;
+
+            final SqlExecutionContext executionContext = new SqlExecutionContextStub(engine);
+
+            try (TableReader reader = engine.getReader(tableToken)) {
+                timestampIndex = reader.getMetadata().getTimestampIndex();
+                metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
+            }
+            final TestTableReaderRecord record = new TestTableReaderRecord();
+            try (
+                    final IntervalPartitionFrameCursorFactory factory = new IntervalPartitionFrameCursorFactory(
+                            tableToken,
+                            0,
+                            new RuntimeIntervalModel(
+                                    ColumnType.getTimestampDriver(metadata.getTimestampType()),
+                                    PartitionBy.DAY,
+                                    intervals
+                            ),
+                            timestampIndex,
+                            metadata,
+                            ORDER_DESC
+                    );
+                    final PartitionFrameCursor cursor = factory.getCursor(executionContext, ORDER_DESC)
+            ) {
+                // assert that there is nothing to start with
+                record.of(cursor.getTableReader());
+
+                assertEqualTimestamps("", record, cursor);
+
+                try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                    for (int i = 0; i < rowCount; i++) {
+                        TableWriter.Row row = writer.newRow(timestamp);
+                        row.putSym(0, rnd.nextChars(4));
+                        row.putSym(1, rnd.nextChars(4));
+                        row.append();
+                        timestamp += increment;
+                    }
+                    writer.commit();
+
+                    Assert.assertTrue(cursor.reload());
+                    assertEqualTimestamps(expected1, record, cursor);
+
+                    timestamp = Timestamps.addYears(timestamp, 3);
+
+                    for (int i = 0; i < rowCount; i++) {
+                        TableWriter.Row row = writer.newRow(timestamp);
+                        row.putSym(0, rnd.nextChars(4));
+                        row.putSym(1, rnd.nextChars(4));
+                        row.append();
+                        timestamp += increment;
+                    }
+                    writer.commit();
+
+                    Assert.assertTrue(cursor.reload());
+                    if (expected2 != null) {
+                        assertEqualTimestamps(expected2, record, cursor);
+                    } else {
+                        assertEqualTimestamps(expected1, record, cursor);
+                    }
+
+                    Assert.assertFalse(cursor.reload());
+                }
+
+                if (convertToParquet) {
+                    execute("alter table x convert partition to parquet where timestamp >= 0;");
+                }
+
+                try (TableWriter writer = engine.getWriter(tableToken, "testing")) {
+                    writer.removeColumn("b");
+                }
+
+                try {
+                    factory.getCursor(executionContext, ORDER_DESC);
+                    Assert.fail();
+                } catch (TableReferenceOutOfDateException ignored) {
+                }
             }
         });
     }

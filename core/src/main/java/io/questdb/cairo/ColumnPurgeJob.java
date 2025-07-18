@@ -43,7 +43,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
 import io.questdb.std.WeakMutableObjectPool;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.tasks.ColumnPurgeTask;
 import org.jetbrains.annotations.TestOnly;
 
@@ -64,7 +64,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private static final int TABLE_TRUNCATE_VERSION = 4;
     private static final int UPDATE_TXN_COLUMN = 7;
     private final DatabaseCheckpointStatus checkpointStatus;
-    private final MicrosecondClock clock;
+    private final Clock clock;
     private final RingQueue<ColumnPurgeTask> inQueue;
     private final Sequence inSubSequence;
     private final long retryDelay;
@@ -274,6 +274,10 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         int tableId = rec.getInt(TABLE_ID_COLUMN);
                         long truncateVersion = rec.getLong(TABLE_TRUNCATE_VERSION);
                         int columnType = rec.getInt(COLUMN_TYPE_COLUMN);
+                        // todo: this information has to be stored in the table we're processing
+                        //    for compatibility purposes, we might be able to get away from storing extra bits
+                        //    of the timestamp type on the partition by integer value
+                        int timestampType = ColumnType.TIMESTAMP;
                         int partitionBy = rec.getInt(PARTITION_BY_COLUMN);
                         long updateTxn = rec.getLong(UPDATE_TXN_COLUMN);
                         TableToken token = engine.getTableTokenByDirName(tableName);
@@ -290,6 +294,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                                 tableId,
                                 truncateVersion,
                                 columnType,
+                                timestampType,
                                 partitionBy,
                                 updateTxn,
                                 retryDelay,
@@ -435,12 +440,13 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                 int tableId,
                 long truncateVersion,
                 int columnType,
+                int timestampType,
                 int partitionBy,
                 long updateTxn,
                 long retryDelay,
                 long microTime
         ) {
-            super.of(tableName, columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
+            super.of(tableName, columnName, tableId, truncateVersion, columnType, timestampType, partitionBy, updateTxn);
             this.retryDelay = retryDelay;
             nextRunTimestamp = microTime;
         }

@@ -25,8 +25,11 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -40,7 +43,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
@@ -71,6 +73,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     private final long samplingInterval;
     private final char samplingIntervalUnit;
     private final int timestampIndex;
+    private final int timestampType;
     private final Function toFunc;
 
     public FillRangeRecordCursorFactory(
@@ -82,7 +85,8 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             char samplingIntervalUnit,
             TimestampSampler timestampSampler,
             ObjList<Function> fillValues,
-            int timestampIndex
+            int timestampIndex,
+            int timestampType
     ) {
         super(metadata);
         this.base = base;
@@ -94,7 +98,8 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         this.samplingIntervalUnit = samplingIntervalUnit;
         this.timestampIndex = timestampIndex;
         this.fillValues = fillValues;
-        this.cursor = new FillRangeRecordCursor(timestampSampler, fromFunc, toFunc, fillValues, timestampIndex);
+        this.timestampType = timestampType;
+        this.cursor = new FillRangeRecordCursor(timestampSampler, fromFunc, toFunc, fillValues, timestampIndex, timestampType);
     }
 
     @Override
@@ -134,7 +139,8 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Fill Range");
-        if (fromFunc != TimestampConstant.NULL || toFunc != TimestampConstant.NULL) {
+        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        if (fromFunc != driver.getTimestampConstantNull() || toFunc != driver.getTimestampConstantNull()) {
             sink.attr("range").val('(').val(fromFunc).val(',').val(toFunc).val(')');
         }
         sink.attr("stride").val('\'').val(samplingInterval).val(samplingIntervalUnit).val('\'');
@@ -176,8 +182,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     private static class FillRangeRecordCursor implements NoRandomAccessRecordCursor {
         private final ObjList<Function> fillValues;
         private final FillRangeRecord fillingRecord = new FillRangeRecord();
-        private final FillRangeTimestampConstant fillingTimestampFunc = new FillRangeTimestampConstant();
+        private final FillRangeTimestampConstant fillingTimestampFunc;
         private final Function fromFunc;
+        private final TimestampDriver timestampDriver;
         private final int timestampIndex;
         private final TimestampSampler timestampSampler;
         private final Function toFunc;
@@ -199,13 +206,16 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 @NotNull Function fromFunc,
                 @NotNull Function toFunc,
                 ObjList<Function> fillValues,
-                int timestampIndex
+                int timestampIndex,
+                int timestampType
         ) {
             this.timestampSampler = timestampSampler;
             this.fromFunc = fromFunc;
             this.toFunc = toFunc;
             this.fillValues = fillValues;
             this.timestampIndex = timestampIndex;
+            this.fillingTimestampFunc = new FillRangeTimestampConstant(timestampType);
+            this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
         }
 
         @Override
@@ -295,9 +305,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             return fillValues.getQuick(col);
         }
 
-        private void initTimestamps(Function fromFunc, Function toFunc) {
-            minTimestamp = fromFunc == TimestampConstant.NULL ? Long.MAX_VALUE : fromFunc.getTimestamp(null);
-            maxTimestamp = toFunc == TimestampConstant.NULL ? Long.MIN_VALUE : toFunc.getTimestamp(null);
+        private void initTimestamps(CairoConfiguration configuration, Function fromFunc, Function toFunc) {
+            minTimestamp = fromFunc == timestampDriver.getTimestampConstantNull() ? Long.MAX_VALUE : timestampDriver.from(fromFunc.getTimestamp(null),
+                    ColumnType.getTimestampType(fromFunc.getType(), configuration));
+            maxTimestamp = toFunc == timestampDriver.getTimestampConstantNull() ? Long.MIN_VALUE : timestampDriver.from(toFunc.getTimestamp(null),
+                    ColumnType.getTimestampType(toFunc.getType(), configuration));
         }
 
         private void initValueFuncs(ObjList<Function> valueFuncs) {
@@ -326,7 +338,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             Function.init(fillValues, baseCursor, executionContext, null);
             fromFunc.init(baseCursor, executionContext);
             toFunc.init(baseCursor, executionContext);
-            initTimestamps(fromFunc, toFunc);
+            initTimestamps(executionContext.getCairoEngine().getConfiguration(), fromFunc, toFunc);
             if (presentTimestamps == null) {
                 long capacity = 8;
                 try {
@@ -631,6 +643,10 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private class FillRangeTimestampConstant extends TimestampFunction implements ConstantFunction {
+            public FillRangeTimestampConstant(int timestampType) {
+                super(timestampType);
+            }
+
             @Override
             public long getTimestamp(Record rec) {
                 return nextBucketTimestamp;

@@ -47,7 +47,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.DirectUtf8StringZ;
@@ -90,7 +90,7 @@ public class Bootstrap {
     private final BuildInformation buildInformation;
     private final ServerConfiguration config;
     private final Log log;
-    private final MicrosecondClock microsecondClock;
+    private final Clock microsecondClock;
     private final String rootDirectory;
 
     public Bootstrap(String... args) {
@@ -358,7 +358,7 @@ public class Bootstrap {
         return log;
     }
 
-    public MicrosecondClock getMicrosecondClock() {
+    public Clock getMicrosecondClock() {
         return microsecondClock;
     }
 

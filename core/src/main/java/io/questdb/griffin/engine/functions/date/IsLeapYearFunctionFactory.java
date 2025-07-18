@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 
 public class IsLeapYearFunctionFactory implements FunctionFactory {
@@ -69,7 +70,7 @@ public class IsLeapYearFunctionFactory implements FunctionFactory {
                 return Boolean.FALSE;
             }
             final int year = Timestamps.getYear(value);
-            return Timestamps.isLeapYear(year);
+            return CommonUtils.isLeapYear(year);
         }
 
         @Override

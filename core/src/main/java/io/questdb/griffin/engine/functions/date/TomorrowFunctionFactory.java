@@ -48,10 +48,14 @@ public class TomorrowFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func();
+        return new Func(sqlExecutionContext.getIntervalFunctionType());
     }
 
     private static class Func extends AbstractDayIntervalFunction {
+
+        protected Func(int intervalType) {
+            super(intervalType);
+        }
 
         @Override
         public String getName() {

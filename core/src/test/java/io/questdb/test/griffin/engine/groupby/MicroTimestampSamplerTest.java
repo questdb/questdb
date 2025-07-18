@@ -24,7 +24,7 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.griffin.engine.groupby.MicroTimestampSampler;
+import io.questdb.griffin.engine.groupby.BaseTimestampSampler;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -37,7 +37,7 @@ public class MicroTimestampSamplerTest {
 
     @Test
     public void testNextTimestamp() throws NumericException {
-        MicroTimestampSampler sampler = new MicroTimestampSampler(Timestamps.MINUTE_MICROS);
+        BaseTimestampSampler sampler = new BaseTimestampSampler(Timestamps.MINUTE_MICROS);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
@@ -60,7 +60,7 @@ public class MicroTimestampSamplerTest {
 
     @Test
     public void testNextTimestampWithStep() throws NumericException {
-        MicroTimestampSampler sampler = new MicroTimestampSampler(Timestamps.SECOND_MICROS);
+        BaseTimestampSampler sampler = new BaseTimestampSampler(Timestamps.SECOND_MICROS);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
@@ -83,7 +83,7 @@ public class MicroTimestampSamplerTest {
 
     @Test
     public void testPreviousTimestamp() throws NumericException {
-        MicroTimestampSampler sampler = new MicroTimestampSampler(Timestamps.HOUR_MICROS);
+        BaseTimestampSampler sampler = new BaseTimestampSampler(Timestamps.HOUR_MICROS);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
@@ -106,7 +106,7 @@ public class MicroTimestampSamplerTest {
 
     @Test
     public void testRound() throws NumericException {
-        MicroTimestampSampler sampler = new MicroTimestampSampler(Timestamps.HOUR_MICROS);
+        BaseTimestampSampler sampler = new BaseTimestampSampler(Timestamps.HOUR_MICROS);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
@@ -130,7 +130,7 @@ public class MicroTimestampSamplerTest {
     @Test
     public void testSimple() throws NumericException {
         StringSink sink = new StringSink();
-        MicroTimestampSampler sampler = new MicroTimestampSampler(Timestamps.HOUR_MICROS);
+        BaseTimestampSampler sampler = new BaseTimestampSampler(Timestamps.HOUR_MICROS);
 
         long timestamp = TimestampFormatUtils.parseUTCTimestamp("2018-11-16T15:00:00.000000Z");
         sampler.setStart(timestamp);

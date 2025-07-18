@@ -25,13 +25,14 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -50,10 +51,11 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
+import static io.questdb.test.cairo.mv.MatViewTest.parseFloorPartialTimestamp;
 
 public class MatViewFuzzTest extends AbstractFuzzTest {
     private static final int SPIN_LOCK_TIMEOUT = 100_000_000;
+    private static String[] timestampTypes = new String[]{"timestamp", "timestamp_ns"};
 
     @Test
     public void test2LevelDependencyView() throws Exception {
@@ -313,7 +315,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, SPIN_LOCK_TIMEOUT);
         spinLockTimeout = 100_000_000;
 
-        final TestMicrosecondClock testClock = new TestMicrosecondClock(parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z"));
+        final TestClock testClock = new TestClock(MicrosTimestampDriver.floor("2000-01-01T00:00:00.000000Z"), ColumnType.TIMESTAMP_MICRO);
         testMicrosClock = testClock;
 
         assertMemoryLeak(() -> {
@@ -335,7 +337,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             final Thread writer = new Thread(() -> {
                 try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                     for (int i = 0; i < iterations; i++) {
-                        executionContext.setNowAndFixClock(testClock.micros.get());
+                        executionContext.setNowAndFixClock(testClock.micros.get(), ColumnType.TIMESTAMP_MICRO);
                         execute(
                                 "insert into base_price values ('gbpusd', 1317, dateadd('m', -3, now()))," +
                                         "('gbpusd', 1318, dateadd('m', -2, now()))," +
@@ -451,7 +453,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "10ms");
         spinLockTimeout = 100_000_000;
 
-        final TestMicrosecondClock testClock = new TestMicrosecondClock(parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z"));
+        final TestClock testClock = new TestClock(parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z"), ColumnType.TIMESTAMP_MICRO);
         testMicrosClock = testClock;
 
         assertMemoryLeak(() -> {
@@ -477,7 +479,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                     startBarrier.await();
                     for (int i = 0; i < iterations; i++) {
-                        executionContext.setNowAndFixClock(testClock.micros.get());
+                        executionContext.setNowAndFixClock(testClock.micros.get(), ColumnType.TIMESTAMP_MICRO);
                         execute(
                                 "insert into base_price values ('gbpusd', 41, dateadd('m', -1, now()))," +
                                         "('gbpusd', 42, now())," +
@@ -551,7 +553,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private ObjList<FuzzTransaction> createTransactionsAndMv(Rnd rnd, String tableNameBase, String matViewName, String viewSql) throws SqlException, NumericException {
-        fuzzer.createInitialTableWal(tableNameBase);
+        fuzzer.createInitialTableWal(tableNameBase, timestampTypes[rnd.nextInt(10) % 2]);
         final boolean deferred = rnd.nextBoolean();
         createMatView(viewSql, matViewName, deferred);
 
@@ -571,7 +573,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             int length,
             char lengthUnit
     ) throws SqlException {
-        fuzzer.createInitialTableWal(tableNameBase);
+        fuzzer.createInitialTableWal(tableNameBase, timestampTypes[rnd.nextInt(10) % 2]);
         final boolean deferred = rnd.nextBoolean();
         createPeriodMatView(viewSql, matViewName, start, length, lengthUnit, deferred);
 
@@ -591,7 +593,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             int interval,
             char intervalUnit
     ) throws SqlException {
-        fuzzer.createInitialTableWal(tableNameBase);
+        fuzzer.createInitialTableWal(tableNameBase, timestampTypes[rnd.nextInt(10) % 2]);
         final boolean deferred = rnd.nextBoolean();
         createTimerMatView(viewSql, matViewName, start, interval, intervalUnit, deferred);
 
@@ -695,7 +697,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 throw new IllegalStateException("unexpected unit: " + lengthUnit);
         }
 
-        final long start = IntervalUtils.parseFloorPartialTimestamp("2022-01-02T03");
+        final long start = MicrosTimestampDriver.floor("2022-01-02T03");
         currentMicros = start;
         final long clockJumpLimit = start + (SPIN_LOCK_TIMEOUT / clockJump);
 
@@ -778,7 +780,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 throw new IllegalStateException("unexpected unit: " + intervalUnit);
         }
 
-        final long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
+        final long start = MicrosTimestampDriver.floor("2022-02-24T17");
         currentMicros = start;
         final long clockJumpLimit = start + (SPIN_LOCK_TIMEOUT / clockJump);
 
@@ -960,13 +962,13 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private void testMvFuzz(Rnd rnd, String baseTableName, String... mvNamesAndSqls) throws Exception {
-        long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
+        long start = MicrosTimestampDriver.floor("2022-02-24T17");
         testMvFuzz(rnd, baseTableName, start, mvNamesAndSqls);
     }
 
     private void testMvFuzz(Rnd rnd, String baseTableName, long start, String... mvNamesAndSqls) throws Exception {
         assertMemoryLeak(() -> {
-            fuzzer.createInitialTableWal(baseTableName);
+            fuzzer.createInitialTableWal(baseTableName, timestampTypes[rnd.nextInt(10) % 2]);
 
             for (int i = 0, n = mvNamesAndSqls.length / 2; i < n; i += 2) {
                 final String mvName = mvNamesAndSqls[i];

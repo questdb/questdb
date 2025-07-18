@@ -44,14 +44,6 @@ import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
-import io.questdb.cutlass.line.LineHourTimestampAdapter;
-import io.questdb.cutlass.line.LineMicroTimestampAdapter;
-import io.questdb.cutlass.line.LineMilliTimestampAdapter;
-import io.questdb.cutlass.line.LineMinuteTimestampAdapter;
-import io.questdb.cutlass.line.LineNanoTimestampAdapter;
-import io.questdb.cutlass.line.LineSecondTimestampAdapter;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
-import io.questdb.cutlass.line.LineTimestampAdapter;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
@@ -85,8 +77,6 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -94,22 +84,24 @@ import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.StationaryNanosClock;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceObjHashMap;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosFormatFactory;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.datetime.microtime.TimestampFormatFactory;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
+import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -283,7 +275,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int lineUdpOwnThreadAffinity;
     private final int lineUdpReceiveBufferSize;
     private final LineUdpReceiverConfiguration lineUdpReceiverConfiguration = new PropLineUdpReceiverConfiguration();
-    private final LineTimestampAdapter lineUdpTimestampAdapter;
+    private final byte lineUdpTimestampUnit;
     private final boolean lineUdpUnicast;
     private final DateLocale locale;
     private final Log log;
@@ -323,7 +315,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final Metrics metrics;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
-    private final MicrosecondClock microsecondClock;
+    private final io.questdb.std.datetime.Clock microsecondClock;
     private final int mkdirMode;
     private final int o3CallbackQueueCapacity;
     private final int o3ColumnMemorySize;
@@ -585,7 +577,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineTcpNetConnectionRcvBuf;
     private long lineTcpNetConnectionTimeout;
     private int lineTcpRecvBufferSize;
-    private LineTcpTimestampAdapter lineTcpTimestampAdapter;
+    private byte lineTcpTimestampUnit;
     private int lineTcpWriterQueueCapacity;
     private int[] lineTcpWriterWorkerAffinity;
     private int lineTcpWriterWorkerCount;
@@ -648,6 +640,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long queryTimeout;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitBeforeReload;
+    private int timestampDefaultColumnType;
 
     public PropServerConfiguration(
             String installRoot,
@@ -678,7 +671,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             Log log,
             BuildInformation buildInformation,
             FilesFacade filesFacade,
-            MicrosecondClock microsecondClock,
+            io.questdb.std.datetime.Clock microsecondClock,
             FactoryProviderFactory fpf
     ) throws ServerConfigurationException, JsonException {
         this(
@@ -702,7 +695,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             Log log,
             BuildInformation buildInformation,
             FilesFacade filesFacade,
-            MicrosecondClock microsecondClock,
+            io.questdb.std.datetime.Clock microsecondClock,
             FactoryProviderFactory fpf
     ) throws ServerConfigurationException, JsonException {
         this(
@@ -727,7 +720,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             Log log,
             BuildInformation buildInformation,
             FilesFacade filesFacade,
-            MicrosecondClock microsecondClock,
+            io.questdb.std.datetime.Clock microsecondClock,
             FactoryProviderFactory fpf,
             boolean loadAdditionalConfigurations
     ) throws ServerConfigurationException, JsonException {
@@ -1431,7 +1424,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),
                     DateLocaleFactory.INSTANCE,
-                    new TimestampFormatFactory(),
+                    new MicrosFormatFactory(),
                     this.locale
             );
 
@@ -1525,7 +1518,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineUdpOwnThread = getBoolean(properties, env, PropertyKey.LINE_UDP_OWN_THREAD, false);
             this.lineUdpUnicast = getBoolean(properties, env, PropertyKey.LINE_UDP_UNICAST, false);
             this.lineUdpCommitMode = getCommitMode(properties, env, PropertyKey.LINE_UDP_COMMIT_MODE);
-            this.lineUdpTimestampAdapter = getLineTimestampAdaptor(properties, env, PropertyKey.LINE_UDP_TIMESTAMP);
+            this.lineUdpTimestampUnit = getLineTimestampUnit(properties, env, PropertyKey.LINE_UDP_TIMESTAMP);
             String defaultUdpPartitionByProperty = getString(properties, env, PropertyKey.LINE_DEFAULT_PARTITION_BY, "DAY");
             this.lineUdpDefaultPartitionBy = PartitionBy.fromString(defaultUdpPartitionByProperty);
             if (this.lineUdpDefaultPartitionBy == -1) {
@@ -1617,8 +1610,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.useLegacyStringDefault = getBoolean(properties, env, PropertyKey.CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT, false);
             if (lineTcpEnabled || (lineHttpEnabled && httpServerEnabled)) {
-                LineTimestampAdapter timestampAdapter = getLineTimestampAdaptor(properties, env, PropertyKey.LINE_TCP_TIMESTAMP);
-                this.lineTcpTimestampAdapter = new LineTcpTimestampAdapter(timestampAdapter);
+                this.lineTcpTimestampUnit = getLineTimestampUnit(properties, env, PropertyKey.LINE_TCP_TIMESTAMP);
                 this.stringToCharCastAllowed = getBoolean(properties, env, PropertyKey.LINE_TCP_UNDOCUMENTED_STRING_TO_CHAR_CAST_ALLOWED, false);
                 String floatDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_FLOAT_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.DOUBLE));
                 this.floatDefaultColumnType = ColumnType.tagOf(floatDefaultColumnTypeName);
@@ -1631,6 +1623,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                 if (integerDefaultColumnType != ColumnType.LONG && integerDefaultColumnType != ColumnType.INT && integerDefaultColumnType != ColumnType.SHORT && integerDefaultColumnType != ColumnType.BYTE) {
                     log.info().$("invalid default column type for integer ").$safe(integerDefaultColumnTypeName).$(", will use LONG").$();
                     this.integerDefaultColumnType = ColumnType.LONG;
+                }
+
+                String timestampDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_TIMESTAMP_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.TIMESTAMP_MICRO));
+                this.timestampDefaultColumnType = ColumnType.typeOf(timestampDefaultColumnTypeName);
+                if (timestampDefaultColumnType != ColumnType.TIMESTAMP_MICRO && timestampDefaultColumnType != ColumnType.TIMESTAMP_NANO) {
+                    log.info().$("invalid default column type for timestamp ").$(timestampDefaultColumnTypeName).$(", will use TIMESTAMP").$();
+                    this.timestampDefaultColumnType = ColumnType.TIMESTAMP_MICRO;
                 }
             }
 
@@ -1900,21 +1899,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         return CommitMode.NOSYNC;
     }
 
-    private LineTimestampAdapter getLineTimestampAdaptor(Properties properties, Map<String, String> env, ConfigPropertyKey propNm) {
+    private byte getLineTimestampUnit(Properties properties, Map<String, String> env, ConfigPropertyKey propNm) {
         final String lineUdpTimestampSwitch = getString(properties, env, propNm, "n");
         switch (lineUdpTimestampSwitch) {
             case "u":
-                return LineMicroTimestampAdapter.INSTANCE;
+                return CommonUtils.TIMESTAMP_UNIT_MICROS;
             case "ms":
-                return LineMilliTimestampAdapter.INSTANCE;
+                return CommonUtils.TIMESTAMP_UNIT_MILLIS;
             case "s":
-                return LineSecondTimestampAdapter.INSTANCE;
+                return CommonUtils.TIMESTAMP_UNIT_SECONDS;
             case "m":
-                return LineMinuteTimestampAdapter.INSTANCE;
+                return CommonUtils.TIMESTAMP_UNIT_MINUTES;
             case "h":
-                return LineHourTimestampAdapter.INSTANCE;
+                return CommonUtils.TIMESTAMP_UNIT_HOURS;
             default:
-                return LineNanoTimestampAdapter.INSTANCE;
+                return CommonUtils.TIMESTAMP_UNIT_NANOS;
         }
     }
 
@@ -3087,7 +3086,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public @NotNull MicrosecondClock getMicrosecondClock() {
+        public @NotNull io.questdb.std.datetime.Clock getMicrosecondClock() {
             return microsecondClock;
         }
 
@@ -4452,7 +4451,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public NanosecondClock getNanosecondClock() {
+        public Clock getNanosecondClock() {
             return httpFrozenClock ? StationaryNanosClock.INSTANCE : NanosecondClockImpl.INSTANCE;
         }
     }
@@ -4485,6 +4484,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getDefaultColumnTypeForTimestamp() {
+            return timestampDefaultColumnType;
+        }
+
+        @Override
         public int getDefaultPartitionBy() {
             return lineTcpDefaultPartitionBy;
         }
@@ -4500,7 +4504,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public MicrosecondClock getMicrosecondClock() {
+        public io.questdb.std.datetime.Clock getMicrosecondClock() {
             return microsecondClock;
         }
 
@@ -4510,8 +4514,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public LineTcpTimestampAdapter getTimestampAdapter() {
-            return lineTcpTimestampAdapter;
+        public byte getTimestampUnit() {
+            return lineTcpTimestampUnit;
         }
 
         @Override
@@ -4654,6 +4658,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getDefaultColumnTypeForTimestamp() {
+            return timestampDefaultColumnType;
+        }
+
+        @Override
         public int getDefaultPartitionBy() {
             return lineTcpDefaultPartitionBy;
         }
@@ -4734,7 +4743,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public MicrosecondClock getMicrosecondClock() {
+        public io.questdb.std.datetime.Clock getMicrosecondClock() {
             return MicrosecondClockImpl.INSTANCE;
         }
 
@@ -4794,8 +4803,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public LineTcpTimestampAdapter getTimestampAdapter() {
-            return lineTcpTimestampAdapter;
+        public byte getTimestampUnit() {
+            return lineTcpTimestampUnit;
         }
 
         @Override
@@ -4958,8 +4967,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public LineTimestampAdapter getTimestampAdapter() {
-            return lineUdpTimestampAdapter;
+        public byte getTimestampUnit() {
+            return lineUdpTimestampUnit;
         }
 
         @Override
