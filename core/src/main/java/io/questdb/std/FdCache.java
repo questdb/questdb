@@ -11,11 +11,17 @@ import static io.questdb.ParanoiaState.FD_PARANOIA_MODE;
 
 public class FdCache {
     private static final int NON_CACHED = (2 << 30);
+    private static final int OPEN_ALWAYS_WIN = 0x4;
+    private static final int OPEN_EXISTING_WIN = 0x3;
+    private static final int O_CREAT;
+    private static final int O_CREAT_LINUX = 0x40;
+    private static final int O_CREAT_OSX = 0x200;
+    private static final int O_RO;
     private static final int RO_MASK = 0;
     private static final int RW_MASK = (1 << 30);
     private final AtomicInteger fdCounter = new AtomicInteger(1);
-    private final Utf8SequenceObjHashMap<FdCacheRecord> openFdMapByPath = new Utf8SequenceObjHashMap<>();
     private final LongObjHashMap<FdCacheRecord> openFdMapByFd = new LongObjHashMap<>();
+    private final Utf8SequenceObjHashMap<FdCacheRecord> openFdMapByPath = new Utf8SequenceObjHashMap<>();
     private long fdReuseCount = 0;
 
     public synchronized void checkFdOpen(long fd) {
@@ -92,10 +98,6 @@ public class FdCache {
         Files.OPEN_FILE_COUNT.decrementAndGet();
     }
 
-    public long getReuseCount() {
-        return fdReuseCount;
-    }
-
     public synchronized String getOpenFdDebugInfo() {
         var sb = new StringSink();
         for (int i = 0, n = openFdMapByFd.keys.length; i < n; i++) {
@@ -110,12 +112,16 @@ public class FdCache {
         return sb.toString();
     }
 
+    public long getReuseCount() {
+        return fdReuseCount;
+    }
+
     public synchronized void markPathRemoved(LPSZ lpsz) {
         openFdMapByPath.remove(lpsz);
     }
 
     public synchronized long openROCached(LPSZ lpsz) {
-        final FdCacheRecord holder = getFdCacheRecord(lpsz, 0);
+        final FdCacheRecord holder = getFdCacheRecord(lpsz, O_RO);
         if (holder == null) {
             // Failed to open
             return -1;
@@ -129,7 +135,7 @@ public class FdCache {
     }
 
     public synchronized long openRWCached(LPSZ lpsz, int opts) {
-        final FdCacheRecord holder = getFdCacheRecord(lpsz, opts | Files.O_CREAT);
+        final FdCacheRecord holder = getFdCacheRecord(lpsz, opts | O_CREAT);
         if (holder == null) {
             // Failed to open
             return -1;
@@ -166,7 +172,6 @@ public class FdCache {
         assert !write || (Numbers.decodeLowInt(fd) >>> 30) != 0 : "RO fd cannot be used for writing: " + fd;
         return toOsFd(fd);
     }
-
 
     private long createUniqueFdRO(int fd) {
         int index = fdCounter.getAndIncrement();
@@ -225,6 +230,20 @@ public class FdCache {
         public FdCacheRecord(Utf8String path, long mmapCacheFd) {
             this.path = path;
             this.mmapCacheFd = mmapCacheFd;
+        }
+    }
+
+    static {
+        if (Os.isOSX()) {
+            O_RO = 0;
+            O_CREAT = O_CREAT_OSX;
+        } else if (Os.isWindows()) {
+            O_RO = OPEN_EXISTING_WIN;
+            O_CREAT = OPEN_ALWAYS_WIN;
+        } else {
+            // Must be Linux of other Unix-like OS
+            O_RO = 0;
+            O_CREAT = O_CREAT_LINUX;
         }
     }
 }
