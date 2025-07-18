@@ -68,7 +68,7 @@ public class RecordComparatorCompiler {
      * @param keyColumnIndices indexes of columns in types object. Column indexes are 1-based.
      *                         Index sign indicates direction of sort: negative - descending,
      *                         positive - ascending.
-     * @return Class<RecordComparator> generated class.
+     * @return generated class.
      */
     public Class<RecordComparator> compile(ColumnTypes columnTypes, @Transient IntList keyColumnIndices) {
         assert keyColumnIndices.size() < SqlParser.MAX_ORDER_BY_COLUMNS;
