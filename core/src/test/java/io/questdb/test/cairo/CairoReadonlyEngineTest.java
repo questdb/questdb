@@ -113,7 +113,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
 
                 roEngine.reloadTableNames();
                 try {
-                    roEngine.dropTableOrMatView(
+                    roEngine.dropTableOrViewOrMatView(
                             Path.getThreadLocal(root),
                             token
                     );

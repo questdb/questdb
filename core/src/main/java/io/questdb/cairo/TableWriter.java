@@ -4021,7 +4021,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int type = metadata.getColumnType(i);
             configureColumn(type, metadata.isColumnIndexed(i), i);
 
-            if (type > -1) {
+            if (type > -1 && !tableToken.isView()) {
                 if (ColumnType.isSymbol(type)) {
                     final int symbolIndex = denseSymbolMapWriters.size();
                     long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(i);
