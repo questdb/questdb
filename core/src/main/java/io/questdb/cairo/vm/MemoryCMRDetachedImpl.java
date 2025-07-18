@@ -61,10 +61,11 @@ public class MemoryCMRDetachedImpl extends MemoryCMRImpl {
 
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts, int madviseOpts, boolean keepFdOpen) {
         super.of(ff, name, extendSegmentSize, size, memoryTag, opts, madviseOpts);
-        if (!keepFdOpen && ff != null && ff.close(fd)) {
-            LOG.debug().$("closing [fd=").$(fd).I$();
-            fd = -1;
-        }
+        // This messes up with mmap cache.
+//        if (!keepFdOpen && ff != null && ff.close(fd)) {
+//            LOG.debug().$("closing [fd=").$(fd).I$();
+//            fd = -1;
+//        }
     }
 
     public boolean tryChangeSize(long newSize) {

@@ -67,9 +67,10 @@ public final class Files {
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
     static final AtomicInteger OPEN_FILE_COUNT = new AtomicInteger();
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
+    private final static FdCache fdCache = new FdCache();
     // To be set in tests to check every call for using OPEN file descriptor
     public static boolean VIRTIO_FS_DETECTED = false;
-    private final static FdCache fdCache = new FdCache();
+    private static final MmapCache mmapCache = new MmapCache();
 
     private Files() {
         // Prevent construction.
@@ -332,11 +333,8 @@ public final class Files {
     }
 
     public static long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-        long address = mmap0(toOsFd(fd), len, offset, flags, 0);
-        if (address != -1) {
-            Unsafe.recordMemAlloc(len, memoryTag);
-        }
-        return address;
+        int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
+        return mmapCache.cacheMmap(osFd, len, offset, flags, memoryTag);
     }
 
     public static long mremap(long fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
@@ -349,19 +347,14 @@ public final class Files {
                     .put(']');
         }
 
-        address = mremap0(toOsFd(fd), address, previousSize, newSize, offset, flags);
-        if (address != -1) {
-            Unsafe.recordMemAlloc(newSize - previousSize, memoryTag);
-        }
-        return address;
+        int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
+        return mmapCache.mremap(osFd, address, previousSize, newSize, offset, flags, memoryTag);
     }
 
     public static native int msync(long addr, long len, boolean async);
 
     public static void munmap(long address, long len, int memoryTag) {
-        if (address != 0 && munmap0(address, len) != -1) {
-            Unsafe.recordMemAlloc(-len, memoryTag);
-        }
+        mmapCache.unmap(address, len, memoryTag);
     }
 
     public static native long noop();
@@ -629,8 +622,6 @@ public final class Files {
 
     private native static long append(int fd, long address, long len);
 
-    native static int close0(int fd);
-
     private static native int copy(long from, long to);
 
     private static native long copyData(int srcFd, int destFd, long offsetSrc, long length);
@@ -676,12 +667,6 @@ public final class Files {
 
     private native static int mkdir(long lpszPath, int mode);
 
-    private static native long mmap0(int fd, long len, long offset, int flags, long baseAddress);
-
-    private static native long mremap0(int fd, long address, long previousSize, long newSize, long offset, int flags);
-
-    private static native int munmap0(long address, long len);
-
     private native static int openAppend(long lpszName);
 
     private native static int openRO(long lpszName);
@@ -689,8 +674,6 @@ public final class Files {
     private native static int openRW(long lpszName);
 
     private native static int openRWOpts(long lpszName, int opts);
-
-    native static int openRWOptsNoCreate(long lpszName, int opts);
 
     private native static long read(int fd, long address, long len, long offset);
 
@@ -717,6 +700,16 @@ public final class Files {
     private native static boolean truncate(int fd, long size);
 
     private native static long write(int fd, long address, long len, long offset);
+
+    native static int close0(int fd);
+
+    static native long mmap0(int fd, long len, long offset, int flags, long baseAddress);
+
+    static native long mremap0(int fd, long address, long previousSize, long newSize, long offset, int flags);
+
+    static native int munmap0(long address, long len);
+
+    native static int openRWOptsNoCreate(long lpszName, int opts);
 
     static {
         Os.init();

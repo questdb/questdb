@@ -139,6 +139,12 @@ public class FdCache {
         return osFd;
     }
 
+    public int toOsFd(long fd, boolean write) {
+        assert !write || (Numbers.decodeLowInt(fd) >>> 30) != 0 : "RO fd cannot be used for writing: " + fd;
+        return toOsFd(fd);
+    }
+
+
     private long createUniqueFdRO(int fd) {
         int index = fdCounter.getAndIncrement();
         return Numbers.encodeLowHighInts(index | RO_MASK, fd);

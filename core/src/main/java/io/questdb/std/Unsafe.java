@@ -291,6 +291,7 @@ public final class Unsafe {
     public static void recordMemAlloc(long size, int memoryTag) {
         assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
         COUNTERS[memoryTag].add(size);
+        assert memoryTag!=MemoryTag.MMAP_TABLE_WRITER||COUNTERS[memoryTag].sum() >= 0;
         if (memoryTag >= MemoryTag.NATIVE_DEFAULT) {
             final long mem = UNSAFE.getAndAddLong(null, RSS_MEM_USED_ADDR, size) + size;
             assert mem >= 0 : "unexpected RSS mem: " + mem + ", size: " + size + ", memoryTag:" + memoryTag;
