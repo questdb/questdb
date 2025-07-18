@@ -213,10 +213,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.matViewGraph = new MatViewGraph();
             this.frameFactory = new FrameFactory(configuration);
             this.dataID = DataID.open(configuration);
-            if (!configuration.isReadOnlyReplica() && !this.dataID.isInitialized()) {
-                final Rnd rnd = configuration.getRandom();
-                this.dataID.set(rnd.nextLong(), rnd.nextLong());
-            }
+            initDataID();
 
             settingsStore = new SettingsStore(configuration);
             settingsStore.init();
@@ -239,6 +236,13 @@ public class CairoEngine implements Closeable, WriterSource {
         } catch (Throwable th) {
             close();
             throw th;
+        }
+    }
+
+    protected void initDataID() {
+        if (!this.dataID.isInitialized()) {
+            final Rnd rnd = configuration.getRandom();
+            this.dataID.set(rnd.nextLong(), rnd.nextLong());
         }
     }
 
