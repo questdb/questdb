@@ -49,6 +49,7 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.LimitedSizeLongTreeChain;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
+import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongList;
@@ -149,7 +150,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public int getScanDirection() {
-        return base.getScanDirection();
+        return SortedRecordCursorFactory.getScanDirection(orderByFilter);
     }
 
     @Override

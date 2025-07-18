@@ -3898,8 +3898,7 @@ if __name__ == "__main__":
                     assertResultSet(
                             "QUERY PLAN[VARCHAR]\n" +
                                     "Async Top K lo: 10 workers: 2\n" +
-                                    "  filter: str='\\b\\f\n" +
-                                    "\\r\\t\\u0005'\n" +
+                                    "  filter: str='\\b\\f\\n\\r\\t\\u0005'\n" +
                                     "  keys: [str, x]\n" +
                                     "    PageFrame\n" +
                                     "        Row forward scan\n" +
