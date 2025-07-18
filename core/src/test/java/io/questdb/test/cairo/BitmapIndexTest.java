@@ -552,7 +552,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         reader.getValueBaseAddress(),
                         reader.getValueMemorySize(),
                         argsAddress,
-                        reader.getUnIndexedNullCount(),
+                        reader.getColumnTop(),
                         Long.MAX_VALUE,
                         0,
                         0,
@@ -624,7 +624,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         reader.getValueBaseAddress(),
                         reader.getValueMemorySize(),
                         argsAddress,
-                        reader.getUnIndexedNullCount(),
+                        reader.getColumnTop(),
                         Long.MAX_VALUE,
                         0,
                         0,
@@ -704,7 +704,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         reader.getValueBaseAddress(),
                         reader.getValueMemorySize(),
                         argsAddress,
-                        reader.getUnIndexedNullCount(),
+                        reader.getColumnTop(),
                         Long.MAX_VALUE,
                         0,
                         0,
@@ -788,8 +788,11 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         tableReader.openPartition(0);
                         final int columnBase = tableReader.getColumnBase(0);
                         final int columnIndex = tableReader.getMetadata().getColumnIndex("c");
-                        BitmapIndexReader reader = tableReader.getBitmapIndexReader(0,
-                                columnBase, columnIndex, BitmapIndexReader.DIR_BACKWARD);
+                        BitmapIndexReader reader = tableReader.getBitmapIndexReader(
+                                0,
+                                columnIndex,
+                                BitmapIndexReader.DIR_BACKWARD
+                        );
 
                         long columnTop = tableReader.getColumnTop(columnBase, columnIndex);
 
