@@ -24,27 +24,55 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.ServerMain;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DataID;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.Uuid;
-import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.AbstractBootstrapTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class DataIDTest extends AbstractCairoTest {
+public class DataIDTest extends AbstractBootstrapTest {
+    @Test
+    public void testDataIDSurvivesRestart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+
+            // Start.
+            Uuid initDataId;
+            try (ServerMain serverMain = startWithEnvVariables()) {
+                serverMain.start();
+                initDataId = serverMain.getEngine().getDataID().get();
+                Assert.assertTrue(serverMain.getEngine().getDataID().isInitialized());
+            }
+
+            // Restart.
+            Uuid restartUuid;
+            try (ServerMain serverMain = startWithEnvVariables()) {
+                serverMain.start();
+                restartUuid = serverMain.getEngine().getDataID().get();
+                Assert.assertTrue(serverMain.getEngine().getDataID().isInitialized());
+            }
+
+            Assert.assertEquals(initDataId, restartUuid);
+        });
+    }
+
     @Test
     public void testOpenDataID() throws Exception {
         assertMemoryLeak(() -> {
-            DataID id = DataID.open(configuration);
+            java.io.File tmpDbRoot = new java.io.File(temp.newFolder(".testOpenDataID.installRoot"), "db");
+            Assert.assertTrue(tmpDbRoot.mkdirs());
+            final CairoConfiguration config = new DefaultTestCairoConfiguration(tmpDbRoot.getAbsolutePath());
+            final DataID id = DataID.open(config);
             Assert.assertNotNull(id);
             Assert.assertFalse(id.isInitialized());
             Assert.assertEquals(Numbers.LONG_NULL, id.getLo());
             Assert.assertEquals(Numbers.LONG_NULL, id.getHi());
 
-            Rnd rnd = new Rnd(configuration.getMicrosecondClock().getTicks(), configuration.getMillisecondClock().getTicks());
+            Rnd rnd = new Rnd(config.getMicrosecondClock().getTicks(), config.getMillisecondClock().getTicks());
             Uuid currentId = new Uuid();
             currentId.of(rnd.nextLong(), rnd.nextLong());
             id.set(currentId.getLo(), currentId.getHi());
@@ -52,7 +80,10 @@ public class DataIDTest extends AbstractCairoTest {
             Assert.assertEquals(id.getLo(), currentId.getLo());
             Assert.assertEquals(id.getHi(), currentId.getHi());
 
-            DataID updatedId = DataID.open(configuration);
+            Assert.assertEquals(id.get().getLo(), id.getLo());
+            Assert.assertEquals(id.get().getHi(), id.getHi());
+
+            DataID updatedId = DataID.open(config);
             Assert.assertTrue(updatedId.isInitialized());
             Assert.assertEquals(updatedId.getLo(), currentId.getLo());
             Assert.assertEquals(updatedId.getHi(), currentId.getHi());

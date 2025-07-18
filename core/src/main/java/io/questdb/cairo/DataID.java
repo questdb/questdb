@@ -49,7 +49,7 @@ public final class DataID implements Sinkable {
      * The file that contains the serialized DataID value has a name that starts with a `.`
      * as this avoids a name clash with a potentially valid table name.
      */
-    public static final CharSequence FILENAME = ".data_id";
+    public static final String FILENAME = ".data_id";
     public static long FILE_SIZE = Long.SIZE * 2;  // Storing UUID as binary
     private final CairoConfiguration configuration;
     private final Uuid id;
@@ -80,6 +80,10 @@ public final class DataID implements Sinkable {
             }
         }
         return new DataID(configuration, new Uuid(lo, hi));
+    }
+
+    public Uuid get() {
+        return id;
     }
 
     public long getHi() {

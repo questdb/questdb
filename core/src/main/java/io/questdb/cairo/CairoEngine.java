@@ -114,6 +114,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Transient;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
@@ -668,7 +669,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return copyContext;
     }
 
-    public DataID getDataID() {
+    public @NotNull DataID getDataID() {
         return dataID;
     }
 
