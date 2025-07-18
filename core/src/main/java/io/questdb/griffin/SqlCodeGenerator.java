@@ -231,7 +231,6 @@ import io.questdb.griffin.engine.table.FilterOnExcludedValuesRecordCursorFactory
 import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnValuesRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllSymbolsFilteredRecordCursorFactory;
@@ -247,6 +246,7 @@ import io.questdb.griffin.engine.table.LatestByValueIndexedFilteredRecordCursorF
 import io.questdb.griffin.engine.table.LatestByValueIndexedRowCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
@@ -4216,8 +4216,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int i = 0; i < selectColumnCount; i++) {
                 QueryColumn qc = columns.getQuick(i);
                 if (
-                        !Chars.equalsIgnoreCase(metadata.getColumnName(i), qc.getAst().token) ||
-                                (qc.getAlias() != null && !Chars.equalsIgnoreCase(qc.getAlias(), qc.getAst().token))
+                        !Chars.equals(metadata.getColumnName(i), qc.getAst().token) ||
+                                (qc.getAlias() != null && !Chars.equals(qc.getAlias(), qc.getAst().token))
                 ) {
                     entity = false;
                     break;
@@ -6539,7 +6539,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final String columnNameA = slaveMetadata.getColumnName(columnIndexA);
             final int columnTypeB = masterMetadata.getColumnType(columnIndexB);
             final String columnNameB = masterMetadata.getColumnName(columnIndexB);
-            if (columnTypeB != columnTypeA && !(ColumnType.isSymbolOrString(columnTypeB) && ColumnType.isSymbolOrString(columnTypeA))) {
+            if (columnTypeB != columnTypeA && !(ColumnType.isSymbolOrStringOrVarchar(columnTypeB) && ColumnType.isSymbolOrStringOrVarchar(columnTypeA))) {
                 // index in column filter and join context is the same
                 throw SqlException.$(jc.aNodes.getQuick(k).position, "join column type mismatch");
             }
