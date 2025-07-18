@@ -31,16 +31,26 @@ import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
 public class CopyModel implements ExecutionModel, Mutable, Sinkable {
+    public static final int COPY_FORMAT_CSV = 1;
+    public static final int COPY_FORMAT_PARQUET = 2;
+    public static final int COPY_FORMAT_UNKNOWN = 0;
+    public static final int COPY_TYPE_FROM = 1;
+    public static final int COPY_TYPE_TO = 2;
+    public static final int COPY_TYPE_UNKNOWN = 0;
     public static final ObjectFactory<CopyModel> FACTORY = CopyModel::new;
+    public static String[] copyFormatMap = {"unknown", "csv", "parquet"};
+    public static String[] copyTypeMap = {"unknown", "from", "to"};
     private int atomicity;
     private boolean cancel;
     private byte delimiter;
     private ExpressionNode fileName;
+    private int format;
     private boolean header;
     private int partitionBy;
     private ExpressionNode target; // holds table name (new import) or import id (cancel model)
     private CharSequence timestampColumnName;
     private CharSequence timestampFormat;
+    private int type;
 
     public CopyModel() {
     }
@@ -56,6 +66,8 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         partitionBy = -1;
         delimiter = -1;
         atomicity = -1;
+        type = COPY_TYPE_UNKNOWN;
+        format = COPY_FORMAT_UNKNOWN;
     }
 
     public int getAtomicity() {
@@ -68,6 +80,10 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
 
     public ExpressionNode getFileName() {
         return fileName;
+    }
+
+    public int getFormat() {
+        return format;
     }
 
     @Override
@@ -97,6 +113,10 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         return timestampFormat;
     }
 
+    public int getType() {
+        return type;
+    }
+
     public boolean isCancel() {
         return cancel;
     }
@@ -121,6 +141,10 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         this.fileName = fileName;
     }
 
+    public void setFormat(int format) {
+        this.format = format;
+    }
+
     public void setHeader(boolean header) {
         this.header = header;
     }
@@ -139,6 +163,10 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
 
     public void setTimestampFormat(CharSequence timestampFormat) {
         this.timestampFormat = timestampFormat;
+    }
+
+    public void setType(int type) {
+        this.type = type;
     }
 
     @Override

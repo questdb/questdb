@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cutlass.text.CopyRequestTask;
 import io.questdb.cutlass.text.CopyTask;
+import io.questdb.cutlass.text.CopyToRequestTask;
 import io.questdb.metrics.QueryTrace;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.FanOut;
@@ -93,6 +94,10 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence tableWriterEventPubSeq;
     private final RingQueue<TableWriterTask> tableWriterEventQueue;
     private final FanOut tableWriterEventSubSeq;
+    private final MPSequence textExportRequestPubSeq;
+    private final RingQueue<CopyToRequestTask> textExportRequestQueue;
+    private final SCSequence textExportRequestSubSeq;
+    private final MCSequence textExportSubSeq;
     private final SCSequence textImportColSeq;
     private final SPSequence textImportPubSeq;
     private final RingQueue<CopyTask> textImportQueue;
@@ -199,6 +204,12 @@ public class MessageBusImpl implements MessageBus {
             this.textImportRequestPubSeq = new MPSequence(textImportRequestQueue.getCycle());
             this.textImportRequestSubSeq = new SCSequence();
             textImportRequestPubSeq.then(textImportRequestSubSeq).then(textImportRequestPubSeq);
+
+            // We allow only a single parallel export to be in-flight, hence queue size of 1.
+//            this.textExportRequestQueue = new RingQueue<>(CopyToRequestTask::new, 1);
+//            this.textExportRequestPubSeq = new MPSequence(textExportRequestQueue.getCycle()).getCycle());
+//            this.textExportRequestSubSeq = new SCSequence();
+//            textExportRequestPubSeq.then(textExportRequestSubSeq).then(textExportRequestPubSeq);
 
             this.walTxnNotificationQueue = new RingQueue<>(WalTxnNotificationTask::new, configuration.getWalTxnNotificationQueueCapacity());
             this.walTxnNotificationPubSequence = new MPSequence(walTxnNotificationQueue.getCycle());
@@ -458,6 +469,11 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public RingQueue<TableWriterTask> getTableWriterEventQueue() {
         return tableWriterEventQueue;
+    }
+
+    @Override
+    public RingQueue<CopyToRequestTask> getTextExportRequestQueue() {
+        return textExportRequestQueue;
     }
 
     @Override

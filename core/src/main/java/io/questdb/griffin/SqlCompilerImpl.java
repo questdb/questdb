@@ -87,6 +87,7 @@ import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CopyCancelFactory;
 import io.questdb.griffin.engine.ops.CopyFactory;
+import io.questdb.griffin.engine.ops.CopyToFactory;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
@@ -146,6 +147,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.griffin.SqlKeywords.*;
+import static io.questdb.griffin.model.CopyModel.COPY_FORMAT_PARQUET;
 import static io.questdb.std.GenericLexer.unquote;
 
 public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallback {
@@ -1542,6 +1544,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return tableName;
     }
 
+    private CharSequence authorizeSelectForCopy(SecurityContext securityContext, CopyModel model) {
+        final CharSequence tableName = unquote(model.getTableName());
+        final TableToken tt = engine.getTableTokenIfExists(tableName);
+        if (tt != null) {
+            securityContext.authorizeSelectOnAnyColumn(tt);
+        }
+        return tableName;
+    }
+
     private void checkMatViewModification(ExecutionModel executionModel) throws SqlException {
         final CharSequence name = executionModel.getTableName();
         final TableToken tableToken = engine.getTableTokenIfExists(name);
@@ -2123,7 +2134,31 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofCommit();
     }
 
-    private RecordCursorFactory compileCopy(SecurityContext securityContext, CopyModel model) throws SqlException {
+    private RecordCursorFactory compileCopyCancel(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
+        assert model.isCancel();
+
+        long cancelCopyID;
+        String cancelCopyIDStr = Chars.toString(unquote(model.getTableName()));
+        try {
+            cancelCopyID = Numbers.parseHexLong(cancelCopyIDStr);
+        } catch (NumericException e) {
+            throw SqlException.$(0, "copy cancel ID format is invalid: '").put(cancelCopyIDStr).put('\'');
+        }
+        return new CopyCancelFactory(
+                engine.getCopyContext(),
+                cancelCopyID,
+                cancelCopyIDStr,
+                query()
+                        .$("select * from '")
+                        .$(engine.getConfiguration().getSystemTableNamePrefix())
+                        .$("text_import_log' where id = '")
+                        .$(cancelCopyIDStr)
+                        .$("' limit -1")
+                        .compile(executionContext).getRecordCursorFactory()
+        );
+    }
+
+    private RecordCursorFactory compileCopyFrom(SecurityContext securityContext, CopyModel model) throws SqlException {
         assert !model.isCancel();
 
         final CharSequence tableName = authorizeInsertForCopy(securityContext, model);
@@ -2149,27 +2184,40 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         );
     }
 
-    private RecordCursorFactory compileCopyCancel(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
-        assert model.isCancel();
 
-        long cancelCopyID;
-        String cancelCopyIDStr = Chars.toString(unquote(model.getTableName()));
-        try {
-            cancelCopyID = Numbers.parseHexLong(cancelCopyIDStr);
-        } catch (NumericException e) {
-            throw SqlException.$(0, "copy cancel ID format is invalid: '").put(cancelCopyIDStr).put('\'');
+    private RecordCursorFactory compileCopyTo(SecurityContext securityContext, CopyModel model) throws SqlException {
+        assert !model.isCancel();
+
+        final CharSequence tableName = authorizeSelectForCopy(securityContext, model);
+
+
+        switch (model.getFormat()) {
+            case COPY_FORMAT_PARQUET:
+
+                break;
+            default:
+                throw CairoException.nonCritical().put("unsupported copy format");
         }
-        return new CopyCancelFactory(
+
+
+        if (model.getTimestampColumnName() == null
+                && ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
+            throw SqlException.$(-1, "invalid option used for import without a designated timestamp (format or partition by)");
+        }
+        if (model.getDelimiter() < 0) {
+            model.setDelimiter((byte) ',');
+        }
+
+        final ExpressionNode fileNameNode = model.getFileName();
+        final CharSequence fileName = fileNameNode != null ? GenericLexer.assertNoDots(unquote(fileNameNode.token), fileNameNode.position) : null;
+        assert fileName != null;
+
+        return new CopyToFactory(
+                messageBus,
                 engine.getCopyContext(),
-                cancelCopyID,
-                cancelCopyIDStr,
-                query()
-                        .$("select * from '")
-                        .$(engine.getConfiguration().getSystemTableNamePrefix())
-                        .$("text_import_log' where id = '")
-                        .$(cancelCopyIDStr)
-                        .$("' limit -1")
-                        .compile(executionContext).getRecordCursorFactory()
+                Chars.toString(tableName),
+                Chars.toString(fileName),
+                model
         );
     }
 
@@ -3113,7 +3161,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (copyModel.isCancel()) {
                 copyFactory = compileCopyCancel(executionContext, copyModel);
             } else {
-                copyFactory = compileCopy(executionContext.getSecurityContext(), copyModel);
+                if (copyModel.getType() == CopyModel.COPY_TYPE_FROM) {
+                    copyFactory = compileCopyFrom(executionContext.getSecurityContext(), copyModel);
+                } else {
+                    copyFactory = compileCopyTo(executionContext.getSecurityContext(), copyModel);
+                }
+
             }
             compiledQuery.ofPseudoSelect(copyFactory);
         }
