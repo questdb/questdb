@@ -99,24 +99,35 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelTopK() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelTopK(
+                "SELECT * FROM tab ORDER BY key DESC, price ASC LIMIT 3;",
+                "ts\tkey\tprice\tquantity\tcolTop\n" +
+                        "1970-01-01T00:57:36.000000Z\tk4\t4.0\t4\tnull\n" +
+                        "1970-01-01T02:09:36.000000Z\tk4\t9.0\t9\tnull\n" +
+                        "1970-01-01T03:21:36.000000Z\tk4\t14.0\t14\tnull\n"
+        );
+    }
+
+    @Test
     public void testParallelTopKFilter() throws Exception {
         testParallelTopK(
-                "SELECT * FROM tab WHERE key = 'k0' ORDER BY price DESC LIMIT 1",
+                "SELECT * FROM tab WHERE key = 'k0' ORDER BY price DESC LIMIT 1;",
                 "ts\tkey\tprice\tquantity\tcolTop\n" +
                         "1970-02-10T12:00:00.000000Z\tk0\t4050.0\t4050\t4050.0\n"
         );
     }
 
     @Test
-    public void testParallelTopKNoFilter() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
+    public void testParallelTopKIntrinsicsFilter() throws Exception {
         testParallelTopK(
-                "SELECT * FROM tab ORDER BY key DESC, price ASC LIMIT 3",
+                "SELECT * FROM tab WHERE ts in '1970-02' ORDER BY colTop LIMIT 3;",
                 "ts\tkey\tprice\tquantity\tcolTop\n" +
-                        "1970-01-01T00:57:36.000000Z\tk4\t4.0\t4\tnull\n" +
-                        "1970-01-01T02:09:36.000000Z\tk4\t9.0\t9\tnull\n" +
-                        "1970-01-01T03:21:36.000000Z\tk4\t14.0\t14\tnull\n"
+                        "1970-02-01T00:00:00.000000Z\tk0\t3100.0\t3100\t3100.0\n" +
+                        "1970-02-01T00:14:24.000000Z\tk1\t3101.0\t3101\t3101.0\n" +
+                        "1970-02-01T00:28:48.000000Z\tk2\t3102.0\t3102\t3102.0\n"
         );
     }
 
