@@ -34,6 +34,12 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     public static final IODispatcherConfiguration INSTANCE = new DefaultIODispatcherConfiguration();
 
     @Override
+    public int getAcceptLoopTimeout() {
+        // 500 millis
+        return 500;
+    }
+
+    @Override
     public int getBindIPv4Address() {
         return 0;
     }

@@ -223,6 +223,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PropHttpConcurrentCacheConfiguration httpMinConcurrentCacheConfiguration = new PropHttpConcurrentCacheConfiguration();
     private final PropHttpContextConfiguration httpMinContextConfiguration;
     private final boolean httpMinServerEnabled;
+    private final int httpNetAcceptLoopTimeout;
     private final boolean httpNetConnectionHint;
     private final String httpPassword;
     private final boolean httpPessimisticHealthCheckEnabled;
@@ -535,6 +536,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private short floatDefaultColumnType;
     private int httpMinBindIPv4Address;
     private int httpMinBindPort;
+    private int httpMinNetAcceptLoopTimeout;
     private boolean httpMinNetConnectionHint;
     private int httpMinNetConnectionLimit;
     private long httpMinNetConnectionQueueTimeout;
@@ -576,6 +578,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpMaintenanceInterval;
     private int lineTcpMaxMeasurementSize;
     private long lineTcpMaxRecvBufferSize;
+    private int lineTcpNetAcceptLoopTimeout;
     private int lineTcpNetBindIPv4Address;
     private int lineTcpNetBindPort;
     private long lineTcpNetConnectionHeartbeatInterval;
@@ -616,6 +619,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgNamedStatementCacheCapacity;
     private int pgNamedStatementLimit;
     private int pgNamesStatementPoolCapacity;
+    private int pgNetAcceptLoopTimeout;
     private int pgNetBindIPv4Address;
     private int pgNetBindPort;
     private boolean pgNetConnectionHint;
@@ -942,6 +946,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     httpMinBindPort = p;
                 });
 
+                this.httpMinNetAcceptLoopTimeout = getInt(properties, env, PropertyKey.HTTP_MIN_NET_ACCEPT_LOOP_TIMEOUT, 500);
                 this.httpMinNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_LIMIT, 64);
 
                 // deprecated
@@ -1061,6 +1066,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             boolean httpServerKeepAlive = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
             boolean httpServerCookiesEnabled = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
             boolean httpReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_READONLY, false);
+
+            this.httpNetAcceptLoopTimeout = getInt(properties, env, PropertyKey.HTTP_NET_ACCEPT_LOOP_TIMEOUT, 500);
 
             // maintain deprecated property name for the time being
             this.httpNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_NET_ACTIVE_CONNECTION_LIMIT, 256);
@@ -1226,6 +1233,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     pgNetBindIPv4Address = a;
                     pgNetBindPort = p;
                 });
+
+                this.pgNetAcceptLoopTimeout = getInt(properties, env, PropertyKey.PG_NET_ACCEPT_LOOP_TIMEOUT, 500);
 
                 // deprecated
                 this.pgNetIdleConnectionTimeout = getMillis(properties, env, PropertyKey.PG_NET_IDLE_TIMEOUT, 300_000);
@@ -1545,6 +1554,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     lineTcpNetBindIPv4Address = a;
                     lineTcpNetBindPort = p;
                 });
+
+                this.lineTcpNetAcceptLoopTimeout = getInt(properties, env, PropertyKey.LINE_TCP_NET_ACCEPT_LOOP_TIMEOUT, 500);
 
                 // deprecated
                 this.lineTcpNetConnectionTimeout = getMillis(properties, env, PropertyKey.LINE_TCP_NET_IDLE_TIMEOUT, 0);
@@ -3965,6 +3976,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public class PropHttpMinServerConfiguration implements HttpServerConfiguration {
+
+        @Override
+        public int getAcceptLoopTimeout() {
+            return httpMinNetAcceptLoopTimeout;
+        }
+
         @Override
         public int getBindIPv4Address() {
             return httpMinBindIPv4Address;
@@ -4152,6 +4169,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public class PropHttpServerConfiguration implements HttpFullFatServerConfiguration {
+
+        @Override
+        public int getAcceptLoopTimeout() {
+            return httpNetAcceptLoopTimeout;
+        }
 
         @Override
         public int getBindIPv4Address() {
@@ -4579,6 +4601,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
+
+        @Override
+        public int getAcceptLoopTimeout() {
+            return lineTcpNetAcceptLoopTimeout;
+        }
+
         @Override
         public String getAuthDB() {
             return lineTcpAuthDB;
@@ -5076,6 +5104,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropPGWireConfiguration implements PGWireConfiguration {
+
+        @Override
+        public int getAcceptLoopTimeout() {
+            return pgNetAcceptLoopTimeout;
+        }
 
         @Override
         public int getBinParamCountCapacity() {

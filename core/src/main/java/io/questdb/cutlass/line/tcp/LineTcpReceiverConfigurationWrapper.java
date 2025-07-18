@@ -51,6 +51,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
+    public int getAcceptLoopTimeout() {
+        return getDelegate().getAcceptLoopTimeout();
+    }
+
+    @Override
     public String getAuthDB() {
         return getDelegate().getAuthDB();
     }

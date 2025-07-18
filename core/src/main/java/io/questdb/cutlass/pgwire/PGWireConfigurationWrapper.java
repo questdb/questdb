@@ -50,6 +50,11 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     }
 
     @Override
+    public int getAcceptLoopTimeout() {
+        return getDelegate().getAcceptLoopTimeout();
+    }
+
+    @Override
     public int getBinParamCountCapacity() {
         return getDelegate().getBinParamCountCapacity();
     }
