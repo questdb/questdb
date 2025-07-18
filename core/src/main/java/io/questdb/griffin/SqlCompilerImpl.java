@@ -1624,7 +1624,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view does not exist");
         }
 
-        try (TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(matViewToken)) {
+        try (TableRecordMetadata tableMetadata = engine.getTableMetadata(matViewToken)) {
             tok = expectToken(lexer, "'alter' or 'resume' or 'suspend'");
             if (isAlterKeyword(tok)) {
                 expectKeyword(lexer, "column");
@@ -1637,7 +1637,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             .put("' does not exist in materialized view '").put(matViewToken.getTableName()).put('\'');
                 }
 
-                tok = expectToken(lexer, "'symbol capacity' or 'add index'");
+                tok = expectToken(lexer, "'symbol capacity', 'add index' or 'drop index'");
                 if (SqlKeywords.isSymbolKeyword(tok)) {
                     alterTableChangeSymbolCapacity(
                             securityContext,
@@ -1651,6 +1651,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else if (SqlKeywords.isAddKeyword(tok)) {
                     expectKeyword(lexer, "index");
 
+                    if (tableMetadata.isColumnIndexed(columnIndex)) {
+                        throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
+                                .put("' already indexed");
+                    }
                     int columnType = tableMetadata.getColumnType(columnIndex);
                     if (columnType != ColumnType.SYMBOL) {
                         throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
@@ -1692,8 +1696,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             tableMetadata,
                             indexValueBlockSize
                     );
+                } else if (SqlKeywords.isDropKeyword(tok)) {
+                    expectKeyword(lexer, "index");
+
+                    if (!tableMetadata.isColumnIndexed(columnIndex)) {
+                        throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
+                                .put("' is not indexed");
+                    }
+
+                    alterTableColumnDropIndex(
+                            securityContext,
+                            matViewNamePosition,
+                            matViewToken,
+                            columnNamePosition,
+                            columnName,
+                            tableMetadata
+                    );
+
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'symbol capacity' or 'add index' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "'symbol capacity', 'add index' or 'drop index' expected");
                 }
             } else if (isSetKeyword(tok)) {
                 tok = expectToken(lexer, "'ttl' or 'refresh'");

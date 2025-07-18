@@ -893,19 +893,19 @@ public class MatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h alter column price",
                     51,
-                    "'symbol capacity' or 'add index' expected"
+                    "'symbol capacity', 'add index' or 'drop index' expected"
             );
 
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h alter column price;",
                     51,
-                    "'symbol capacity' or 'add index' expected"
+                    "'symbol capacity', 'add index' or 'drop index' expected"
             );
 
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h alter column price x",
                     52,
-                    "'symbol capacity' or 'add index' expected"
+                    "'symbol capacity', 'add index' or 'drop index' expected"
             );
 
             assertExceptionNoLeakCheck(
@@ -1049,12 +1049,12 @@ public class MatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h alter column sym;",
                     49,
-                    "'symbol capacity' or 'add index' expected"
+                    "'symbol capacity', 'add index' or 'drop index' expected"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h alter column sym foobar;",
                     50,
-                    "'symbol capacity' or 'add index' expected"
+                    "'symbol capacity', 'add index' or 'drop index' expected"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h alter column price symbol;",
@@ -5537,7 +5537,7 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddIndex() throws Exception {
+    public void testIndex() throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
@@ -5545,7 +5545,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
 
-            execute("create materialized view price_1h as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY ttl 2 days");
+            execute("create materialized view price_1h as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY");
 
             execute(
                     "insert into base_price values('gbpusd', 1.310, '2024-09-10T12:05')" +
@@ -5561,6 +5561,13 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainQueues();
 
+            // index already exists - exception
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym add index",
+                    46,
+                    "column 'sym' already indexed"
+            );
+
             String sql = "select * from price_1h where sym = 'eurusd';";
             assertQueryNoLeakCheck(
                     "sym\tprice\tts\n" +
@@ -5571,6 +5578,42 @@ public class MatViewTest extends AbstractCairoTest {
                     true,
                     false
             );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "DeferredSingleSymbolFilterPageFrame\n" +
+                            "    Index forward scan on: sym\n" +
+                            "      filter: sym=2\n" +
+                            "    Frame forward scan on: price_1h\n",
+                    "explain " + sql
+            );
+
+            execute("alter materialized view price_1h alter column sym drop index");
+
+            drainQueues();
+
+            // not indexed
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym drop index",
+                    46,
+                    "column 'sym' is not indexed"
+            );
+
+            drainQueues();
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async JIT Filter workers: 1\n" +
+                            "  filter: sym='eurusd' [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: price_1h\n",
+                    "explain " + sql
+            );
+
+            execute("alter materialized view price_1h alter column sym add index");
+
+            drainQueues();
 
             assertSql(
                     "QUERY PLAN\n" +
