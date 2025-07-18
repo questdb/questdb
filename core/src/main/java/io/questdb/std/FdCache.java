@@ -14,8 +14,9 @@ public class FdCache {
     private static final int RO_MASK = 0;
     private static final int RW_MASK = (1 << 30);
     private final AtomicInteger fdCounter = new AtomicInteger(1);
-    private final Utf8SequenceObjHashMap<FdCacheRecord> openFdMap = new Utf8SequenceObjHashMap<>();
+    private final Utf8SequenceObjHashMap<FdCacheRecord> openFdMapByPath = new Utf8SequenceObjHashMap<>();
     private final LongObjHashMap<FdCacheRecord> openFdMapByFd = new LongObjHashMap<>();
+    private long fdReuseCount = 0;
 
     public synchronized void checkFdOpen(long fd) {
         if (openFdMapByFd.keyIndex(fd) > -1) {
@@ -77,8 +78,22 @@ public class FdCache {
     }
 
     public synchronized void detach(long fd) {
-        openFdMapByFd.remove(fd);
+        int keyIndex = openFdMapByFd.keyIndex(fd);
+        if (keyIndex < 0) {
+            var cacheRecord = openFdMapByFd.valueAt(keyIndex);
+            openFdMapByFd.removeAt(keyIndex);
+
+            int cahceKeyByPath = openFdMapByPath.keyIndex(cacheRecord.path);
+            if (cahceKeyByPath < 0 && openFdMapByPath.valueAt(cahceKeyByPath) == cacheRecord) {
+                // If the record is the same object, we can remove it
+                openFdMapByPath.removeAt(cahceKeyByPath);
+            }
+        }
         Files.OPEN_FILE_COUNT.decrementAndGet();
+    }
+
+    public long getReuseCount() {
+        return fdReuseCount;
     }
 
     public synchronized String getOpenFdDebugInfo() {
@@ -96,7 +111,7 @@ public class FdCache {
     }
 
     public synchronized void markPathRemoved(LPSZ lpsz) {
-        openFdMap.remove(lpsz);
+        openFdMapByPath.remove(lpsz);
     }
 
     public synchronized long openROCached(LPSZ lpsz) {
@@ -125,6 +140,14 @@ public class FdCache {
         openFdMapByFd.put(uniqROFd, holder);
 
         return uniqROFd;
+    }
+
+    public synchronized long toMmapCacheFd(long fd) {
+        var cacheRecord = openFdMapByFd.get(fd);
+        if (cacheRecord == null) {
+            return 0;
+        }
+        return cacheRecord.mmapCacheFd;
     }
 
     public int toOsFd(long fd) {
@@ -157,48 +180,51 @@ public class FdCache {
 
     @Nullable
     private FdCacheRecord getFdCacheRecord(LPSZ lpsz, int opts) {
-        int keyIndex = openFdMap.keyIndex(lpsz);
+        int keyIndex = openFdMapByPath.keyIndex(lpsz);
         final FdCacheRecord holder;
         if (keyIndex > -1) {
-            int roFd = Files.openRWOptsNoCreate(lpsz.ptr(), opts);
-            if (roFd < 0) {
+            int osFd = Files.openRWOptsNoCreate(lpsz.ptr(), opts);
+            if (osFd < 0) {
                 // Failed to open
                 holder = null;
             } else {
                 Files.OPEN_FILE_COUNT.incrementAndGet();
                 Utf8String path = Utf8String.newInstance(lpsz);
-                holder = new FdCacheRecord(path);
-                holder.osFd = roFd;
+                holder = new FdCacheRecord(path, Numbers.encodeLowHighInts(fdCounter.incrementAndGet(), osFd));
+                holder.osFd = osFd;
                 openFdMapByFd.put(holder.osFd, holder);
-                openFdMap.putAt(keyIndex, lpsz, holder);
+                openFdMapByPath.putAt(keyIndex, lpsz, holder);
             }
         } else {
-            holder = openFdMap.valueAtQuick(keyIndex);
+            holder = openFdMapByPath.valueAtQuick(keyIndex);
+            fdReuseCount++;
         }
         return holder;
     }
 
     private void removeFdCacheSafe(FdCacheRecord fdCacheRecord) {
         if (fdCacheRecord.count == 0) {
-            int fdRecIndex = openFdMap.keyIndex(fdCacheRecord.path);
+            int fdRecIndex = openFdMapByPath.keyIndex(fdCacheRecord.path);
             if (fdRecIndex < 0) {
                 // If the record is the same object, we can remove it
-                if (openFdMap.valueAt(fdRecIndex) == fdCacheRecord) {
-                    openFdMap.removeAt(fdRecIndex);
+                if (openFdMapByPath.valueAt(fdRecIndex) == fdCacheRecord) {
+                    openFdMapByPath.removeAt(fdRecIndex);
                 }
             }
         }
     }
 
     private static class FdCacheRecord {
-        private static final FdCacheRecord EMPTY = new FdCacheRecord(null);
+        private static final FdCacheRecord EMPTY = new FdCacheRecord(null, 0);
 
         private final Utf8String path;
+        long mmapCacheFd;
         private int count;
         private int osFd;
 
-        public FdCacheRecord(Utf8String path) {
+        public FdCacheRecord(Utf8String path, long mmapCacheFd) {
             this.path = path;
+            this.mmapCacheFd = mmapCacheFd;
         }
     }
 }

@@ -68,9 +68,9 @@ public final class Files {
     static final AtomicInteger OPEN_FILE_COUNT = new AtomicInteger();
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
     private final static FdCache fdCache = new FdCache();
+    private static final MmapCache mmapCache = new MmapCache();
     // To be set in tests to check every call for using OPEN file descriptor
     public static boolean VIRTIO_FS_DETECTED = false;
-    private static final MmapCache mmapCache = new MmapCache();
 
     private Files() {
         // Prevent construction.
@@ -201,6 +201,10 @@ public final class Files {
         return 0L;
     }
 
+    public static long getFdReuseCount() {
+        return fdCache.getReuseCount();
+    }
+
     /**
      * Returns fs.file-max kernel limit on Linux or 0 on other OSes.
      */
@@ -231,6 +235,10 @@ public final class Files {
      * Returns vm.max_map_count kernel limit on Linux or 0 on other OSes.
      */
     public native static long getMapCountLimit();
+
+    public static long getMmapReuseCount() {
+        return mmapCache.getReuseCount();
+    }
 
     public static String getOpenFdDebugInfo() {
         return fdCache.getOpenFdDebugInfo();
@@ -334,7 +342,8 @@ public final class Files {
 
     public static long mmap(long fd, long len, long offset, int flags, int memoryTag) {
         int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
-        return mmapCache.cacheMmap(osFd, len, offset, flags, memoryTag);
+        long mmapCacheFd = fdCache.toMmapCacheFd(fd);
+        return mmapCache.cacheMmap(osFd, mmapCacheFd, len, offset, flags, memoryTag);
     }
 
     public static long mremap(long fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
@@ -348,7 +357,9 @@ public final class Files {
         }
 
         int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
-        return mmapCache.mremap(osFd, address, previousSize, newSize, offset, flags, memoryTag);
+        long mmapCacheFd = fdCache.toMmapCacheFd(fd);
+
+        return mmapCache.mremap(osFd, mmapCacheFd, address, previousSize, newSize, offset, flags, memoryTag);
     }
 
     public static native int msync(long addr, long len, boolean async);

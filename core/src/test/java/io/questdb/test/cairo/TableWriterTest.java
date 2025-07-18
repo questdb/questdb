@@ -1313,12 +1313,12 @@ public class TableWriterTest extends AbstractCairoTest {
                 boolean ran = false;
 
                 @Override
-                public long openRW(LPSZ name, int opts) {
+                public long openRWNoCache(LPSZ name, int opts) {
                     if (Utf8s.endsWithAscii(name, PRODUCT_FS + ".lock")) {
                         ran = true;
                         return -1;
                     }
-                    return super.openRW(name, opts);
+                    return super.openRWNoCache(name, opts);
                 }
 
                 @Override

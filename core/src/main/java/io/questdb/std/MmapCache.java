@@ -26,21 +26,23 @@ package io.questdb.std;
 
 public class MmapCache {
     private final LongObjHashMap<MmapCacheRecord> mmapAddrCache = new LongObjHashMap<>();
-    private final IntObjHashMap<MmapCacheRecord> mmapFdCache = new IntObjHashMap<>();
+    private final LongObjHashMap<MmapCacheRecord> mmapFileCache = new LongObjHashMap<>();
+    private long mmapReuseCount = 0;
 
-    public long cacheMmap(int fd, long len, long offset, int flags, int memoryTag) {
+    public long cacheMmap(int fd, long fileCacheKey, long len, long offset, int flags, int memoryTag) {
         // TODO: handle the offset
-        if (offset != 0) {
+        if (offset != 0 || fileCacheKey == 0) {
             return mmap0(fd, len, offset, flags, memoryTag);
         }
 
         synchronized (this) {
 
-            int fdMapIndex = mmapFdCache.keyIndex(fd);
+            int fdMapIndex = mmapFileCache.keyIndex(fileCacheKey);
             if (fdMapIndex < 0) {
-                MmapCacheRecord record = mmapFdCache.valueAt(fdMapIndex);
+                MmapCacheRecord record = mmapFileCache.valueAt(fdMapIndex);
                 if (record.length >= len) {
                     record.count++;
+                    mmapReuseCount++;
                     return record.address;
                 }
             }
@@ -53,8 +55,8 @@ public class MmapCache {
                 return address;
             }
             // Cache the mmap record
-            var record = new MmapCacheRecord(fd, len, address, 1, memoryTag);
-            mmapFdCache.putAt(fdMapIndex, fd, record);
+            var record = new MmapCacheRecord(fd, fileCacheKey, len, address, 1, memoryTag);
+            mmapFileCache.putAt(fdMapIndex, fileCacheKey, record);
 
             // Point the returned address to the correct offset
             mmapAddrCache.put(address, record);
@@ -63,9 +65,13 @@ public class MmapCache {
         }
     }
 
-    public long mremap(int fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
+    public long getReuseCount() {
+        return mmapReuseCount;
+    }
+
+    public long mremap(int fd, long fileCacheKey, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
         // TODO: handle the offset
-        if (offset != 0) {
+        if (offset != 0 || fileCacheKey == 0) {
             return mremap0(fd, address, previousSize, newSize, offset, flags, memoryTag, memoryTag);
         }
 
@@ -87,14 +93,15 @@ public class MmapCache {
                 }
 
                 // Check if someone else remapped this to a larger size
-                int fdIndex = mmapFdCache.keyIndex(fd);
+                int fdIndex = mmapFileCache.keyIndex(fileCacheKey);
                 if (fdIndex < 0) {
-                    MmapCacheRecord updatedCacheRecord = mmapFdCache.valueAt(fdIndex);
+                    MmapCacheRecord updatedCacheRecord = mmapFileCache.valueAt(fdIndex);
                     if (updatedCacheRecord.length >= newSize) {
                         // Cache for the FD is updated by someone else
                         // The fd cache record is already long enough, just return the address
                         updatedCacheRecord.count++;
                         newAddress = updatedCacheRecord.address;
+                        mmapReuseCount++;
 
                         record.count--;
                         if (record.count == 0) {
@@ -128,8 +135,8 @@ public class MmapCache {
                     newAddress = mmap0(fd, newSize, 0, Files.MAP_RW, memoryTag);
                     if (newAddress != -1) {
                         // Cache the new mmap record
-                        var newRecord = new MmapCacheRecord(fd, newSize, newAddress, 1, memoryTag);
-                        mmapFdCache.put(fd, newRecord);
+                        var newRecord = new MmapCacheRecord(fd, fileCacheKey, newSize, newAddress, 1, memoryTag);
+                        mmapFileCache.put(fileCacheKey, newRecord);
                         mmapAddrCache.put(newAddress, newRecord);
                     }
                 }
@@ -175,9 +182,9 @@ public class MmapCache {
 
             // Check if the same map record is used for the FD,
             // it can be already overwritten by a longer map over the same file
-            int fdIndex = mmapFdCache.keyIndex(record.fd);
-            if (fdIndex < 0 && mmapFdCache.valueAt(fdIndex) == record) {
-                mmapFdCache.removeAt(fdIndex);
+            int fdIndex = mmapFileCache.keyIndex(record.fileCacheKey);
+            if (fdIndex < 0 && mmapFileCache.valueAt(fdIndex) == record) {
+                mmapFileCache.removeAt(fdIndex);
             }
 
             // Unmap after exiting the lock.
@@ -222,11 +229,13 @@ public class MmapCache {
         long address;
         int count;
         int fd;
+        long fileCacheKey;
         long length;
         int memoryTag;
 
-        public MmapCacheRecord(int fd, long length, long address, int count, int memoryTag) {
+        public MmapCacheRecord(int fd, long fileCacheKey, long length, long address, int count, int memoryTag) {
             this.fd = fd;
+            this.fileCacheKey = fileCacheKey;
             this.length = length;
             this.address = address;
             this.count = count;
