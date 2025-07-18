@@ -67,7 +67,7 @@ public final class DefaultPgWireAuthenticatorFactoryModern implements PgWireAuth
         final UsernamePasswordMatcher matcher = new DynamicUsernamePasswordMatcher(serverConfiguration, configuration);
 
         // HexTestsCircuitBreakRegistry implies we are either recording or replaying a hex test.
-        // In this case, we don't sends build information to the client. Build informations are volatile by nature, we
+        // In this case, we don't send build information to the client. Build information is volatile by nature, we
         // only record what does not change over time.
         BuildInformation buildInformationToUse = (registry == HexTestsCircuitBreakRegistry.INSTANCE ? null : buildInformation);
 
