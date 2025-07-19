@@ -43,6 +43,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.catalogue.MatViewsFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
+import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.LongList;
@@ -5601,15 +5602,27 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainQueues();
 
-            assertSql(
-                    "QUERY PLAN\n" +
-                            "Async JIT Filter workers: 1\n" +
-                            "  filter: sym='eurusd' [pre-touch]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: price_1h\n",
-                    "explain " + sql
-            );
+            if (JitUtil.isJitSupported()) {
+                assertSql(
+                        "QUERY PLAN\n" +
+                                "Async JIT Filter workers: 1\n" +
+                                "  filter: sym='eurusd' [pre-touch]\n" +
+                                "    PageFrame\n" +
+                                "        Row forward scan\n" +
+                                "        Frame forward scan on: price_1h\n",
+                        "explain " + sql
+                );
+            } else {
+                assertSql(
+                        "QUERY PLAN\n" +
+                                "Async Filter workers: 1\n" +
+                                "  filter: sym='eurusd' [pre-touch]\n" +
+                                "    PageFrame\n" +
+                                "        Row forward scan\n" +
+                                "        Frame forward scan on: price_1h\n",
+                        "explain " + sql
+                );
+            }
 
             execute("alter materialized view price_1h alter column sym add index");
 
