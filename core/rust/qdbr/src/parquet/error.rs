@@ -125,14 +125,6 @@ impl ParquetError {
         Ok(())
     }
 
-    fn fmt_msg_with_backtrace<W: Write>(&self, f: &mut W) -> std::fmt::Result {
-        self.fmt_msg(f)?;
-        if self.backtrace.status() == BacktraceStatus::Captured {
-            write!(f, "\n{}", self.backtrace)?;
-        }
-        Ok(())
-    }
-
     fn build_out_of_memory() -> ParquetError {
         let last_err = take_last_alloc_error();
         let no_last_err = last_err.is_none();
@@ -196,15 +188,6 @@ impl Debug for ParquetError {
 impl Display for ParquetError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         self.fmt_msg(f)?;
-        Ok(())
-    }
-}
-
-pub struct ParquetErrorWithBacktraceDisplay<'a>(&'a ParquetError);
-
-impl Display for ParquetErrorWithBacktraceDisplay<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt_msg_with_backtrace(f)?;
         Ok(())
     }
 }
