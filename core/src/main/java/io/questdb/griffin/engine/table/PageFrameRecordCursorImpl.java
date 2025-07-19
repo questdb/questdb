@@ -165,18 +165,18 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             return;
         }
 
-        long skipToPosition = rowCount.get();
+        long skipTarget = rowCount.get();
         PageFrame pageFrame;
-        while ((pageFrame = frameCursor.next()) != null) {
+        while ((pageFrame = frameCursor.next(skipTarget)) != null) {
             frameAddressCache.add(frameCount++, pageFrame);
 
             long frameSize = pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
-            if (frameSize > skipToPosition) {
-                rowCount.dec(skipToPosition);
+            if (frameSize > skipTarget) {
+                rowCount.dec(skipTarget);
                 break;
             }
             rowCount.dec(frameSize);
-            skipToPosition -= frameSize;
+            skipTarget -= frameSize;
         }
 
         final int frameIndex = frameCount - 1;
@@ -188,7 +188,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             recordA.init(frameMemory);
             recordA.setRowIndex(0);
             rowCursor = rowCursorFactory.getCursor(pageFrame, frameMemory);
-            rowCursor.jumpTo(skipToPosition);
+            rowCursor.jumpTo(skipTarget);
         }
     }
 

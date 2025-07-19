@@ -105,7 +105,7 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
-    public @Nullable PageFrame next() {
+    public @Nullable PageFrame next(long skipTarget) {
         final int rowGroupIndex = ++frame.rowGroupIndex;
         if (rowGroupIndex < rowGroupCount) {
             frame.rowGroupSize = decoder.metadata().rowGroupSize(rowGroupIndex);
