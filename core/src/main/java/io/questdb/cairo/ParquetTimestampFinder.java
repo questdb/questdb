@@ -127,7 +127,7 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
     }
 
     @Override
-    public long maxTimestampApprox() {
+    public long maxTimestampApproxFromMetadata() {
         return maxTimestampApprox;
     }
 
@@ -140,7 +140,7 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
     }
 
     @Override
-    public long minTimestampApprox() {
+    public long minTimestampApproxFromMetadata() {
         return minTimestampApprox;
     }
 

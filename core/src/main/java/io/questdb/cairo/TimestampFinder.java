@@ -60,7 +60,7 @@ public interface TimestampFinder {
      *
      * @return max timestamp as inferred from partition name and metadata
      */
-    long maxTimestampApprox();
+    long maxTimestampApproxFromMetadata();
 
     /**
      * Max partition timestamp as read from the timestamp column data. This method must only be called after
@@ -77,7 +77,7 @@ public interface TimestampFinder {
      *
      * @return min timestamp as inferred from partition name and metadata
      */
-    long minTimestampApprox();
+    long minTimestampApproxFromMetadata();
 
     /**
      * Min partition timestamp as read from the timestamp column data. This method must only be called after

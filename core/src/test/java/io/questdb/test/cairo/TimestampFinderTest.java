@@ -124,18 +124,18 @@ public class TimestampFinderTest extends AbstractCairoTest {
                 finder.of(reader, 0, 0);
 
                 // assert approx timestamps for both finders
-                Assert.assertTrue(oracleFinder.minTimestampApprox() <= oracleFinder.maxTimestampApprox());
-                Assert.assertTrue(finder.minTimestampApprox() <= finder.maxTimestampApprox());
+                Assert.assertTrue(oracleFinder.minTimestampApproxFromMetadata() <= oracleFinder.maxTimestampApproxFromMetadata());
+                Assert.assertTrue(finder.minTimestampApproxFromMetadata() <= finder.maxTimestampApproxFromMetadata());
 
                 // prepare() must be called before accessing exact timestamps
                 oracleFinder.prepare();
                 finder.prepare();
 
                 // assert approx vs. exact timestamps
-                Assert.assertTrue(oracleFinder.minTimestampApprox() <= oracleFinder.minTimestampExact());
-                Assert.assertTrue(finder.minTimestampApprox() <= finder.minTimestampExact());
-                Assert.assertTrue(oracleFinder.maxTimestampApprox() >= oracleFinder.maxTimestampExact());
-                Assert.assertTrue(finder.maxTimestampApprox() >= finder.maxTimestampExact());
+                Assert.assertTrue(oracleFinder.minTimestampApproxFromMetadata() <= oracleFinder.minTimestampExact());
+                Assert.assertTrue(finder.minTimestampApproxFromMetadata() <= finder.minTimestampExact());
+                Assert.assertTrue(oracleFinder.maxTimestampApproxFromMetadata() >= oracleFinder.maxTimestampExact());
+                Assert.assertTrue(finder.maxTimestampApproxFromMetadata() >= finder.maxTimestampExact());
 
                 // assert exact timestamps
                 Assert.assertEquals(minTimestamp, oracleFinder.minTimestampExact());

@@ -78,14 +78,14 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                         .$(", currentInterval=").$(currentInterval)
                         .I$();
 
-                final long partitionTimestampLoApprox = timestampFinder.minTimestampApprox();
+                final long partitionTimestampLoApprox = timestampFinder.minTimestampApproxFromMetadata();
                 // interval is wholly above partition, skip partition
                 if (partitionTimestampLoApprox > intervalHi) {
                     skipPartition(currentPartition);
                     continue;
                 }
 
-                final long partitionTimestampHiApprox = timestampFinder.maxTimestampApprox();
+                final long partitionTimestampHiApprox = timestampFinder.maxTimestampApproxFromMetadata();
                 // interval is wholly below partition, skip interval
                 if (partitionTimestampHiApprox < intervalLo) {
                     skipInterval(currentInterval, limitHi + 1);

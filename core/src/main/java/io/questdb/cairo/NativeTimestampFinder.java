@@ -54,7 +54,7 @@ public class NativeTimestampFinder implements TimestampFinder, Mutable {
     }
 
     @Override
-    public long maxTimestampApprox() {
+    public long maxTimestampApproxFromMetadata() {
         return maxTimestampApprox;
     }
 
@@ -64,7 +64,7 @@ public class NativeTimestampFinder implements TimestampFinder, Mutable {
     }
 
     @Override
-    public long minTimestampApprox() {
+    public long minTimestampApproxFromMetadata() {
         return minTimestampApprox;
     }
 
