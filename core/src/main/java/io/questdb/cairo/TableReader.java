@@ -568,6 +568,8 @@ public class TableReader implements Closeable, SymbolTableSource {
      * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
     public long openPartition(int partitionIndex) {
+//        System.out.println("open: "+partitionIndex);
+//        new Exception().printStackTrace();
         final long size = getPartitionRowCount(partitionIndex);
         if (size != -1) {
             return size;

@@ -131,7 +131,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(k)",
                 "k",
                 false,
-                true
+                false
         );
     }
 
@@ -152,7 +152,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(k)",
                 "k",
                 false,
-                true
+                false
         );
     }
 
@@ -448,7 +448,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(k)",
                 "k",
                 false,
-                true
+                false
         );
     }
 
@@ -937,7 +937,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ")",
                 "k",
                 true,
-                true
+                false
         );
     }
 
@@ -6726,7 +6726,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                 "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
-                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n", true, true, false);
+                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n",
+                true,
+                false,
+                false
+        );
     }
 
     @Test
@@ -6788,7 +6792,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
                 "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
-                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", true, true, false);
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
+                true,
+                false,
+                false
+        );
     }
 
     @Test
@@ -6849,7 +6857,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
                 "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n", true, true, false);
+                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n",
+                true,
+                false,
+                false
+        );
     }
 
     @Test
@@ -6911,7 +6923,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
                 "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
-                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", true, true, false);
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
+                true,
+                false,
+                false
+        );
     }
 
     @Test
