@@ -1342,11 +1342,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "ORDER BY t1.s, t1.ts\n" +
                     "LIMIT 1000000;";
 
-<<<<<<< HEAD
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from (select-choose [s, ts] from (select-choose [ts, s] s, ts from (select [ts, s] from t1 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) t1 order by s, ts limit 1000000) t1 timestamp (ts) order by ts) t1 asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s) order by s, ts", query);
-=======
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
->>>>>>> master
             assertPlanNoLeakCheck(query,
                     "Sort\n" +
                             "  keys: [s, ts]\n" +

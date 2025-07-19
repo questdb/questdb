@@ -688,6 +688,21 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void addOrderByTimestampColumnToTargetModel(QueryModel targetModel) {
+        ExpressionNode aliasNode = expressionNodePool.next();
+        aliasNode.token = targetModel.getTableNameExpr() == null ? targetModel.getAlias().token :
+                targetModel.getTableNameExpr().token;
+        aliasNode.token += ".timestamp";
+
+        ExpressionNode timestampNode = expressionNodePool.next();
+        aliasNode.token = "timestamp";
+        targetModel.setTimestamp(timestampNode);
+
+        targetModel.setTimestamp(timestampNode);
+        targetModel.getOrderBy().add(aliasNode);
+
+    }
+
     private void addOuterJoinExpression(QueryModel parent, QueryModel model, int joinIndex, ExpressionNode node) {
         model.setOuterJoinExpressionClause(concatFilters(model.getOuterJoinExpressionClause(), node));
         // add dependency to prevent previous model reordering (left joins are not symmetric)
@@ -3463,6 +3478,7 @@ public class SqlOptimiser implements Mutable {
         addOrderByClausesToModel(targetModel, level2);
         propagateColumnsFromLowerToHigherModel(level1, level2, false);
         level2.setNestedModel(level1);
+        level2.setWhereClause(targetModel.getWhereClause());
 
         /*
            level 3 is select model choose over level-2 model with limit clause
@@ -3477,20 +3493,28 @@ public class SqlOptimiser implements Mutable {
         */
         QueryModel level4 = QueryModel.FACTORY.newInstance();
         level4.setSelectModelType(SELECT_MODEL_NONE);
-        level4.setTimestamp(baseTableModel.getTimestamp());
+        propagateColumnsFromLowerToHigherModel(level3, level4, false);
+        level4.setNestedModel(level3);
+
+         /*
+          level 5 is select model choose over level-4 model with order by timestamp ASC
+        */
+        QueryModel level5 = QueryModel.FACTORY.newInstance();
+        level5.setSelectModelType(SELECT_MODEL_CHOOSE);
+        level5.setTimestamp(baseTableModel.getTimestamp());
         if (baseTableModel.getTimestamp() != null) {
             final CharSequence timestampColumn = baseTableModel.getTimestamp().token;
             final ExpressionNode timestampNode = expressionNodePool.next();
             timestampNode.token = timestampColumn;
-            level4.addOrderBy(timestampNode, QueryModel.ORDER_DIRECTION_ASCENDING);
+            level5.addOrderBy(timestampNode, QueryModel.ORDER_DIRECTION_ASCENDING);
         }
-        propagateColumnsFromLowerToHigherModel(level3, level4, false);
-        level4.setNestedModel(level3);
+        propagateColumnsFromLowerToHigherModel(level4, level5, true);
+        level5.setNestedModel(level4);
 
         /*
         changes in target model
          */
-        targetModel.setNestedModel(level4);
+        targetModel.setNestedModel(level5);
         targetModel.setWhereClause(null);
         if (targetModel.getTableNameExpr() != null) {
             ExpressionNode aliasNode = expressionNodePool.next();
@@ -3501,6 +3525,7 @@ public class SqlOptimiser implements Mutable {
             targetModel.setTableNameExpr(null);
             targetModel.setTimestamp(null);
         }
+        addOrderByTimestampColumnToTargetModel(targetModel);
         model.setLimit(null, null);
 
     }
