@@ -75,6 +75,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -1805,7 +1806,7 @@ public class WalWriterTest extends AbstractCairoTest {
             ) {
                 for (int i = 0; i < rowsToInsertTotal; i++) {
                     if (rnd.nextBoolean()) {
-                        walWriter.resetMatViewState(i, i, true, "Invalidating " + i, i);
+                        walWriter.resetMatViewState(i, i, true, "Invalidating " + i, i, null, -1);
                     }
                     String symbol = rnd.nextInt(10) == 5 ? null : rnd.nextString(rnd.nextInt(9) + 1);
                     int v = rnd.nextInt(rowsToInsertTotal);
@@ -1924,7 +1925,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 row.append();
                 walWriter.commitMatView(1, 2, 3, 4, 5);
 
-                walWriter.resetMatViewState(6, 7, true, "test", 8);
+                walWriter.resetMatViewState(6, 7, true, "test", 8, null, -1);
             }
 
             try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, 1)) {
@@ -1949,8 +1950,11 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertEquals(7, mvInfo.getLastRefreshTimestamp());
                 assertTrue(mvInfo.isInvalid());
                 TestUtils.assertEquals("test", mvInfo.getInvalidationReason());
-                // last period value should be ignored
+                // last period and cached txn intervals values should be ignored
                 assertEquals(Numbers.LONG_NULL, mvInfo.getLastPeriodHi());
+                assertNotNull(mvInfo.getRefreshIntervals());
+                assertEquals(0, mvInfo.getRefreshIntervals().size());
+                assertEquals(-1, mvInfo.getRefreshIntervalsBaseTxn());
 
                 assertFalse(eventCursor.hasNext());
             }
@@ -4171,10 +4175,11 @@ public class WalWriterTest extends AbstractCairoTest {
         tableToken = createTable(model);
 
         FilesFacade ff = configuration.getFilesFacade();
-        try (Path path = new Path();
-             MemoryCMR txnMem = Vm.getCMRInstance();
-             BlockFileReader reader = new BlockFileReader(configuration);
-             WalEventReader walEventReader = new WalEventReader(ff)
+        try (
+                Path path = new Path();
+                MemoryCMR txnMem = Vm.getCMRInstance();
+                BlockFileReader reader = new BlockFileReader(configuration);
+                WalEventReader walEventReader = new WalEventReader(ff)
         ) {
             MatViewStateReader matViewStateReader = new MatViewStateReader();
             path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
@@ -4215,7 +4220,7 @@ public class WalWriterTest extends AbstractCairoTest {
             assertEquals(42, matViewStateReader.getLastRefreshBaseTxn()); // refresh commit
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                walWriter.resetMatViewState(45, 45, true, "test_invalidate", 45);
+                walWriter.resetMatViewState(45, 45, true, "test_invalidate", 45, null, -1);
             }
 
             success = WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
@@ -4223,9 +4228,12 @@ public class WalWriterTest extends AbstractCairoTest {
             assertTrue(matViewStateReader.isInvalid());
             assertEquals(45, matViewStateReader.getLastRefreshBaseTxn()); // invalidate commit
 
+            final LongList intervals = new LongList();
+            intervals.add(1L, 2L);
+            intervals.add(3L, 4L);
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 // reset invalidation
-                walWriter.resetMatViewState(43, 43, false, "test_invalidate", 43);
+                walWriter.resetMatViewState(43, 43, false, "test_invalidate", 43, intervals, 48);
             }
 
             drainWalQueue();
@@ -4236,6 +4244,8 @@ public class WalWriterTest extends AbstractCairoTest {
             success = WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
             assertTrue(success);
             assertEquals(43, matViewStateReader.getLastRefreshBaseTxn()); // no _event file, state file
+            TestUtils.assertEquals(intervals, matViewStateReader.getRefreshIntervals());
+            assertEquals(48, matViewStateReader.getRefreshIntervalsBaseTxn());
 
             path.trimTo(tableLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
             ff.remove(path.$());
@@ -4314,7 +4324,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
             }
             if (newFormat) {
-                walWriter.resetMatViewState(1, 1, true, "test_invalidate", 1);
+                walWriter.resetMatViewState(1, 1, true, "test_invalidate", 1, null, -1);
             }
         }
         return tableToken;

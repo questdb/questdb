@@ -824,7 +824,7 @@ public final class Numbers {
      * the return value of {@link #isFinite(double)}
      *
      * @param value to check
-     * @return true is value is "infinite", which includes {@link Double#isNaN(double)}, positive and negative
+     * @return true if value is "infinite", which includes {@link Double#isNaN(double)}, positive and negative
      * infinities that arise from division by 0.
      */
     public static boolean isNull(double value) {

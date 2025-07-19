@@ -31,6 +31,11 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
     private final NullCursor cursor = new NullCursor();
 
     @Override
+    public long getColumnTop() {
+        return 0;
+    }
+
+    @Override
     public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
         final NullCursor cursor = getCursor(cachedInstance);
         // Cursor only returns records when key is for the NULL value.
@@ -50,11 +55,6 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
 
     @Override
     public long getKeyMemorySize() {
-        return 0;
-    }
-
-    @Override
-    public long getUnIndexedNullCount() {
         return 0;
     }
 
@@ -79,7 +79,13 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
     }
 
     @Override
-    public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount) {
+    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, long unIndexedNullCount) {
+        // no-op
+    }
+
+    @Override
+    public void reloadConditionally() {
+        // no-op
     }
 
     private NullCursor getCursor(boolean cachedInstance) {

@@ -74,7 +74,6 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
-import org.checkerframework.checker.units.qual.A;
 import org.jetbrains.annotations.NotNull;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -214,6 +213,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewRowsPerQueryEstimate());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
+        Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshIntervals());
+        Assert.assertEquals(15_000, configuration.getCairoConfiguration().getMatViewRefreshIntervalsUpdatePeriod());
         Assert.assertTrue(configuration.getCairoConfiguration().getDefaultSymbolCacheFlag());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getDefaultSymbolCapacity());
         Assert.assertEquals(30, configuration.getCairoConfiguration().getFileOperationRetryCount());
@@ -427,6 +428,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(524288, configuration.getCairoConfiguration().getDataIndexKeyAppendPageSize());
         Assert.assertEquals(16777216, configuration.getCairoConfiguration().getDataIndexValueAppendPageSize());
         Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getMiscAppendPageSize());
+        Assert.assertEquals(262144, configuration.getCairoConfiguration().getSymbolTableAppendPageSize());
         Assert.assertEquals(2.0, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
 
         Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
@@ -1321,6 +1323,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
             Assert.assertEquals(10000, configuration.getCairoConfiguration().getMatViewRowsPerQueryEstimate());
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
+            Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRefreshIntervals());
+            Assert.assertEquals(4200, configuration.getCairoConfiguration().getMatViewRefreshIntervalsUpdatePeriod());
 
             // PG wire
             Assert.assertEquals(9, configuration.getPGWireConfiguration().getBinParamCountCapacity());
@@ -1845,6 +1849,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(Files.PAGE_SIZE, configuration.getDataIndexKeyAppendPageSize());
         Assert.assertEquals(262144, configuration.getDataIndexValueAppendPageSize());
         Assert.assertEquals(131072, configuration.getMiscAppendPageSize());
+        Assert.assertEquals(65536, configuration.getSymbolTableAppendPageSize());
 
         Assert.assertEquals(512, configuration.getColumnPurgeQueueCapacity());
         Assert.assertEquals(5.0, configuration.getColumnPurgeRetryDelayMultiplier(), 0.00001);
@@ -1871,6 +1876,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(4242, configuration.getWalMaxLagTxnCount());
         Assert.assertEquals(262144, configuration.getWalDataAppendPageSize());
         Assert.assertEquals(524288, configuration.getSystemWalDataAppendPageSize());
+        Assert.assertEquals(65536, configuration.getSymbolTableAppendPageSize());
 
         Assert.assertEquals(1, configuration.getO3LastPartitionMaxSplits());
         final long TB = (long) Numbers.SIZE_1MB * Numbers.SIZE_1MB;

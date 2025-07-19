@@ -47,6 +47,7 @@ import java.util.function.Function;
 
 public class MatViewStateStoreImpl implements MatViewStateStore {
     private static final Log LOG = LogFactory.getLog(MatViewStateStoreImpl.class);
+    private static final ThreadLocal<MatViewTimerTask> tlTimerTask = new ThreadLocal<>(MatViewTimerTask::new);
     private final Function<CharSequence, AtomicLong> createLastNotifiedTxn;
     // Table name to last notified base table txn.
     // Flips to negative value once a refresh message is processed. Long.MIN_VALUE stands for "just invalidated" state.
@@ -59,12 +60,14 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     private final Queue<MatViewRefreshTask> taskQueue = ConcurrentQueue.createConcurrentQueue(MatViewRefreshTask::new);
     private final Telemetry<TelemetryMatViewTask> telemetry;
     private final MatViewTelemetryFacade telemetryFacade;
+    private final Queue<MatViewTimerTask> timerTaskQueue;
 
     public MatViewStateStoreImpl(CairoEngine engine) {
         this.telemetry = engine.getTelemetryMatView();
         this.telemetryFacade = telemetry.isEnabled()
                 ? this::storeMatViewTelemetry
                 : (event, tableToken, baseTableTxn, errorMessage, latencyUs) -> { /* no-op */ };
+        this.timerTaskQueue = engine.getMatViewTimerQueue();
         this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
         this.createLastNotifiedTxn = name -> new AtomicLong();
     }
@@ -90,19 +93,28 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         return lastNotified != Long.MIN_VALUE && lastNotified != -seqTxn;
     }
 
+    // kept public for tests
     @Override
     public MatViewState addViewState(MatViewDefinition viewDefinition) {
-        final TableToken matViewToken = viewDefinition.getMatViewToken();
+        final TableToken viewToken = viewDefinition.getMatViewToken();
         final MatViewState state = new MatViewState(viewDefinition, telemetryFacade);
 
-        final MatViewState prevState = stateByTableDirName.putIfAbsent(matViewToken.getDirName(), state);
+        final MatViewState prevState = stateByTableDirName.putIfAbsent(viewToken.getDirName(), state);
         // WAL table directories are unique, so we don't expect previous value
         if (prevState != null) {
             Misc.free(state);
-            throw CairoException.critical(0).put("materialized view state already exists [dir=").put(matViewToken.getDirName());
+            throw CairoException.critical(0).put("materialized view state already exists [dir=").put(viewToken.getDirName());
         }
 
         lastNotifiedTxnByTableName.computeIfAbsent(viewDefinition.getBaseTableName(), createLastNotifiedTxn);
+
+        // Publish a timer creation task.
+        // We need timer(s) in all cases, but immediate non-period view.
+        if (viewDefinition.getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE || viewDefinition.getPeriodLength() > 0) {
+            final MatViewTimerTask timerTask = tlTimerTask.get();
+            timerTaskQueue.enqueue(timerTask.ofAdd(viewToken));
+        }
+
         return state;
     }
 
@@ -128,17 +140,17 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
 
     @Override
     public void enqueueFullRefresh(TableToken matViewToken) {
-        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.FULL_REFRESH, null);
+        enqueueTaskIfStateExists(matViewToken, MatViewRefreshTask.FULL_REFRESH, null);
     }
 
     @Override
     public void enqueueIncrementalRefresh(TableToken matViewToken) {
-        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.INCREMENTAL_REFRESH, null);
+        enqueueTaskIfStateExists(matViewToken, MatViewRefreshTask.INCREMENTAL_REFRESH, null);
     }
 
     @Override
     public void enqueueInvalidate(TableToken matViewToken, String invalidationReason) {
-        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.INVALIDATE, invalidationReason);
+        enqueueTaskIfStateExists(matViewToken, MatViewRefreshTask.INVALIDATE, invalidationReason);
     }
 
     @Override
@@ -155,10 +167,10 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
 
     @Override
     public void enqueueRangeRefresh(TableToken matViewToken, long rangeFrom, long rangeTo) {
-        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.RANGE_REFRESH, null, rangeFrom, rangeTo);
+        enqueueTaskIfStateExists(matViewToken, MatViewRefreshTask.RANGE_REFRESH, null, rangeFrom, rangeTo);
     }
 
-    public void enqueueRefreshTaskIfStateExists(
+    public void enqueueTaskIfStateExists(
             TableToken matViewToken,
             int operation,
             String invalidationReason,
@@ -171,8 +183,9 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         }
     }
 
-    public void enqueueRefreshTaskIfStateExists(TableToken matViewToken, int operation, String invalidationReason) {
-        enqueueRefreshTaskIfStateExists(matViewToken, operation, invalidationReason, Numbers.LONG_NULL, Numbers.LONG_NULL);
+    @Override
+    public void enqueueUpdateRefreshIntervals(TableToken matViewToken) {
+        enqueueTaskIfStateExists(matViewToken, MatViewRefreshTask.UPDATE_REFRESH_INTERVALS, null);
     }
 
     @Override
@@ -236,6 +249,9 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         if (state != null) {
             state.markAsDropped();
             state.tryCloseIfDropped();
+            // Make sure to remove all timers associated with the mat view.
+            final MatViewTimerTask timerTask = tlTimerTask.get();
+            timerTaskQueue.enqueue(timerTask.ofRemove(matViewToken));
         }
     }
 
@@ -249,6 +265,9 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         final MatViewState state = stateByTableDirName.get(matViewToken.getDirName());
         if (state != null) {
             state.setViewDefinition(newDefinition);
+            // Make sure to recreate all timers associated with the mat view.
+            final MatViewTimerTask timerTask = tlTimerTask.get();
+            timerTaskQueue.enqueue(timerTask.ofUpdate(matViewToken));
         }
     }
 
@@ -272,6 +291,10 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
             task.refreshTriggerTimestamp = microsecondClock.getTicks();
         }
         taskQueue.enqueue(task);
+    }
+
+    private void enqueueTaskIfStateExists(TableToken matViewToken, int operation, String invalidationReason) {
+        enqueueTaskIfStateExists(matViewToken, operation, invalidationReason, Numbers.LONG_NULL, Numbers.LONG_NULL);
     }
 
     private void storeMatViewTelemetry(short event, TableToken tableToken, long baseTableTxn, CharSequence errorMessage, long latencyUs) {

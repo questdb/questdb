@@ -1027,8 +1027,11 @@ public final class TestUtils {
     }
 
     public static void assertSqlWithTypes(
-            SqlCompiler compiler, SqlExecutionContext sqlExecutionContext,
-            CharSequence sql, MutableUtf16Sink sink, CharSequence expected
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableUtf16Sink sink,
+            CharSequence expected
     ) throws SqlException {
         printSqlWithTypes(compiler, sqlExecutionContext, sql, sink);
         assertEquals(expected, sink);

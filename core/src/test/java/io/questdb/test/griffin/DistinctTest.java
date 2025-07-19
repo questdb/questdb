@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -132,6 +133,26 @@ public class DistinctTest extends AbstractCairoTest {
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: x\n",
                 "SELECT DISTINCT sym, origin, lag(origin) over() from x order by 1 limit 5",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDistinctWithAlias() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertQuery(
+                "created\n" +
+                        "1970-01-01T00:00:00.000000Z\n",
+                "SELECT distinct sa.created FROM x sa;",
+                "create table x as (" +
+                        "  select" +
+                        "    rnd_short() origin," +
+                        "    rnd_short() event," +
+                        "    timestamp_sequence(0, 0) created" +
+                        "  from long_sequence(10)" +
+                        ") timestamp(created);",
                 null,
                 true,
                 true

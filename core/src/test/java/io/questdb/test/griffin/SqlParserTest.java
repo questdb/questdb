@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlCompiler;
@@ -47,7 +48,6 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
-import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -59,12 +59,6 @@ import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
 
 public class SqlParserTest extends AbstractSqlParserTest {
     private static final List<String> frameTypes = Arrays.asList("rows  ", "groups", "range ");
-
-    @Before
-    public void setUp() {
-        super.setUp();
-        setProperty(PropertyKey.MAT_VIEW_DEBUG_ENABLED, "true");
-    }
 
     @Test
     public void test2Between() throws Exception {
@@ -2080,7 +2074,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW myview REFRESH",
                 39,
-                "'immediate' or 'manual' or 'period' or 'start' or 'every' or 'as' expected"
+                "'immediate' or 'manual' or 'period' or 'every' or 'as' expected"
         );
     }
 
@@ -2423,11 +2417,65 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateMatView57() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH EVERY -1s;",
+                46,
+                "positive number expected: -"
+        );
+    }
+
+    @Test
+    public void testCreateMatView58() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH EVERY 0s;",
+                46,
+                "positive number expected: 0s"
+        );
+    }
+
+    @Test
+    public void testCreateMatView59() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH MANUAL PERIOD (LENGTH -1d);",
+                62,
+                "positive number expected: -"
+        );
+    }
+
+    @Test
     public void testCreateMatView6() throws Exception {
         assertSyntaxError(
                 "create materialized view 'myview' with refresh",
                 39,
                 "'base' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView60() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH MANUAL PERIOD (LENGTH 0d);",
+                62,
+                "positive number expected: 0d"
+        );
+    }
+
+    @Test
+    public void testCreateMatView61() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH MANUAL PERIOD (LENGTH 1d DELAY -1h);",
+                71,
+                "positive number expected: -"
+        );
+    }
+
+    @Test
+    public void testCreateMatView62() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH MANUAL PERIOD (LENGTH 1d DELAY 0h);",
+                71,
+                "positive number expected: 0h"
         );
     }
 
@@ -2455,6 +2503,26 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create materialized view 'myview' refresh immediate",
                 51,
                 "'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatViewsWithInvalidColumnNameShouldFail() throws Exception {
+        TableModel model = new TableModel(configuration, "tab", PartitionBy.DAY)
+                .timestamp()
+                .col("a", ColumnType.DOUBLE)
+                .wal();
+
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertSyntaxError("create materialized view x as select timestamp, sum(a) from tab sample by 1h",
+                48,
+                "column 'sum(a)' requires an explicit alias. Use: sum(a) AS your_column_name",
+                model
+        );
+        assertSyntaxError("create materialized view x as select timestamp, sum(a) \"a,b\" from tab sample by 1h",
+                55,
+                "column alias 'a,b' contains unsupported characters",
+                model
         );
     }
 
@@ -3886,6 +3954,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table x (gh GEOHASH(12s), t TIMESTAMP) timestamp(t) partition by DAY",
                 26, "invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits"
+        );
+    }
+
+    @Test
+    public void testCreateTableWithInvalidColumnNameShouldFail() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertSyntaxError("create table x as (select rnd_str('a', 'b', 'c') from long_sequence(10))",
+                13,
+                "invalid column name [name=rnd_str('a', 'b', 'c'), position=0]"
+        );
+        assertSyntaxError("create table x as (select 1 \"rnd_str('a', 'b', 'c')\" from long_sequence(10))",
+                13,
+                "invalid column name [name=rnd_str('a', 'b', 'c'), position=0]"
         );
     }
 

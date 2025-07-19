@@ -28,6 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -63,7 +64,7 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
             final double value = Vect.maxDouble(address, frameRowCount);
-            if (value == value) {
+            if (Numbers.isFinite(value)) {
                 max.accumulate(value);
             }
         }

@@ -31,6 +31,7 @@ import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public interface MetadataServiceStub extends MetadataService {
 
@@ -105,6 +106,21 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default boolean removePartition(long partitionTimestamp) {
         throw CairoException.critical(0).put("remove partition does not update sequencer metadata");
+    }
+
+    @Override
+    default void setMatViewRefresh(
+            int refreshType,
+            int timerInterval,
+            char timerUnit,
+            long timerStart,
+            @Nullable CharSequence timerTimeZone,
+            int periodLength,
+            char periodLengthUnit,
+            int periodDelay,
+            char periodDelayUnit
+    ) {
+        throw CairoException.critical(0).put("change of materialized view refresh settings does not update sequencer metadata");
     }
 
     @Override
