@@ -265,6 +265,30 @@ public class TableUtilsTest extends AbstractTest {
         }
     }
 
+    @Test
+    public void testAllocateDiskSpaceThrowsOnFailure() {
+        FilesFacade ff = new FilesFacade() {
+            @Override
+            public long length(long fd) {
+                return 0;
+            }
+            @Override
+            public boolean allocate(long fd, long size) {
+                return false; // Simulate allocation failure
+            }
+            @Override
+            public int errno() {
+                return 123; // Simulate error code
+            }
+        };
+        try {
+            TableUtils.allocateDiskSpace(ff, 1L, 100L);
+            Assert.fail("Expected CairoException to be thrown");
+        } catch (CairoException ex) {
+            Assert.assertTrue(ex.getMessage().contains("No space left"));
+        }
+    }
+
     private void testIsValidColumnName(char c, boolean expected) {
         Assert.assertEquals(expected, TableUtils.isValidColumnName(Character.toString(c), 127));
         Assert.assertEquals(expected, TableUtils.isValidColumnName(c + "abc", 127));
