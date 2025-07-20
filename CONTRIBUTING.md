@@ -113,6 +113,14 @@ Code is formatted using configuration files in `.idea` directory .
 To minimize conflicts when merging and problems in CI all contributed code should be formatted
 before submitting PR.
 
+> 💡 **Tip:** You can use the Spotless plugin to automatically format your code before committing:
+>
+> ```bash
+> mvn spotless:apply
+> ```
+>
+> This helps ensure your code style matches the project’s requirements.
+
 In IntelliJ IDEA you can : 
 - automate formatting (preferrable):
   - open File | Settings
