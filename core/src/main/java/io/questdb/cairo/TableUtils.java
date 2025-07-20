@@ -202,6 +202,14 @@ public final class TableUtils {
     private TableUtils() {
     }
 
+    /**
+     * Ensures the file descriptor has at least the specified size allocated on disk.
+     * Throws a CairoException if allocation fails (e.g., due to insufficient disk space).
+     *
+     * @param ff   the FilesFacade to use for file operations
+     * @param fd   the file descriptor
+     * @param size the minimum size to allocate
+     */
     public static void allocateDiskSpace(FilesFacade ff, long fd, long size) {
         if (ff.length(fd) < size && !ff.allocate(fd, size)) {
             throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
