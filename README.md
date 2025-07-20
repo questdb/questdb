@@ -71,8 +71,8 @@ Feature highlights include:
   and ordered by time
 - Responsive and intuitive Web Console for query and data management, with error
   handling
-- Excellent performance with
-  [high data cardinality](https://questdb.io/glossary/high-cardinality/) - see
+- Excellent performance even with
+  [high data cardinality](https://questdb.io/glossary/high-cardinality/) (many unique values) – see
   [benchmarks](#questdb-performance-vs-other-oss-databases)
 
 And why use a time-series database?
