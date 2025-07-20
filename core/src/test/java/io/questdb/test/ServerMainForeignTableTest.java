@@ -534,11 +534,16 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 }
                 resultSink.clear(resultSink.length() - 1);
             }
-            String expected = tableToken.getTableName() + "\tts\tDAY\t500000\t600000000\t" + isWal + '\t' + tableToken.getDirName();
+            StringBuilder expected = new StringBuilder();
+            expected.append(tableToken.getTableName())
+                    .append("\tts\tDAY\t500000\t600000000\t")
+                    .append(isWal)
+                    .append('\t')
+                    .append(tableToken.getDirName());
             if (inVolume) {
-                expected += " (->)";
+                expected.append(" (->)");
             }
-            TestUtils.assertContains(resultSink.toString(), expected);
+            TestUtils.assertContains(resultSink.toString(), expected.toString());
         }
         Assert.assertTrue(Files.exists(auxPath.of(inVolume ? otherVolume : mainVolume).concat(tableToken.getDirName()).$()));
     }
@@ -557,11 +562,16 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         ) {
             RecordMetadata metadata = factory.getMetadata();
             CursorPrinter.println(cursor, metadata, resultSink);
-            String expected = tableToken.getTableName() + "\tts\tDAY\t500000\t600000000\t" + true + '\t' + tableToken.getDirName();
+            StringBuilder expected = new StringBuilder();
+            expected.append(tableToken.getTableName())
+                    .append("\tts\tDAY\t500000\t600000000\t")
+                    .append(true)
+                    .append('\t')
+                    .append(tableToken.getDirName());
             if (inVolume) {
-                expected += " (->)";
+                expected.append(" (->)");
             }
-            TestUtils.assertContains(resultSink.toString(), expected);
+            TestUtils.assertContains(resultSink.toString(), expected.toString());
         }
         Assert.assertTrue(Files.exists(auxPath.of(inVolume ? otherVolume : mainVolume).concat(tableToken.getDirName()).$()));
     }
