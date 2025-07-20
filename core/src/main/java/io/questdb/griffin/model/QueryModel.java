@@ -1160,7 +1160,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
         }
 
-        if (baseModel.getOrderBy().size() > 0 && baseModel.getLimitLo() != null && baseModel.getLimitHi() != null) {
+        if (baseModel.getOrderBy().size() > 0) {
             assert getOrderBy().size() == 0;
             for (int i = 0, n = baseModel.getOrderBy().size(); i < n; i++) {
                 addOrderBy(baseModel.getOrderBy().getQuick(i), baseModel.getOrderByDirection().getQuick(i));
