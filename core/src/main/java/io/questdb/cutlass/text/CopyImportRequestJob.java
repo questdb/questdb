@@ -50,17 +50,17 @@ import io.questdb.std.str.Utf8StringSink;
 
 import java.io.Closeable;
 
-import static io.questdb.cutlass.text.CopyTask.getPhaseName;
-import static io.questdb.cutlass.text.CopyTask.getStatusName;
+import static io.questdb.cutlass.text.CopyImportTask.getPhaseName;
+import static io.questdb.cutlass.text.CopyImportTask.getStatusName;
 
-public class CopyRequestJob extends SynchronizedJob implements Closeable {
-    private static final Log LOG = LogFactory.getLog(CopyRequestJob.class);
+public class CopyImportRequestJob extends SynchronizedJob implements Closeable {
+    private static final Log LOG = LogFactory.getLog(CopyImportRequestJob.class);
     private final MicrosecondClock clock;
     private final CopyContext copyContext;
     private final CairoEngine engine;
     private final int logRetentionDays;
     private final LongList partitionsToRemove = new LongList();
-    private final RingQueue<CopyRequestTask> requestQueue;
+    private final RingQueue<CopyImportRequestTask> requestQueue;
     private final Sequence requestSubSeq;
     private final TableToken statusTableToken;
     private final StringSink utf16StringSink = new StringSink();
@@ -69,11 +69,11 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
     private Path path;
     private SerialCsvFileImporter serialImporter;
     private SqlExecutionContextImpl sqlExecutionContext;
-    private CopyRequestTask task;
+    private CopyImportRequestTask task;
     private TableWriter writer;
     private final ParallelCsvFileImporter.PhaseStatusReporter updateStatusRef = this::updateStatus;
 
-    public CopyRequestJob(final CairoEngine engine, int workerCount) throws SqlException {
+    public CopyImportRequestJob(final CairoEngine engine, int workerCount) throws SqlException {
         try {
             this.requestQueue = engine.getMessageBus().getTextImportRequestQueue();
             this.requestSubSeq = engine.getMessageBus().getTextImportRequestSubSeq();
@@ -150,8 +150,8 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
                 }
                 row.putSym(2, task.getTableName());
                 row.putSym(3, task.getFileName());
-                row.putSym(4, CopyTask.getPhaseName(phase));
-                row.putSym(5, CopyTask.getStatusName(status));
+                row.putSym(4, CopyImportTask.getPhaseName(phase));
+                row.putSym(5, CopyImportTask.getStatusName(status));
                 final int msgColumnType = writer.getMetadata().getColumnType(6);
                 if (msgColumnType == ColumnType.VARCHAR) {
                     utf8StringSink.clear();
@@ -264,8 +264,8 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
                 }
             } catch (TextImportException e) {
                 updateStatus(
-                        CopyTask.NO_PHASE,
-                        e.isCancelled() ? CopyTask.STATUS_CANCELLED : CopyTask.STATUS_FAILED,
+                        CopyImportTask.NO_PHASE,
+                        e.isCancelled() ? CopyImportTask.STATUS_CANCELLED : CopyImportTask.STATUS_FAILED,
                         e.getMessage(),
                         0,
                         0,

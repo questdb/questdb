@@ -27,8 +27,9 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cutlass.text.CopyExportRequestTask;
-import io.questdb.cutlass.text.CopyRequestTask;
-import io.questdb.cutlass.text.CopyTask;
+import io.questdb.cutlass.text.CopyExportTask;
+import io.questdb.cutlass.text.CopyImportRequestTask;
+import io.questdb.cutlass.text.CopyImportTask;
 import io.questdb.metrics.QueryTrace;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.FanOut;
@@ -94,15 +95,17 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence tableWriterEventPubSeq;
     private final RingQueue<TableWriterTask> tableWriterEventQueue;
     private final FanOut tableWriterEventSubSeq;
-    //    private final MPSequence textExportRequestPubSeq;
-//    private final RingQueue<CopyExportRequestTask> textExportRequestQueue;
-//    private final SCSequence textExportRequestSubSeq;
-//    private final MCSequence textExportSubSeq;
+    private final SPSequence textExportPubSeq;
+    private final RingQueue<CopyExportTask> textExportQueue;
+    private final MPSequence textExportRequestPubSeq;
+    private final RingQueue<CopyExportRequestTask> textExportRequestQueue;
+    private final SCSequence textExportRequestSubSeq;
+    private final MCSequence textExportSubSeq;
     private final SCSequence textImportColSeq;
     private final SPSequence textImportPubSeq;
-    private final RingQueue<CopyTask> textImportQueue;
+    private final RingQueue<CopyImportTask> textImportQueue;
     private final MPSequence textImportRequestPubSeq;
-    private final RingQueue<CopyRequestTask> textImportRequestQueue;
+    private final RingQueue<CopyImportRequestTask> textImportRequestQueue;
     private final SCSequence textImportRequestSubSeq;
     private final MCSequence textImportSubSeq;
     private final MPSequence vectorAggregatePubSeq;
@@ -111,6 +114,7 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence walTxnNotificationPubSequence;
     private final RingQueue<WalTxnNotificationTask> walTxnNotificationQueue;
     private final MCSequence walTxnNotificationSubSequence;
+
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         try {
@@ -193,23 +197,28 @@ public class MessageBusImpl implements MessageBus {
                 reducePubSeq.then(reduceSubSeq).then(collectFanOut).then(reducePubSeq);
             }
 
-            this.textImportQueue = new RingQueue<>(CopyTask::new, configuration.getSqlCopyQueueCapacity());
+            this.textImportQueue = new RingQueue<>(CopyImportTask::new, configuration.getSqlCopyQueueCapacity());
             this.textImportPubSeq = new SPSequence(textImportQueue.getCycle());
             this.textImportSubSeq = new MCSequence(textImportQueue.getCycle());
             this.textImportColSeq = new SCSequence();
             textImportPubSeq.then(textImportSubSeq).then(textImportColSeq).then(textImportPubSeq);
 
+            this.textExportQueue = new RingQueue<>(CopyExportTask::new, configuration.getSqlCopyQueueCapacity());
+            this.textExportPubSeq = new SPSequence(textExportQueue.getCycle());
+            this.textExportSubSeq = new MCSequence(textExportQueue.getCycle());
+            textImportPubSeq.then(textExportSubSeq).then(textExportPubSeq);
+
             // We allow only a single parallel import to be in-flight, hence queue size of 1.
-            this.textImportRequestQueue = new RingQueue<>(CopyRequestTask::new, 1);
+            this.textImportRequestQueue = new RingQueue<>(CopyImportRequestTask::new, 1);
             this.textImportRequestPubSeq = new MPSequence(textImportRequestQueue.getCycle());
             this.textImportRequestSubSeq = new SCSequence();
             textImportRequestPubSeq.then(textImportRequestSubSeq).then(textImportRequestPubSeq);
 
             // We allow only a single parallel export to be in-flight, hence queue size of 1.
-//            this.textExportRequestQueue = new RingQueue<>(CopyToRequestTask::new, 1);
-//            this.textExportRequestPubSeq = new MPSequence(textExportRequestQueue.getCycle()).getCycle());
-//            this.textExportRequestSubSeq = new SCSequence();
-//            textExportRequestPubSeq.then(textExportRequestSubSeq).then(textExportRequestPubSeq);
+            this.textExportRequestQueue = new RingQueue<>(CopyExportRequestTask::new, 1);
+            this.textExportRequestPubSeq = new MPSequence(textExportRequestQueue.getCycle());
+            this.textExportRequestSubSeq = new SCSequence();
+            textExportRequestPubSeq.then(textExportRequestSubSeq).then(textExportRequestPubSeq);
 
             this.walTxnNotificationQueue = new RingQueue<>(WalTxnNotificationTask::new, configuration.getWalTxnNotificationQueueCapacity());
             this.walTxnNotificationPubSequence = new MPSequence(walTxnNotificationQueue.getCycle());
@@ -473,7 +482,7 @@ public class MessageBusImpl implements MessageBus {
 
     @Override
     public RingQueue<CopyExportRequestTask> getTextExportRequestQueue() {
-//        return textExportRequestQueue;
+        return textExportRequestQueue;
     }
 
     @Override
@@ -487,12 +496,12 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public RingQueue<CopyTask> getTextImportQueue() {
+    public RingQueue<CopyImportTask> getTextImportQueue() {
         return textImportQueue;
     }
 
     @Override
-    public RingQueue<CopyRequestTask> getTextImportRequestQueue() {
+    public RingQueue<CopyImportRequestTask> getTextImportRequestQueue() {
         return textImportRequestQueue;
     }
 

@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cutlass.text.CopyContext;
-import io.questdb.cutlass.text.CopyRequestTask;
+import io.questdb.cutlass.text.CopyImportRequestTask;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -77,7 +77,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final RingQueue<CopyRequestTask> textImportRequestQueue = messageBus.getTextImportRequestQueue();
+        final RingQueue<CopyImportRequestTask> textImportRequestQueue = messageBus.getTextImportRequestQueue();
         final MPSequence copyRequestPubSeq = messageBus.getCopyRequestPubSeq();
         final AtomicBooleanCircuitBreaker circuitBreaker = copyContext.getCircuitBreaker();
 

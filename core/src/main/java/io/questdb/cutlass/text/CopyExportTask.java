@@ -74,7 +74,7 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cutlass.text.ParallelCsvFileImporter.createTable;
 
-public class CopyTask {
+public class CopyExportTask {
 
     public static final byte NO_PHASE = -1;
     public static final byte PHASE_ANALYZE_FILE_STRUCTURE = 9;
@@ -93,7 +93,7 @@ public class CopyTask {
     public static final byte STATUS_FINISHED = 1;
     public static final byte STATUS_STARTED = 0;
     private static final TxnScoreboardPool EMPTY_SCOREBOARD_POOL = new EmptyTxnScoreboardPool();
-    private static final Log LOG = LogFactory.getLog(CopyTask.class);
+    private static final Log LOG = LogFactory.getLog(CopyExportTask.class);
     private static final long MASK_NEW_LINE = SwarUtils.broadcast((byte) '\n');
     private static final long MASK_QUOTE = SwarUtils.broadcast((byte) '"');
     private static final IntObjHashMap<String> PHASE_NAME_MAP = new IntObjHashMap<>();

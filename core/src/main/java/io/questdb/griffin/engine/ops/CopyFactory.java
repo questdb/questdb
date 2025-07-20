@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cutlass.text.CopyContext;
-import io.questdb.cutlass.text.CopyRequestTask;
+import io.questdb.cutlass.text.CopyImportRequestTask;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -88,7 +88,7 @@ public class CopyFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final RingQueue<CopyRequestTask> textImportRequestQueue = messageBus.getTextImportRequestQueue();
+        final RingQueue<CopyImportRequestTask> textImportRequestQueue = messageBus.getTextImportRequestQueue();
         final MPSequence copyRequestPubSeq = messageBus.getCopyRequestPubSeq();
         final AtomicBooleanCircuitBreaker circuitBreaker = copyContext.getCircuitBreaker();
 
@@ -96,7 +96,7 @@ public class CopyFactory extends AbstractRecordCursorFactory {
         if (activeCopyID == CopyContext.INACTIVE_COPY_ID) {
             long processingCursor = copyRequestPubSeq.next();
             if (processingCursor > -1) {
-                final CopyRequestTask task = textImportRequestQueue.get(processingCursor);
+                final CopyImportRequestTask task = textImportRequestQueue.get(processingCursor);
 
                 long copyID = copyContext.assignActiveImportId(executionContext.getSecurityContext());
                 task.of(
