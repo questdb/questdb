@@ -399,6 +399,14 @@ public final class TableUtils {
             int tableId,
             CharSequence dirName
     ) {
+        if (structure == null) {
+            LOG.error().$("TableStructure is null in createTable").$();
+            throw new IllegalArgumentException("TableStructure must not be null");
+        }
+        if (dirName == null) {
+            LOG.error().$("dirName is null in createTable").$();
+            throw new IllegalArgumentException("dirName must not be null");
+        }
         createTable(ff, root, mkDirMode, memory, path, dirName, structure, tableVersion, tableId);
     }
 
