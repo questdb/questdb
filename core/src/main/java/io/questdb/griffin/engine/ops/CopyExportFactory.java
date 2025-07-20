@@ -48,7 +48,7 @@ import io.questdb.std.str.StringSink;
  * Executes COPY statement lazily, i.e. on record cursor initialization, to play
  * nicely with server-side statements in PG Wire and query caching in general.
  */
-public class CopyToFactory extends AbstractRecordCursorFactory {
+public class CopyExportFactory extends AbstractRecordCursorFactory {
 
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private final CopyContext copyContext;
@@ -60,7 +60,7 @@ public class CopyToFactory extends AbstractRecordCursorFactory {
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
     private final String tableName;
 
-    public CopyToFactory(
+    public CopyExportFactory(
             MessageBus messageBus,
             CopyContext copyContext,
             String tableName,
@@ -85,15 +85,15 @@ public class CopyToFactory extends AbstractRecordCursorFactory {
         if (activeCopyID == CopyContext.INACTIVE_COPY_ID) {
             long processingCursor = copyRequestPubSeq.next();
             if (processingCursor > -1) {
-                final CopyToRequestTask task = textImportRequestQueue.get(processingCursor);
+//                final CopyExportRequestTask task = textImportRequestQueue.get(processingCursor);
 
                 long copyID = copyContext.assignActiveImportId(executionContext.getSecurityContext());
-                task.of(
-                        executionContext.getSecurityContext(),
-                        copyID,
-                        tableName,
-                        fileName
-                );
+//                task.of(
+//                        executionContext.getSecurityContext(),
+//                        copyID,
+//                        tableName,
+//                        fileName
+//                );
 
                 circuitBreaker.reset();
                 copyRequestPubSeq.done(processingCursor);

@@ -783,7 +783,7 @@ public class SqlParser {
 
                 model.setTarget(target);
                 model.setFileName(fileName);
-                model.setType(isFromKeyword() ? CopyModel.COPY_TYPE_FROM : CopyModel.COPY_TYPE_TO);
+//                model.setType(isFromKeyword() ? CopyModel.COPY_TYPE_FROM : CopyModel.COPY_TYPE_TO);
             }
 
             if (isFromKeyword(tok)) {

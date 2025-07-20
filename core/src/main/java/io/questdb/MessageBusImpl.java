@@ -26,9 +26,9 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cutlass.text.CopyExportRequestTask;
 import io.questdb.cutlass.text.CopyRequestTask;
 import io.questdb.cutlass.text.CopyTask;
-import io.questdb.cutlass.text.CopyToRequestTask;
 import io.questdb.metrics.QueryTrace;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.FanOut;
@@ -94,10 +94,10 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence tableWriterEventPubSeq;
     private final RingQueue<TableWriterTask> tableWriterEventQueue;
     private final FanOut tableWriterEventSubSeq;
-    private final MPSequence textExportRequestPubSeq;
-    private final RingQueue<CopyToRequestTask> textExportRequestQueue;
-    private final SCSequence textExportRequestSubSeq;
-    private final MCSequence textExportSubSeq;
+    //    private final MPSequence textExportRequestPubSeq;
+//    private final RingQueue<CopyExportRequestTask> textExportRequestQueue;
+//    private final SCSequence textExportRequestSubSeq;
+//    private final MCSequence textExportSubSeq;
     private final SCSequence textImportColSeq;
     private final SPSequence textImportPubSeq;
     private final RingQueue<CopyTask> textImportQueue;
@@ -472,8 +472,8 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public RingQueue<CopyToRequestTask> getTextExportRequestQueue() {
-        return textExportRequestQueue;
+    public RingQueue<CopyExportRequestTask> getTextExportRequestQueue() {
+//        return textExportRequestQueue;
     }
 
     @Override
