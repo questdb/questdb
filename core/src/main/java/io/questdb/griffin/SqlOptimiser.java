@@ -354,6 +354,12 @@ public class SqlOptimiser implements Mutable {
         model.getJoinModels().getQuick(parent).removeDependency(child);
     }
 
+    private void addAliasToNone(QueryModel model, CharSequence alias) {
+        ExpressionNode aliasNode = expressionNodePool.next();
+        aliasNode.token = alias;
+        model.setAlias(aliasNode);
+    }
+
     private void addColumnToSelectModel(QueryModel model, IntList insertColumnIndexes, ObjList<QueryColumn> insertColumnAliases, CharSequence timestampAlias) {
         tempColumns.clear();
         tempColumns.addAll(model.getBottomUpColumns());
@@ -695,10 +701,10 @@ public class SqlOptimiser implements Mutable {
         aliasNode.token += ".timestamp";
 
         ExpressionNode timestampNode = expressionNodePool.next();
-        aliasNode.token = "timestamp";
-        targetModel.setTimestamp(timestampNode);
+        timestampNode.token = "timestamp";
+        timestampNode.type = LITERAL;
+//        targetModel.setTimestamp(timestampNode);
 
-        targetModel.setTimestamp(timestampNode);
         targetModel.getOrderBy().add(aliasNode);
 
     }
@@ -3479,6 +3485,11 @@ public class SqlOptimiser implements Mutable {
         propagateColumnsFromLowerToHigherModel(level1, level2, false);
         level2.setNestedModel(level1);
         level2.setWhereClause(targetModel.getWhereClause());
+        if (targetModel.getAlias() == null) {
+            level2.getModelAliasIndexes().put(targetModel.getTableNameExpr().token, 0);
+        } else {
+            level2.getModelAliasIndexes().put(targetModel.getAlias().token, 0);
+        }
 
         /*
            level 3 is select model choose over level-2 model with limit clause
@@ -3493,6 +3504,13 @@ public class SqlOptimiser implements Mutable {
         */
         QueryModel level4 = QueryModel.FACTORY.newInstance();
         level4.setSelectModelType(SELECT_MODEL_NONE);
+//        level4.setTimestamp(baseTableModel.getTimestamp());
+        if (baseTableModel.getTimestamp() != null) {
+            final CharSequence timestampColumn = baseTableModel.getTimestamp().token;
+            final ExpressionNode timestampNode = expressionNodePool.next();
+            timestampNode.token = timestampColumn;
+            level4.addOrderBy(timestampNode, QueryModel.ORDER_DIRECTION_ASCENDING);
+        }
         propagateColumnsFromLowerToHigherModel(level3, level4, false);
         level4.setNestedModel(level3);
 
@@ -3501,13 +3519,6 @@ public class SqlOptimiser implements Mutable {
         */
         QueryModel level5 = QueryModel.FACTORY.newInstance();
         level5.setSelectModelType(SELECT_MODEL_CHOOSE);
-        level5.setTimestamp(baseTableModel.getTimestamp());
-        if (baseTableModel.getTimestamp() != null) {
-            final CharSequence timestampColumn = baseTableModel.getTimestamp().token;
-            final ExpressionNode timestampNode = expressionNodePool.next();
-            timestampNode.token = timestampColumn;
-            level5.addOrderBy(timestampNode, QueryModel.ORDER_DIRECTION_ASCENDING);
-        }
         propagateColumnsFromLowerToHigherModel(level4, level5, true);
         level5.setNestedModel(level4);
 
@@ -3525,7 +3536,7 @@ public class SqlOptimiser implements Mutable {
             targetModel.setTableNameExpr(null);
             targetModel.setTimestamp(null);
         }
-        addOrderByTimestampColumnToTargetModel(targetModel);
+//        addOrderByTimestampColumnToTargetModel(targetModel);
         model.setLimit(null, null);
 
     }
@@ -7270,39 +7281,39 @@ public class SqlOptimiser implements Mutable {
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
             optimiseModelsWithASOFJoins(sqlExecutionContext, rewrittenModel);
             optimiseJoins(rewrittenModel);
-            System.out.println("****" + rewrittenModel.toString0() + "****");
+//            System.out.println("****" + rewrittenModel.toString0() + "****");
             collapseStackedChooseModels(rewrittenModel);
-            System.out.println("****" + rewrittenModel.toString0() + "****");
+//            System.out.println("****" + rewrittenModel.toString0() + "****");
             rewriteCountDistinct(rewrittenModel);
-            System.out.println("****" + rewrittenModel.toString0() + "****");
+//            System.out.println("****" + rewrittenModel.toString0() + "****");
             rewriteMultipleTermLimitedOrderByPart1(rewrittenModel);
-            System.out.println("****" + rewrittenModel.toString0() + "****");
+//            System.out.println("****" + rewrittenModel.toString0() + "****");
             pushLimitFromChooseToNone(rewrittenModel, sqlExecutionContext);
-            System.out.println("****" + rewrittenModel.toString0() + "****");
+//            System.out.println("****" + rewrittenModel.toString0() + "****");
             validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);
-            System.out.println("****" + rewrittenModel.toString0() + "****");
+//            System.out.println("****" + rewrittenModel.toString0() + "****");
             rewriteOrderByPosition(rewrittenModel);
-            System.out.println("****" + rewrittenModel.toString0() + "****");
+//            System.out.println("****" + rewrittenModel.toString0() + "****");
             rewriteOrderByPositionForUnionModels(rewrittenModel);
-            System.out.println("****" + rewrittenModel.toString0() + "****");
+//            System.out.println("****" + rewrittenModel.toString0() + "****");
             rewrittenModel = rewriteOrderBy(rewrittenModel);
-            System.out.println("****" + rewrittenModel.toString0() + "****");
+//            System.out.println("****" + rewrittenModel.toString0() + "****");
             optimiseOrderBy(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
-            System.out.println("****" + rewrittenModel.toString0() + "****");
+//            System.out.println("****" + rewrittenModel.toString0() + "****");
             createOrderHash(rewrittenModel);
-            System.out.println("****" + rewrittenModel.toString0() + "****");
+//            System.out.println("****" + rewrittenModel.toString0() + "****");
             moveWhereInsideSubQueries(rewrittenModel);
-            System.out.println("****" + rewrittenModel.toString0() + "****");
+//            System.out.println("****" + rewrittenModel.toString0() + "****");
             eraseColumnPrefixInWhereClauses(rewrittenModel);
-            System.out.println("****" + rewrittenModel.toString0() + "****");
+//            System.out.println("****" + rewrittenModel.toString0() + "****");
             moveTimestampToChooseModel(rewrittenModel);
-            System.out.println("****" + rewrittenModel.toString0() + "****");
+//            System.out.println("****" + rewrittenModel.toString0() + "****");
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
-            System.out.println("****" + rewrittenModel.toString0() + "****");
+//            System.out.println("****" + rewrittenModel.toString0() + "****");
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
-            System.out.println("****" + rewrittenModel.toString0() + "****");
+//            System.out.println("****" + rewrittenModel.toString0() + "****");
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
-            System.out.println("****" + rewrittenModel.toString0() + "****");
+//            System.out.println("****" + rewrittenModel.toString0() + "****");
             return rewrittenModel;
         } catch (Throwable th) {
             // at this point, models may have functions than need to be freed
