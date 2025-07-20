@@ -831,18 +831,18 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // 0 = text, 1 = binary. Meaning that parameter values in the bind message are
         // provided either as text or binary.
         lo = hi + 1;
-        final short parameterFormatCodeCount = pipelineCurrentEntry.getShort(
+        final int parameterFormatCodeCount = pipelineCurrentEntry.getShort(
                 lo,
                 msgLimit,
                 "could not read parameter format code count"
-        );
+        ) & 0xFFFF;
         lo += Short.BYTES;
 
-        final short parameterValueCount = pipelineCurrentEntry.getShort(
+        final int parameterValueCount = pipelineCurrentEntry.getShort(
                 lo + parameterFormatCodeCount * Short.BYTES,
                 msgLimit,
                 "could not read parameter value count"
-        );
+        ) & 0xFFFF;
 
         pipelineCurrentEntry.msgBindCopyParameterFormatCodes(
                 lo,
@@ -1041,7 +1041,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // It is possible that the number of parameter types provided here is
         // different from the number of bind variables in the SQL. At this point
         // we will copy into the pipeline entry whatever was provided
-        short parameterTypeCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read parameter type count");
+        int parameterTypeCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read parameter type count") & 0xFFFF;
 
         // process parameter types
         if (parameterTypeCount > 0) {
@@ -1057,10 +1057,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             // the entry will also maintain count of these argument types to aid
             // validation of the "bind" message.
             pipelineCurrentEntry.msgParseCopyParameterTypesFromMsg(lo + Short.BYTES, parameterTypeCount);
-        } else if (parameterTypeCount < 0) {
-            throw msgKaput()
-                    .put("invalid parameter count [parameterCount=").put(parameterTypeCount)
-                    .put(", offset=").put(lo - address);
         }
 
         // At this point parameters may or may not be defined.
