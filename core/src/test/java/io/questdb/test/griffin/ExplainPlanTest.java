@@ -679,6 +679,93 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 
+
+    @Test
+    public void testAsofJoinWithOptimisationInNestedQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+
+            assertPlanNoLeakCheck(
+                    "  select * from (select price,size, timestamp from trades order by trades.timestamp) a \n" +
+                            "  asof join (select bid_price,bid_size,ask_price from order_book where bid_price = 189.4 order by timestamp) b \n" +
+                            "  where price = 184.0\n" +
+                            "  order by size, price asc limit 6",
+                    "Sort\n" +
+                            "  keys: [size, price]\n" +
+                            "    SelectedRecord\n" +
+                            "        Filtered AsOf Join Fast Scan\n" +
+                            "          filter: bid_price=189.4\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [timestamp]\n" +
+                            "                Sort light lo: 6\n" +
+                            "                  keys: [size, price]\n" +
+                            "                    Async Filter workers: 1\n" +
+                            "                      filter: price=184.0\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsofJoinWithSimpleQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tsize INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 'order_book' ( \n" +
+                    "\ttimestamp TIMESTAMP,\n" +
+                    "\tbid_price DOUBLE,\n" +
+                    "\tbid_size INT,\n" +
+                    "\task_price DOUBLE,\n" +
+                    "\task_size INT\n" +
+                    ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+
+            assertPlanNoLeakCheck(
+                    " select * from trades ASOF JOIN order_book\n" +
+                            " where price = '184.0'\n" +
+                            "order by price, size, trades.timestamp limit 5",
+                    "Sort\n" +
+                            "  keys: [price, size, timestamp]\n" +
+                            "    SelectedRecord\n" +
+                            "        AsOf Join Fast Scan\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [timestamp]\n" +
+                            "                Sort light lo: 5\n" +
+                            "                  keys: [price, size, timestamp]\n" +
+                            "                    Async Filter workers: 1\n" +
+                            "                      filter: price='184.0'\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: order_book\n"
+            );
+        });
+    }
+
     @Test
     public void testCachedWindowRecordCursorFactoryWithLimit() throws Exception {
         assertMemoryLeak(() -> {
