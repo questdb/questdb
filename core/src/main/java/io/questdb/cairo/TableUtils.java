@@ -78,6 +78,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.O3PartitionPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import java.util.Objects;
 
 import static io.questdb.ParanoiaState.VM_PARANOIA_MODE;
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
@@ -399,14 +400,8 @@ public final class TableUtils {
             int tableId,
             CharSequence dirName
     ) {
-        if (structure == null) {
-            LOG.error().$("TableStructure is null in createTable").$();
-            throw new IllegalArgumentException("TableStructure must not be null");
-        }
-        if (dirName == null) {
-            LOG.error().$("dirName is null in createTable").$();
-            throw new IllegalArgumentException("dirName must not be null");
-        }
+        Objects.requireNonNull(structure, "TableStructure must not be null");
+        Objects.requireNonNull(dirName, "dirName must not be null");
         createTable(ff, root, mkDirMode, memory, path, dirName, structure, tableVersion, tableId);
     }
 
@@ -837,7 +832,8 @@ public final class TableUtils {
 
     @NotNull
     public static String getTableDir(boolean mangleDirNames, @NotNull String tableName, int tableId, boolean isWal) {
-        StringBuilder dirName = new StringBuilder(tableName);
+        StringBuilder dirName = new StringBuilder(tableName.length() + 16); // Pre-size for performance
+        dirName.append(tableName);
         if (isWal) {
             dirName.append(TableUtils.SYSTEM_TABLE_NAME_SUFFIX);
             dirName.append(tableId);
