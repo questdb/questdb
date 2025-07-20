@@ -837,14 +837,14 @@ public final class TableUtils {
 
     @NotNull
     public static String getTableDir(boolean mangleDirNames, @NotNull String tableName, int tableId, boolean isWal) {
-        String dirName = tableName;
+        StringBuilder dirName = new StringBuilder(tableName);
         if (isWal) {
-            dirName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-            dirName += tableId;
+            dirName.append(TableUtils.SYSTEM_TABLE_NAME_SUFFIX);
+            dirName.append(tableId);
         } else if (mangleDirNames) {
-            dirName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+            dirName.append(TableUtils.SYSTEM_TABLE_NAME_SUFFIX);
         }
-        return dirName;
+        return dirName.toString();
     }
 
     public static CharSequence getTableNameFromDirName(CharSequence privateName) {
