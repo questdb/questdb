@@ -354,11 +354,6 @@ public class SqlOptimiser implements Mutable {
         model.getJoinModels().getQuick(parent).removeDependency(child);
     }
 
-    private void addAliasToNone(QueryModel model, CharSequence alias) {
-        ExpressionNode aliasNode = expressionNodePool.next();
-        aliasNode.token = alias;
-        model.setAlias(aliasNode);
-    }
 
     private void addColumnToSelectModel(QueryModel model, IntList insertColumnIndexes, ObjList<QueryColumn> insertColumnAliases, CharSequence timestampAlias) {
         tempColumns.clear();
@@ -694,20 +689,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void addOrderByTimestampColumnToTargetModel(QueryModel targetModel) {
-        ExpressionNode aliasNode = expressionNodePool.next();
-        aliasNode.token = targetModel.getTableNameExpr() == null ? targetModel.getAlias().token :
-                targetModel.getTableNameExpr().token;
-        aliasNode.token += ".timestamp";
-
-        ExpressionNode timestampNode = expressionNodePool.next();
-        timestampNode.token = "timestamp";
-        timestampNode.type = LITERAL;
-//        targetModel.setTimestamp(timestampNode);
-
-        targetModel.getOrderBy().add(aliasNode);
-
-    }
 
     private void addOuterJoinExpression(QueryModel parent, QueryModel model, int joinIndex, ExpressionNode node) {
         model.setOuterJoinExpressionClause(concatFilters(model.getOuterJoinExpressionClause(), node));
@@ -3535,7 +3516,6 @@ public class SqlOptimiser implements Mutable {
             targetModel.setTableNameExpr(null);
             targetModel.setTimestamp(null);
         }
-//        addOrderByTimestampColumnToTargetModel(targetModel);
         model.setLimit(null, null);
 
     }
