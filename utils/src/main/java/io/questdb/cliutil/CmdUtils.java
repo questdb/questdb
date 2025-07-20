@@ -31,6 +31,13 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.str.Utf8String;
 
 public class CmdUtils {
+    /**
+     * Runs the column rebuild operation using the provided parameters and rebuild implementation.
+     * Logs any CairoException that occurs during the reindexing process.
+     *
+     * @param params the arguments specifying the table path, partition, and column to rebuild
+     * @param ri the rebuild implementation to use for the operation
+     */
     static void runColumnRebuild(RebuildColumnCommandArgs params, RebuildColumnBase ri) {
         final Log log = LogFactory.getLog("recover-var-index");
         ri.of(new Utf8String(params.tablePath));
