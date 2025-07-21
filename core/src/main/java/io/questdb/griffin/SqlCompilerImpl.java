@@ -2942,6 +2942,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void compileTruncate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         CharSequence tok;
+        boolean ifExists = false;
         tok = SqlUtil.fetchNext(lexer);
 
         if (tok == null) {
@@ -2952,7 +2953,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "TABLE expected");
         }
 
+        // Parse optional IF EXISTS
         tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && Chars.equalsNc(tok, "if")) {
+            CharSequence nextTok = SqlUtil.fetchNext(lexer);
+            if (nextTok != null && Chars.equalsNc(nextTok, "exists")) {
+                ifExists = true;
+                tok = SqlUtil.fetchNext(lexer);
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "EXISTS expected");
+            }
+        }
+
         if (tok != null && isOnlyKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
         }
@@ -2971,13 +2983,34 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (Chars.isQuoted(tok)) {
                     tok = unquote(tok);
                 }
-                final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+                TableToken tableToken = null;
+                try {
+                    tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+                } catch (SqlException e) {
+                    if (ifExists) {
+                        // skip this table and continue
+                        tok = SqlUtil.fetchNext(lexer);
+                        if (tok == null || Chars.equals(tok, ';') || isKeepKeyword(tok)) {
+                            break;
+                        }
+                        if (!Chars.equalsNc(tok, ',')) {
+                            throw SqlException.$(lexer.getPosition(), "',' or 'keep' expected");
+                        }
+                        tok = SqlUtil.fetchNext(lexer);
+                        if (tok != null && isKeepKeyword(tok)) {
+                            throw SqlException.$(lexer.getPosition(), "table name expected");
+                        }
+                        continue;
+                    } else {
+                        throw e;
+                    }
+                }
                 checkMatViewModification(tableToken);
                 executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
                 try {
                     tableWriters.add(engine.getTableWriterAPI(tableToken, "truncateTables"));
                 } catch (CairoException e) {
-                    LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).I$();
+                    LOG.info().$("table busy [table=").$(tok).$", e=").$((Throwable) e).I$();
                     throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
                 }
                 tok = SqlUtil.fetchNext(lexer);
@@ -3036,7 +3069,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             }
                         }
                     } catch (CairoException | CairoError e) {
-                        LOG.error().$("could not truncate [table=").$(writer.getTableToken()).$(", e=").$((Sinkable) e).I$();
+                        LOG.error().$("could not truncate [table=").$(writer.getTableToken()).$", e=").$((Sinkable) e).I$();
                         throw e;
                     }
                 }
