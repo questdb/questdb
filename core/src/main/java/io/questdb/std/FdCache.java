@@ -38,7 +38,7 @@ public class FdCache {
 
         int fdKind = (Numbers.decodeLowInt(fd) >>> 30) & 3;
         if (fdKind > 1) {
-            // RW_CLEAR or APPEND. Simply close the underlying fd.
+            // NON_CACHED. Simply close the underlying fd.
             int osFd = Numbers.decodeHighInt(fd);
             int res = Files.close0(osFd);
             if (res != 0) {
@@ -86,13 +86,15 @@ public class FdCache {
     public synchronized void detach(long fd) {
         int keyIndex = openFdMapByFd.keyIndex(fd);
         if (keyIndex < 0) {
-            var cacheRecord = openFdMapByFd.valueAt(keyIndex);
+            FdCacheRecord cacheRecord = openFdMapByFd.valueAt(keyIndex);
             openFdMapByFd.removeAt(keyIndex);
 
-            int cahceKeyByPath = openFdMapByPath.keyIndex(cacheRecord.path);
-            if (cahceKeyByPath < 0 && openFdMapByPath.valueAt(cahceKeyByPath) == cacheRecord) {
-                // If the record is the same object, we can remove it
-                openFdMapByPath.removeAt(cahceKeyByPath);
+            if (cacheRecord != FdCacheRecord.EMPTY) {
+                int cacheKeyByPath = openFdMapByPath.keyIndex(cacheRecord.path);
+                if (cacheKeyByPath < 0 && openFdMapByPath.valueAt(cacheKeyByPath) == cacheRecord) {
+                    // If the record is the same object, we can remove it
+                    openFdMapByPath.removeAt(cacheKeyByPath);
+                }
             }
         }
         Files.OPEN_FILE_COUNT.decrementAndGet();

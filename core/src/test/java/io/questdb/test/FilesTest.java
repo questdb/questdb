@@ -268,6 +268,15 @@ public class FilesTest {
     }
 
     @Test
+    public void testDeatch() throws Exception {
+        assertMemoryLeak(() -> {
+            int fdFake = 123;
+            long fd = Files.createUniqueFd(fdFake);
+            Files.detach(fd);
+        });
+    }
+
+    @Test
     public void testDeleteDir() throws Exception {
         Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
