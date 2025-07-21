@@ -969,8 +969,8 @@ public class PropServerConfigurationTest {
     @Test(expected = ServerConfigurationException.class)
     public void testInvalidLineTcpBufferSize() throws Exception {
         Properties properties = new Properties();
-        properties.setProperty("line.tcp.max.measurement.size", "256");
-        properties.setProperty("line.tcp.recv.buffer.size", "512");
+        properties.setProperty("line.tcp.max.measurement.size", "14");
+        properties.setProperty("line.tcp.recv.buffer.size", "14");
         newPropServerConfiguration(properties);
     }
 

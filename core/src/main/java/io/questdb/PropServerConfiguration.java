@@ -144,7 +144,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final String ILP_PROTO_SUPPORT_VERSIONS = "[1,2]";
     private static final String ILP_PROTO_SUPPORT_VERSIONS_NAME = "line.proto.support.versions";
     private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
-    private static final int MIN_BUF_SIZE = AuthUtils.CHALLENGE_LEN + 1;
+    private static final int MIN_BUF_SIZE = 16;
     private static final String RELEASE_TYPE = "release.type";
     private static final String RELEASE_VERSION = "release.version";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
