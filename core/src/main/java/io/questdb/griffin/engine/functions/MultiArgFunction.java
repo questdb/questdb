@@ -50,60 +50,111 @@ public interface MultiArgFunction extends Function {
     @Override
     default boolean isConstant() {
         ObjList<Function> args = getArgs();
-        for (int i = 0, n = args.size(); i < n; i++) {
-            if (!args.getQuick(i).isConstant()) {
-                return false;
+        int n = args.size();
+        if (n == 2) {
+            return args.getQuick(0).isConstant() && args.getQuick(1).isConstant();
+        } else if (n == 3) {
+            return args.getQuick(0).isConstant() && args.getQuick(1).isConstant() && args.getQuick(2).isConstant();
+        } else if (n == 4) {
+            return args.getQuick(0).isConstant() && args.getQuick(1).isConstant() && args.getQuick(2).isConstant() && args.getQuick(3).isConstant();
+        } else {
+            for (int i = 0; i < n; i++) {
+                if (!args.getQuick(i).isConstant()) {
+                    return false;
+                }
             }
+            return true;
         }
-        return true;
     }
 
     @Override
     default boolean isNonDeterministic() {
         final ObjList<Function> args = getArgs();
-        for (int i = 0, n = args.size(); i < n; i++) {
-            final Function function = args.getQuick(i);
-            if (function.isNonDeterministic()) {
-                return true;
+        int n = args.size();
+        if (n == 2) {
+            return args.getQuick(0).isNonDeterministic() || args.getQuick(1).isNonDeterministic();
+        } else if (n == 3) {
+            return args.getQuick(0).isNonDeterministic() || args.getQuick(1).isNonDeterministic() || args.getQuick(2).isNonDeterministic();
+        } else if (n == 4) {
+            return args.getQuick(0).isNonDeterministic() || args.getQuick(1).isNonDeterministic() || args.getQuick(2).isNonDeterministic() || args.getQuick(3).isNonDeterministic();
+        } else {
+            for (int i = 0; i < n; i++) {
+                final Function function = args.getQuick(i);
+                if (function.isNonDeterministic()) {
+                    return true;
+                }
             }
+            return false;
         }
-        return false;
     }
 
     @Override
     default boolean isRandom() {
         final ObjList<Function> args = getArgs();
-        for (int i = 0, n = args.size(); i < n; i++) {
-            final Function function = args.getQuick(i);
-            if (function.isRandom()) {
-                return true;
+        int n = args.size();
+        if (n == 2) {
+            return args.getQuick(0).isRandom() || args.getQuick(1).isRandom();
+        } else if (n == 3) {
+            return args.getQuick(0).isRandom() || args.getQuick(1).isRandom() || args.getQuick(2).isRandom();
+        } else if (n == 4) {
+            return args.getQuick(0).isRandom() || args.getQuick(1).isRandom() || args.getQuick(2).isRandom() || args.getQuick(3).isRandom();
+        } else {
+            for (int i = 0; i < n; i++) {
+                final Function function = args.getQuick(i);
+                if (function.isRandom()) {
+                    return true;
+                }
             }
+            return false;
         }
-        return false;
     }
 
     @Override
     default boolean isRuntimeConstant() {
         final ObjList<Function> args = getArgs();
-        for (int i = 0, n = args.size(); i < n; i++) {
-            final Function function = args.getQuick(i);
-            if (!function.isRuntimeConstant() && !function.isConstant()) {
-                return false;
+        int n = args.size();
+        if (n == 2) {
+            return (args.getQuick(0).isRuntimeConstant() || args.getQuick(0).isConstant()) &&
+                   (args.getQuick(1).isRuntimeConstant() || args.getQuick(1).isConstant());
+        } else if (n == 3) {
+            return (args.getQuick(0).isRuntimeConstant() || args.getQuick(0).isConstant()) &&
+                   (args.getQuick(1).isRuntimeConstant() || args.getQuick(1).isConstant()) &&
+                   (args.getQuick(2).isRuntimeConstant() || args.getQuick(2).isConstant());
+        } else if (n == 4) {
+            return (args.getQuick(0).isRuntimeConstant() || args.getQuick(0).isConstant()) &&
+                   (args.getQuick(1).isRuntimeConstant() || args.getQuick(1).isConstant()) &&
+                   (args.getQuick(2).isRuntimeConstant() || args.getQuick(2).isConstant()) &&
+                   (args.getQuick(3).isRuntimeConstant() || args.getQuick(3).isConstant());
+        } else {
+            for (int i = 0; i < n; i++) {
+                final Function function = args.getQuick(i);
+                if (!function.isRuntimeConstant() && !function.isConstant()) {
+                    return false;
+                }
             }
+            return true;
         }
-        return true;
     }
 
     @Override
     default boolean isThreadSafe() {
         final ObjList<Function> args = getArgs();
-        for (int i = 0, n = args.size(); i < n; i++) {
-            final Function function = args.getQuick(i);
-            if (!function.isThreadSafe()) {
-                return false;
+        int n = args.size();
+        if (n == 2) {
+            return args.getQuick(0).isThreadSafe() && args.getQuick(1).isThreadSafe();
+        } else if (n == 3) {
+            return args.getQuick(0).isThreadSafe() && args.getQuick(1).isThreadSafe() && args.getQuick(2).isThreadSafe();
+        } else if (n == 4) {
+            return args.getQuick(0).isThreadSafe() && args.getQuick(1).isThreadSafe() && args.getQuick(2).isThreadSafe() && args.getQuick(3).isThreadSafe();
+        } else {
+            for (int i = 0; i < n; i++) {
+                final Function function = args.getQuick(i);
+                if (!function.isThreadSafe()) {
+                    return false;
+                }
             }
+            return true;
         }
-        return true;
     }
 
     @Override
@@ -122,25 +173,43 @@ public interface MultiArgFunction extends Function {
     @Override
     default boolean shouldMemoize() {
         final ObjList<Function> args = getArgs();
-        for (int i = 0, n = args.size(); i < n; i++) {
-            final Function function = args.getQuick(i);
-            if (function.shouldMemoize()) {
-                return true;
+        int n = args.size();
+        if (n == 2) {
+            return args.getQuick(0).shouldMemoize() || args.getQuick(1).shouldMemoize();
+        } else if (n == 3) {
+            return args.getQuick(0).shouldMemoize() || args.getQuick(1).shouldMemoize() || args.getQuick(2).shouldMemoize();
+        } else if (n == 4) {
+            return args.getQuick(0).shouldMemoize() || args.getQuick(1).shouldMemoize() || args.getQuick(2).shouldMemoize() || args.getQuick(3).shouldMemoize();
+        } else {
+            for (int i = 0; i < n; i++) {
+                final Function function = args.getQuick(i);
+                if (function.shouldMemoize()) {
+                    return true;
+                }
             }
+            return false;
         }
-        return false;
     }
 
     @Override
     default boolean supportsParallelism() {
         final ObjList<Function> args = getArgs();
-        for (int i = 0, n = args.size(); i < n; i++) {
-            final Function function = args.getQuick(i);
-            if (!function.supportsParallelism()) {
-                return false;
+        int n = args.size();
+        if (n == 2) {
+            return args.getQuick(0).supportsParallelism() && args.getQuick(1).supportsParallelism();
+        } else if (n == 3) {
+            return args.getQuick(0).supportsParallelism() && args.getQuick(1).supportsParallelism() && args.getQuick(2).supportsParallelism();
+        } else if (n == 4) {
+            return args.getQuick(0).supportsParallelism() && args.getQuick(1).supportsParallelism() && args.getQuick(2).supportsParallelism() && args.getQuick(3).supportsParallelism();
+        } else {
+            for (int i = 0; i < n; i++) {
+                final Function function = args.getQuick(i);
+                if (!function.supportsParallelism()) {
+                    return false;
+                }
             }
+            return true;
         }
-        return true;
     }
 
     @Override
