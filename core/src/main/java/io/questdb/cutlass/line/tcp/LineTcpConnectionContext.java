@@ -38,6 +38,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.network.IOContext;
 import io.questdb.network.NetworkFacade;
+import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -296,7 +297,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     @Override
-    protected void doInit() {
+    protected void doInit() throws TlsSessionInitFailedException {
         if (recvBuffer.getBufStart() == 0) {
             recvBuffer.of(configuration.getRecvBufferSize(), configuration.getMaxRecvBufferSize());
             goodMeasurement = true;
@@ -315,9 +316,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         }
 
         if (socket.supportsTls()) {
-            if (socket.startTlsSession(null) != 0) {
-                throw CairoException.nonCritical().put("failed to start TLS session");
-            }
+            socket.startTlsSession(null);
         }
     }
 

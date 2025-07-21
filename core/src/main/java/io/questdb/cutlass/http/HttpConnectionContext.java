@@ -52,6 +52,7 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.network.Socket;
 import io.questdb.network.SocketFactory;
 import io.questdb.network.SuspendEvent;
+import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -1007,7 +1008,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     @Override
-    protected void doInit() {
+    protected void doInit() throws TlsSessionInitFailedException {
         // the context is obtained from the pool, so we should initialize the memory
         if (recvBuffer == 0) {
             // re-read recv buffer size in case the config was reloaded
@@ -1021,9 +1022,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         multipartContentHeaderParser.reopen(configuration.getHttpContextConfiguration().getMultipartHeaderBufferSize());
 
         if (socket.supportsTls()) {
-            if (socket.startTlsSession(null) != 0) {
-                throw CairoException.nonCritical().put("failed to start TLS session");
-            }
+            socket.startTlsSession(null);
         }
         connectionCounted = false;
     }

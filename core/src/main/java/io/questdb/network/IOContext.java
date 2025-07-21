@@ -76,7 +76,7 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         return null;
     }
 
-    public final void init() {
+    public final void init() throws TlsSessionInitFailedException {
         if (!initialized) {
             doInit();
             initialized = true;
@@ -138,6 +138,6 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
      *
      * @throws io.questdb.cairo.CairoException if initialization fails
      */
-    protected void doInit() {
+    protected void doInit() throws TlsSessionInitFailedException {
     }
 }

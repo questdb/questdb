@@ -61,6 +61,7 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.network.SuspendEvent;
+import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.DirectBinarySequence;
@@ -401,8 +402,10 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             if (tlsSessionStarting) {
                 flushRemainingBuffer();
                 tlsSessionStarting = false;
-                if (socket.startTlsSession(null) != 0) {
-                    LOG.error().$("failed to create new TLS session").$();
+                try {
+                    socket.startTlsSession(null);
+                } catch (TlsSessionInitFailedException e) {
+                    LOG.error().$("failed to create new TLS session").$((Throwable) e).$();
                     throw BadProtocolException.INSTANCE;
                 }
                 // Start listening for read.

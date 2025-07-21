@@ -24,7 +24,6 @@
 
 package io.questdb.network;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.Counter;
@@ -215,13 +214,14 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             ioEventSubSeq.done(cursor);
             try {
                 connectionContext.init();
-            } catch (CairoException e) {
+                useful = processor.onRequest(operation, connectionContext, this);
+            } catch (TlsSessionInitFailedException e) {
                 LOG.error().$("could not initialize connection context [fd=").$(connectionContext.getFd())
                         .$(", e=").$safe(e.getFlyweightMessage())
                         .I$();
                 ioContextFactory.done(connectionContext);
+                disconnect(connectionContext, DISCONNECT_REASON_TLS_SESSION_INIT_FAILED);
             }
-            useful = processor.onRequest(operation, connectionContext, this);
         }
 
         return useful;

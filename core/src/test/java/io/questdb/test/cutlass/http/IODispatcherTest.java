@@ -364,6 +364,7 @@ public class IODispatcherTest extends AbstractTest {
         );
     }
 
+    @SuppressWarnings("resource")
     @Test
     public void testCannotSetNonBlocking() throws Exception {
         assertMemoryLeak(() -> {
@@ -8104,6 +8105,7 @@ public class IODispatcherTest extends AbstractTest {
         });
     }
 
+    @SuppressWarnings("resource")
     @Test
     public void testTwoThreadsSendTwoThreadsRead() throws Exception {
         LOG.info().$("started testTwoThreadsSendTwoThreadsRead").$();

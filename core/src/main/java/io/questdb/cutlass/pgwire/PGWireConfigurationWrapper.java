@@ -50,7 +50,7 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     }
 
     @Override
-    public int getAcceptLoopTimeout() {
+    public long getAcceptLoopTimeout() {
         return getDelegate().getAcceptLoopTimeout();
     }
 

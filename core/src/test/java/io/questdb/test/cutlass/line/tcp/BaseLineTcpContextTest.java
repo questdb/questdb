@@ -49,6 +49,7 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
@@ -307,7 +308,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         });
     }
 
-    protected void setupContext(UnstableRunnable onCommitNewEvent) {
+    protected void setupContext(UnstableRunnable onCommitNewEvent) throws TlsSessionInitFailedException {
         disconnected = false;
         recvBuffer = null;
         scheduler = new LineTcpMeasurementScheduler(

@@ -35,7 +35,7 @@ public interface IODispatcherConfiguration {
     int BIAS_WRITE = 2;
 
     // millis
-    int getAcceptLoopTimeout();
+    long getAcceptLoopTimeout();
 
     int getBindIPv4Address();
 

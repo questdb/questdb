@@ -34,7 +34,7 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     public static final IODispatcherConfiguration INSTANCE = new DefaultIODispatcherConfiguration();
 
     @Override
-    public int getAcceptLoopTimeout() {
+    public long getAcceptLoopTimeout() {
         // 500 millis
         return 500;
     }

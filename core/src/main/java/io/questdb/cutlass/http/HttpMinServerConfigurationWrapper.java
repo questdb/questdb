@@ -46,7 +46,7 @@ public class HttpMinServerConfigurationWrapper implements HttpServerConfiguratio
     }
 
     @Override
-    public int getAcceptLoopTimeout() {
+    public long getAcceptLoopTimeout() {
         return getDelegate().getAcceptLoopTimeout();
     }
 
