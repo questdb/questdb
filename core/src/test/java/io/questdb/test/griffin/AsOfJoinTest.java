@@ -2779,10 +2779,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
         });
     }
 
-    private static String getTimestampSuffix(String timestampType) {
-        return TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? "000Z" : "Z";
-    }
-
     private static String replaceTimestampSuffix(String expected, String timestampType) {
         return TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? expected.replace(".00000", ".00000000") : expected;
     }
@@ -2848,5 +2844,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
     static void executeWithRewriteTimestamp(CharSequence sqlText, String timestampType) throws SqlException {
         sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType);
         engine.execute(sqlText, sqlExecutionContext);
+    }
+
+    static String getTimestampSuffix(String timestampType) {
+        return TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? "000Z" : "Z";
     }
 }
