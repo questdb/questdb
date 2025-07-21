@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.text;
+package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -44,6 +44,14 @@ import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cutlass.text.AbstractTextLexer;
+import io.questdb.cutlass.text.Atomicity;
+import io.questdb.cutlass.text.CsvFileIndexer;
+import io.questdb.cutlass.text.ParallelCsvFileImporter;
+import io.questdb.cutlass.text.TextException;
+import io.questdb.cutlass.text.TextImportException;
+import io.questdb.cutlass.text.TextLexerWrapper;
+import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.griffin.engine.functions.columns.ColumnUtils;
@@ -850,7 +858,7 @@ public class CopyExportTask {
         private ObjList<TypeAdapter> types;
         private DirectUtf16Sink utf16Sink;
         private DirectUtf8Sink utf8Sink;
-        private final CsvTextLexer.Listener onFieldsPartitioned = this::onFieldsPartitioned;
+        private final AbstractTextLexer.Listener onFieldsPartitioned = this::onFieldsPartitioned;
 
         public void clear() {
             this.engine = null;

@@ -22,9 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.text;
+package io.questdb.cutlass.parquet;
 
 import io.questdb.MessageBus;
+import io.questdb.cutlass.text.CopyImportTask;
+import io.questdb.cutlass.text.CsvFileIndexer;
+import io.questdb.cutlass.text.TextLexerWrapper;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.DirectLongList;

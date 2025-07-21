@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.text;
+package io.questdb.cutlass.parquet;
 
 
 import io.questdb.cairo.SecurityContext;

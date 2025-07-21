@@ -32,8 +32,8 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.text.CopyContext;
-import io.questdb.cutlass.text.CopyImportRequestTask;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -52,9 +52,8 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private final CopyContext copyContext;
-
+    private final StringSink exportIdSink = new StringSink();
     private final String fileName;
-    private final StringSink importIdSink = new StringSink();
     private final MessageBus messageBus;
     private final CopyRecord record = new CopyRecord();
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
@@ -77,7 +76,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final RingQueue<CopyImportRequestTask> textImportRequestQueue = messageBus.getTextImportRequestQueue();
+        final RingQueue<CopyExportRequestTask> textExportRequestQueue = messageBus.getTextExportRequestQueue();
         final MPSequence copyRequestPubSeq = messageBus.getCopyRequestPubSeq();
         final AtomicBooleanCircuitBreaker circuitBreaker = copyContext.getCircuitBreaker();
 
@@ -85,34 +84,34 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         if (activeCopyID == CopyContext.INACTIVE_COPY_ID) {
             long processingCursor = copyRequestPubSeq.next();
             if (processingCursor > -1) {
-//                final CopyExportRequestTask task = textImportRequestQueue.get(processingCursor);
+                final CopyExportRequestTask task = textExportRequestQueue.get(processingCursor);
 
                 long copyID = copyContext.assignActiveImportId(executionContext.getSecurityContext());
-//                task.of(
-//                        executionContext.getSecurityContext(),
-//                        copyID,
-//                        tableName,
-//                        fileName
-//                );
+                task.of(
+                        executionContext.getSecurityContext(),
+                        copyID,
+                        tableName,
+                        fileName
+                );
 
                 circuitBreaker.reset();
                 copyRequestPubSeq.done(processingCursor);
 
-                importIdSink.clear();
-                Numbers.appendHex(importIdSink, copyID, true);
-                record.setValue(importIdSink);
+                exportIdSink.clear();
+                Numbers.appendHex(exportIdSink, copyID, true);
+                record.setValue(exportIdSink);
                 cursor.toTop();
                 return cursor;
             } else {
-                throw SqlException.$(0, "Unable to process the import request. Another import request may be in progress.");
+                throw SqlException.$(0, "Unable to process the export request. Another export request may be in progress.");
             }
         }
 
-        importIdSink.clear();
-        Numbers.appendHex(importIdSink, activeCopyID, true);
-        throw SqlException.$(0, "Another import request is in progress. ")
-                .put("[activeImportId=")
-                .put(importIdSink)
+        exportIdSink.clear();
+        Numbers.appendHex(exportIdSink, activeCopyID, true);
+        throw SqlException.$(0, "Another export request is in progress. ")
+                .put("[activeExportId=")
+                .put(exportIdSink)
                 .put(']');
     }
 

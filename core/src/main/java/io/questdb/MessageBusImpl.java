@@ -26,8 +26,8 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
-import io.questdb.cutlass.text.CopyExportRequestTask;
-import io.questdb.cutlass.text.CopyExportTask;
+import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.cutlass.parquet.CopyExportTask;
 import io.questdb.cutlass.text.CopyImportRequestTask;
 import io.questdb.cutlass.text.CopyImportTask;
 import io.questdb.metrics.QueryTrace;
@@ -483,6 +483,11 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public RingQueue<CopyExportRequestTask> getTextExportRequestQueue() {
         return textExportRequestQueue;
+    }
+
+    @Override
+    public SCSequence getTextExportRequestSubSeq() {
+        return textExportRequestSubSeq;
     }
 
     @Override
