@@ -1,13 +1,20 @@
 # Contributing to QuestDB
 
-Hi, glad to know that you're interested in contributing to QuestDB. Here are
-some topics that can help you to get started:
+Thank you for your interest in contributing to QuestDB! We welcome contributions of all kinds, including code, documentation, bug reports, and feature requests. This guide will help you get started and make your contribution process smooth and successful.
 
-- 💡 [Bugs and features](#bugs-and-features)
-- 🧭 [Navigation](#navigation)
-- 🔧 [Environment setup](#environment-setup)
-- ✅ [Before you submit](#before-you-submit)
-- 📢 [For maintainers](#for-maintainers)
+## How to Contribute
+- **Find an issue:** Look for issues labeled [`good first issue`](https://github.com/questdb/questdb/labels/Good%20first%20issue) or [`help wanted`](https://github.com/questdb/questdb/labels/Help%20wanted).
+- **Discuss:** If unsure, join our [Slack channel](https://slack.questdb.io/) or open an issue to discuss your idea.
+- **Fork and branch:** Fork the repository and create a new branch for your changes.
+- **Make your changes:** Follow the guidelines below for environment setup, formatting, and testing.
+- **Submit a pull request:** Open a PR with a clear description of your changes.
+
+## Table of Contents
+- [Bugs and Features](#bugs-and-features)
+- [Navigation](#navigation)
+- [Environment Setup](#environment-setup)
+- [Before You Submit](#before-you-submit)
+- [For Maintainers](#for-maintainers)
 
 # Bugs and features
 
