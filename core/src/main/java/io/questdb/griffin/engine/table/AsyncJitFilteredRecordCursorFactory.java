@@ -74,7 +74,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     private final int limitLoPos;
     private final int maxNegativeLimit;
     private final AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
-    private final int workerCount;
+    private final int sharedQueryWorkerCount;
     private DirectLongList negativeLimitRows;
 
     public AsyncJitFilteredRecordCursorFactory(
@@ -88,7 +88,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @Nullable ObjList<Function> perWorkerFilters,
             @Nullable Function limitLoFunction,
             int limitLoPos,
-            int workerCount
+            int sharedQueryWorkerCount
     ) {
         super(base.getMetadata());
         assert !(base instanceof FilteredRecordCursorFactory);
@@ -125,13 +125,13 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 atom,
                 REDUCER,
                 reduceTaskFactory,
-                workerCount,
+                sharedQueryWorkerCount,
                 PageFrameReduceTask.TYPE_FILTER
         );
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
-        this.workerCount = workerCount;
+        this.sharedQueryWorkerCount = sharedQueryWorkerCount;
     }
 
     public static void prepareBindVarMemory(
@@ -256,7 +256,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Async JIT Filter");
-        sink.meta("workers").val(workerCount);
+        sink.meta("workers").val(sharedQueryWorkerCount);
         // calc order and limit if possible
         long rowsRemaining;
         int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;

@@ -176,8 +176,8 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
-    public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
-        return getDelegate().getIOWorkerPoolConfiguration();
+    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
+        return getDelegate().getNetworkWorkerPoolConfiguration();
     }
 
     @Override

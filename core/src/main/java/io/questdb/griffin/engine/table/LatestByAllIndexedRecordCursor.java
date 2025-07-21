@@ -63,7 +63,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private boolean isFrameCacheBuilt;
     private boolean isTreeMapBuilt;
     private int keyCount;
-    private int workerCount;
+    private int sharedQueryWorkerCount;
 
     public LatestByAllIndexedRecordCursor(
             @NotNull CairoConfiguration configuration,
@@ -103,7 +103,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         bus = executionContext.getMessageBus();
-        workerCount = executionContext.getSharedWorkerCount();
+        // If the worker count is 0
+        sharedQueryWorkerCount = executionContext.getSharedQueryWorkerCount();
         rows.clear();
         keyCount = -1;
         argumentsAddress = 0;
@@ -126,7 +127,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Async index backward scan").meta("on").putColumnName(columnIndex);
-        sink.meta("workers").val(workerCount);
+        sink.meta("workers").val(sharedQueryWorkerCount + 1);
 
         if (prefixes.size() > 2) {
             int geoHashColumnIndex = (int) prefixes.get(0);
@@ -151,8 +152,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         aIndex = indexShift;
     }
 
-    private static long getChunkSize(int keyCount, int workerCount) {
-        return (keyCount + workerCount - 1) / workerCount;
+    private static long getChunkSize(int keyCount, int sharedWorkerCount) {
+        return sharedWorkerCount > 0 ? (keyCount + sharedWorkerCount - 1) / sharedWorkerCount : keyCount;
     }
 
     private static int getTaskCount(int keyCount, long chunkSize) {
@@ -163,7 +164,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         int taskCount;
         if (keyCount < 0) {
             keyCount = getSymbolTable(columnIndex).getSymbolCount() + 1;
-            final long chunkSize = getChunkSize(keyCount, workerCount);
+            final long chunkSize = getChunkSize(keyCount, sharedQueryWorkerCount);
             taskCount = getTaskCount(keyCount, chunkSize);
             rows.setCapacity(keyCount);
             GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
@@ -182,7 +183,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
             sharedCircuitBreaker.reset();
         } else {
-            final long chunkSize = getChunkSize(keyCount, workerCount);
+            final long chunkSize = getChunkSize(keyCount, sharedQueryWorkerCount);
             taskCount = getTaskCount(keyCount, chunkSize);
         }
 
