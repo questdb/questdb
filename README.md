@@ -1,3 +1,5 @@
+# QuestDB: High-Performance Time-Series Database
+
 <div align="center">
   <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
 </div>
@@ -23,6 +25,29 @@
   <a href="./i18n/README.hn-in.md">हिंदी</a> |
   <a href="./i18n/README.vi-vn.md">Tiếng Việt</a>
 </p>
+
+---
+
+## What is QuestDB?
+
+**QuestDB** is an open-source, high-performance time-series database designed for fast ingestion and low-latency SQL queries. Built from the ground up in Java, C++, and Rust, QuestDB is engineered for speed, efficiency, and reliability, with no external dependencies and zero garbage collection.
+
+---
+
+## Table of Contents
+- [Benefits of QuestDB](#benefits-of-questdb)
+- [Try QuestDB, Demo and Dashboards](#try-questdb-demo-and-dashboards)
+- [QuestDB Performance vs. Other OSS Databases](#questdb-performance-vs-other-oss-databases)
+- [Get Started](#get-started)
+- [First-Party Ingestion Clients](#first-party-ingestion-clients)
+- [Connect to QuestDB](#connect-to-questdb)
+- [Popular Third-Party Tools](#popular-third-party-tools)
+- [End-to-End Code Scaffolds](#end-to-end-code-scaffolds)
+- [Configure QuestDB for Production Workloads](#configure-questdb-for-production-workloads)
+- [QuestDB Enterprise](#questdb-enterprise)
+- [Additional Resources](#additional-resources)
+- [Contribute](#contribute)
+- [License](#license)
 
 ---
 
@@ -440,3 +465,11 @@ QuestDB [emoji key](https://allcontributors.org/docs/en/emoji-key):
 This project adheres to the
 [all-contributors](https://github.com/all-contributors/all-contributors)
 specification. Contributions of any kind are welcome!
+
+## License
+
+This project is licensed under the [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2.0).
+
+---
+
+*This README was improved for clarity, accessibility, and professionalism. Contributions are welcome!*
