@@ -1,11 +1,21 @@
-# TSBS guide for QuestDB
+# TSBS Guide for QuestDB
 
-This guide is provided as supplementary documentation for the
-[Time Series Benchmark Suite](https://github.com/timescale/tsbs) (TSBS) used to
-benchmark several time series databases. This document explains how the data for
-TSBS is generated along with additional flags available when using the data
-importer (`tsbs_load_questdb`). This guide should be read _after_ the
-[TSBS README](https://github.com/timescale/tsbs/blob/master/README.md).
+Welcome to the QuestDB TSBS benchmarking guide! This document provides supplementary instructions for using the [Time Series Benchmark Suite (TSBS)](https://github.com/timescale/tsbs) to benchmark QuestDB and other time series databases. It covers data generation, loading, query benchmarking, and available flags for the QuestDB TSBS loader.
+
+## Table of Contents
+- [Overview](#overview)
+- [Data Format](#data-format)
+- [How to Run the Test](#how-to-run-the-test)
+  - [Generating Data](#generating-data)
+  - [Running the Benchmark Tool](#running-the-benchmark-tool)
+  - [Query Benchmarks](#query-benchmarks)
+- [Benchmarking InfluxDB and QuestDB on FreeBSD](#benchmarking-influxdb-and-questdb-on-freebsd)
+- [Query Benchmarks](#query-benchmarks-1)
+- [`tsbs_load_questdb` Flags](#tsbs_load_questdb-flags)
+
+## Overview
+
+This guide explains how to generate and load data, run query benchmarks, and use the available flags for benchmarking QuestDB with TSBS. Please read the [TSBS README](https://github.com/timescale/tsbs/blob/master/README.md) first for general information about the suite.
 
 ## Data format
 
