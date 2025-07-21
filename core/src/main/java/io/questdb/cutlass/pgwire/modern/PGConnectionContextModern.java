@@ -1464,19 +1464,18 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     protected void doInit() {
         sqlExecutionContext.with(getFd());
 
-        if (recvBuffer == 0) {
-            // re-read recv buffer size in case the config was reloaded
-            this.recvBufferSize = configuration.getRecvBufferSize();
-            this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
-        }
-        if (sendBuffer == 0) {
-            // re-read send buffer size in case the config was reloaded
-            this.sendBufferSize = configuration.getSendBufferSize();
-            this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
-            this.sendBufferPtr = sendBuffer;
-            this.responseUtf8Sink.bookmarkPtr = this.sendBufferPtr;
-            this.sendBufferLimit = sendBuffer + sendBufferSize;
-        }
+        // re-read recv buffer size in case the config was reloaded
+        assert recvBuffer == 0;
+        this.recvBufferSize = configuration.getRecvBufferSize();
+        this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
+
+        // re-read send buffer size in case the config was reloaded
+        assert sendBuffer == 0;
+        this.sendBufferSize = configuration.getSendBufferSize();
+        this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
+        this.sendBufferPtr = sendBuffer;
+        this.responseUtf8Sink.bookmarkPtr = this.sendBufferPtr;
+        this.sendBufferLimit = sendBuffer + sendBufferSize;
 
         // reinitialize the prepared statement limit - this property can be changed at runtime
         // so new connections need to pick up the new value

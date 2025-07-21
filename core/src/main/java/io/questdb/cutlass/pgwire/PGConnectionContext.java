@@ -2929,14 +2929,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     protected void doInit() {
         sqlExecutionContext.with(getFd());
 
-        if (recvBuffer == 0) {
-            this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
-        }
-        if (sendBuffer == 0) {
-            this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
-            this.sendBufferPtr = sendBuffer;
-            this.sendBufferLimit = sendBuffer + sendBufferSize;
-        }
+        assert recvBuffer == 0;
+        this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
+
+        assert sendBuffer == 0;
+        this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
+        this.sendBufferPtr = sendBuffer;
+        this.sendBufferLimit = sendBuffer + sendBufferSize;
 
         authenticator.init(socket, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
     }
