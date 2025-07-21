@@ -49,7 +49,7 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "to_timezone(NS)";
+        return "to_timezone(NS|NSN)";
     }
 
     @Override
@@ -64,12 +64,25 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         final Function timezoneFunc = args.getQuick(1);
         final int timezonePos = argPositions.getQuick(1);
 
-        if (timezoneFunc.isConstant()) {
-            return toTimezoneConstFunction(timestampFunc, timezoneFunc, timezonePos);
-        } else if (timezoneFunc.isRuntimeConstant()) {
-            return new RuntimeConstFunc(timestampFunc, timezoneFunc, timezonePos);
+        if (args.size() == 2) {
+            if (timezoneFunc.isConstant()) {
+                return toTimezoneConstFunction(timestampFunc, timezoneFunc, timezonePos);
+            } else if (timezoneFunc.isRuntimeConstant()) {
+                return new RuntimeConstFunc(timestampFunc, timezoneFunc, timezonePos);
+            } else {
+                return new Func(timestampFunc, timezoneFunc);
+            }
+        } else if (args.size() == 3) {
+            final Function intervalFunc = args.getQuick(2);
+            if (timezoneFunc.isConstant()) {
+                return toTimezoneConstFunctionWithInterval(timestampFunc, timezoneFunc, intervalFunc, timezonePos);
+            } else if (timezoneFunc.isRuntimeConstant()) {
+                return new RuntimeConstFuncWithInterval(timestampFunc, timezoneFunc, intervalFunc, timezonePos);
+            } else {
+                return new FuncWithInterval(timestampFunc, timezoneFunc, intervalFunc);
+            }
         } else {
-            return new Func(timestampFunc, timezoneFunc);
+            throw SqlException.$(position, "to_timezone expects 2 or 3 arguments");
         }
     }
 
@@ -105,6 +118,41 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         throw SqlException.$(timezonePos, "timezone must not be null");
     }
 
+    @NotNull
+    private static TimestampFunction toTimezoneConstFunctionWithInterval(
+            Function timestampFunc,
+            Function timezoneFunc,
+            Function intervalFunc,
+            int timezonePos
+    ) throws SqlException {
+        final CharSequence tz = timezoneFunc.getStrA(null);
+        if (tz != null) {
+            final int hi = tz.length();
+            final long l = Timestamps.parseOffset(tz, 0, hi);
+            if (l == Long.MIN_VALUE) {
+                try {
+                    return new ConstRulesFuncWithInterval(
+                            timestampFunc,
+                            intervalFunc,
+                            TimestampFormatUtils.EN_LOCALE.getZoneRules(
+                                    Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                            )
+                    );
+                } catch (NumericException e) {
+                    Misc.free(timestampFunc);
+                    throw SqlException.$(timezonePos, "invalid timezone: ").put(tz);
+                }
+            } else {
+                return new OffsetTimestampFunctionWithInterval(
+                        timestampFunc,
+                        intervalFunc,
+                        Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS
+                );
+            }
+        }
+        throw SqlException.$(timezonePos, "timezone must not be null");
+    }
+
     private static class ConstRulesFunc extends TimestampFunction implements UnaryFunction {
         private final Function timestampFunc;
         private final TimeZoneRules tzRules;
@@ -128,6 +176,31 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             final long timestamp = timestampFunc.getTimestamp(rec);
             return timestamp + tzRules.getOffset(timestamp);
+        }
+    }
+
+    private static class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction {
+        private final Function timestampFunc;
+        private final long offset;
+
+        public OffsetTimestampFunction(Function timestampFunc, long offset) {
+            this.timestampFunc = timestampFunc;
+            this.offset = offset;
+        }
+
+        @Override
+        public Function getArg() {
+            return timestampFunc;
+        }
+
+        @Override
+        public String getName() {
+            return "to_timezone";
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return timestampFunc.getTimestamp(rec) + offset;
         }
     }
 
@@ -158,6 +231,99 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             final long timestampValue = timestampFunc.getTimestamp(rec);
+            try {
+                final CharSequence tz = timezoneFunc.getStrA(rec);
+                return tz != null ? Timestamps.toTimezone(timestampValue, TimestampFormatUtils.EN_LOCALE, tz) : timestampValue;
+            } catch (NumericException e) {
+                return timestampValue;
+            }
+        }
+    }
+
+    private static class ConstRulesFuncWithInterval extends TimestampFunction implements UnaryFunction {
+        private final Function timestampFunc;
+        private final Function intervalFunc;
+        private final TimeZoneRules tzRules;
+
+        public ConstRulesFuncWithInterval(Function timestampFunc, Function intervalFunc, TimeZoneRules tzRules) {
+            this.timestampFunc = timestampFunc;
+            this.intervalFunc = intervalFunc;
+            this.tzRules = tzRules;
+        }
+
+        @Override
+        public Function getArg() {
+            return timestampFunc;
+        }
+
+        @Override
+        public String getName() {
+            return "to_timezone";
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            final long timestamp = timestampFunc.getTimestamp(rec) + intervalFunc.getLong(rec);
+            return timestamp + tzRules.getOffset(timestamp);
+        }
+    }
+
+    private static class OffsetTimestampFunctionWithInterval extends TimestampFunction implements UnaryFunction {
+        private final Function timestampFunc;
+        private final Function intervalFunc;
+        private final long offset;
+
+        public OffsetTimestampFunctionWithInterval(Function timestampFunc, Function intervalFunc, long offset) {
+            this.timestampFunc = timestampFunc;
+            this.intervalFunc = intervalFunc;
+            this.offset = offset;
+        }
+
+        @Override
+        public Function getArg() {
+            return timestampFunc;
+        }
+
+        @Override
+        public String getName() {
+            return "to_timezone";
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return timestampFunc.getTimestamp(rec) + intervalFunc.getLong(rec) + offset;
+        }
+    }
+
+    private static class FuncWithInterval extends TimestampFunction implements BinaryFunction {
+        private final Function timestampFunc;
+        private final Function timezoneFunc;
+        private final Function intervalFunc;
+
+        public FuncWithInterval(Function timestampFunc, Function timezoneFunc, Function intervalFunc) {
+            this.timestampFunc = timestampFunc;
+            this.timezoneFunc = timezoneFunc;
+            this.intervalFunc = intervalFunc;
+        }
+
+        @Override
+        public Function getLeft() {
+            return timestampFunc;
+        }
+
+        @Override
+        public String getName() {
+            return "to_timezone";
+        }
+
+        @Override
+        public Function getRight() {
+            return timezoneFunc;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            final long timestampValue = timestampFunc.getTimestamp(rec) + intervalFunc.getLong(rec);
             try {
                 final CharSequence tz = timezoneFunc.getStrA(rec);
                 return tz != null ? Timestamps.toTimezone(timestampValue, TimestampFormatUtils.EN_LOCALE, tz) : timestampValue;
@@ -198,6 +364,72 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             final long timestamp = timestampFunc.getTimestamp(rec);
+            if (tzRules != null) {
+                return timestamp + tzRules.getOffset(timestamp);
+            }
+            return timestamp + tzOffset;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+
+            final CharSequence tz = timezoneFunc.getStrA(null);
+            if (tz == null) {
+                throw SqlException.$(timezonePos, "timezone must not be null");
+            }
+
+            final int hi = tz.length();
+            final long l = Timestamps.parseOffset(tz, 0, hi);
+            if (l == Long.MIN_VALUE) {
+                try {
+                    tzRules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
+                            Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                    );
+                    tzOffset = 0;
+                } catch (NumericException e) {
+                    throw SqlException.$(timezonePos, "invalid timezone: ").put(tz);
+                }
+            } else {
+                tzOffset = Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS;
+                tzRules = null;
+            }
+        }
+    }
+
+    private static class RuntimeConstFuncWithInterval extends TimestampFunction implements BinaryFunction {
+        private final Function timestampFunc;
+        private final Function timezoneFunc;
+        private final Function intervalFunc;
+        private final int timezonePos;
+        private long tzOffset;
+        private TimeZoneRules tzRules;
+
+        public RuntimeConstFuncWithInterval(Function timestampFunc, Function timezoneFunc, Function intervalFunc, int timezonePos) {
+            this.timestampFunc = timestampFunc;
+            this.timezoneFunc = timezoneFunc;
+            this.intervalFunc = intervalFunc;
+            this.timezonePos = timezonePos;
+        }
+
+        @Override
+        public Function getLeft() {
+            return timestampFunc;
+        }
+
+        @Override
+        public String getName() {
+            return "to_timezone";
+        }
+
+        @Override
+        public Function getRight() {
+            return timezoneFunc;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            final long timestamp = timestampFunc.getTimestamp(rec) + intervalFunc.getLong(rec);
             if (tzRules != null) {
                 return timestamp + tzRules.getOffset(timestamp);
             }
