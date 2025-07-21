@@ -43,8 +43,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 
-import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
-
 public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinKeyedFastRecordCursor cursor;
     private final RecordSink masterKeySink;
@@ -81,7 +79,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 configuration.getSqlAsOfJoinLookAhead()
         );
         this.symbolShortCircuit = symbolShortCircuit;
-        this.toleranceInterval = scaleTimestamp(toleranceInterval, cursor.slaveTimestampScale);
+        this.toleranceInterval = toleranceInterval;
     }
 
     @Override

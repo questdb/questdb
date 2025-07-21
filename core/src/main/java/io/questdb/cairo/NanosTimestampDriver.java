@@ -865,28 +865,6 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public long getTimestampMultiplier(char unit) {
-        switch (unit) {
-            case 'U':
-                return 1;
-            case 'T':
-                return Nanos.MILLI_NANOS;
-            case 's':
-                return Nanos.SECOND_NANOS;
-            case 'm':
-                return Nanos.MINUTE_NANOS;
-            case 'h':
-                return Nanos.HOUR_NANOS;
-            case 'd':
-                return Nanos.DAY_NANOS;
-            case 'w':
-                return Nanos.WEEK_NANOS;
-            default:
-                return 0;
-        }
-    }
-
-    @Override
     public TimestampSampler getTimestampSampler(long interval, char timeUnit, int position) throws SqlException {
         switch (timeUnit) {
             case 'n':

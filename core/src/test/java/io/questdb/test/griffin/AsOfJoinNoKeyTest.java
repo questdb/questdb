@@ -25,15 +25,19 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+
+import static io.questdb.test.griffin.AsOfJoinTest.executeWithRewriteTimestamp;
 
 /**
  * Verifies correctness of both slow and fast non-keyed ASOF/LT join factories.
@@ -42,16 +46,22 @@ import java.util.Collection;
 @RunWith(Parameterized.class)
 public class AsOfJoinNoKeyTest extends AbstractCairoTest {
     private final JoinType joinType;
+    private final String leftTableTimestampType;
+    private final String rightTableTimestampType;
 
-    public AsOfJoinNoKeyTest(JoinType joinType) {
+    public AsOfJoinNoKeyTest(JoinType joinType, int leftTimestampType, int rightTimestampType) {
         this.joinType = joinType;
+        this.leftTableTimestampType = ColumnType.nameOf(leftTimestampType);
+        this.rightTableTimestampType = ColumnType.nameOf(rightTimestampType);
     }
 
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
+    @Parameterized.Parameters(name = "{0}-{1}-{2}")
+    public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {JoinType.ASOF},
-                {JoinType.LT},
+                {JoinType.ASOF, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_MICRO}, {JoinType.ASOF, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO},
+                {JoinType.ASOF, ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_MICRO}, {JoinType.ASOF, ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO},
+                {JoinType.LT, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_MICRO}, {JoinType.LT, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO},
+                {JoinType.LT, ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_MICRO}, {JoinType.LT, ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO}
         });
     }
 
@@ -64,13 +74,13 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
     @Test
     public void testInterleaved1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", leftTableTimestampType);
             execute("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
             execute("INSERT INTO t1 values ('2022-10-05T08:17:00.000000Z', 1, 'b');");
             execute("INSERT INTO t1 values ('2022-10-05T08:21:00.000000Z', 2, 'c');");
             execute("INSERT INTO t1 values ('2022-10-10T01:01:00.000000Z', 3, 'd');");
 
-            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", rightTableTimestampType);
             execute("INSERT INTO t2 values ('2022-10-05T08:18:00.000000Z', 4, 'e');");
             execute("INSERT INTO t2 values ('2022-10-05T08:19:00.000000Z', 5, 'f');");
             execute("INSERT INTO t2 values ('2023-10-05T09:00:00.000000Z', 6, 'g');");
@@ -83,7 +93,7 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
     @Test
     public void testInterleaved2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", leftTableTimestampType);
             execute("INSERT INTO t1 values ('2000-02-07T22:00:00.000000Z', 1, 't1_1');");
             execute("INSERT INTO t1 values ('2000-02-08T06:00:00.000000Z', 2, 't1_2');");
             execute("INSERT INTO t1 values ('2000-02-08T19:00:00.000000Z', 3, 't1_3');");
@@ -92,7 +102,7 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
             execute("INSERT INTO t1 values ('2000-02-10T06:00:00.000000Z', 6, 't1_6');");
             execute("INSERT INTO t1 values ('2000-02-10T19:00:00.000000Z', 7, 't1_7');");
 
-            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", rightTableTimestampType);
             execute("INSERT INTO t1 values ('2000-02-07T14:00:00.000000Z', 8, 't2_1');");
             execute("INSERT INTO t1 values ('2000-02-08T02:00:00.000000Z', 9, 't2_2');");
             execute("INSERT INTO t1 values ('2000-02-08T02:00:00.000000Z', 10, 't2_3');");
@@ -108,12 +118,12 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
     @Test
     public void testRightHandAfter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", leftTableTimestampType);
             execute("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
             execute("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'b');");
             execute("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 2, 'c');");
 
-            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", rightTableTimestampType);
             execute("INSERT INTO t2 values ('2023-10-05T04:00:00.000000Z', 3, 'd');");
 
             assertResultSetsMatch("t1", "t2");
@@ -123,12 +133,12 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
     @Test
     public void testRightHandBefore() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", leftTableTimestampType);
             execute("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
             execute("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'b');");
             execute("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 2, 'c');");
 
-            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", rightTableTimestampType);
             execute("INSERT INTO t2 values ('2021-10-01T00:00:00.000000Z', 3, 'd');");
             execute("INSERT INTO t2 values ('2021-10-03T01:00:00.000000Z', 4, 'e');");
             execute("INSERT INTO t2 values ('2021-10-05T04:00:00.000000Z', 5, 'f');");
@@ -140,12 +150,12 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
     @Test
     public void testRightHandDuplicate() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", leftTableTimestampType);
             execute("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
             execute("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 1, 'b');");
             execute("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 2, 'c');");
 
-            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", rightTableTimestampType);
             execute("INSERT INTO t2 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
             execute("INSERT INTO t2 values ('2022-10-05T08:15:00.000000Z', 1, 'b');");
             execute("INSERT INTO t2 values ('2022-10-05T08:15:00.000000Z', 2, 'c');");
@@ -157,12 +167,12 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
     @Test
     public void testRightHandEmpty() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", leftTableTimestampType);
             execute("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
             execute("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'b');");
             execute("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 2, 'c');");
 
-            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", rightTableTimestampType);
             execute("INSERT INTO t2 values ('2023-10-05T04:00:00.000000Z', 3, 'd');");
 
             assertResultSetsMatch("t1", "t2");
@@ -172,10 +182,10 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
     @Test
     public void testRightHandPartitionBoundary() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", leftTableTimestampType);
             execute("INSERT INTO t1 values ('2022-10-05T00:00:00.000000Z', 0, 'a');");
 
-            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", rightTableTimestampType);
             execute("INSERT INTO t2 values ('2022-10-04T23:59:59.999999Z', 1, 'b');");
             execute("INSERT INTO t2 values ('2022-10-05T00:00:00.000000Z', 2, 'c');");
 
@@ -186,12 +196,12 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
     @Test
     public void testRightHandSame() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", leftTableTimestampType);
             execute("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
             execute("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'b');");
             execute("INSERT INTO t1 values ('2022-10-07T08:16:00.000000Z', 2, 'c');");
 
-            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", rightTableTimestampType);
             execute("INSERT INTO t2 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
             execute("INSERT INTO t2 values ('2022-10-05T08:16:00.000000Z', 1, 'b');");
             execute("INSERT INTO t2 values ('2022-10-07T08:16:00.000000Z', 2, 'c');");
@@ -203,7 +213,8 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
     @Test
     public void testSelfJoin() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            Assume.assumeTrue(rightTableTimestampType.equals("TIMESTAMP"));
+            executeWithRewriteTimestamp("CREATE TABLE t (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", leftTableTimestampType);
             execute("INSERT INTO t values ('2022-10-05T00:00:00.000000Z', 0, 'a');");
             execute("INSERT INTO t values ('2022-10-05T08:16:00.000000Z', 1, 'b');");
             execute("INSERT INTO t values ('2022-10-05T08:16:00.000000Z', 3, 'c');");

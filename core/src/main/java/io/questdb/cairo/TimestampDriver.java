@@ -337,8 +337,6 @@ public interface TimestampDriver {
 
     TimestampFloorWithStrideMethod getTimestampFloorWithStrideMethod(String c);
 
-    long getTimestampMultiplier(char unit);
-
     /**
      * Creates a timestamp sampler instance for the given interval and time unit.
      *

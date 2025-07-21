@@ -807,26 +807,46 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
     }
 
-    private static long tolerance(QueryModel slaveModel, int timestampType) throws SqlException {
+    private static long tolerance(QueryModel slaveModel, int leftTimestamp, int rightTimestampType) throws SqlException {
         ExpressionNode tolerance = slaveModel.getAsOfJoinTolerance();
         long toleranceInterval = Numbers.LONG_NULL;
         if (tolerance != null) {
             int k = TimestampSamplerFactory.findIntervalEndIndex(tolerance.token, tolerance.position, "tolerance");
             assert tolerance.token.length() > k;
             char unit = tolerance.token.charAt(k);
-            TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
+            TimestampDriver timestampDriver = ColumnType.getTimestampDriver(Math.max(leftTimestamp, rightTimestampType));
+
             long multiplier;
-            if (unit == 'n') {
-                toleranceInterval = timestampDriver.fromNanos(toleranceInterval);
-            } else {
-                multiplier = timestampDriver.getTimestampMultiplier(unit);
-                if (multiplier == 0) {
+            switch (unit) {
+                case 'n':
+                    return timestampDriver.fromNanos(toleranceInterval);
+                case 'U':
+                    multiplier = timestampDriver.fromMicros(1);
+                    break;
+                case 'T':
+                    multiplier = timestampDriver.fromMillis(1);
+                    break;
+                case 's':
+                    multiplier = timestampDriver.fromSeconds(1);
+                    break;
+                case 'm':
+                    multiplier = timestampDriver.fromMinutes(1);
+                    break;
+                case 'h':
+                    multiplier = timestampDriver.fromHours(1);
+                    break;
+                case 'd':
+                    multiplier = timestampDriver.fromDays(1);
+                    break;
+                case 'w':
+                    multiplier = timestampDriver.fromWeeks(1);
+                    break;
+                default:
                     throw SqlException.$(tolerance.position, "unsupported TOLERANCE unit [unit=").put(unit).put(']');
-                }
-                int maxValue = (int) Math.min(Long.MAX_VALUE / multiplier, Integer.MAX_VALUE);
-                toleranceInterval = TimestampSamplerFactory.parseInterval(tolerance.token, k, tolerance.position, "tolerance", maxValue, unit);
-                toleranceInterval *= multiplier;
             }
+            int maxValue = (int) Math.min(Long.MAX_VALUE / multiplier, Integer.MAX_VALUE);
+            toleranceInterval = TimestampSamplerFactory.parseInterval(tolerance.token, k, tolerance.position, "tolerance", maxValue, unit);
+            toleranceInterval *= multiplier;
         }
         return toleranceInterval;
     }
@@ -2646,7 +2666,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 boolean selfJoin = isSameTable(master, slave);
                                 processJoinContext(index == 1, selfJoin, slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
-                                long asOfToleranceInterval = tolerance(slaveModel, slaveMetadata.getTimestampType());
+                                long asOfToleranceInterval = tolerance(slaveModel, masterMetadata.getTimestampType(), slaveMetadata.getTimestampType());
                                 boolean asOfAvoidBinarySearch = SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
@@ -2903,7 +2923,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 releaseSlave = false;
                                 break;
                             case JOIN_LT:
-                                long ltToleranceInterval = tolerance(slaveModel, slaveMetadata.getTimestampType());
+                                long ltToleranceInterval = tolerance(slaveModel, masterMetadata.getTimestampType(), slaveMetadata.getTimestampType());
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "LT");
                                 boolean ltAvoidBinarySearch = SqlHints.hasAvoidLtJoinBinarySearchHint(model, masterAlias, slaveModel.getName());

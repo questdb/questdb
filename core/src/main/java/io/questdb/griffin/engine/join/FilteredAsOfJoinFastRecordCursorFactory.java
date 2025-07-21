@@ -47,8 +47,6 @@ import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
-
 /**
  * Specialized ASOF join cursor factory usable when the slave table supports TimeFrameRecordCursor.
  * <p>
@@ -117,7 +115,7 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
         } else {
             this.selectedTimeFrameCursor = null;
         }
-        this.toleranceInterval = scaleTimestamp(toleranceInterval, cursor.slaveTimestampScale);
+        this.toleranceInterval = toleranceInterval;
     }
 
     @Override

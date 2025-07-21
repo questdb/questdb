@@ -850,28 +850,6 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public long getTimestampMultiplier(char unit) {
-        switch (unit) {
-            case 'U':
-                return 1;
-            case 'T':
-                return Timestamps.MILLI_MICROS;
-            case 's':
-                return Timestamps.SECOND_MICROS;
-            case 'm':
-                return Timestamps.MINUTE_MICROS;
-            case 'h':
-                return Timestamps.HOUR_MICROS;
-            case 'd':
-                return Timestamps.DAY_MICROS;
-            case 'w':
-                return Timestamps.WEEK_MICROS;
-            default:
-                return 0;
-        }
-    }
-
-    @Override
     public TimestampSampler getTimestampSampler(long interval, char timeUnit, int position) throws SqlException {
         switch (timeUnit) {
             case 'U':

@@ -25,6 +25,8 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -38,9 +40,36 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+import static io.questdb.test.griffin.AsOfJoinTest.executeWithRewriteTimestamp;
+
+@RunWith(Parameterized.class)
 public class AsOfJoinFuzzTest extends AbstractCairoTest {
     private static final boolean RUN_ALL_PERMUTATIONS = false;
+    private final String leftTableTimestampType;
+    private final TimestampDriver leftTimestampDriver;
+    private final String rightTableTimestampType;
+    private final TimestampDriver rightTimestampDriver;
+
+    public AsOfJoinFuzzTest(int leftTimestampType, int rightTimestampType) {
+        this.leftTableTimestampType = ColumnType.nameOf(leftTimestampType);
+        this.rightTableTimestampType = ColumnType.nameOf(rightTimestampType);
+        this.leftTimestampDriver = ColumnType.getTimestampDriver(leftTimestampType);
+        this.rightTimestampDriver = ColumnType.getTimestampDriver(rightTimestampType);
+    }
+
+    @Parameterized.Parameters(name = "{0}-{1}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO},
+                {ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO}
+        });
+    }
 
     @Test
     public void testFuzzManyDuplicates() throws Exception {
@@ -295,9 +324,12 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 RecordMetadata metadata = factory.getMetadata();
                 int masterColIndex = metadata.getColumnIndex("ts");
                 int slaveColIndex = metadata.getColumnIndex(slaveTimestampColumnName);
+                TimestampDriver masterTimestampDriver = ColumnType.getTimestampDriver(metadata.getColumnType(masterColIndex));
+                TimestampDriver slaveTimestampDriver = ColumnType.getTimestampDriver(metadata.getColumnType(slaveColIndex));
+
                 while (cursor.hasNext()) {
-                    long masterTimestamp = record.getTimestamp(masterColIndex);
-                    long slaveTimestamp = record.getTimestamp(slaveColIndex);
+                    long masterTimestamp = masterTimestampDriver.toMicros(record.getTimestamp(masterColIndex));
+                    long slaveTimestamp = slaveTimestampDriver.toMicros(record.getTimestamp(slaveColIndex));
                     Assert.assertTrue(slaveTimestamp <= masterTimestamp);
 
                     if (maxTolerance != -1 && slaveTimestamp != Numbers.LONG_NULL) {
@@ -318,23 +350,23 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             final int table1Size = rnd.nextPositiveInt() % 1000;
             final int table2Size = rnd.nextPositiveInt() % 1000;
 
-            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            long ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
-            ts += Timestamps.HOUR_MICROS * (rnd.nextLong() % 48);
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", leftTableTimestampType);
+            long ts = leftTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
+            ts += leftTimestampDriver.fromHours((int) (rnd.nextLong() % 48));
             for (int i = 0; i < table1Size; i++) {
                 if (rnd.nextInt(100) >= tsDuplicatePercentage) {
-                    ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
+                    ts += leftTimestampDriver.fromHours((int) rnd.nextLong(24));
                 }
                 String symbol = "s_" + rnd.nextInt(10);
                 execute("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
-            ts += Timestamps.HOUR_MICROS * rnd.nextLong(48);
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", rightTableTimestampType);
+            ts = rightTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
+            ts += rightTimestampDriver.fromHours((int) rnd.nextLong(48));
             for (int i = 0; i < table2Size; i++) {
                 if (rnd.nextInt(100) >= tsDuplicatePercentage) {
-                    ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
+                    ts += rightTimestampDriver.fromHours((int) rnd.nextLong(24));
                 }
                 String symbol = "s_" + rnd.nextInt(10);
                 execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "');");
@@ -350,23 +382,23 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             final int table1Size = rnd.nextPositiveInt() % 1000;
             final int table2Size = rnd.nextPositiveInt() % 1000;
 
-            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts)");
-            long ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
-            ts += Timestamps.HOUR_MICROS * (rnd.nextLong() % 48);
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts)", leftTableTimestampType);
+            long ts = leftTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
+            ts += leftTimestampDriver.fromHours((int) (rnd.nextLong() % 48));
             for (int i = 0; i < table1Size; i++) {
                 if (rnd.nextInt(100) >= tsDuplicatePercentage) {
-                    ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
+                    ts += leftTimestampDriver.fromHours((int) rnd.nextLong(24));
                 }
                 String symbol = "s_" + rnd.nextInt(10);
                 execute("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts)");
-            ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
-            ts += Timestamps.HOUR_MICROS * rnd.nextLong(48);
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts)", rightTableTimestampType);
+            ts = rightTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
+            ts += rightTimestampDriver.fromHours((int) rnd.nextLong(48));
             for (int i = 0; i < table2Size; i++) {
                 if (rnd.nextInt(100) >= tsDuplicatePercentage) {
-                    ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
+                    ts += rightTimestampDriver.fromHours((int) rnd.nextLong(24));
                 }
                 String symbol = "s_" + rnd.nextInt(10);
                 execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "');");
