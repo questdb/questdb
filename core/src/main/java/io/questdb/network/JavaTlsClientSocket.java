@@ -329,7 +329,7 @@ public final class JavaTlsClientSocket implements Socket {
                                 while (written < bufferLimit) {
                                     int n = delegate.send(wrapOutputBufferPtr + written, bufferLimit - written);
                                     if (n < 0) {
-                                        return;
+                                        throw TlsSessionInitFailedException.instance("socket write error");
                                     }
                                     written += n;
                                 }
@@ -343,7 +343,7 @@ public final class JavaTlsClientSocket implements Socket {
                     case NEED_UNWRAP: {
                         int n = readFromSocket();
                         if (n < 0) {
-                            throw TlsSessionInitFailedException.instance("server closed connection unexpectedly");
+                            throw TlsSessionInitFailedException.instance("socket read error");
                         }
                         SSLEngineResult result = sslEngine.unwrap(unwrapInputBuffer, unwrapOutputBuffer);
                         handshakeStatus = result.getHandshakeStatus();
