@@ -140,7 +140,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
-    public static final int MIN_TCP_ILP_BUF_SIZE = AuthUtils.CHALLENGE_LEN;
+    public static final int MIN_TCP_ILP_BUF_SIZE = AuthUtils.CHALLENGE_LEN + 1;
     public static final String TMP_DIRECTORY = "tmp";
     private static final String ILP_PROTO_SUPPORT_VERSIONS = "[1,2]";
     private static final String ILP_PROTO_SUPPORT_VERSIONS_NAME = "line.proto.support.versions";

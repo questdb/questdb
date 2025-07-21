@@ -433,7 +433,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
         private static final long DEFAULT_MIN_REQUEST_THROUGHPUT = 100 * 1024; // 100KB/s, keep in sync with the contract of the configuration method
         private static final int DEFAULT_TCP_PORT = 9009;
-        private static final int MIN_BUFFER_SIZE = AuthUtils.CHALLENGE_LEN; // challenge size + 1;
+        private static final int MIN_BUFFER_SIZE = AuthUtils.CHALLENGE_LEN + 1; // challenge size + 1;
         // The PARAMETER_NOT_SET_EXPLICITLY constant is used to detect if a parameter was set explicitly in configuration parameters
         // where it matters. This is needed to detect invalid combinations of parameters. Why?
         // We want to fail-fast even when an explicitly configured options happens to be same value as the default value,
