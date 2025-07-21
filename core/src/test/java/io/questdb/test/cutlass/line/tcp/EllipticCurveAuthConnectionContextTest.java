@@ -24,7 +24,6 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.std.Files;
@@ -348,23 +347,6 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected, "weather");
         });
-    }
-
-    @Test
-    public void testIncorrectConfig() throws Exception {
-        maxRecvBufferSize.set(200);
-        try {
-            runInAuthContext(() -> {
-                recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-                handleContextIO0();
-                Assert.assertFalse(disconnected);
-                waitForIOCompletion();
-                closeContext();
-                Assert.fail();
-            });
-        } catch (CairoException ex) {
-            TestUtils.assertEquals("Minimum buffer length is 513", ex.getFlyweightMessage());
-        }
     }
 
     @Test

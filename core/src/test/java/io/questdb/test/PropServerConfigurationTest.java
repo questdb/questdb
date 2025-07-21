@@ -967,6 +967,14 @@ public class PropServerConfigurationTest {
     }
 
     @Test(expected = ServerConfigurationException.class)
+    public void testInvalidLineTcpBufferSize() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("line.tcp.max.measurement.size", "256");
+        properties.setProperty("line.tcp.recv.buffer.size", "512");
+        newPropServerConfiguration(properties);
+    }
+
+    @Test(expected = ServerConfigurationException.class)
     public void testInvalidLong() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("cairo.idle.check.interval", "1234a");
