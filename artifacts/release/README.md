@@ -1,8 +1,26 @@
-# Release steps
+# QuestDB Release Process Guide
 
-This is a short guide to outline steps involved making QuestDB release.
+Welcome! This guide outlines the steps involved in making a QuestDB release, including preparing release notes, building and publishing artifacts, and updating related resources.
 
-## Edit release notes
+## Table of Contents
+- [Overview](#overview)
+- [Edit Release Notes](#edit-release-notes)
+- [Create a New Branch from `master`](#create-a-new-branch-from-master)
+- [Clear Previous Release Memory](#clear-previous-release-memory)
+- [Perform Release](#perform-release)
+- [Release Docker Image](#release-docker-image)
+  - [Manual Docker Build](#manual-way-of-building-the-docker)
+- [Build QuestDB Binaries](#build-questdb-binaries)
+- [Release Java Library](#release-java-library)
+- [Release AMI](#release-ami)
+- [Update demo.questdb.io](#update-demoquestdbio)
+- [Release Helm Chart](#release-helm-chart)
+- [Update pom.xml to Snapshot](#update-pomxml-to-snapshot)
+
+## Overview
+This document provides a step-by-step checklist for releasing a new version of QuestDB, ensuring consistency and reliability throughout the process.
+
+## Edit Release Notes
 
 First step is to create a draft release with the intended release version number and release notes. Git tag should not
 be created but the correct tag (the intended release number) should be chosen in the draft with the option
