@@ -343,7 +343,7 @@ public final class JavaTlsClientSocket implements Socket {
                     case NEED_UNWRAP: {
                         int n = readFromSocket();
                         if (n < 0) {
-                            return;
+                            throw TlsSessionInitFailedException.instance("server closed connection unexpectedly");
                         }
                         SSLEngineResult result = sslEngine.unwrap(unwrapInputBuffer, unwrapOutputBuffer);
                         handshakeStatus = result.getHandshakeStatus();
