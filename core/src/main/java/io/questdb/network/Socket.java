@@ -110,9 +110,9 @@ public interface Socket extends QuietCloseable {
      * on server connections.
      *
      * @param peerName server name to use for SNI and certificate validation.
-     * @return 0 if the call is successful; -1 if there was an error.
+     * @throws TlsSessionInitFailedException if the call fails.
      */
-    int startTlsSession(@Nullable CharSequence peerName);
+    void startTlsSession(@Nullable CharSequence peerName) throws TlsSessionInitFailedException;
 
     /**
      * @return true if the socket support TLS encryption; false otherwise.

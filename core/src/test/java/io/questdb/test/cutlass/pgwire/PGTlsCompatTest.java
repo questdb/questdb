@@ -34,6 +34,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.PlainSocket;
 import io.questdb.network.Socket;
 import io.questdb.network.SocketFactory;
+import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -231,13 +232,13 @@ public class PGTlsCompatTest extends BasePGTest {
         }
 
         @Override
-        public int startTlsSession(CharSequence peerName) {
+        public void startTlsSession(CharSequence peerName) throws TlsSessionInitFailedException {
             if (!tlsSessionStarted) {
                 createTlsSessionCalls.incrementAndGet();
                 tlsSessionStarted = true;
-                return 0;
+                return;
             }
-            return -1;
+            throw TlsSessionInitFailedException.instance("TLS session has been started already");
         }
 
         @Override

@@ -34,6 +34,7 @@ import io.questdb.network.IOOperation;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.Socket;
 import io.questdb.network.SocketFactory;
+import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
@@ -609,10 +610,15 @@ public abstract class HttpClient implements QuietCloseable {
             }
 
             if (socket.supportsTls()) {
-                if (socket.startTlsSession(host) < 0) {
+                try {
+                    socket.startTlsSession(host);
+                } catch (TlsSessionInitFailedException e) {
                     int errno = nf.errno();
                     disconnect();
-                    throw new HttpClientException("could not start TLS session [fd=").put(fd).put(", errno=").put(errno).put(']');
+                    throw new HttpClientException("could not start TLS session [fd=").put(fd)
+                            .put(", error=").put(e.getFlyweightMessage())
+                            .put(", errno=").put(errno)
+                            .put(']');
                 }
             }
             setupIoWait();
