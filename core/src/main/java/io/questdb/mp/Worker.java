@@ -55,6 +55,7 @@ public class Worker extends Thread {
     private final long sleepMs;
     private final long sleepThreshold;
     private final WorkerStats stats;
+    private final WorkerPoolMetrics poolMetrics;
     private final int workerId;
     private final long yieldThreshold;
 
@@ -71,7 +72,8 @@ public class Worker extends Thread {
             long sleepThreshold,
             long sleepMs,
             Metrics metrics,
-            @Nullable Log log
+            @Nullable Log log,
+            WorkerPoolMetrics poolMetrics
     ) {
         assert yieldThreshold > 0L;
         this.setName(poolName + '_' + workerId);
@@ -89,6 +91,7 @@ public class Worker extends Thread {
         this.sleepMs = sleepMs;
         this.metrics = metrics;
         this.log = log;
+        this.poolMetrics = poolMetrics;
         this.stats = new WorkerStats();
     }
 
@@ -197,6 +200,11 @@ public class Worker extends Thread {
 
                     // Record iteration stats
                     stats.recordIteration(usefulJobs > 0);
+                    
+                    // Update pool metrics periodically (every 100 iterations)
+                    if (stats.getTotalIterations() % 100 == 0) {
+                        poolMetrics.recordUtilization(workerId, stats.getUtilizationPercentage());
+                    }
 
                     if (runAsap) {
                         ticker = 0;
@@ -260,6 +268,10 @@ public class Worker extends Thread {
         private long usefulIterations;
         private boolean windowFull = false;
         private int windowIndex = 0;
+
+        long getTotalIterations() {
+            return totalIterations;
+        }
 
         private double getUtilizationPercentage() {
             long total = totalIterations;
