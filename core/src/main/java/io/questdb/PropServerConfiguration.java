@@ -538,7 +538,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private short floatDefaultColumnType;
     private int httpMinBindIPv4Address;
     private int httpMinBindPort;
-    private int httpMinNetAcceptLoopTimeout;
+    private long httpMinNetAcceptLoopTimeout;
     private boolean httpMinNetConnectionHint;
     private int httpMinNetConnectionLimit;
     private long httpMinNetConnectionQueueTimeout;
@@ -580,7 +580,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpMaintenanceInterval;
     private int lineTcpMaxMeasurementSize;
     private long lineTcpMaxRecvBufferSize;
-    private int lineTcpNetAcceptLoopTimeout;
+    private long lineTcpNetAcceptLoopTimeout;
     private int lineTcpNetBindIPv4Address;
     private int lineTcpNetBindPort;
     private long lineTcpNetConnectionHeartbeatInterval;
@@ -621,7 +621,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgNamedStatementCacheCapacity;
     private int pgNamedStatementLimit;
     private int pgNamesStatementPoolCapacity;
-    private int pgNetAcceptLoopTimeout;
+    private long pgNetAcceptLoopTimeout;
     private int pgNetBindIPv4Address;
     private int pgNetBindPort;
     private boolean pgNetConnectionHint;
@@ -948,7 +948,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     httpMinBindPort = p;
                 });
 
-                this.httpMinNetAcceptLoopTimeout = getInt(properties, env, PropertyKey.HTTP_MIN_NET_ACCEPT_LOOP_TIMEOUT, 500);
+                this.httpMinNetAcceptLoopTimeout = getMillis(properties, env, PropertyKey.HTTP_MIN_NET_ACCEPT_LOOP_TIMEOUT, 500);
                 this.httpMinNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_LIMIT, 64);
 
                 // deprecated
@@ -1236,7 +1236,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     pgNetBindPort = p;
                 });
 
-                this.pgNetAcceptLoopTimeout = getInt(properties, env, PropertyKey.PG_NET_ACCEPT_LOOP_TIMEOUT, 500);
+                this.pgNetAcceptLoopTimeout = getMillis(properties, env, PropertyKey.PG_NET_ACCEPT_LOOP_TIMEOUT, 500);
 
                 // deprecated
                 this.pgNetIdleConnectionTimeout = getMillis(properties, env, PropertyKey.PG_NET_IDLE_TIMEOUT, 300_000);
@@ -1513,7 +1513,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.telemetryDisableCompletely = getBoolean(properties, env, PropertyKey.TELEMETRY_DISABLE_COMPLETELY, false);
             this.telemetryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_QUEUE_CAPACITY, 512));
             this.telemetryHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_HIDE_TABLES, true);
-            this.telemetryDbSizeEstimateTimeout = getLong(properties, env, PropertyKey.TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT, Timestamps.SECOND_MILLIS);
+            this.telemetryDbSizeEstimateTimeout = getMillis(properties, env, PropertyKey.TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT, Timestamps.SECOND_MILLIS);
             this.o3PartitionPurgeListCapacity = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY, 1);
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
@@ -1557,7 +1557,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     lineTcpNetBindPort = p;
                 });
 
-                this.lineTcpNetAcceptLoopTimeout = getInt(properties, env, PropertyKey.LINE_TCP_NET_ACCEPT_LOOP_TIMEOUT, 500);
+                this.lineTcpNetAcceptLoopTimeout = getMillis(properties, env, PropertyKey.LINE_TCP_NET_ACCEPT_LOOP_TIMEOUT, 500);
 
                 // deprecated
                 this.lineTcpNetConnectionTimeout = getMillis(properties, env, PropertyKey.LINE_TCP_NET_IDLE_TIMEOUT, 0);
