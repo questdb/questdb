@@ -1,4 +1,18 @@
-# How to set up kafka PostgreSQL connector for development
+# Kafka PostgreSQL Connector Setup Guide (Development)
+
+Welcome! This guide will help you set up the Kafka PostgreSQL connector for development with QuestDB. It covers prerequisites, setup steps, configuration, and example messages for testing.
+
+## Table of Contents
+- [Overview](#overview)
+- [Prerequisites](#prerequisites)
+- [PostgreSQL Setup](#postgresql-setup)
+- [Kafka Setup](#kafka-setup)
+- [Kafka Connect Configuration](#kafka-connect-configuration)
+- [Publishing Messages](#publishing-messages)
+- [Example JSON Messages](#example-json-messages)
+
+## Overview
+This document provides step-by-step instructions for setting up a development environment with Kafka, PostgreSQL, and the Kafka Connect JDBC sink for QuestDB integration. It includes configuration examples and test messages for validating your setup.
 
 You will need the following:
 
