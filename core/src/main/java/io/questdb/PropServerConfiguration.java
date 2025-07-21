@@ -140,11 +140,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
+    public static final int MIN_TCP_ILP_BUF_SIZE = AuthUtils.CHALLENGE_LEN;
     public static final String TMP_DIRECTORY = "tmp";
     private static final String ILP_PROTO_SUPPORT_VERSIONS = "[1,2]";
     private static final String ILP_PROTO_SUPPORT_VERSIONS_NAME = "line.proto.support.versions";
     private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
-    private static final int MIN_BUF_SIZE = 16;
     private static final String RELEASE_TYPE = "release.type";
     private static final String RELEASE_VERSION = "release.version";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
@@ -1583,9 +1583,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                 if (lineTcpRecvBufferSize > lineTcpMaxRecvBufferSize) {
                     lineTcpMaxRecvBufferSize = lineTcpRecvBufferSize;
                 }
-                if (lineTcpRecvBufferSize < MIN_BUF_SIZE) {
+                if (lineTcpRecvBufferSize < MIN_TCP_ILP_BUF_SIZE) {
                     throw new ServerConfigurationException(
-                            "TCP ILP buffer size is too small, should be at least " + MIN_BUF_SIZE + ", ["
+                            "TCP ILP buffer size is too small, should be at least " + MIN_TCP_ILP_BUF_SIZE + ", ["
                                     + PropertyKey.LINE_TCP_RECV_BUFFER_SIZE.getPropertyPath() + "=" + lineTcpRecvBufferSize + ']');
                 }
 
