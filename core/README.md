@@ -1,3 +1,25 @@
+# QuestDB Core: Build and Usage Guide
+
+Welcome to the QuestDB core module! This guide will help you build QuestDB from source, run it locally, and use Docker images for various platforms. Whether you're a new contributor or an advanced user, follow the steps below for a smooth experience.
+
+## Table of Contents
+- [Overview](#overview)
+- [Building from Source](#building-from-source)
+  - [Prerequisites](#prerequisites)
+  - [Maven Commands](#maven-commands)
+  - [Run QuestDB](#run-questdb)
+- [Docker Images](#docker-images)
+  - [Login to Docker Hub](#login-to-docker-hub)
+  - [Switch Docker Desktop to Linux](#switch-docker-desktop-to-linux)
+  - [Build and Push Images](#build-and-push-images)
+  - [Switch Docker Desktop to Windows](#switch-docker-desktop-to-windows)
+  - [Create Manifest](#create-manifest)
+- [Running QuestDB via Docker](#running-questdb-via-docker)
+
+## Overview
+
+QuestDB is a high-performance, open-source time-series database. This document provides instructions for building QuestDB from source, running it locally, and working with Docker images for different platforms.
+
 # Building QuestDB
 
 As a first step, clone the repository:
