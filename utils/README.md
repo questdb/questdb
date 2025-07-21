@@ -1,4 +1,18 @@
-# QuestDB command line utils
+# QuestDB Command Line Utilities
+
+Welcome to the QuestDB command line utilities! This guide provides an overview of the available utilities, their usage, and examples to help you investigate storage issues, rebuild indexes, recover string column indexes, and migrate tables between QuestDB instances.
+
+## Table of Contents
+- [Overview](#overview)
+- [TxSerializer](#txserializer)
+- [Rebuild Index](#rebuild-index)
+- [Rebuild String Column Index](#rebuild-string-column-index-i-file)
+- [Copy Table Between Instances](#copy-table-from-one-instance-to-another-using-postgres-wire-to-read-and-ilp-to-write)
+- [Build Utils Project](#build-utils-project)
+
+## Overview
+
+This document describes the command line utilities included in the QuestDB utils project. Each utility is designed to assist with specific database maintenance and migration tasks.
 
 ### TxSerializer
 
