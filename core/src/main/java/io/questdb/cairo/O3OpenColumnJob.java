@@ -1528,7 +1528,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcDataOldPartitionSize,
                         o3SplitPartitionSize,
                         tableWriter,
-                        indexWriter,
+                        // Even though we are not using mapped memory for the last partition from the table writer
+                        // we must use its indexers to produce consistent index results. The condition here is
+                        // "creative" - we want to avoid bitmap index lookup for each and every column. We will use
+                        // presence of "indexWriter" as the guide. For columns that do not need indexing, this
+                        // writer would be null.
+                        openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND && indexWriter != null ? tableWriter.getBitmapIndexWriter(columnIndex) : indexWriter,
                         colTopSinkAddr,
                         columnIndex,
                         columnNameTxn,
