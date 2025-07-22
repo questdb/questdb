@@ -151,7 +151,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testDropPartitionExpectName2() throws Exception {
-        createXAndAssertException("alter table x drop partition list;", 33, "partition name missing");
+        createXAndAssertException("alter table x drop partition list;", 33, "partition name expected");
     }
 
     @Test
@@ -284,7 +284,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testDropPartitionNameMissing1() throws Exception {
-        createXAndAssertException("alter table x drop partition list ;", 34, "partition name missing");
+        createXAndAssertException("alter table x drop partition list ;", 34, "partition name expected");
     }
 
     @Test
