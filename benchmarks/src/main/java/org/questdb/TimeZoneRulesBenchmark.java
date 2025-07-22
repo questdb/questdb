@@ -51,13 +51,13 @@ public class TimeZoneRulesBenchmark {
     private final TimeZoneRules rules;
     private final TimestampDriver timestampDriver = MicrosTimestampDriver.INSTANCE;
 
-    public TimeZoneRulesBenchmark() throws NumericException {
+    public TimeZoneRulesBenchmark() {
         try {
             this.initialTs = timestampDriver.parseFloorLiteral("2024-01-01T00:00:00.000000Z");
+            this.rules = timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin");
         } catch (NumericException e) {
             throw new RuntimeException(e);
         }
-        this.rules = timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin");
     }
 
     public static void main(String[] args) throws Exception {
