@@ -2779,10 +2779,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
         });
     }
 
-    private static String replaceTimestampSuffix(String expected, String timestampType) {
-        return TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? expected.replace(".00000", ".00000000") : expected;
-    }
-
     private void assertResultSetsMatch(String leftTable, String rightTable) throws Exception {
         final StringSink expectedSink = new StringSink();
         // equivalent of the below query, but uses slow factory
@@ -2848,5 +2844,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     static String getTimestampSuffix(String timestampType) {
         return TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? "000Z" : "Z";
+    }
+
+    static String replaceTimestampSuffix(String expected, String timestampType) {
+        return TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? expected.replace(".00000", ".00000000") : expected;
     }
 }
