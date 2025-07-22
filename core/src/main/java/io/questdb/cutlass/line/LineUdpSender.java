@@ -26,13 +26,13 @@ package io.questdb.cutlass.line;
 
 
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.cutlass.line.udp.UdpLineChannel;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 
 import java.time.Instant;
@@ -56,7 +56,7 @@ public class LineUdpSender extends AbstractLineSender {
 
     @Override
     public final void at(Instant timestamp) {
-        putAsciiInternal(' ').put(timestamp.getEpochSecond() * Timestamps.SECOND_NANOS + timestamp.getNano());
+        putAsciiInternal(' ').put(NanosTimestampDriver.INSTANCE.fromSeconds((int) timestamp.getEpochSecond()) + timestamp.getNano());
         atNow();
     }
 

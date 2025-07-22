@@ -38,7 +38,6 @@ import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
@@ -72,26 +71,6 @@ public class SqlUtilTest {
     }
 
     @Test
-    public void testExprColumnAliasTrimmed() {
-        CharacterStore store = new CharacterStore(32, 1);
-        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);
-        Assert.assertEquals(
-                "longstr",
-                SqlUtil.createExprColumnAlias(store, "longstring", aliasMap, 7).toString()
-        );
-    }
-
-    @Test
-    public void testExprColumnAliasSimpleCase() {
-        CharacterStore store = new CharacterStore(32, 1);
-        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);
-        Assert.assertEquals(
-                "basic",
-                SqlUtil.createExprColumnAlias(store, "basic", aliasMap, 64).toString()
-        );
-    }
-
-    @Test
     public void testExprColumnAliasDuplicates() {
         CharacterStore store = new CharacterStore(32, 1);
         LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
@@ -108,12 +87,32 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testExprColumnAliasSimpleCase() {
+        CharacterStore store = new CharacterStore(32, 1);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);
+        Assert.assertEquals(
+                "basic",
+                SqlUtil.createExprColumnAlias(store, "basic", aliasMap, 64).toString()
+        );
+    }
+
+    @Test
     public void testExprColumnAliasTrimEnd() {
         CharacterStore store = new CharacterStore(32, 1);
         LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);
         Assert.assertEquals(
                 "  space",
                 SqlUtil.createExprColumnAlias(store, "  space    ", aliasMap, 64).toString()
+        );
+    }
+
+    @Test
+    public void testExprColumnAliasTrimmed() {
+        CharacterStore store = new CharacterStore(32, 1);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);
+        Assert.assertEquals(
+                "longstr",
+                SqlUtil.createExprColumnAlias(store, "longstring", aliasMap, 7).toString()
         );
     }
 
@@ -238,6 +237,7 @@ public class SqlUtilTest {
 
     @Test
     public void testParseMicros() throws SqlException {
+        Assert.assertEquals(1, SqlUtil.expectMicros("1000ns", 12));
         Assert.assertEquals(1, SqlUtil.expectMicros("1us", 12));
         Assert.assertEquals(1000, SqlUtil.expectMicros("1ms", 12));
         Assert.assertEquals(2000000, SqlUtil.expectMicros("2s", 12));

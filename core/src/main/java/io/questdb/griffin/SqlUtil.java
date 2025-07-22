@@ -27,6 +27,8 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cutlass.pgwire.modern.DoubleArrayParser;
@@ -183,40 +185,46 @@ public class SqlUtil {
             if (nChars > 2) {
                 throw SqlException.$(position + k, "expected 1/2 letter interval qualifier in ").put(tok);
             }
+            TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
 
             switch (tok.charAt(k)) {
                 case 's':
                     if (nChars == 1) {
                         // seconds
-                        return interval * Timestamps.SECOND_MICROS;
+                        return driver.fromSeconds((int) interval);
                     }
                     break;
                 case 'm':
                     if (nChars == 1) {
                         // minutes
-                        return interval * Timestamps.MINUTE_MICROS;
+                        return driver.fromMinutes((int) interval);
                     } else {
                         if (tok.charAt(k + 1) == 's') {
                             // millis
-                            return interval * Timestamps.MILLI_MICROS;
+                            return driver.fromMillis((int) interval);
                         }
                     }
                     break;
                 case 'h':
                     if (nChars == 1) {
                         // hours
-                        return interval * Timestamps.HOUR_MICROS;
+                        return driver.fromHours((int) interval);
                     }
                     break;
                 case 'd':
                     if (nChars == 1) {
                         // days
-                        return interval * Timestamps.DAY_MICROS;
+                        return driver.fromDays((int) interval);
                     }
                     break;
                 case 'u':
                     if (nChars == 2 && tok.charAt(k + 1) == 's') {
-                        return interval;
+                        return driver.fromMicros(interval);
+                    }
+                    break;
+                case 'n':
+                    if (nChars == 2 && tok.charAt(k + 1) == 's') {
+                        return driver.fromNanos(interval);
                     }
                     break;
                 default:

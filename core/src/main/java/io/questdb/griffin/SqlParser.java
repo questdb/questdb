@@ -66,7 +66,6 @@ import io.questdb.std.Os;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -221,7 +220,7 @@ public class SqlParser {
             throw SqlException.$(unitPos, "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was '")
                     .put(tok).put('\'');
         }
-        return Timestamps.toHoursOrMonths(ttlValue, unit, valuePos);
+        return CommonUtils.toHoursOrMonths(ttlValue, unit, valuePos);
     }
 
     public static ExpressionNode recursiveReplace(ExpressionNode node, ReplacingVisitor visitor) throws SqlException {
@@ -940,7 +939,7 @@ public class SqlParser {
                 }
             }
 
-            // driver used to calc start in timer, which use microSecond precision.
+            // Timer uses microsecond precision for start time calculation
             TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
             if (isPeriodKeyword(tok)) {
                 // REFRESH ... PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])

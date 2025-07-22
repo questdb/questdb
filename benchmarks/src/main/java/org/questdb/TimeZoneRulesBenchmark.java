@@ -24,9 +24,11 @@
 
 package org.questdb;
 
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimeZoneRulesMicros;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -38,7 +40,6 @@ import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
-import java.time.ZoneId;
 import java.util.concurrent.TimeUnit;
 
 @State(Scope.Thread)
@@ -47,15 +48,16 @@ import java.util.concurrent.TimeUnit;
 public class TimeZoneRulesBenchmark {
     private static final int ITERATIONS = 10_000;
     private final long initialTs;
-    private final TimeZoneRulesMicros rules;
+    private final TimeZoneRules rules;
+    private final TimestampDriver timestampDriver = MicrosTimestampDriver.INSTANCE;
 
-    public TimeZoneRulesBenchmark() {
+    public TimeZoneRulesBenchmark() throws NumericException {
         try {
-            this.initialTs = TimestampFormatUtils.parseTimestamp("2024-01-01T00:00:00.000000Z");
+            this.initialTs = timestampDriver.parseFloorLiteral("2024-01-01T00:00:00.000000Z");
         } catch (NumericException e) {
             throw new RuntimeException(e);
         }
-        this.rules = new TimeZoneRulesMicros(ZoneId.of("Europe/Berlin").getRules());
+        this.rules = timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin");
     }
 
     public static void main(String[] args) throws Exception {

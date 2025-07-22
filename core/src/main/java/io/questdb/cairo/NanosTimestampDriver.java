@@ -1386,6 +1386,11 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public String toUSecString(long nanos) {
+        return Nanos.toUSecString(nanos);
+    }
+
+    @Override
     public long toUTC(long localTimestamp, TimeZoneRules zoneRules) {
         return Nanos.toUTC(localTimestamp, zoneRules);
     }

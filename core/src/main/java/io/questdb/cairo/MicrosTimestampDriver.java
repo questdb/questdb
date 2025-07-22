@@ -1385,6 +1385,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public String toUSecString(long micros) {
+        return Timestamps.toUSecString(micros);
+    }
+
+    @Override
     public long toUTC(long localTimestamp, TimeZoneRules zoneRules) {
         return Timestamps.toUTC(localTimestamp, zoneRules);
     }

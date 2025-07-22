@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
@@ -87,6 +88,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceObjHashMap;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -100,7 +102,6 @@ import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
-import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.std.str.CharSink;
@@ -742,8 +743,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         if (logTimestampLocale == null) {
             throw new ServerConfigurationException("Invalid log locale: '" + logTimestampLocaleStr + "'");
         }
-        TimestampFormatCompiler formatCompiler = new TimestampFormatCompiler();
-        this.logTimestampFormat = formatCompiler.compile(logTimestampFormatStr);
+        this.logTimestampFormat = MicrosTimestampDriver.INSTANCE.getTimestampDateFormatFactory().get(logTimestampFormatStr);
         try {
             this.logTimestampTimezoneRules = Timestamps.getTimezoneRules(logTimestampLocale, logTimestampTimezone);
         } catch (NumericException e) {

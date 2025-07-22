@@ -5804,6 +5804,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (o3MaxLag > 0) {
                 long lagError = 0;
+                // convert o3MaxLag from microseconds to timestamps
+                o3MaxLag = timestampDriver.fromMicros(o3MaxLag);
                 if (getMaxTimestamp() != Long.MIN_VALUE) {
                     // When table already has data we can calculate the overlap of the newly added
                     // batch of records with existing data in the table. The positive value of the overlap
@@ -5867,13 +5869,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 LOG.info().$("o3 commit [table=").$safe(tableToken.getTableName())
                         .$(", maxUncommittedRows=").$(maxUncommittedRows)
-                        .$(", o3TimestampMin=").$ts(o3TimestampMin)
-                        .$(", o3TimestampMax=").$ts(o3TimestampMax)
-                        .$(", o3MaxLagUs=").$(o3MaxLag)
-                        .$(", o3EffectiveLagUs=").$(o3EffectiveLag)
+                        .$(", o3TimestampMin=").$ts(timestampDriver, o3TimestampMin)
+                        .$(", o3TimestampMax=").$ts(timestampDriver, o3TimestampMax)
+                        .$(", o3MaxLag=").$(o3MaxLag)
+                        .$(", o3EffectiveLag=").$(o3EffectiveLag)
                         .$(", lagError=").$(lagError)
                         .$(", o3SpreadUs=").$(o3TimestampMax - o3TimestampMin)
-                        .$(", lagThresholdTimestamp=").$ts(lagThresholdTimestamp)
+                        .$(", lagThresholdTimestamp=").$ts(timestampDriver, lagThresholdTimestamp)
                         .$(", o3LagRowCount=").$(o3LagRowCount)
                         .$(", srcOooMax=").$(srcOooMax)
                         .$(", o3RowCount=").$(o3RowCount)

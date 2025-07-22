@@ -26,6 +26,7 @@ package io.questdb.std.datetime;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
@@ -238,6 +239,54 @@ public class CommonUtils {
                 return 100000000;
             default:
                 throw NumericException.INSTANCE;
+        }
+    }
+
+    /**
+     * Returns a duration value in TTL format: if positive, it's in hours; if negative, it's in months (and
+     * the actual value is positive)
+     *
+     * @param value           the number of units, must be a non-negative number
+     * @param partitionByUnit the time unit, one of `PartitionBy` constants
+     * @param tokenPos        the position of the number token in the SQL string
+     * @return the TTL value as described
+     * @throws SqlException if the passed value is out of range
+     */
+    public static int toHoursOrMonths(int value, int partitionByUnit, int tokenPos) throws SqlException {
+        if (value < 0) {
+            throw new AssertionError("The value must be non-negative");
+        }
+        if (value == 0) {
+            return 0;
+        }
+        switch (partitionByUnit) {
+            case PartitionBy.HOUR:
+                return value;
+            case PartitionBy.DAY:
+                int maxDays = Integer.MAX_VALUE / DAY_HOURS;
+                if (value > maxDays) {
+                    throw SqlException.$(tokenPos, "value out of range: ")
+                            .put(value).put(" days. Max value: ").put(maxDays).put(" days");
+                }
+                return DAY_HOURS * value;
+            case PartitionBy.WEEK:
+                int maxWeeks = Integer.MAX_VALUE / Timestamps.WEEK_DAYS / DAY_HOURS;
+                if (value > maxWeeks) {
+                    throw SqlException.$(tokenPos, "value out of range: ")
+                            .put(value).put(" weeks. Max value: ").put(maxWeeks).put(" weeks");
+                }
+                return Timestamps.WEEK_DAYS * DAY_HOURS * value;
+            case PartitionBy.MONTH:
+                return -value;
+            case PartitionBy.YEAR:
+                int maxYears = Integer.MAX_VALUE / YEAR_MONTHS;
+                if (value > maxYears) {
+                    throw SqlException.$(tokenPos, "value out of range: ")
+                            .put(value).put(" years. Max value: ").put(maxYears).put(" years");
+                }
+                return -(YEAR_MONTHS * value);
+            default:
+                throw new AssertionError("invalid value for partitionByUnit: " + partitionByUnit);
         }
     }
 

@@ -1082,6 +1082,12 @@ public final class Nanos {
         return utc + offset;
     }
 
+    public static String toUSecString(long micros) {
+        Utf16Sink sink = Misc.getThreadLocalSink();
+        NanosFormatUtils.appendDateTimeUSec(sink, micros);
+        return sink.toString();
+    }
+
     public static long toUTC(long localTimestamp, TimeZoneRules zoneRules) {
         return localTimestamp - zoneRules.getLocalOffset(localTimestamp);
     }

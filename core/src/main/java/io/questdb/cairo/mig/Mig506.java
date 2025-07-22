@@ -76,10 +76,10 @@ final class Mig506 {
         long maxTimestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
         long transientCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
 
-        final TimestampDriver.TimestampFloorMethod partitionFloorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, partitionBy);
+        final TimestampDriver.TimestampFloorMethod partitionFloorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP_MICRO, partitionBy);
         assert partitionFloorMethod != null;
 
-        final TimestampDriver.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(ColumnType.TIMESTAMP, partitionBy);
+        final TimestampDriver.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(ColumnType.TIMESTAMP_MICRO, partitionBy);
         assert partitionAddMethod != null;
 
         final long tsLimit = partitionFloorMethod.floor(maxTimestamp);
