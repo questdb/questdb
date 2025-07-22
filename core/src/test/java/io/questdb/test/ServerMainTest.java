@@ -407,6 +407,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.busy.retry.maximum.wait.before.retry\tQDB_HTTP_BUSY_RETRY_MAXIMUM_WAIT_BEFORE_RETRY\t1000\tdefault\tfalse\tfalse\n" +
                                     "http.connection.pool.initial.capacity\tQDB_HTTP_CONNECTION_POOL_INITIAL_CAPACITY\t4\tdefault\tfalse\tfalse\n" +
                                     "http.connection.string.pool.capacity\tQDB_HTTP_CONNECTION_STRING_POOL_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
+                                    "http.net.accept.loop.timeout\tQDB_HTTP_NET_ACCEPT_LOOP_TIMEOUT\t500\tdefault\tfalse\tfalse\n" +
                                     "http.enabled\tQDB_HTTP_ENABLED\ttrue\tconf\tfalse\tfalse\n" +
                                     "http.frozen.clock\tQDB_HTTP_FROZEN_CLOCK\ttrue\tconf\tfalse\tfalse\n" +
                                     "http.health.check.authentication.required\tQDB_HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED\ttrue\tdefault\tfalse\tfalse\n" +
@@ -428,6 +429,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.min.net.connection.timeout\tQDB_HTTP_MIN_NET_CONNECTION_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
                                     "http.min.net.idle.connection.timeout\tQDB_HTTP_MIN_NET_IDLE_CONNECTION_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
                                     "http.min.net.queued.connection.timeout\tQDB_HTTP_MIN_NET_QUEUED_CONNECTION_TIMEOUT\t5000\tdefault\tfalse\tfalse\n" +
+                                    "http.min.net.accept.loop.timeout\tQDB_HTTP_MIN_NET_ACCEPT_LOOP_TIMEOUT\t500\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.affinity\tQDB_HTTP_MIN_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.count\tQDB_HTTP_MIN_WORKER_COUNT\t1\tconf\tfalse\tfalse\n" +
                                     "http.min.worker.haltOnError\tQDB_HTTP_MIN_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
@@ -521,6 +523,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.tcp.net.connection.timeout\tQDB_LINE_TCP_NET_CONNECTION_TIMEOUT\t0\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.net.idle.timeout\tQDB_LINE_TCP_NET_IDLE_TIMEOUT\t0\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.net.queued.timeout\tQDB_LINE_TCP_NET_QUEUED_TIMEOUT\t5000\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.net.accept.loop.timeout\tQDB_LINE_TCP_NET_ACCEPT_LOOP_TIMEOUT\t500\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.symbol.cache.wait.before.reload\tQDB_LINE_TCP_SYMBOL_CACHE_WAIT_BEFORE_RELOAD\t500000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.timestamp\tQDB_LINE_TCP_TIMESTAMP\tn\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.undocumented.string.to.char.cast.allowed\tQDB_LINE_TCP_UNDOCUMENTED_STRING_TO_CHAR_CAST_ALLOWED\tfalse\tdefault\tfalse\tfalse\n" +
@@ -583,6 +586,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.net.connection.timeout\tQDB_PG_NET_CONNECTION_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
                                     "pg.net.idle.timeout\tQDB_PG_NET_IDLE_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
                                     "pg.net.connection.sndbuf\tQDB_PG_NET_CONNECTION_SNDBUF\t-1\tdefault\tfalse\tfalse\n" +
+                                    "pg.net.accept.loop.timeout\tQDB_PG_NET_ACCEPT_LOOP_TIMEOUT\t500\tdefault\tfalse\tfalse\n" +
                                     "pg.net.send.buf.size\tQDB_PG_NET_SEND_BUF_SIZE\t-1\tdefault\tfalse\tfalse\n" +
                                     "pg.net.connection.rcvbuf\tQDB_PG_NET_CONNECTION_RCVBUF\t-1\tdefault\tfalse\tfalse\n" +
                                     "pg.net.recv.buf.size\tQDB_PG_NET_RECV_BUF_SIZE\t-1\tdefault\tfalse\tfalse\n" +

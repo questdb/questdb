@@ -34,6 +34,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
@@ -131,6 +132,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
+    public static final int MIN_TCP_ILP_BUF_SIZE = AuthUtils.CHALLENGE_LEN + 1;
     public static final String TMP_DIRECTORY = "tmp";
     private static final String ILP_PROTO_SUPPORT_VERSIONS = "[1,2]";
     private static final String ILP_PROTO_SUPPORT_VERSIONS_NAME = "line.proto.support.versions";
@@ -215,6 +217,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PropHttpConcurrentCacheConfiguration httpMinConcurrentCacheConfiguration = new PropHttpConcurrentCacheConfiguration();
     private final PropHttpContextConfiguration httpMinContextConfiguration;
     private final boolean httpMinServerEnabled;
+    private final long httpNetAcceptLoopTimeout;
     private final boolean httpNetConnectionHint;
     private final String httpPassword;
     private final boolean httpPessimisticHealthCheckEnabled;
@@ -527,6 +530,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private short floatDefaultColumnType;
     private int httpMinBindIPv4Address;
     private int httpMinBindPort;
+    private long httpMinNetAcceptLoopTimeout;
     private boolean httpMinNetConnectionHint;
     private int httpMinNetConnectionLimit;
     private long httpMinNetConnectionQueueTimeout;
@@ -568,6 +572,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpMaintenanceInterval;
     private int lineTcpMaxMeasurementSize;
     private long lineTcpMaxRecvBufferSize;
+    private long lineTcpNetAcceptLoopTimeout;
     private int lineTcpNetBindIPv4Address;
     private int lineTcpNetBindPort;
     private long lineTcpNetConnectionHeartbeatInterval;
@@ -608,6 +613,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgNamedStatementCacheCapacity;
     private int pgNamedStatementLimit;
     private int pgNamesStatementPoolCapacity;
+    private long pgNetAcceptLoopTimeout;
     private int pgNetBindIPv4Address;
     private int pgNetBindPort;
     private boolean pgNetConnectionHint;
@@ -935,6 +941,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     httpMinBindPort = p;
                 });
 
+                this.httpMinNetAcceptLoopTimeout = getMillis(properties, env, PropertyKey.HTTP_MIN_NET_ACCEPT_LOOP_TIMEOUT, 500);
                 this.httpMinNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_LIMIT, 64);
 
                 // deprecated
@@ -1054,6 +1061,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             boolean httpServerKeepAlive = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
             boolean httpServerCookiesEnabled = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
             boolean httpReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_READONLY, false);
+
+            this.httpNetAcceptLoopTimeout = getMillis(properties, env, PropertyKey.HTTP_NET_ACCEPT_LOOP_TIMEOUT, 500);
 
             // maintain deprecated property name for the time being
             this.httpNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_NET_ACTIVE_CONNECTION_LIMIT, 256);
@@ -1219,6 +1228,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     pgNetBindIPv4Address = a;
                     pgNetBindPort = p;
                 });
+
+                this.pgNetAcceptLoopTimeout = getMillis(properties, env, PropertyKey.PG_NET_ACCEPT_LOOP_TIMEOUT, 500);
 
                 // deprecated
                 this.pgNetIdleConnectionTimeout = getMillis(properties, env, PropertyKey.PG_NET_IDLE_TIMEOUT, 300_000);
@@ -1495,7 +1506,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.telemetryDisableCompletely = getBoolean(properties, env, PropertyKey.TELEMETRY_DISABLE_COMPLETELY, false);
             this.telemetryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_QUEUE_CAPACITY, 512));
             this.telemetryHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_HIDE_TABLES, true);
-            this.telemetryDbSizeEstimateTimeout = getLong(properties, env, PropertyKey.TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT, Timestamps.SECOND_MILLIS);
+            this.telemetryDbSizeEstimateTimeout = getMillis(properties, env, PropertyKey.TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT, Timestamps.SECOND_MILLIS);
             this.o3PartitionPurgeListCapacity = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY, 1);
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
@@ -1539,6 +1550,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     lineTcpNetBindPort = p;
                 });
 
+                this.lineTcpNetAcceptLoopTimeout = getMillis(properties, env, PropertyKey.LINE_TCP_NET_ACCEPT_LOOP_TIMEOUT, 500);
+
                 // deprecated
                 this.lineTcpNetConnectionTimeout = getMillis(properties, env, PropertyKey.LINE_TCP_NET_IDLE_TIMEOUT, 0);
                 this.lineTcpNetConnectionTimeout = getMillis(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_TIMEOUT, this.lineTcpNetConnectionTimeout);
@@ -1562,6 +1575,11 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpMaxRecvBufferSize = getLongSize(properties, env, PropertyKey.LINE_TCP_MAX_RECV_BUFFER_SIZE, Numbers.SIZE_1GB);
                 if (lineTcpRecvBufferSize > lineTcpMaxRecvBufferSize) {
                     lineTcpMaxRecvBufferSize = lineTcpRecvBufferSize;
+                }
+                if (lineTcpRecvBufferSize < MIN_TCP_ILP_BUF_SIZE) {
+                    throw new ServerConfigurationException(
+                            "TCP ILP buffer size is too small, should be at least " + MIN_TCP_ILP_BUF_SIZE + ", ["
+                                    + PropertyKey.LINE_TCP_RECV_BUFFER_SIZE.getPropertyPath() + "=" + lineTcpRecvBufferSize + ']');
                 }
 
                 this.lineTcpWriterQueueCapacity = getQueueCapacity(properties, env, PropertyKey.LINE_TCP_WRITER_QUEUE_CAPACITY, 128);
@@ -3964,6 +3982,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public class PropHttpMinServerConfiguration implements HttpServerConfiguration {
+
+        @Override
+        public long getAcceptLoopTimeout() {
+            return httpMinNetAcceptLoopTimeout;
+        }
+
         @Override
         public int getBindIPv4Address() {
             return httpMinBindIPv4Address;
@@ -4151,6 +4175,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public class PropHttpServerConfiguration implements HttpFullFatServerConfiguration {
+
+        @Override
+        public long getAcceptLoopTimeout() {
+            return httpNetAcceptLoopTimeout;
+        }
 
         @Override
         public int getBindIPv4Address() {
@@ -4583,6 +4612,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
+
+        @Override
+        public long getAcceptLoopTimeout() {
+            return lineTcpNetAcceptLoopTimeout;
+        }
+
         @Override
         public String getAuthDB() {
             return lineTcpAuthDB;
@@ -5085,6 +5120,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropPGWireConfiguration implements PGWireConfiguration {
+
+        @Override
+        public long getAcceptLoopTimeout() {
+            return pgNetAcceptLoopTimeout;
+        }
 
         @Override
         public int getBinParamCountCapacity() {

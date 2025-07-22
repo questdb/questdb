@@ -51,6 +51,8 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.seq.TableTransactionLogFile;
+import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.log.Log;
@@ -90,6 +92,10 @@ import org.junit.Test;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.cairo.TableUtils.openSmallFile;
+import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
+import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 
 public class TableWriterTest extends AbstractCairoTest {
 
@@ -2869,6 +2875,27 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShouldThrowExceptionWhenTxnLogIsCorrupted() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table product (ts TIMESTAMP, i INT) timestamp(ts) partition by day wal;");
+            drainWalQueue();
+            TableToken token = engine.getTableTokenIfExists("product");
+            engine.releaseAllWriters();
+            engine.getTableSequencerAPI().releaseAll();
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                path.of(configuration.getDbRoot()).concat(token.getDirName()).concat(SEQ_DIR);
+                openSmallFile(FF, path, path.size(), mem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+                mem.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, 2);
+                mem.jumpTo(TableTransactionLogFile.HEADER_SIZE);
+                mem.putLong(TableTransactionLogFile.HEADER_SIZE + TableTransactionLogV1.RECORD_SIZE + TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET, 2);
+                mem.sync(false);
+                mem.setTruncateSize(TableTransactionLogFile.HEADER_SIZE + TableTransactionLogV1.RECORD_SIZE + TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES);
+            }
+            assertException("alter table " + PRODUCT + " add column abc INT;", 0, "possible corruption in transaction metadata [table=product~1, offset=24, newVersion=1]");
+        });
+    }
+
+    @Test
     public void testSinglePartitionTruncate() throws Exception {
         assertMemoryLeak(() -> {
             create(FF, PartitionBy.YEAR, 4);
@@ -2902,7 +2929,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("0001-01-01.123").slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
-                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(SEQ_DIR).slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
                 path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
@@ -2919,7 +2946,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("0001-01-01.123").slash$();
                 Assert.assertFalse(ff.exists(path.$()));
 
-                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(SEQ_DIR).slash$();
                 Assert.assertTrue(ff.exists(path.$()));
 
                 path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
@@ -2946,7 +2973,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(PRODUCT).concat("0001-01-01.123").slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
-                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(SEQ_DIR).slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
                 path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
@@ -2963,7 +2990,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(PRODUCT).concat("0001-01-01.123").slash$();
                 Assert.assertTrue(ff.exists(path.$()));
 
-                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(SEQ_DIR).slash$();
                 Assert.assertTrue(ff.exists(path.$()));
 
                 path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
