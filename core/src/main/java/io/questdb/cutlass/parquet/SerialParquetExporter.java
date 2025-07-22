@@ -26,17 +26,20 @@ package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cutlass.text.SerialCsvFileImporter;
+import io.questdb.griffin.engine.table.parquet.MappedMemoryPartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -48,22 +51,27 @@ public class SerialParquetExporter implements Closeable {
     private static final Log LOG = LogFactory.getLog(SerialCsvFileImporter.class);
     private final CairoEngine cairoEngine;
     private final CairoConfiguration configuration;
+    private final CharSequence copyRoot;
     private final FilesFacade ff;
-    private final CharSequence inputRoot;
-    Path fromNative, toParquet;
-    TableToken tableToken;
-    TableReader tableReader;
     ExecutionCircuitBreaker circuitBreaker;
-    CharSequence tableName;
-    CharSequence fileName;
     long copyId;
+    CharSequence fileName;
+    Path fromNative, toParquet;
     PhaseStatusReporter statusReporter;
+    CharSequence tableName;
+    TableReader tableReader;
+    TableToken tableToken;
 
     public SerialParquetExporter(CairoEngine engine) {
         this.cairoEngine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = this.configuration.getFilesFacade();
-        this.inputRoot = this.configuration.getSqlCopyInputRoot();
+        this.copyRoot = this.configuration.getSqlCopyInputRoot();
+    }
+
+    @Override
+    public void close() throws IOException {
+
     }
 
     public void of(@NotNull CharSequence tableName,
@@ -79,34 +87,51 @@ public class SerialParquetExporter implements Closeable {
     }
 
 
-    @FunctionalInterface
-    public interface PhaseStatusReporter {
-        void report(byte phase, byte status, @Nullable final CharSequence msg, long errors);
-    }
-
-
-    @Override
-    public void close() throws IOException {
-
-    }
-
     public void process(SecurityContext securityContext) throws IOException {
         final int memoryTag = MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER;
 
+//        setPathForNativePartition(fromNative.trimTo(pathSize), partitionBy, partitionTimestamp, partitionNameTxn);
+
         try (TableReader reader = cairoEngine.getReader(tableToken)) {
+            TableReaderMetadata metadata = reader.getMetadata();
             final int partitionCount = reader.getPartitionCount();
 
-            for (int i = 0; i < partitionCount; i++) {
+            for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
 
+                try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor(ff)) {
+                    final long partitionRowCount = reader.getPartitionRowCount(partitionIndex);
+                    final int timestampIndex = metadata.getTimestampIndex();
+                    partitionDescriptor.of(tableToken.getTableName(), partitionRowCount, (int) timestampIndex);
+
+                    final int columnCount = metadata.getColumnCount();
+
+
+                    for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                        final int columnType = metadata.getColumnType(columnIndex);
+                        if (columnType <= 0) {
+                            // column is deleted
+                            continue;
+                        }
+                        final String columnName = metadata.getColumnName(columnIndex);
+                        final int columnId = metadata.getColumnMetadata(columnIndex).getWriterIndex();
+
+                        ColumnVersionReader columnReader = reader.getColumnVersionReader();
+                        final long columnNameTxn = columnReader.getColumnNameTxn(partitionTimestamp, columnIndex);
+                        final long columnTop = columnReader.getColumnTop(partitionTimestamp, columnIndex);
+                        final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
+
+                    }
+                }
             }
 
         }
 
-        cairoEngine.getTableSequencerAPI()
+    }
 
-        setPathForNativePartition(fromNative.)
-
-        cairoEngine.
+    @FunctionalInterface
+    public interface PhaseStatusReporter {
+        void report(byte phase, byte status, @Nullable final CharSequence msg, long errors);
     }
 
 }

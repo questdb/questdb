@@ -26,18 +26,10 @@ package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cutlass.text.CopyContext;
-import io.questdb.cutlass.text.CopyImportRequestTask;
-import io.questdb.cutlass.text.CopyImportTask;
-import io.questdb.cutlass.text.ParallelCsvFileImporter;
-import io.questdb.cutlass.text.TextImportException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -46,12 +38,10 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.Nullable;
 
@@ -72,10 +62,10 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
     private final Utf8StringSink utf8StringSink = new Utf8StringSink();
     private Path other;
     private Path path;
-    private WalWriter writer;
     private SerialParquetExporter serialExporter;
     private SqlExecutionContextImpl sqlExecutionContext;
     private CopyExportRequestTask task;
+    private WalWriter writer;
 
     public CopyExportRequestJob(final CairoEngine engine) throws SqlException {
         try {
@@ -180,34 +170,35 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
     @Override
     protected boolean runSerially() {
         long cursor = requestSubSeq.next();
-        if (cursor > -1) {
-            task = requestQueue.get(cursor);
-            try {
-                    serialExporter.of(
-                            task.getTableName(),
-                            task.getFileName(),
-                            task.getCopyID(),
-                            copyContext.getCircuitBreaker(),
-                            this::updateStatus
-                    );
-                    serialExporter.process(task.getSecurityContext());
-                }
-            } catch (TextImportException e) {
-                updateStatus(
-                        CopyImportTask.NO_PHASE,
-                        e.isCancelled() ? CopyImportTask.STATUS_CANCELLED : CopyImportTask.STATUS_FAILED,
-                        e.getMessage(),
-                        0,
-                        0,
-                        0
-                );
-            } finally {
-                requestSubSeq.done(cursor);
-                copyContext.clear();
-            }
-            enforceLogRetention();
-            return true;
-        }
         return false;
+//        if (cursor > -1) {
+//            task = requestQueue.get(cursor);
+//            try {
+//                    serialExporter.of(
+//                            task.getTableName(),
+//                            task.getFileName(),
+//                            task.getCopyID(),
+//                            copyContext.getCircuitBreaker(),
+//                            this::updateStatus
+//                    );
+//                    serialExporter.process(task.getSecurityContext());
+//                }
+//            } catch (TextImportException e) {
+//                updateStatus(
+//                        CopyImportTask.NO_PHASE,
+//                        e.isCancelled() ? CopyImportTask.STATUS_CANCELLED : CopyImportTask.STATUS_FAILED,
+//                        e.getMessage(),
+//                        0,
+//                        0,
+//                        0
+//                );
+//            } finally {
+//                requestSubSeq.done(cursor);
+//                copyContext.clear();
+//            }
+//            enforceLogRetention();
+//            return true;
+//        }
+//        return false;
     }
 }

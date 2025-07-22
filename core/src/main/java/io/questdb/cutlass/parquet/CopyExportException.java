@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.parquet;
 
-import io.questdb.cutlass.text.TextImportException;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
@@ -33,81 +32,80 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
-public class CopyExportException extends RuntimeException implements Sinkable, FlyweightMessageContainer{
+public class CopyExportException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
 
-        private static final io.questdb.std.ThreadLocal<CopyExportException> tlException = new ThreadLocal<>(CopyExportException::new);
-        private final StringSink message = new StringSink();
-        private boolean cancelled;
-        private byte phase;
+    private static final io.questdb.std.ThreadLocal<CopyExportException> tlException = new ThreadLocal<>(CopyExportException::new);
+    private final StringSink message = new StringSink();
+    private boolean cancelled;
+    private byte phase;
 
-        public static CopyExportException instance(byte phase, CharSequence message) {
-            return instance(phase, message, Integer.MIN_VALUE);
+    public static CopyExportException instance(byte phase, CharSequence message) {
+        return instance(phase, message, Integer.MIN_VALUE);
+    }
+
+    public static CopyExportException instance(byte phase, CharSequence message, int errno) {
+        CopyExportException te = tlException.get();
+        te.phase = phase;
+        te.cancelled = false;
+        StringSink sink = te.message;
+        sink.clear();
+        if (errno > Integer.MIN_VALUE) {
+            sink.put('[').put(errno).put("] ");
         }
+        sink.put(message);
+        return te;
+    }
 
-        public static io.questdb.cutlass.text.TextImportException instance(byte phase, CharSequence message, int errno) {
-            io.questdb.cutlass.text.TextImportException te = tlException.get();
-            te.phase = phase;
-            te.cancelled = false;
-            StringSink sink = te.message;
-            sink.clear();
-            if (errno > Integer.MIN_VALUE) {
-                sink.put('[').put(errno).put("] ");
-            }
-            sink.put(message);
-            return te;
-        }
+    @Override
+    public CharSequence getFlyweightMessage() {
+        return message;
+    }
 
-        @Override
-        public CharSequence getFlyweightMessage() {
-            return message;
-        }
+    @Override
+    public String getMessage() {
+        return message.toString();
+    }
 
-        @Override
-        public String getMessage() {
-            return message.toString();
-        }
+    public byte getPhase() {
+        return phase;
+    }
 
-        public byte getPhase() {
-            return phase;
-        }
+    public boolean isCancelled() {
+        return cancelled;
+    }
 
-        public boolean isCancelled() {
-            return cancelled;
-        }
+    public CopyExportException put(CharSequence cs) {
+        message.put(cs);
+        return this;
+    }
 
-        public io.questdb.cutlass.text.TextImportException put(CharSequence cs) {
-            message.put(cs);
-            return this;
-        }
+    public CopyExportException put(Utf8Sequence us) {
+        message.put(us);
+        return this;
+    }
 
-        public io.questdb.cutlass.text.TextImportException put(Utf8Sequence us) {
-            message.put(us);
-            return this;
-        }
+    public CopyExportException put(char c) {
+        message.put(c);
+        return this;
+    }
 
-        public io.questdb.cutlass.text.TextImportException put(char c) {
-            message.put(c);
-            return this;
-        }
+    public CopyExportException put(double c) {
+        message.put(c);
+        return this;
+    }
 
-        public io.questdb.cutlass.text.TextImportException put(double c) {
-            message.put(c);
-            return this;
-        }
+    public CopyExportException put(long c) {
+        message.put(c);
+        return this;
+    }
 
-        public io.questdb.cutlass.text.TextImportException put(long c) {
-            message.put(c);
-            return this;
-        }
+    public void setCancelled(boolean cancelled) {
+        this.cancelled = cancelled;
+    }
 
-        public void setCancelled(boolean cancelled) {
-            this.cancelled = cancelled;
-        }
-
-        @Override
-        public void toSink(@NotNull CharSink<?> sink) {
-            sink.put(message);
-        }
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        sink.put(message);
     }
 
 }
