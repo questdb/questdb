@@ -302,7 +302,7 @@ public final class Files {
     }
 
     public static void madvise(long address, long len, int advise) {
-        if (Os.isLinux()) {
+        if (Os.isLinux() && mmapCache.isSingleUse(address)) {
             madvise0(address, len, advise);
         }
     }

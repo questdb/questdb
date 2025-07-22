@@ -162,7 +162,7 @@ public class FdCache {
         if (FD_PARANOIA_MODE && fd != -1) {
             synchronized (this) {
                 int keyIndex = openFdMapByFd.keyIndex(fd);
-                assert keyIndex < 0 : "Invalid fd: " + fd + ", not found in cache";
+                assert keyIndex < 0 : "Invalid fd=" + fd + ", not found in cache";
             }
         }
         int osFd = Numbers.decodeHighInt(fd);

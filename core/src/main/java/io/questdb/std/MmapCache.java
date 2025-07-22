@@ -69,6 +69,11 @@ public class MmapCache {
         return mmapReuseCount;
     }
 
+    public boolean isSingleUse(long address) {
+        var cacheRecord = mmapAddrCache.get(address);
+        return cacheRecord != null && cacheRecord.count == 1;
+    }
+
     public long mremap(int fd, long fileCacheKey, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
         // TODO: handle the offset
         if (offset != 0 || fileCacheKey == 0) {
