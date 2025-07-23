@@ -282,7 +282,7 @@ public class TimestampFormatUtils {
             throw NumericException.INSTANCE;
         }
 
-        if ((week <= 0 && week != -1) || week > Timestamps.getWeeks(year)) {
+        if ((week <= 0 && week != -1) || week > CommonUtils.getWeeks(year)) {
             throw NumericException.INSTANCE;
         }
 
@@ -290,9 +290,9 @@ public class TimestampFormatUtils {
         if (week != -1) {
             long firstDayOfIsoWeekMicros = Timestamps.yearMicros(year, CommonUtils.isLeapYear(year)) +
                     (week - 1) * Timestamps.WEEK_MICROS +
-                    Timestamps.getIsoYearDayOffset(year) * Timestamps.DAY_MICROS;
+                    CommonUtils.getIsoYearDayOffset(year) * Timestamps.DAY_MICROS;
             month = Timestamps.getMonthOfYear(firstDayOfIsoWeekMicros);
-            year += (week == 1 && Timestamps.getIsoYearDayOffset(year) < 0) ? -1 : 0;
+            year += (week == 1 && CommonUtils.getIsoYearDayOffset(year) < 0) ? -1 : 0;
             day = Timestamps.getDayOfMonth(firstDayOfIsoWeekMicros, year, month, CommonUtils.isLeapYear(year));
         }
 

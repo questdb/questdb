@@ -191,7 +191,7 @@ public class SqlUtil {
                 case 's':
                     if (nChars == 1) {
                         // seconds
-                        return driver.fromSeconds((int) interval);
+                        return driver.fromSeconds(interval);
                     }
                     break;
                 case 'm':

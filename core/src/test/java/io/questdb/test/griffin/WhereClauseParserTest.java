@@ -3575,7 +3575,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             return "";
         }
         try (RuntimeIntrinsicIntervalModel sm = model.buildIntervalModel()) {
-            return GriffinParserTestUtils.intervalToString(sm.calculateIntervals(sqlExecutionContext));
+            return GriffinParserTestUtils.intervalToString(MicrosTimestampDriver.INSTANCE, sm.calculateIntervals(sqlExecutionContext));
         }
     }
 

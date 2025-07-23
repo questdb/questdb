@@ -577,7 +577,7 @@ public final class Nanos {
             return y - 1;
         }
 
-        if (w > io.questdb.std.datetime.microtime.Timestamps.getWeeks(y)) {
+        if (w > CommonUtils.getWeeks(y)) {
             return y + 1;
         }
 
@@ -837,10 +837,10 @@ public final class Nanos {
         int w = (10 + getDoy(nanos) - getDayOfWeek(nanos)) / 7;
         int y = getYear(nanos);
         if (w < 1) {
-            return io.questdb.std.datetime.microtime.Timestamps.getWeeks(y - 1);
+            return CommonUtils.getWeeks(y - 1);
         }
 
-        if (w > io.questdb.std.datetime.microtime.Timestamps.getWeeks(y)) {
+        if (w > CommonUtils.getWeeks(y)) {
             return 1;
         }
 

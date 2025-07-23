@@ -393,7 +393,7 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public long fromSeconds(int seconds) {
+    public long fromSeconds(long seconds) {
         return seconds * Nanos.SECOND_NANOS;
     }
 

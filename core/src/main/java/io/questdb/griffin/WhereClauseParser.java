@@ -141,8 +141,9 @@ public final class WhereClauseParser implements Mutable {
         this.preferredKeyColumn = preferredKeyColumn;
 
         IntrinsicModel model = models.next();
-        model.of(reader.getMetadata().getTimestampType(), reader.getPartitionedBy());
-        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
+        int timestampType = reader.getMetadata().getTimestampType();
+        model.of(timestampType, reader.getPartitionedBy());
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
 
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal

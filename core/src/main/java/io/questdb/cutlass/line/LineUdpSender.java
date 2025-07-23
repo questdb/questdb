@@ -56,7 +56,7 @@ public class LineUdpSender extends AbstractLineSender {
 
     @Override
     public final void at(Instant timestamp) {
-        putAsciiInternal(' ').put(NanosTimestampDriver.INSTANCE.fromSeconds((int) timestamp.getEpochSecond()) + timestamp.getNano());
+        putAsciiInternal(' ').put(NanosTimestampDriver.INSTANCE.fromSeconds(timestamp.getEpochSecond()) + timestamp.getNano());
         atNow();
     }
 

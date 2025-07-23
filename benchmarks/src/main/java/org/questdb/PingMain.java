@@ -63,7 +63,7 @@ public class PingMain {
             long buf = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
             DirectUtf8String flyweight = new DirectUtf8String();
 
-            long durationUs = MicrosTimestampDriver.INSTANCE.fromSeconds((int) durationSec);
+            long durationUs = MicrosTimestampDriver.INSTANCE.fromSeconds(durationSec);
             long startUs = Os.currentTimeMicros();
             while (Os.currentTimeMicros() - durationUs < startUs) {
                 Utf8s.strCpyAscii(PING, buf);

@@ -1159,7 +1159,7 @@ public class LogFactoryTest {
                     for (int i = 0; i < extraFiles; i++) {
                         path.of(base + extraFilePrefix).put(i).put(".log").$();
                         Files.touch(path.$());
-                        Files.setLastModified(path.$(), clock.getTicks() / 1000 - (i + 1) * Numbers.parseLongDuration(lifeDuration) / 1000);
+                        Files.setLastModified(path.$(), clock.getTicks() / 1000 - (i + 1) * Numbers.parseLongDurationMicros(lifeDuration) / 1000);
                     }
                 }
             }

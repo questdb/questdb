@@ -390,7 +390,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public long fromSeconds(int seconds) {
+    public long fromSeconds(long seconds) {
         return seconds * Timestamps.SECOND_MICROS;
     }
 

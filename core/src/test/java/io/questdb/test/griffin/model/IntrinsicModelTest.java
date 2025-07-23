@@ -25,27 +25,45 @@
 package io.questdb.test.griffin.model;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static io.questdb.test.griffin.GriffinParserTestUtils.intervalToString;
 
+@RunWith(Parameterized.class)
 public class IntrinsicModelTest {
     private static final StringSink sink = new StringSink();
     private final LongList a = new LongList();
     private final LongList b = new LongList();
     private final LongList out = new LongList();
+    private final TimestampDriver timestampDriver;
+    private final int timestampType;
+
+    public IntrinsicModelTest(int timestampType) {
+        this.timestampType = timestampType;
+        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+        });
+    }
 
     @Before
     public void setUp() {
@@ -147,73 +165,73 @@ public class IntrinsicModelTest {
 
     @Test
     public void testIntersectContain2() throws Exception {
-        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T10:00:00.000Z"));
-        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T12:00:00.000Z"));
+        a.add(timestampDriver.parseFloorLiteral("2016-03-10T10:00:00.000Z"));
+        a.add(timestampDriver.parseFloorLiteral("2016-03-10T12:00:00.000Z"));
 
-        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T09:00:00.000Z"));
-        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T13:30:00.000Z"));
+        b.add(timestampDriver.parseFloorLiteral("2016-03-10T09:00:00.000Z"));
+        b.add(timestampDriver.parseFloorLiteral("2016-03-10T13:30:00.000Z"));
 
         assertIntersect("[{lo=2016-03-10T10:00:00.000000Z, hi=2016-03-10T12:00:00.000000Z}]");
     }
 
     @Test
     public void testIntersectMergeOverlap() throws Exception {
-        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T10:00:00.000Z"));
-        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T12:00:00.000Z"));
+        a.add(timestampDriver.parseFloorLiteral("2016-03-10T10:00:00.000Z"));
+        a.add(timestampDriver.parseFloorLiteral("2016-03-10T12:00:00.000Z"));
 
-        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T11:00:00.000Z"));
-        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T14:00:00.000Z"));
+        b.add(timestampDriver.parseFloorLiteral("2016-03-10T11:00:00.000Z"));
+        b.add(timestampDriver.parseFloorLiteral("2016-03-10T14:00:00.000Z"));
 
         assertIntersect("[{lo=2016-03-10T11:00:00.000000Z, hi=2016-03-10T12:00:00.000000Z}]");
     }
 
     @Test
     public void testIntersectMergeOverlap2() throws Exception {
-        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T10:00:00.000Z"));
-        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T12:00:00.000Z"));
+        a.add(timestampDriver.parseFloorLiteral("2016-03-10T10:00:00.000Z"));
+        a.add(timestampDriver.parseFloorLiteral("2016-03-10T12:00:00.000Z"));
 
-        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T11:00:00.000Z"));
-        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T14:00:00.000Z"));
+        b.add(timestampDriver.parseFloorLiteral("2016-03-10T11:00:00.000Z"));
+        b.add(timestampDriver.parseFloorLiteral("2016-03-10T14:00:00.000Z"));
 
         assertIntersect("[{lo=2016-03-10T11:00:00.000000Z, hi=2016-03-10T12:00:00.000000Z}]");
     }
 
     @Test
     public void testIntersectNoOverlap() throws Exception {
-        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T10:00:00.000Z"));
-        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T12:00:00.000Z"));
-        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T14:00:00.000Z"));
-        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T16:00:00.000Z"));
+        a.add(timestampDriver.parseFloorLiteral("2016-03-10T10:00:00.000Z"));
+        a.add(timestampDriver.parseFloorLiteral("2016-03-10T12:00:00.000Z"));
+        a.add(timestampDriver.parseFloorLiteral("2016-03-10T14:00:00.000Z"));
+        a.add(timestampDriver.parseFloorLiteral("2016-03-10T16:00:00.000Z"));
 
-        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T13:00:00.000Z"));
-        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T13:30:00.000Z"));
+        b.add(timestampDriver.parseFloorLiteral("2016-03-10T13:00:00.000Z"));
+        b.add(timestampDriver.parseFloorLiteral("2016-03-10T13:30:00.000Z"));
 
         assertIntersect("[]");
     }
 
     @Test
     public void testIntersectSame() throws Exception {
-        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T10:00:00.000Z"));
-        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T12:00:00.000Z"));
+        a.add(timestampDriver.parseFloorLiteral("2016-03-10T10:00:00.000Z"));
+        a.add(timestampDriver.parseFloorLiteral("2016-03-10T12:00:00.000Z"));
 
-        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T10:00:00.000Z"));
-        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T12:00:00.000Z"));
+        b.add(timestampDriver.parseFloorLiteral("2016-03-10T10:00:00.000Z"));
+        b.add(timestampDriver.parseFloorLiteral("2016-03-10T12:00:00.000Z"));
 
         assertIntersect("[{lo=2016-03-10T10:00:00.000000Z, hi=2016-03-10T12:00:00.000000Z}]");
     }
 
     @Test
     public void testIntersectTwoOverlapOne2() throws Exception {
-        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T10:00:00.000Z"));
-        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T12:00:00.000Z"));
+        a.add(timestampDriver.parseFloorLiteral("2016-03-10T10:00:00.000Z"));
+        a.add(timestampDriver.parseFloorLiteral("2016-03-10T12:00:00.000Z"));
 
 
-        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T14:00:00.000Z"));
-        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T16:00:00.000Z"));
+        a.add(timestampDriver.parseFloorLiteral("2016-03-10T14:00:00.000Z"));
+        a.add(timestampDriver.parseFloorLiteral("2016-03-10T16:00:00.000Z"));
 
 
-        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T11:00:00.000Z"));
-        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T15:00:00.000Z"));
+        b.add(timestampDriver.parseFloorLiteral("2016-03-10T11:00:00.000Z"));
+        b.add(timestampDriver.parseFloorLiteral("2016-03-10T15:00:00.000Z"));
 
         assertIntersect("[{lo=2016-03-10T11:00:00.000000Z, hi=2016-03-10T12:00:00.000000Z},{lo=2016-03-10T14:00:00.000000Z, hi=2016-03-10T15:00:00.000000Z}]");
     }
@@ -228,7 +246,7 @@ public class IntrinsicModelTest {
         IntervalUtils.invert(out);
         TestUtils.assertEquals(
                 "[{lo=, hi=2018-01-10T10:29:59.999999Z},{lo=2018-01-10T11:00:00.000001Z, hi=2018-01-12T10:29:59.999999Z},{lo=2018-01-12T11:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]",
-                intervalToString(out)
+                intervalToString(timestampDriver, out)
         );
     }
 
@@ -376,35 +394,40 @@ public class IntrinsicModelTest {
         assertIntervalError("20-");
     }
 
-    private static void assertShortInterval(String expected, String interval) throws SqlException {
-        LongList out = new LongList();
-        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
-        IntervalUtils.parseInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        IntervalUtils.applyLastEncodedInterval(timestampDriver, out);
-        TestUtils.assertEquals(expected, intervalToString(out));
-    }
-
     private void assertDateFloor(String expected, String value) throws NumericException {
         sink.clear();
-        long t = MicrosTimestampDriver.floor(value);
-        TimestampFormatUtils.appendDateTimeUSec(sink, t);
-        TestUtils.assertEquals(expected, sink);
+        long t = timestampDriver.parseFloorLiteral(value);
+        timestampDriver.append(sink, t);
+        TestUtils.assertEquals(timestampType == ColumnType.TIMESTAMP_NANO ?
+                expected.replaceAll("Z", "000Z").replaceAll("999999Z", "999999999Z")
+                : expected, sink);
     }
 
     private void assertIntersect(String expected) {
         out.add(a);
         out.add(b);
         IntervalUtils.intersectInPlace(out, a.size());
-        TestUtils.assertEquals(expected, intervalToString(out));
+        TestUtils.assertEquals(timestampType == ColumnType.TIMESTAMP_NANO ?
+                expected.replaceAll("000000Z", "000000000Z").replaceAll("999999Z", "999999999Z")
+                : expected, intervalToString(timestampDriver, out));
     }
 
     private void assertIntervalError(String interval) {
         try {
-            TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
             IntervalUtils.parseInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
             IntervalUtils.applyLastEncodedInterval(timestampDriver, out);
             Assert.fail();
         } catch (SqlException ignore) {
         }
+    }
+
+    private void assertShortInterval(String expected, String interval) throws SqlException {
+        LongList out = new LongList();
+        IntervalUtils.parseInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        IntervalUtils.applyLastEncodedInterval(timestampDriver, out);
+        TestUtils.assertEquals(timestampType == ColumnType.TIMESTAMP_NANO ?
+                        expected.replaceAll("00000Z", "00000000Z").replaceAll("999999Z", "999999999Z")
+                        : expected,
+                intervalToString(timestampDriver, out));
     }
 }

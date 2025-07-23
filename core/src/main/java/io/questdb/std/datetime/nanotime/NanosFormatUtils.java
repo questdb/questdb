@@ -32,13 +32,13 @@ import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.std.datetime.CommonUtils.*;
+import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_NANOS;
 
 public class NanosFormatUtils {
     public static final DateFormat DAY_FORMAT;
@@ -229,32 +229,77 @@ public class NanosFormatUtils {
             int hourType
     ) throws NumericException {
         if (era == 0) {
-            // era out of range
+            year = -(year - 1);
+        }
+
+        boolean leap = CommonUtils.isLeapYear(year);
+
+        // wrong month
+        if (month < 1 || month > 12) {
             throw NumericException.INSTANCE;
         }
 
-        if (year > 1677 && year < 2262) {
-            long m = TimestampFormatUtils.compute(
-                    locale,
-                    era,
-                    year,
-                    month,
-                    week,
-                    day,
-                    hour,
-                    minute,
-                    second,
-                    millis,
-                    micros,
-                    timezone,
-                    offsetMinutes,
-                    hourType
-            );
-            return m * Nanos.MICRO_NANOS + nanos;
+        if (hourType == CommonUtils.HOUR_24) {
+            // wrong 24-hour clock hour
+            if (hour < 0 || hour > 24) {
+                throw NumericException.INSTANCE;
+            }
+            hour %= 24;
+        } else {
+            // wrong 12-hour clock hour
+            if (hour < 0 || hour > 12) {
+                throw NumericException.INSTANCE;
+            }
+            hour %= 12;
+            if (hourType == CommonUtils.HOUR_PM) {
+                hour += 12;
+            }
         }
 
-        // yeah overflow
-        throw NumericException.INSTANCE;
+        // wrong day of month
+        if (day < 1 || day > CommonUtils.getDaysPerMonth(month, leap)) {
+            throw NumericException.INSTANCE;
+        }
+
+        if (minute < 0 || minute > 59) {
+            throw NumericException.INSTANCE;
+        }
+
+        if (second < 0 || second > 59) {
+            throw NumericException.INSTANCE;
+        }
+
+        if ((week <= 0 && week != -1) || week > CommonUtils.getWeeks(year)) {
+            throw NumericException.INSTANCE;
+        }
+
+        // calculate year, month, and day of ISO week
+        if (week != -1) {
+            long firstDayOfIsoWeekNanos = Nanos.yearNanos(year, CommonUtils.isLeapYear(year)) +
+                    (week - 1) * Nanos.WEEK_NANOS +
+                    getIsoYearDayOffset(year) * Nanos.DAY_NANOS;
+            month = Nanos.getMonthOfYear(firstDayOfIsoWeekNanos);
+            year += (week == 1 && getIsoYearDayOffset(year) < 0) ? -1 : 0;
+            day = Nanos.getDayOfMonth(firstDayOfIsoWeekNanos, year, month, CommonUtils.isLeapYear(year));
+        }
+
+        long outNanos = Nanos.yearNanos(year, leap)
+                + Nanos.monthOfYearNanos(month, leap)
+                + (day - 1) * Nanos.DAY_NANOS
+                + hour * Nanos.HOUR_NANOS
+                + minute * Nanos.MILLI_NANOS
+                + second * Nanos.SECOND_NANOS
+                + millis * Nanos.MILLI_NANOS
+                + micros * Nanos.MICRO_NANOS
+                + nanos;
+
+        if (timezone > -1) {
+            outNanos -= locale.getZoneRules(timezone, RESOLUTION_NANOS).getOffset(outNanos, year);
+        } else if (offsetMinutes > Long.MIN_VALUE) {
+            outNanos -= offsetMinutes * Nanos.MINUTE_NANOS;
+        }
+
+        return outNanos;
     }
 
     // YYYY-MM-DD

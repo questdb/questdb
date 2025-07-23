@@ -140,6 +140,17 @@ public class CommonUtils {
         return leap & m == 2 ? 29 : DAYS_PER_MONTH[m - 1];
     }
 
+    /**
+     * Since ISO weeks don't always start on the first day of the year, there is an offset of days from the 1st day of the year.
+     *
+     * @param year of timestamp
+     * @return difference in the days from the start of the year (January 1st) and the first ISO week
+     */
+    public static int getIsoYearDayOffset(int year) {
+        int dayOfTheWeekOfEndOfPreviousYear = Timestamps.getDayOfTheWeekOfEndOfYear(year - 1);
+        return ((dayOfTheWeekOfEndOfPreviousYear <= 3) ? 0 : 7) - dayOfTheWeekOfEndOfPreviousYear;
+    }
+
     public static int getStrideMultiple(CharSequence str, int position) throws SqlException {
         if (str != null) {
             if (Chars.equals(str, '-')) {
@@ -176,6 +187,13 @@ public class CommonUtils {
             default:
                 throw SqlException.position(position).put("Invalid unit: ").put(str);
         }
+    }
+
+    public static int getWeeks(int y) {
+        if (Timestamps.getDayOfTheWeekOfEndOfYear(y) == 4 || Timestamps.getDayOfTheWeekOfEndOfYear(y - 1) == 3) {
+            return 53;
+        }
+        return 52;
     }
 
     /**

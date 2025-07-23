@@ -163,7 +163,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
         if (lifeDuration != null) {
             try {
-                nLifeDuration = Numbers.parseLongDuration(lifeDuration);
+                nLifeDuration = Numbers.parseLongDurationMicros(lifeDuration);
             } catch (NumericException e) {
                 throw new LogError("Invalid value for lifeDuration");
             }

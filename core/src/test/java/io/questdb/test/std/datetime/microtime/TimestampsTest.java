@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -401,14 +402,14 @@ public class TimestampsTest {
 
     @Test
     public void testGetIsoYearDayOffset() {
-        Assert.assertEquals(-3, Timestamps.getIsoYearDayOffset(2015));
-        Assert.assertEquals(3, Timestamps.getIsoYearDayOffset(2016));
-        Assert.assertEquals(1, Timestamps.getIsoYearDayOffset(2017));
-        Assert.assertEquals(0, Timestamps.getIsoYearDayOffset(2018));
-        Assert.assertEquals(-1, Timestamps.getIsoYearDayOffset(2019));
-        Assert.assertEquals(-2, Timestamps.getIsoYearDayOffset(2020));
-        Assert.assertEquals(3, Timestamps.getIsoYearDayOffset(2021));
-        Assert.assertEquals(2, Timestamps.getIsoYearDayOffset(2022));
+        Assert.assertEquals(-3, CommonUtils.getIsoYearDayOffset(2015));
+        Assert.assertEquals(3, CommonUtils.getIsoYearDayOffset(2016));
+        Assert.assertEquals(1, CommonUtils.getIsoYearDayOffset(2017));
+        Assert.assertEquals(0, CommonUtils.getIsoYearDayOffset(2018));
+        Assert.assertEquals(-1, CommonUtils.getIsoYearDayOffset(2019));
+        Assert.assertEquals(-2, CommonUtils.getIsoYearDayOffset(2020));
+        Assert.assertEquals(3, CommonUtils.getIsoYearDayOffset(2021));
+        Assert.assertEquals(2, CommonUtils.getIsoYearDayOffset(2022));
     }
 
     @Test
@@ -433,9 +434,9 @@ public class TimestampsTest {
 
     @Test
     public void testGetWeeks() {
-        Assert.assertEquals(52, Timestamps.getWeeks(2017));
-        Assert.assertEquals(52, Timestamps.getWeeks(2021));
-        Assert.assertEquals(53, Timestamps.getWeeks(2020));
+        Assert.assertEquals(52, CommonUtils.getWeeks(2017));
+        Assert.assertEquals(52, CommonUtils.getWeeks(2021));
+        Assert.assertEquals(53, CommonUtils.getWeeks(2020));
     }
 
     @Test

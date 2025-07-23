@@ -107,7 +107,7 @@ public interface TimestampDriver {
             case CommonUtils.TIMESTAMP_UNIT_MILLIS:
                 return fromMillis(ts);
             case CommonUtils.TIMESTAMP_UNIT_SECONDS:
-                return fromSeconds((int) ts);
+                return fromSeconds(ts);
             case CommonUtils.TIMESTAMP_UNIT_MINUTES:
                 return fromMinutes((int) ts);
             case CommonUtils.TIMESTAMP_UNIT_HOURS:
@@ -131,7 +131,7 @@ public interface TimestampDriver {
 
     long fromNanos(long nanos);
 
-    long fromSeconds(int seconds);
+    long fromSeconds(long seconds);
 
     // used by the row copier
     @SuppressWarnings("unused")

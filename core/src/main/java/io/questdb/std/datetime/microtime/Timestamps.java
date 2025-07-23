@@ -594,22 +594,11 @@ public final class Timestamps {
             return y - 1;
         }
 
-        if (w > getWeeks(y)) {
+        if (w > CommonUtils.getWeeks(y)) {
             return y + 1;
         }
 
         return y;
-    }
-
-    /**
-     * Since ISO weeks don't always start on the first day of the year, there is an offset of days from the 1st day of the year.
-     *
-     * @param year of timestamp
-     * @return difference in the days from the start of the year (January 1st) and the first ISO week
-     */
-    public static int getIsoYearDayOffset(int year) {
-        int dayOfTheWeekOfEndOfPreviousYear = getDayOfTheWeekOfEndOfYear(year - 1);
-        return ((dayOfTheWeekOfEndOfPreviousYear <= 3) ? 0 : 7) - dayOfTheWeekOfEndOfPreviousYear;
     }
 
     public static long getMicrosBetween(long a, long b) {
@@ -805,10 +794,10 @@ public final class Timestamps {
         int w = (10 + getDoy(micros) - getDayOfWeek(micros)) / 7;
         int y = getYear(micros);
         if (w < 1) {
-            return getWeeks(y - 1);
+            return CommonUtils.getWeeks(y - 1);
         }
 
-        if (w > getWeeks(y)) {
+        if (w > CommonUtils.getWeeks(y)) {
             return 1;
         }
 
@@ -823,13 +812,6 @@ public final class Timestamps {
 
     public static int getWeekOfYear(long micros) {
         return getDayOfYear(micros) / 7 + 1;
-    }
-
-    public static int getWeeks(int y) {
-        if (getDayOfTheWeekOfEndOfYear(y) == 4 || getDayOfTheWeekOfEndOfYear(y - 1) == 3) {
-            return 53;
-        }
-        return 52;
     }
 
     public static long getWeeksBetween(long a, long b) {

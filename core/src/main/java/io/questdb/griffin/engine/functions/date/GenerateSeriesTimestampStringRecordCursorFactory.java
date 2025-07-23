@@ -39,7 +39,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.datetime.microtime.Timestamps;
 
 
 public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGenerateSeriesRecordCursorFactory {
@@ -229,21 +228,22 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
         private long adjustStride() {
             switch (unit) {
                 case 'w':
-                    return stride * Timestamps.WEEK_MICROS;
+                    return timestampDriver.fromWeeks(stride);
                 case 'd':
-                    return stride * Timestamps.DAY_MICROS;
+                    return timestampDriver.fromDays(stride);
                 case 'h':
-                    return stride * Timestamps.HOUR_MICROS;
+                    return timestampDriver.fromHours(stride);
                 case 'm':
-                    return stride * Timestamps.MINUTE_MICROS;
+                    return timestampDriver.fromMinutes(stride);
                 case 's':
-                    return stride * Timestamps.SECOND_MICROS;
+                    return timestampDriver.fromSeconds(stride);
                 case 'T':
-                    return stride * Timestamps.MILLI_MICROS;
+                    return timestampDriver.fromMillis(stride);
                 case 'U':
                 case 'u':
-                    // todo: get rid of 'u' case whe nanosecond refactor happens
-                    return stride;
+                    return timestampDriver.fromMicros(stride);
+                case 'n':
+                    return timestampDriver.fromNanos(stride);
                 default:
                     throw new UnsupportedOperationException();
             }
