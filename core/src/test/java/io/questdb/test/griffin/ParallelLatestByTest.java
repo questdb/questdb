@@ -53,6 +53,7 @@ import java.util.Arrays;
 import java.util.Collection;
 
 import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix;
+import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix1;
 
 @RunWith(Parameterized.class)
 public class ParallelLatestByTest extends AbstractTest {
@@ -257,7 +258,7 @@ public class ParallelLatestByTest extends AbstractTest {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final String expected = replaceTimestampSuffix("a\tb\tk\n" +
+        final String expected = replaceTimestampSuffix1("a\tb\tk\n" +
                 "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                 "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +

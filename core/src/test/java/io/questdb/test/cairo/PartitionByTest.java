@@ -26,7 +26,6 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.Chars;
@@ -35,20 +34,38 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static io.questdb.test.tools.TestUtils.maxDayOfMonth;
 import static io.questdb.test.tools.TestUtils.putWithLeadingZeroIfNeeded;
 
+@RunWith(Parameterized.class)
 public class PartitionByTest {
     private static final StringSink sink = new StringSink();
+    private final TimestampDriver timestampDriver;
+    private final int timestampType;
+
+    public PartitionByTest(int timestampType) {
+        this.timestampType = timestampType;
+        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+        });
+    }
 
     @Before
     public void setUp() {
@@ -117,11 +134,11 @@ public class PartitionByTest {
 
     @Test
     public void testAddCeilFloorNone() {
-        TimestampDriver.PartitionAddMethod addMethod = PartitionBy.getPartitionAddMethod(ColumnType.TIMESTAMP, PartitionBy.NONE);
+        TimestampDriver.PartitionAddMethod addMethod = PartitionBy.getPartitionAddMethod(timestampType, PartitionBy.NONE);
         Assert.assertNull(addMethod);
-        TimestampDriver.TimestampFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, PartitionBy.NONE);
+        TimestampDriver.TimestampFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(timestampType, PartitionBy.NONE);
         Assert.assertNull(floorMethod);
-        TimestampDriver.TimestampCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(ColumnType.TIMESTAMP, PartitionBy.NONE);
+        TimestampDriver.TimestampCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(timestampType, PartitionBy.NONE);
         Assert.assertNull(ceilMethod);
     }
 
@@ -167,25 +184,25 @@ public class PartitionByTest {
 
     @Test
     public void testCeilWeekBeforeAndAfterEpoch() {
-        long start = -366 * Timestamps.DAY_MICROS;
+        long start = timestampDriver.fromDays(-366);
         for (int i = 0; i < 2 * 366; i++) {
-            long timestamp = start + i * Timestamps.DAY_MICROS;
-            String date = Timestamps.toString(timestamp);
+            long timestamp = start + i * timestampDriver.fromDays(i);
+            String date = timestampDriver.toString(timestamp);
 
-            long ceil = PartitionBy.getPartitionCeilMethod(ColumnType.TIMESTAMP, PartitionBy.WEEK).ceil(timestamp);
-            String ceilDate = Timestamps.toString(ceil);
+            long ceil = PartitionBy.getPartitionCeilMethod(timestampType, PartitionBy.WEEK).ceil(timestamp);
+            String ceilDate = timestampDriver.toString(ceil);
             String message = "ceil(" + date + ")=" + ceilDate;
 
-            Assert.assertEquals(message, 1, Timestamps.getDayOfWeek(ceil));
+            Assert.assertEquals(message, 1, timestampDriver.getDayOfWeek(ceil));
             Assert.assertTrue(message, ceil > timestamp);
-            Assert.assertTrue(message, ceil <= timestamp + Timestamps.WEEK_MICROS);
+            Assert.assertTrue(message, ceil <= timestamp + timestampDriver.fromWeeks(1));
         }
     }
 
     @Test
     public void testDaySplit() throws NumericException {
         assertFormatAndParse("2013-03-31T175500", "2013-03-31T17:55:00.000000Z", PartitionBy.DAY);
-        assertFormatAndParse("2013-03-31T175501-123000", "2013-03-31T17:55:01.123000Z", PartitionBy.DAY);
+        assertFormatAndParse(timestampType == ColumnType.TIMESTAMP_NANO ? "2013-03-31T175501-123000100" : "2013-03-31T175501-123000", "2013-03-31T17:55:01.123000100Z", PartitionBy.DAY);
         assertFormatAndParse("2013-03-01T17", "2013-03-01T17:00:00.000000Z", PartitionBy.DAY);
     }
 
@@ -194,9 +211,9 @@ public class PartitionByTest {
         Rnd rnd = TestUtils.generateRandom(null);
         testDaySplitFuzz(PartitionBy.DAY, 1, rnd);
         testDaySplitFuzz(PartitionBy.DAY, 1000, rnd);
-        testDaySplitFuzz(PartitionBy.DAY, Timestamps.SECOND_MICROS, rnd);
-        testDaySplitFuzz(PartitionBy.DAY, Timestamps.HOUR_MICROS, rnd);
-        testDaySplitFuzz(PartitionBy.DAY, Timestamps.DAY_MICROS, rnd);
+        testDaySplitFuzz(PartitionBy.DAY, timestampDriver.fromSeconds(1), rnd);
+        testDaySplitFuzz(PartitionBy.DAY, timestampDriver.fromHours(1), rnd);
+        testDaySplitFuzz(PartitionBy.DAY, timestampDriver.fromDays(1), rnd);
     }
 
     @Test
@@ -282,35 +299,35 @@ public class PartitionByTest {
     @SuppressWarnings("ConstantConditions")
     @Test
     public void testFloorWeek() {
-        long floor1 = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, PartitionBy.WEEK).floor(0);
-        long floor2 = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, PartitionBy.WEEK).floor(floor1);
+        long floor1 = PartitionBy.getPartitionFloorMethod(timestampType, PartitionBy.WEEK).floor(0);
+        long floor2 = PartitionBy.getPartitionFloorMethod(timestampType, PartitionBy.WEEK).floor(floor1);
         Assert.assertEquals(floor1, floor2);
     }
 
     @SuppressWarnings("ConstantConditions")
     @Test
     public void testFloorWeekBeforeAndAfterEpoch() {
-        long start = -366 * Timestamps.DAY_MICROS;
+        long start = timestampDriver.fromDays(-366);
         for (int i = 0; i < 2 * 366; i++) {
-            long timestamp = start + i * Timestamps.DAY_MICROS;
-            String date = Timestamps.toString(timestamp);
+            long timestamp = start + timestampDriver.fromDays(i);
+            String date = timestampDriver.toString(timestamp);
 
-            long floor = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, PartitionBy.WEEK).floor(timestamp);
-            String floorDate = Timestamps.toString(floor);
+            long floor = PartitionBy.getPartitionFloorMethod(timestampType, PartitionBy.WEEK).floor(timestamp);
+            String floorDate = timestampDriver.toString(floor);
             String message = "floor(" + date + ")=" + floorDate;
 
-            Assert.assertEquals(message, 1, Timestamps.getDayOfWeek(floor));
+            Assert.assertEquals(message, 1, timestampDriver.getDayOfWeek(floor));
             Assert.assertTrue(message, floor <= timestamp);
-            Assert.assertTrue(message, floor + Timestamps.WEEK_MICROS > timestamp);
+            Assert.assertTrue(message, floor + timestampDriver.fromWeeks(1) > timestamp);
         }
     }
 
     @Test
     public void testHourSplit() throws NumericException {
         assertFormatAndParse("2013-03-31T175500", "2013-03-31T17:55:00.000000Z", PartitionBy.HOUR);
-        assertFormatAndParse("2013-03-31T175501-123000", "2013-03-31T17:55:01.123000Z", PartitionBy.HOUR);
+        assertFormatAndParse(timestampType == ColumnType.TIMESTAMP_NANO ? "2013-03-31T175501-123000101" : "2013-03-31T175501-123000", "2013-03-31T17:55:01.123000101Z", PartitionBy.HOUR);
         assertFormatAndParse("2013-03-01T17", "2013-03-01T17:00:00.000000Z", PartitionBy.HOUR);
-        assertFormatAndParse("2013-03-31T175501-123020", "2013-03-31T17:55:01.123020Z", PartitionBy.HOUR);
+        assertFormatAndParse(timestampType == ColumnType.TIMESTAMP_NANO ? "2013-03-31T175501-123020101" : "2013-03-31T175501-123020", "2013-03-31T17:55:01.123020101Z", PartitionBy.HOUR);
         assertFormatAndParse("2013-03-31T00", "2013-03-31T00:00:00.000000Z", PartitionBy.HOUR);
     }
 
@@ -319,9 +336,9 @@ public class PartitionByTest {
         Rnd rnd = TestUtils.generateRandom(null);
         testDaySplitFuzz(PartitionBy.HOUR, 1, rnd);
         testDaySplitFuzz(PartitionBy.HOUR, 1000, rnd);
-        testDaySplitFuzz(PartitionBy.HOUR, Timestamps.SECOND_MICROS, rnd);
-        testDaySplitFuzz(PartitionBy.HOUR, Timestamps.HOUR_MICROS, rnd);
-        testDaySplitFuzz(PartitionBy.HOUR, Timestamps.DAY_MICROS, rnd);
+        testDaySplitFuzz(PartitionBy.HOUR, timestampDriver.fromSeconds(1), rnd);
+        testDaySplitFuzz(PartitionBy.HOUR, timestampDriver.fromHours(1), rnd);
+        testDaySplitFuzz(PartitionBy.HOUR, timestampDriver.fromDays(1), rnd);
     }
 
     @Test
@@ -337,7 +354,7 @@ public class PartitionByTest {
     @Test
     public void testMonthSplit() throws NumericException {
         assertFormatAndParse("2013-03-31T175500", "2013-03-31T17:55:00.000000Z", PartitionBy.MONTH);
-        assertFormatAndParse("2013-03-31T175501-123000", "2013-03-31T17:55:01.123000Z", PartitionBy.MONTH);
+        assertFormatAndParse(timestampType == ColumnType.TIMESTAMP_NANO ? "2013-03-31T175501-123000101" : "2013-03-31T175501-123000", "2013-03-31T17:55:01.123000101Z", PartitionBy.MONTH);
         assertFormatAndParse("2013-03-01T17", "2013-03-01T17:00:00.000000Z", PartitionBy.MONTH);
         assertFormatAndParse("2013-03", "2013-03-01T00:00:00.000000Z", PartitionBy.MONTH);
     }
@@ -347,9 +364,9 @@ public class PartitionByTest {
         Rnd rnd = TestUtils.generateRandom(null);
         testDaySplitFuzz(PartitionBy.MONTH, 1, rnd);
         testDaySplitFuzz(PartitionBy.MONTH, 1000, rnd);
-        testDaySplitFuzz(PartitionBy.MONTH, Timestamps.SECOND_MICROS, rnd);
-        testDaySplitFuzz(PartitionBy.MONTH, Timestamps.HOUR_MICROS, rnd);
-        testDaySplitFuzz(PartitionBy.MONTH, Timestamps.DAY_MICROS, rnd);
+        testDaySplitFuzz(PartitionBy.MONTH, timestampDriver.fromSeconds(1), rnd);
+        testDaySplitFuzz(PartitionBy.MONTH, timestampDriver.fromHours(1), rnd);
+        testDaySplitFuzz(PartitionBy.MONTH, timestampDriver.fromDays(1), rnd);
     }
 
     @Test
@@ -359,8 +376,8 @@ public class PartitionByTest {
         checkPartitionPartialParseMonth(PartitionBy.MONTH);
         checkPartitionPartialParseMonth(PartitionBy.YEAR);
         Assert.assertEquals(
-                MicrosTimestampDriver.floor("2013"),
-                PartitionBy.parsePartitionDirName("2013", ColumnType.TIMESTAMP, PartitionBy.YEAR)
+                timestampDriver.parseFloorLiteral("2013"),
+                PartitionBy.parsePartitionDirName("2013", timestampType, PartitionBy.YEAR)
         );
     }
 
@@ -386,7 +403,7 @@ public class PartitionByTest {
 
     @Test
     public void testParseFloorFailsTooManyUsecs() {
-        assertParseFails("2013-03-31T175501-12302123", PartitionBy.DAY);
+        assertParseFails("2013-03-31T175501-12302123112", PartitionBy.DAY);
     }
 
     @Test
@@ -431,8 +448,8 @@ public class PartitionByTest {
 
     @Test
     public void testPartitionDayToWeekForWholeYear() throws NumericException {
-        final DateFormat weekFormat = PartitionBy.getPartitionDirFormatMethod(ColumnType.TIMESTAMP, PartitionBy.WEEK);
-        final DateFormat dayFormat = PartitionBy.getPartitionDirFormatMethod(ColumnType.TIMESTAMP, PartitionBy.DAY);
+        final DateFormat weekFormat = PartitionBy.getPartitionDirFormatMethod(timestampType, PartitionBy.WEEK);
+        final DateFormat dayFormat = PartitionBy.getPartitionDirFormatMethod(timestampType, PartitionBy.DAY);
         StringSink weekSink = new StringSink();
         StringSink dateSink = new StringSink();
         dateSink.put("2023-");
@@ -444,9 +461,9 @@ public class PartitionByTest {
                 putWithLeadingZeroIfNeeded(dateSink, monthLen, day);
                 final String expectedDayFormatted = dateSink.toString(); // yyyy-MM-dd
                 final String expectedWeekFormatted;
-                final long timestamp = TimestampFormatUtils.parseTimestamp(expectedDayFormatted);
-                int year = Timestamps.getYear(timestamp);
-                int week = Timestamps.getWeek(timestamp);
+                final long timestamp = timestampDriver.parseFloorLiteral(expectedDayFormatted);
+                int year = timestampDriver.getYear(timestamp);
+                int week = timestampDriver.getWeek(timestamp);
                 if (week == 52 && month == 1) {
                     year--;
                 }
@@ -469,8 +486,8 @@ public class PartitionByTest {
 
                 // assert that regardless of the format, when partitioned by week the timestamp
                 // is the same, ie. the first day of the week
-                long weekTs = PartitionBy.parsePartitionDirName(weekFormatted, ColumnType.TIMESTAMP, PartitionBy.WEEK);
-                long dayTs = PartitionBy.parsePartitionDirName(dayFormatted, ColumnType.TIMESTAMP, PartitionBy.DAY);
+                long weekTs = PartitionBy.parsePartitionDirName(weekFormatted, timestampType, PartitionBy.WEEK);
+                long dayTs = PartitionBy.parsePartitionDirName(dayFormatted, timestampType, PartitionBy.DAY);
                 Assert.assertEquals(weekTs, dayTs);
             }
         }
@@ -508,9 +525,9 @@ public class PartitionByTest {
         sink.put("a/b/");
         PartitionBy.setSinkForPartition(
                 sink,
-                ColumnType.TIMESTAMP,
+                timestampType,
                 PartitionBy.NONE,
-                TimestampFormatUtils.parseTimestamp("2021-01-01T00:00:00.000000Z")
+                timestampDriver.parseFloorLiteral("2021-01-01T00:00:00.000000Z")
         );
         TestUtils.assertEquals("a/b/default", sink);
     }
@@ -581,7 +598,7 @@ public class PartitionByTest {
     @Test
     public void testUnknowns() {
         try {
-            PartitionBy.getPartitionDirFormatMethod(ColumnType.TIMESTAMP, -1);
+            PartitionBy.getPartitionDirFormatMethod(timestampType, -1);
             Assert.fail();
         } catch (Exception ignored) {
             TestUtils.assertEquals("UNKNOWN", PartitionBy.toString(-1));
@@ -591,7 +608,7 @@ public class PartitionByTest {
     @Test
     public void testWeekSplit() throws NumericException {
         assertFormatAndParse("2023-W13", "2023-03-27T00:00:00.000000Z", PartitionBy.WEEK);
-        assertFormatAndParse("2023-W13-1T175501-123000", "2023-03-27T17:55:01.123000Z", PartitionBy.WEEK);
+        assertFormatAndParse(timestampType == ColumnType.TIMESTAMP_NANO ? "2023-W13-1T175501-123000101" : "2023-W13-1T175501-123000", "2023-03-27T17:55:01.123000101Z", PartitionBy.WEEK);
         assertFormatAndParse("2013-W09-5T17", "2013-03-01T17:00:00.000000Z", PartitionBy.WEEK);
         assertFormatAndParse("2013-W09-5", "2013-03-01T00:00:00.000000Z", PartitionBy.WEEK);
     }
@@ -599,7 +616,7 @@ public class PartitionByTest {
     @Test
     public void testYearSplit() throws NumericException {
         assertFormatAndParse("2013-03-31T175500", "2013-03-31T17:55:00.000000Z", PartitionBy.YEAR);
-        assertFormatAndParse("2013-03-31T175501-123000", "2013-03-31T17:55:01.123000Z", PartitionBy.YEAR);
+        assertFormatAndParse(timestampType == ColumnType.TIMESTAMP_NANO ? "2013-03-31T175501-123000101" : "2013-03-31T175501-123000", "2013-03-31T17:55:01.123000101Z", PartitionBy.YEAR);
         assertFormatAndParse("2013-03-01T17", "2013-03-01T17:00:00.000000Z", PartitionBy.YEAR);
         assertFormatAndParse("2013", "2013-01-01T00:00:00.000000Z", PartitionBy.YEAR);
     }
@@ -609,100 +626,100 @@ public class PartitionByTest {
         Rnd rnd = TestUtils.generateRandom(null);
         testDaySplitFuzz(PartitionBy.YEAR, 1, rnd);
         testDaySplitFuzz(PartitionBy.YEAR, 1000, rnd);
-        testDaySplitFuzz(PartitionBy.YEAR, Timestamps.SECOND_MICROS, rnd);
-        testDaySplitFuzz(PartitionBy.YEAR, Timestamps.HOUR_MICROS, rnd);
-        testDaySplitFuzz(PartitionBy.YEAR, Timestamps.DAY_MICROS, rnd);
+        testDaySplitFuzz(PartitionBy.YEAR, timestampDriver.fromSeconds(1), rnd);
+        testDaySplitFuzz(PartitionBy.YEAR, timestampDriver.fromHours(1), rnd);
+        testDaySplitFuzz(PartitionBy.YEAR, timestampDriver.fromDays(1), rnd);
     }
 
-    private static void assertFormatAndParse(CharSequence expectedDirName, CharSequence timestampString, int partitionBy) throws NumericException {
-        long expected = TimestampFormatUtils.parseTimestamp(timestampString);
-        DateFormat dirFormatMethod = PartitionBy.getPartitionDirFormatMethod(ColumnType.TIMESTAMP, partitionBy);
+    private void assertFormatAndParse(CharSequence expectedDirName, CharSequence timestampString, int partitionBy) throws NumericException {
+        long expected = timestampDriver.parseFloorLiteral(timestampString);
+        DateFormat dirFormatMethod = PartitionBy.getPartitionDirFormatMethod(timestampType, partitionBy);
         sink.clear();
         dirFormatMethod.format(expected, DateLocaleFactory.EN_LOCALE, null, sink);
         TestUtils.assertEquals(expectedDirName, sink);
         if (partitionBy == PartitionBy.WEEK) {
-            int year = Timestamps.getYear(expected);
-            int week = Timestamps.getWeek(expected);
-            if (week == 52 && Timestamps.getMonthOfYear(expected) == 1) {
+            int year = timestampDriver.getYear(expected);
+            int week = timestampDriver.getWeek(expected);
+            if (week == 52 && timestampDriver.getMonthOfYear(expected) == 1) {
                 year--;
             }
             sink.clear();
             sink.put(year).put("-W");
             putWithLeadingZeroIfNeeded(sink, sink.length(), week);
-            expected = TimestampFormatUtils.parseTimestamp(sink, 0, CommonUtils.WEEK_PATTERN.length());
+            expected = timestampDriver.parseAnyFormat(sink, 0, CommonUtils.WEEK_PATTERN.length());
         }
-        Assert.assertEquals(expected, PartitionBy.parsePartitionDirName(sink, ColumnType.TIMESTAMP, partitionBy));
+        Assert.assertEquals(expected, PartitionBy.parsePartitionDirName(sink, timestampType, partitionBy));
     }
 
-    private static void assertParseFails(String partitionName, int partitionBy) {
+    private void assertParseFails(String partitionName, int partitionBy) {
         try {
-            PartitionBy.parsePartitionDirName(partitionName, ColumnType.TIMESTAMP, partitionBy);
+            PartitionBy.parsePartitionDirName(partitionName, timestampType, partitionBy);
             Assert.fail("exception expected");
         } catch (Exception ignored) {
         }
     }
 
-    private static void assertParseFailure(CharSequence expected, CharSequence dirName, int partitionBy) {
+    private void assertParseFailure(CharSequence expected, CharSequence dirName, int partitionBy) {
         try {
-            PartitionBy.parsePartitionDirName(dirName, ColumnType.TIMESTAMP, partitionBy);
+            PartitionBy.parsePartitionDirName(dirName, timestampType, partitionBy);
             Assert.fail();
         } catch (CairoException e) {
             TestUtils.assertEquals(expected, e.getFlyweightMessage());
         }
     }
 
-    private static void checkPartitionPartialParseDay(int day) throws NumericException {
+    private void checkPartitionPartialParseDay(int day) throws NumericException {
         checkPartitionPartialParseHour(day);
-        Assert.assertEquals(MicrosTimestampDriver.floor("2013-03-31"), PartitionBy.parsePartitionDirName("2013-03-31", ColumnType.TIMESTAMP, day));
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2013-03-31"), PartitionBy.parsePartitionDirName("2013-03-31", timestampType, day));
     }
 
-    private static void checkPartitionPartialParseHour(int partBy) throws NumericException {
-        Assert.assertEquals(MicrosTimestampDriver.floor("2013-03-31T17:55:01.123021"),
-                PartitionBy.parsePartitionDirName("2013-03-31T175501-123021", ColumnType.TIMESTAMP, partBy)
+    private void checkPartitionPartialParseHour(int partBy) throws NumericException {
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2013-03-31T17:55:01.123021"),
+                PartitionBy.parsePartitionDirName("2013-03-31T175501-123021", timestampType, partBy)
         );
         Assert.assertEquals(
-                MicrosTimestampDriver.floor("2013-03-31T17:55:01.12302"),
-                PartitionBy.parsePartitionDirName("2013-03-31T175501-12302", ColumnType.TIMESTAMP, partBy)
+                timestampDriver.parseFloorLiteral("2013-03-31T17:55:01.12302"),
+                PartitionBy.parsePartitionDirName("2013-03-31T175501-12302", timestampType, partBy)
         );
         Assert.assertEquals(
-                MicrosTimestampDriver.floor("2013-03-31T17:55:01.1230"),
-                PartitionBy.parsePartitionDirName("2013-03-31T175501-1230", ColumnType.TIMESTAMP, partBy)
+                timestampDriver.parseFloorLiteral("2013-03-31T17:55:01.1230"),
+                PartitionBy.parsePartitionDirName("2013-03-31T175501-1230", timestampType, partBy)
         );
         Assert.assertEquals(
-                MicrosTimestampDriver.floor("2013-03-31T17:55:01.123"),
-                PartitionBy.parsePartitionDirName("2013-03-31T175501-123", ColumnType.TIMESTAMP, partBy)
+                timestampDriver.parseFloorLiteral("2013-03-31T17:55:01.123"),
+                PartitionBy.parsePartitionDirName("2013-03-31T175501-123", timestampType, partBy)
         );
         Assert.assertEquals(
-                MicrosTimestampDriver.floor("2013-03-31T17:55:01.12"),
-                PartitionBy.parsePartitionDirName("2013-03-31T175501-12", ColumnType.TIMESTAMP, partBy)
+                timestampDriver.parseFloorLiteral("2013-03-31T17:55:01.12"),
+                PartitionBy.parsePartitionDirName("2013-03-31T175501-12", timestampType, partBy)
         );
         Assert.assertEquals(
-                MicrosTimestampDriver.floor("2013-03-31T17:55:01.1"),
-                PartitionBy.parsePartitionDirName("2013-03-31T175501-1", ColumnType.TIMESTAMP, partBy)
+                timestampDriver.parseFloorLiteral("2013-03-31T17:55:01.1"),
+                PartitionBy.parsePartitionDirName("2013-03-31T175501-1", timestampType, partBy)
         );
         Assert.assertEquals(
-                MicrosTimestampDriver.floor("2013-03-31T17:55:01"),
-                PartitionBy.parsePartitionDirName("2013-03-31T175501", ColumnType.TIMESTAMP, partBy)
+                timestampDriver.parseFloorLiteral("2013-03-31T17:55:01"),
+                PartitionBy.parsePartitionDirName("2013-03-31T175501", timestampType, partBy)
         );
         Assert.assertEquals(
-                MicrosTimestampDriver.floor("2013-03-31T17:55"),
-                PartitionBy.parsePartitionDirName("2013-03-31T1755", ColumnType.TIMESTAMP, partBy)
+                timestampDriver.parseFloorLiteral("2013-03-31T17:55"),
+                PartitionBy.parsePartitionDirName("2013-03-31T1755", timestampType, partBy)
         );
         Assert.assertEquals(
-                MicrosTimestampDriver.floor("2013-03-31T17"),
-                PartitionBy.parsePartitionDirName("2013-03-31T17", ColumnType.TIMESTAMP, partBy)
+                timestampDriver.parseFloorLiteral("2013-03-31T17"),
+                PartitionBy.parsePartitionDirName("2013-03-31T17", timestampType, partBy)
         );
     }
 
-    private static void checkPartitionPartialParseMonth(int partitionBy) throws NumericException {
+    private void checkPartitionPartialParseMonth(int partitionBy) throws NumericException {
         checkPartitionPartialParseDay(partitionBy);
         Assert.assertEquals(
-                MicrosTimestampDriver.floor("2013-03"),
-                PartitionBy.parsePartitionDirName("2013-03", ColumnType.TIMESTAMP, partitionBy)
+                timestampDriver.parseFloorLiteral("2013-03"),
+                PartitionBy.parsePartitionDirName("2013-03", timestampType, partitionBy)
         );
     }
 
-    private static void setSetPath(
+    private void setSetPath(
             CharSequence expectedDirName,
             CharSequence timestamp,
             int partitionBy
@@ -710,14 +727,14 @@ public class PartitionByTest {
         sink.put("a/b/");
         PartitionBy.setSinkForPartition(
                 sink,
-                ColumnType.TIMESTAMP,
+                timestampType,
                 partitionBy,
-                TimestampFormatUtils.parseTimestamp(timestamp)
+                timestampDriver.parseFloorLiteral(timestamp)
         );
         TestUtils.assertEquals(expectedDirName, sink);
     }
 
-    private static void setSetPathNoCalc(
+    private void setSetPathNoCalc(
             CharSequence expectedDirName,
             CharSequence timestamp,
             int partitionBy
@@ -725,30 +742,30 @@ public class PartitionByTest {
         sink.put("a/b/");
         PartitionBy.setSinkForPartition(
                 sink,
-                ColumnType.TIMESTAMP,
+                timestampType,
                 partitionBy,
-                TimestampFormatUtils.parseTimestamp(timestamp)
+                timestampDriver.parseFloorLiteral(timestamp)
         );
         TestUtils.assertEquals(expectedDirName, sink);
     }
 
-    private static void testAddCeilFloor(
+    private void testAddCeilFloor(
             CharSequence expectedNext,
             int partitionBy,
             CharSequence partitionTimestampStr,
             CharSequence midPartitionTimestampStr
     ) throws NumericException {
-        final long expectedNextPartitionTimestamp = TimestampFormatUtils.parseTimestamp(expectedNext);
-        final long partitionTimestamp = TimestampFormatUtils.parseTimestamp(partitionTimestampStr);
-        final long midPartitionTimestamp = TimestampFormatUtils.parseTimestamp(midPartitionTimestampStr);
+        final long expectedNextPartitionTimestamp = timestampDriver.parseFloorLiteral(expectedNext);
+        final long partitionTimestamp = timestampDriver.parseFloorLiteral(partitionTimestampStr);
+        final long midPartitionTimestamp = timestampDriver.parseFloorLiteral(midPartitionTimestampStr);
 
-        TimestampDriver.PartitionAddMethod addMethod = PartitionBy.getPartitionAddMethod(ColumnType.TIMESTAMP, partitionBy);
+        TimestampDriver.PartitionAddMethod addMethod = PartitionBy.getPartitionAddMethod(timestampType, partitionBy);
         Assert.assertNotNull(addMethod);
 
-        TimestampDriver.TimestampFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, partitionBy);
+        TimestampDriver.TimestampFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(timestampType, partitionBy);
         Assert.assertNotNull(floorMethod);
 
-        TimestampDriver.TimestampCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(ColumnType.TIMESTAMP, partitionBy);
+        TimestampDriver.TimestampCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(timestampType, partitionBy);
         Assert.assertNotNull(ceilMethod);
 
         Assert.assertEquals(expectedNextPartitionTimestamp, addMethod.calculate(partitionTimestamp, 1));
@@ -756,7 +773,21 @@ public class PartitionByTest {
         Assert.assertEquals(expectedNextPartitionTimestamp, ceilMethod.ceil(midPartitionTimestamp));
     }
 
-    private static void testPartitionByName(CharSequence expectedPartitionName, int partitionBy) {
+    private void testDaySplitFuzz(int partitionBy, long multiplier, Rnd rnd) {
+        StringSink tsSink = new StringSink();
+        DateFormat formatter = PartitionBy.getPartitionDirFormatMethod(timestampType, partitionBy);
+
+        for (int i = 0; i < 10; i++) {
+            long timestamp = rnd.nextLong(timestampDriver.fromDays(3000 * 365) / multiplier);
+            tsSink.clear();
+            formatter.format(timestamp, DateLocaleFactory.EN_LOCALE, null, tsSink);
+            long actual = PartitionBy.parsePartitionDirName(tsSink, timestampType, partitionBy);
+
+            Assert.assertEquals(tsSink.toString(), timestamp, actual);
+        }
+    }
+
+    private void testPartitionByName(CharSequence expectedPartitionName, int partitionBy) {
         CharSequence partitionName = PartitionBy.toString(partitionBy);
         TestUtils.assertEquals(expectedPartitionName, partitionName);
         Assert.assertEquals(partitionBy, PartitionBy.fromString(partitionName));
@@ -766,19 +797,5 @@ public class PartitionByTest {
         Assert.assertEquals(partitionBy, PartitionBy.fromUtf8String(new Utf8String(partitionName)));
         Assert.assertEquals(partitionBy, PartitionBy.fromUtf8String(new Utf8String(Chars.toString(partitionName).toUpperCase())));
         Assert.assertEquals(partitionBy, PartitionBy.fromUtf8String(new Utf8String(Chars.toString(partitionName).toLowerCase())));
-    }
-
-    private void testDaySplitFuzz(int partitionBy, long multiplier, Rnd rnd) {
-        StringSink tsSink = new StringSink();
-        DateFormat formatter = PartitionBy.getPartitionDirFormatMethod(ColumnType.TIMESTAMP, partitionBy);
-
-        for (int i = 0; i < 10; i++) {
-            long timestamp = rnd.nextLong(3000 * Timestamps.DAY_MICROS * 365L / multiplier);
-            tsSink.clear();
-            formatter.format(timestamp, DateLocaleFactory.EN_LOCALE, null, tsSink);
-            long actual = PartitionBy.parsePartitionDirName(tsSink, ColumnType.TIMESTAMP, partitionBy);
-
-            Assert.assertEquals(tsSink.toString(), timestamp, actual);
-        }
     }
 }
