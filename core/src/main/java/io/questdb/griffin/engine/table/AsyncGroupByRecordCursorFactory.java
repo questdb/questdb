@@ -63,8 +63,8 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
-import static io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory.applyCompiledFilter;
-import static io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory.applyFilter;
+import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
+import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
 public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer AGGREGATE = AsyncGroupByRecordCursorFactory::aggregate;
@@ -123,32 +123,20 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     perWorkerFilters,
                     workerCount
             );
-            if (filter != null) {
-                this.frameSequence = new PageFrameSequence<>(
-                        configuration,
-                        messageBus,
-                        atom,
-                        FILTER_AND_AGGREGATE,
-                        reduceTaskFactory,
-                        workerCount,
-                        PageFrameReduceTask.TYPE_GROUP_BY
-                );
-            } else {
-                this.frameSequence = new PageFrameSequence<>(
-                        configuration,
-                        messageBus,
-                        atom,
-                        AGGREGATE,
-                        reduceTaskFactory,
-                        workerCount,
-                        PageFrameReduceTask.TYPE_GROUP_BY
-                );
-            }
+            this.frameSequence = new PageFrameSequence<>(
+                    configuration,
+                    messageBus,
+                    atom,
+                    filter != null ? FILTER_AND_AGGREGATE : AGGREGATE,
+                    reduceTaskFactory,
+                    workerCount,
+                    PageFrameReduceTask.TYPE_GROUP_BY
+            );
             this.cursor = new AsyncGroupByRecordCursor(groupByFunctions, recordFunctions, messageBus);
             this.workerCount = workerCount;
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             close();
-            throw e;
+            throw th;
         }
     }
 

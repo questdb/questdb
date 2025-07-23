@@ -35,7 +35,7 @@ import java.io.Closeable;
  * Interfaces which extend Closeable are not optionally-closeable.
  * close() method must be called after other calls are complete.
  */
-public interface RecordCursor extends Closeable, SymbolTableSource {
+public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTableSource {
 
     static void calculateSize(RecordCursor cursor, SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
         if (circuitBreaker != null) {
@@ -171,21 +171,12 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      *
      * // Assert that resetting the cursor did not discard its state
      * Assert.assertEquals("Cursor precomputed state should not change on toTop()", stateBefore, stateAfter);
-     * }
      * }</pre>
      *
      * @return A long value representing the cursor's pre-computed state. This is not
      * a memory size in bytes, but a stable value used to detect state changes.
      */
     long preComputedStateSize();
-
-    /**
-     * Positions record at given row id. The row id must have been previously obtained from Record instance.
-     *
-     * @param record  to position
-     * @param atRowId rowid of the desired record
-     */
-    void recordAt(Record record, long atRowId);
 
     /**
      * Not every record cursor has a size, may return -1, in this case, keep going until hasNext()
