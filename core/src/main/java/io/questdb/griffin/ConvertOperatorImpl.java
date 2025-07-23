@@ -333,7 +333,7 @@ public class ConvertOperatorImpl implements Closeable {
                             .$(tableWriter.getTableToken())
                             .$(", column=").$safe(columnName).$(", from=").$(ColumnType.nameOf(existingType))
                             .$(", to=").$(ColumnType.nameOf(newType)).$(", srcFixFd=").$(srcFixFd)
-                            .$(", srcVarFd=").$(srcVarFd).$(", partition ").$ts(partitionTimestamp)
+                            .$(", srcVarFd=").$(srcVarFd).$(", partition ").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), partitionTimestamp)
                             .I$();
                     asyncProcessingErrorCount.incrementAndGet();
                 }
@@ -345,7 +345,7 @@ public class ConvertOperatorImpl implements Closeable {
                     .$(", column=").$safe(columnName).$(", from=").$(ColumnType.nameOf(existingType))
                     .$(", to=").$(ColumnType.nameOf(newType))
                     .$(", srcFixFd=").$(srcFixFd).$(", srcVarFd=")
-                    .$(srcVarFd).$(", partition ").$ts(partitionTimestamp);
+                    .$(srcVarFd).$(", partition ").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), partitionTimestamp);
             if (th instanceof CairoException) {
                 log.$(", errno=").$(((CairoException) th).getErrno());
             }

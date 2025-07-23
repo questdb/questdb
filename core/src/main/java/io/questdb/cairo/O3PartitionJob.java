@@ -346,6 +346,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // if so we do not need to re-open files and write to existing file descriptors
         final RecordMetadata metadata = tableWriter.getMetadata();
         final int timestampIndex = metadata.getTimestampIndex();
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(metadata.getTimestampType());
 
         if (isParquet) {
             processParquetPartition(
@@ -453,6 +454,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     0,
                     0,
                     timestampIndex,
+                    timestampDriver,
                     sortedTimestampsAddr,
                     newPartitionSize,
                     oldPartitionSize,
@@ -888,7 +890,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             o3RangeHi
                                     )) {
                                         LOG.info().$("replace commit resulted in identical data [table=").$safe(tableWriter.getTableToken().getTableName())
-                                                .$(", partitionTimestamp=").$ts(partitionTimestamp)
+                                                .$(", partitionTimestamp=").$ts(timestampDriver, partitionTimestamp)
                                                 .$(", srcNameTxn=").$(srcNameTxn)
                                                 .I$();
                                         // No need to update partition, it is identical to the existing one
@@ -969,12 +971,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         .$(", prefixType=").$(prefixType)
                         .$(", prefixLo=").$(prefixLo)
                         .$(", prefixHi=").$(prefixHi)
-                        .$(", o3TimestampLo=").$ts(o3TimestampLo)
-                        .$(", o3TimestampHi=").$ts(o3TimestampHi)
-                        .$(", o3TimestampMin=").$ts(o3TimestampMin)
-                        .$(", dataTimestampLo=").$ts(dataTimestampLo)
-                        .$(", dataTimestampHi=").$ts(dataTimestampHi)
-                        .$(", partitionTimestamp=").$ts(partitionTimestamp)
+                        .$(", o3TimestampLo=").$ts(timestampDriver, o3TimestampLo)
+                        .$(", o3TimestampHi=").$ts(timestampDriver, o3TimestampHi)
+                        .$(", o3TimestampMin=").$ts(timestampDriver, o3TimestampMin)
+                        .$(", dataTimestampLo=").$ts(timestampDriver, dataTimestampLo)
+                        .$(", dataTimestampHi=").$ts(timestampDriver, dataTimestampHi)
+                        .$(", partitionTimestamp=").$ts(timestampDriver, partitionTimestamp)
                         .$(", srcDataMax=").$(srcDataMax)
                         .$(", mergeType=").$(mergeType)
                         .$(", mergeDataLo=").$(mergeDataLo)
@@ -1052,11 +1054,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         // large prefix copy, better to split the partition
                         LOG.info().$("o3 split partition [table=").$(tableWriter.getTableToken())
-                                .$(", timestamp=").$ts(oldPartitionTimestamp)
+                                .$(", timestamp=").$ts(timestampDriver, oldPartitionTimestamp)
                                 .$(", nameTxn=").$(srcNameTxn)
                                 .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
                                 .$(", o3SplitPartitionSize=").$(o3SplitPartitionSize)
-                                .$(", newPartitionTimestamp=").$ts(partitionTimestamp)
+                                .$(", newPartitionTimestamp=").$ts(timestampDriver, partitionTimestamp)
                                 .$(", nameTxn=").$(txn)
                                 .I$();
                     }
@@ -1133,6 +1135,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     srcTimestampAddr,
                     srcTimestampSize,
                     timestampIndex,
+                    timestampDriver,
                     sortedTimestampsAddr,
                     srcDataNewPartitionSize,
                     oldPartitionSize,
@@ -2070,6 +2073,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcTimestampAddr,
             long srcTimestampSize,
             int timestampIndex,
+            TimestampDriver timestampDriver,
             long sortedTimestampsAddr,
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
@@ -2148,7 +2152,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                                 if (suffixType != O3_BLOCK_O3) {
                                     LOG.info().$("deduplication resulted in noop [table=").$(tableWriter.getTableToken())
-                                            .$(", partition=").$ts(partitionTimestamp)
+                                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                                             .I$();
 
                                     // nothing to do, skip the partition
@@ -2210,8 +2214,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         if (o3SplitPartitionSize > 0) {
                             LOG.info().$("dedup resulted in no merge, undo partition split [table=")
                                     .$safe(tableWriter.getTableToken().getTableName())
-                                    .$(", partition=").$ts(oldPartitionTimestamp)
-                                    .$(", split=").$ts(partitionTimestamp)
+                                    .$(", partition=").$ts(timestampDriver, oldPartitionTimestamp)
+                                    .$(", split=").$ts(timestampDriver, partitionTimestamp)
                                     .I$();
                             partitionTimestamp = oldPartitionTimestamp;
                             srcDataNewPartitionSize += o3SplitPartitionSize;
@@ -2243,7 +2247,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                     LOG.info()
                             .$("dedup row reduction [table=").$safe(tableWriter.getTableToken().getTableName())
-                            .$(", partition=").$ts(partitionTimestamp)
+                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                             .$(", duplicateCount=").$(duplicateCount)
                             .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
                             .$(", srcDataOldPartitionSize=").$(srcDataOldPartitionSize)

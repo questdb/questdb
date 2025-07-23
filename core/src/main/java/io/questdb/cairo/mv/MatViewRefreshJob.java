@@ -948,18 +948,19 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         if (viewState == null || viewState.isPendingInvalidation() || viewState.isInvalid() || viewState.isDropped()) {
             return false;
         }
+        final MatViewDefinition viewDefinition = viewState.getViewDefinition();
 
         if (!viewState.tryLock()) {
             // Someone is refreshing the view, so we're going for another attempt.
             LOG.debug().$("could not lock materialized view for range refresh, will retry [view=").$(viewToken)
-                    .$(", from=").$ts(rangeFrom)
-                    .$(", to=").$ts(rangeTo)
+                    .$(", from=").$ts(viewDefinition.getBaseTableTimestampDriver(), rangeFrom)
+                    .$(", to=").$ts(viewDefinition.getBaseTableTimestampDriver(), rangeTo)
                     .I$();
             stateStore.enqueueRangeRefresh(viewToken, rangeFrom, rangeTo);
             return false;
         }
 
-        final MatViewDefinition viewDefinition = viewState.getViewDefinition();
+
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
             final TableToken baseTableToken;
             final String baseTableName = viewDefinition.getBaseTableName();
@@ -967,8 +968,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 baseTableToken = engine.verifyTableName(viewDefinition.getBaseTableName());
             } catch (CairoException e) {
                 LOG.error().$("could not perform range refresh, could not verify base table [view=").$(viewToken)
-                        .$(", from=").$ts(rangeFrom)
-                        .$(", to=").$ts(rangeTo)
+                        .$(", from=").$ts(viewDefinition.getBaseTableTimestampDriver(), rangeFrom)
+                        .$(", to=").$ts(viewDefinition.getBaseTableTimestampDriver(), rangeTo)
                         .$(", baseTableName=").$(baseTableName)
                         .$(", errno=").$(e.getErrno())
                         .$(", errorMsg=").$safe(e.getFlyweightMessage())

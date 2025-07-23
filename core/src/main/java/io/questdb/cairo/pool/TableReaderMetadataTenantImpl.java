@@ -26,6 +26,7 @@ package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -182,7 +183,7 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
                             .$("new transaction [txn=").$(txn)
                             .$(", transientRowCount=").$(txFile.getTransientRowCount())
                             .$(", fixedRowCount=").$(txFile.getFixedRowCount())
-                            .$(", maxTimestamp=").$ts(txFile.getMaxTimestamp())
+                            .$(", maxTimestamp=").$ts(ColumnType.getTimestampDriver(getTimestampType()), txFile.getMaxTimestamp())
                             .$(", attempts=").$(count)
                             .$(", thread=").$(Thread.currentThread().getName())
                             .$(']').$();

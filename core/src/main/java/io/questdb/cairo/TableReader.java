@@ -74,12 +74,12 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final int maxOpenPartitions;
     private final MessageBus messageBus;
     private final TableReaderMetadata metadata;
-    private final int timestampType;
     private final int partitionBy;
     private final PartitionOverwriteControl partitionOverwriteControl;
     private final Path path;
     private final int rootLen;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
+    private final int timestampType;
     private final MemoryMR todoMem = Vm.getCMRInstance();
     private final TxReader txFile;
     private final TxnScoreboard txnScoreboard;
@@ -687,7 +687,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         parquetPartitions.remove(partitionIndex);
         openPartitionInfo.removeIndexBlock(offset, PARTITIONS_SLOT_SIZE);
         LOG.info().$("closed deleted partition [table=").$(tableToken)
-                .$(", ts=").$ts(partitionTimestamp)
+                .$(", ts=").$ts(ColumnType.getTimestampDriver(timestampType), partitionTimestamp)
                 .$(", partitionIndex=").$(partitionIndex)
                 .I$();
         partitionCount--;
@@ -714,7 +714,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (partitionSize > -1) {
             closePartitionResources(partitionIndex, offset);
             openPartitionCount--;
-            LOG.debug().$("closed partition [path=").$substr(dbRootSize, path).$(", timestamp=").$ts(partitionTimestamp).I$();
+            LOG.debug().$("closed partition [path=").$substr(dbRootSize, path).$(", timestamp=")
+                    .$ts(ColumnType.getTimestampDriver(timestampType), partitionTimestamp).I$();
         }
     }
 
@@ -750,7 +751,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         long newNameTxn = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTs);
         long newSize = txFile.getPartitionRowCountByTimestamp(partitionTs);
         if (existingPartitionNameTxn != newNameTxn || newSize < 0) {
-            LOG.debug().$("close outdated partition files [table=").$safe(tableToken.getTableName()).$(", ts=").$ts(partitionTs).$(", nameTxn=").$(newNameTxn).$();
+            LOG.debug().$("close outdated partition files [table=").$safe(tableToken.getTableName()).$(", ts=")
+                    .$ts(ColumnType.getTimestampDriver(timestampType), partitionTs).$(", nameTxn=").$(newNameTxn).$();
             // Close all columns, partition is overwritten. Partition reconciliation process will re-open correct files
             if (getPartitionFormat(partitionIndex) == PartitionFormat.NATIVE) {
                 for (int i = 0; i < columnCount; i++) {
@@ -1011,7 +1013,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, -1);
         partitionCount++;
-        LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", table=").$(tableToken).$(", timestamp=").$ts(timestamp).I$();
+        LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", table=").$(tableToken)
+                .$(", timestamp=").$ts(ColumnType.getTimestampDriver(timestampType), timestamp).I$();
     }
 
     // this method is not thread safe
@@ -1213,7 +1216,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                             .$("new transaction [txn=").$(txn)
                             .$(", transientRowCount=").$(txFile.getTransientRowCount())
                             .$(", fixedRowCount=").$(txFile.getFixedRowCount())
-                            .$(", maxTimestamp=").$ts(txFile.getMaxTimestamp())
+                            .$(", maxTimestamp=").$ts(ColumnType.getTimestampDriver(timestampType), txFile.getMaxTimestamp())
                             .$(", attempts=").$(count)
                             .$(", thread=").$(Thread.currentThread().getName())
                             .I$();

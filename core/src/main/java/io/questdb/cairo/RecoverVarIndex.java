@@ -59,7 +59,7 @@ public class RecoverVarIndex extends RebuildColumnBase {
 
         if (columnTop == -1L) {
             LOG.info().$("not rebuilding column ").$safe(columnName)
-                    .$(" in partition ").$ts(partitionTimestamp)
+                    .$(" in partition ").$ts(ColumnType.getTimestampDriver(timestampType), partitionTimestamp)
                     .$(", column not added to partition")
                     .$();
             return;

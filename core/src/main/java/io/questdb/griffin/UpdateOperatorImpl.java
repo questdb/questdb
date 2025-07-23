@@ -187,7 +187,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                                 LOG.info()
                                         .$("updating partition [partitionIndex=").$(partitionIndex)
                                         .$(", rowPartitionIndex=").$(rowPartitionIndex)
-                                        .$(", rowPartitionTs=").$ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))
+                                        .$(", rowPartitionTs=").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), tableWriter.getPartitionTimestamp(rowPartitionIndex))
                                         .$(", affectedColumnCount=").$(affectedColumnCount)
                                         .$(", prevRow=").$(prevRow)
                                         .$(", minRow=").$(minRow)

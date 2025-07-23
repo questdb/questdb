@@ -157,7 +157,7 @@ public class MatViewTimerJob extends SynchronizedJob {
         );
         timerQueue.add(periodTimer);
         LOG.info().$("created period timer for materialized view [view=").$(viewToken)
-                .$(", start=").$ts(start)
+                .$(", start=").$ts(viewDefinition.getBaseTableTimestampDriver(), start)
                 .$(", tz=").$(viewDefinition.getTimerTimeZone())
                 .$(", length=").$(length).$(lengthUnit)
                 .$(", delay=").$(delay).$(delayUnit)
