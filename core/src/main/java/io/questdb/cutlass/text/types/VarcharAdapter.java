@@ -76,7 +76,7 @@ public class VarcharAdapter extends AbstractTypeAdapter {
                 if (zeroBytesWord == 0) {
                     // fast path for no double quotes in consequent 8 bytes
                     quoteCount = 0;
-                    utf8Sink.putAnyLong(word);
+                    utf8Sink.putAny8(word);
                     i += 8;
                     continue;
                 }
@@ -85,7 +85,7 @@ public class VarcharAdapter extends AbstractTypeAdapter {
             byte b = value.byteAt(i++);
             if (b == DOUBLE_QUOTE) {
                 if (quoteCount++ % 2 == 0) {
-                    utf8Sink.putAny(b);
+                    utf8Sink.putAny(DOUBLE_QUOTE);
                 }
             } else {
                 quoteCount = 0;

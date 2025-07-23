@@ -119,8 +119,10 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
         return this;
     }
 
-    // writes 8 consequent bytes (long), use with care
-    public void putAnyLong(long w) {
+    /**
+     * Same as {@link #putAny(byte)}, but writes 8 consequent bytes (a long).
+     */
+    public void putAny8(long w) {
         setAscii(isAscii() & (w & NON_ASCII_MASK_FULL) == 0);
         sink.putLong(w);
     }
