@@ -80,7 +80,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyDataToOffset
     char buf[16 * 4096];
     DWORD read_sz;
     LONG64 rd_off = fromOffset;
-    LONG64 wrt_off = 0;
+    LONG64 wrt_off = destOffset;
     LONG64 hi;
 
     if (length < 0) {
@@ -89,50 +89,55 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyDataToOffset
         hi = fromOffset + length;
     }
 
-    if (!set_file_pos(FD_TO_HANDLE(srcFd), fromOffset)) {
-        return -1;
-    }
+    HANDLE srcHandle = FD_TO_HANDLE(srcFd);
+    HANDLE destHandle = FD_TO_HANDLE(destFd);
 
-    if (!set_file_pos(FD_TO_HANDLE(destFd), destOffset)) {
-        return -1;
-    }
+    while (rd_off < hi) {
+        // Create OVERLAPPED structure for read operation
+        OVERLAPPED readOverlapped = {0};
+        readOverlapped.Offset = (DWORD)(rd_off & 0xFFFFFFFF);
+        readOverlapped.OffsetHigh = (DWORD)(rd_off >> 32);
 
-    while (ReadFile(FD_TO_HANDLE(srcFd), &buf, sizeof buf, &read_sz, NULL) &&
-           read_sz > 0) {
-        char *out_ptr = buf;
-        if (rd_off + read_sz > hi) {
-            read_sz = hi - rd_off;
+        // Calculate how much to read (don't exceed the limit)
+        DWORD toRead = sizeof(buf);
+        if (rd_off + toRead > hi) {
+            toRead = (DWORD)(hi - rd_off);
         }
 
-        DWORD write_sz;
-        do {
-            if (!WriteFile(FD_TO_HANDLE(destFd), &buf, read_sz, &write_sz, NULL)) {
+        if (!ReadFile(srcHandle, buf, toRead, &read_sz, &readOverlapped) || read_sz == 0) {
+            break;
+        }
+
+        // Write the data we just read
+        char *out_ptr = buf;
+        DWORD remaining = read_sz;
+
+        while (remaining > 0) {
+            // Create OVERLAPPED structure for write operation
+            OVERLAPPED writeOverlapped = {0};
+            writeOverlapped.Offset = (DWORD)(wrt_off & 0xFFFFFFFF);
+            writeOverlapped.OffsetHigh = (DWORD)(wrt_off >> 32);
+
+            DWORD write_sz;
+            if (!WriteFile(destHandle, out_ptr, remaining, &write_sz, &writeOverlapped)) {
                 SaveLastError();
                 return rd_off - fromOffset;
             }
-            if (write_sz >= 0) {
-                read_sz -= write_sz;
+
+            if (write_sz > 0) {
+                remaining -= write_sz;
                 out_ptr += write_sz;
                 wrt_off += write_sz;
-            } else if (errno != EINTR) {
-                break;
+            } else {
+                // Write returned 0, which shouldn't happen with overlapped I/O
+                SaveLastError();
+                return -1;
             }
-        } while (read_sz > 0);
-
-        if (read_sz > 0) {
-            // error
-            SaveLastError();
-            return -1;
         }
 
-        rd_off += write_sz;
-        if (rd_off >= hi) {
-            /* Success! */
-            break;
-        }
+        rd_off += read_sz;
     }
 
-    SaveLastError();
     return rd_off - fromOffset;
 }
 
@@ -173,11 +178,18 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
         // To align with other platforms
         return -1;
     }
+
     HANDLE handle = FD_TO_HANDLE(fd);
-    if (set_file_pos(handle, offset)
-        && WriteFile(handle, (LPCVOID) address, (DWORD) len, &count, NULL)) {
+
+    // Create OVERLAPPED structure with the specified offset
+    OVERLAPPED overlapped = {0};
+    overlapped.Offset = (DWORD)(offset & 0xFFFFFFFF);
+    overlapped.OffsetHigh = (DWORD)(offset >> 32);
+
+    if (WriteFile(handle, (LPCVOID) address, (DWORD) len, &count, &overlapped)) {
         return count;
     }
+
     SaveLastError();
     return -1;
 }
@@ -192,8 +204,13 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
 
     DWORD count;
     HANDLE handle = FD_TO_HANDLE(fd);
-    if (set_file_pos(handle, offset)
-        && ReadFile(handle, (LPVOID) address, (DWORD) len, &count, NULL)) {
+
+    // Create OVERLAPPED structure with the specified offset
+    OVERLAPPED overlapped = {0};
+    overlapped.Offset = (DWORD)(offset & 0xFFFFFFFF);
+    overlapped.OffsetHigh = (DWORD)(offset >> 32);
+
+    if (ReadFile(handle, (LPVOID) address, (DWORD) len, &count, &overlapped)) {
         return count;
     }
     SaveLastError();
@@ -205,8 +222,13 @@ JNIEXPORT jbyte JNICALL Java_io_questdb_std_Files_readNonNegativeByte
     DWORD count;
     jbyte result;
     HANDLE handle = FD_TO_HANDLE(fd);
-    if (set_file_pos(handle, offset)
-        && ReadFile(handle, (LPVOID) &result, (DWORD) 1, &count, NULL)) {
+
+    // Create OVERLAPPED structure with the specified offset
+    OVERLAPPED overlapped = {0};
+    overlapped.Offset = (DWORD)(offset & 0xFFFFFFFF);
+    overlapped.OffsetHigh = (DWORD)(offset >> 32);
+
+    if (ReadFile(handle, (LPVOID) &result, (DWORD) 1, &count, &overlapped)) {
         if (count == 1) {
             return result;
         }
@@ -220,8 +242,13 @@ JNIEXPORT jshort JNICALL Java_io_questdb_std_Files_readNonNegativeShort
     DWORD count;
     jshort result;
     HANDLE handle = FD_TO_HANDLE(fd);
-    if (set_file_pos(handle, offset)
-        && ReadFile(handle, (LPVOID) &result, (DWORD) 2, &count, NULL)) {
+
+    // Create OVERLAPPED structure with the specified offset
+    OVERLAPPED overlapped = {0};
+    overlapped.Offset = (DWORD)(offset & 0xFFFFFFFF);
+    overlapped.OffsetHigh = (DWORD)(offset >> 32);
+
+    if (ReadFile(handle, (LPVOID) &result, (DWORD) 2, &count, &overlapped)) {
         if (count == 2) {
             return result;
         }
@@ -235,8 +262,13 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readNonNegativeInt
     DWORD count;
     jint result;
     HANDLE handle = FD_TO_HANDLE(fd);
-    if (set_file_pos(handle, offset)
-        && ReadFile(handle, (LPVOID) &result, (DWORD) 4, &count, NULL)) {
+
+    // Create OVERLAPPED structure with the specified offset
+    OVERLAPPED overlapped = {0};
+    overlapped.Offset = (DWORD)(offset & 0xFFFFFFFF);
+    overlapped.OffsetHigh = (DWORD)(offset >> 32);
+
+    if (ReadFile(handle, (LPVOID) &result, (DWORD) 4, &count, &overlapped)) {
         if (count == 4) {
             return result;
         }
@@ -250,8 +282,13 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readIntAsUnsignedLong
     DWORD count;
     uint32_t result;
     HANDLE handle = FD_TO_HANDLE(fd);
-    if (set_file_pos(handle, offset)
-        && ReadFile(handle, (LPVOID) &result, (DWORD) 4, &count, NULL)) {
+
+    // Create OVERLAPPED structure with the specified offset
+    OVERLAPPED overlapped = {0};
+    overlapped.Offset = (DWORD)(offset & 0xFFFFFFFF);
+    overlapped.OffsetHigh = (DWORD)(offset >> 32);
+
+    if (ReadFile(handle, (LPVOID) &result, (DWORD) 4, &count, &overlapped)) {
         if (count == 4) {
             return (jlong) result;
         }
@@ -262,17 +299,21 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readIntAsUnsignedLong
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readNonNegativeLong
         (JNIEnv *e, jclass cl, jint fd, jlong offset) {
-    DWORD count;
     jlong result;
+    OVERLAPPED overlapped = {0};
+    overlapped.Offset = (DWORD)(offset & 0xFFFFFFFF);
+    overlapped.OffsetHigh = (DWORD)(offset >> 32);
+
+
     HANDLE handle = FD_TO_HANDLE(fd);
-    if (set_file_pos(handle, offset)
-        && ReadFile(handle, (LPVOID) &result, (DWORD) 8, &count, NULL)) {
-        if (count == 8) {
-            return result;
-        }
+    DWORD bytesRead;
+    if (!ReadFile(handle, (LPVOID) &result, sizeof(uint64_t), &bytesRead, &overlapped) || bytesRead != sizeof(uint64_t)) {
+        SaveLastError();
+        return -1;
     }
-    SaveLastError();
-    return -1;
+
+    return result;
+
 }
 
 #define MILLIS_SINCE_1970 11644473600000
@@ -643,7 +684,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getStdOutFd
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_truncate
         (JNIEnv *e, jclass cl, jint fd, jlong size) {
     HANDLE handle = FD_TO_HANDLE(fd);
-    if (set_file_pos(handle, size) && SetEndOfFile(handle)) {
+
+    FILE_END_OF_FILE_INFO fileInfo;
+    fileInfo.EndOfFile.QuadPart = size;
+
+    if (SetFileInformationByHandle(handle, FileEndOfFileInfo, &fileInfo, sizeof(fileInfo))) {
         return TRUE;
     }
     SaveLastError();
