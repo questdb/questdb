@@ -61,7 +61,7 @@ import static io.questdb.cairo.PartitionBy.*;
 import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_NANOS;
-import static io.questdb.std.datetime.microtime.TimestampFormatUtils.*;
+import static io.questdb.std.datetime.nanotime.NanosFormatUtils.*;
 
 public class NanosTimestampDriver implements TimestampDriver {
     public static final TimestampDriver INSTANCE = new NanosTimestampDriver();
@@ -132,11 +132,11 @@ public class NanosTimestampDriver implements TimestampDriver {
     private static final TimestampFloorWithOffsetMethod FLOOR_YYYY_WITH_OFFSET = Nanos::floorYYYY;
     private static final TimestampFloorWithStrideMethod FLOOR_YYYY_WITH_STRIDE = Nanos::floorYYYY;
     private static final String MAX_NANO_TIMESTAMP_STR = "2261-12-31 23:59:59.999999999";
-    private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(FLOOR_DD, DAY_FORMAT);
-    private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(FLOOR_HH, HOUR_FORMAT);
-    private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(FLOOR_MM, MONTH_FORMAT);
+    private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(FLOOR_DD, NanosFormatUtils.DAY_FORMAT);
+    private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(FLOOR_HH, NanosFormatUtils.HOUR_FORMAT);
+    private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(FLOOR_MM, NanosFormatUtils.MONTH_FORMAT);
     private static final DateFormat PARTITION_WEEK_FORMAT = new IsoWeekPartitionFormat();
-    private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(FLOOR_YYYY, YEAR_FORMAT);
+    private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(FLOOR_YYYY, NanosFormatUtils.YEAR_FORMAT);
     private Clock clock = NanosecondClockImpl.INSTANCE;
 
     private NanosTimestampDriver() {
@@ -1527,7 +1527,7 @@ public class NanosTimestampDriver implements TimestampDriver {
         @Override
         public long parse(@NotNull CharSequence in, int lo, int hi, @NotNull DateLocale locale) throws NumericException {
             long ts;
-            if (hi - lo < 4 || hi - lo > 25) {
+            if (hi - lo < 4 || hi - lo > 28) {
                 throw NumericException.INSTANCE;
             }
             int p = lo;

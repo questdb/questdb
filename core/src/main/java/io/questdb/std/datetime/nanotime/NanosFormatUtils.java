@@ -28,6 +28,7 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -40,10 +41,15 @@ import org.jetbrains.annotations.TestOnly;
 import static io.questdb.std.datetime.CommonUtils.*;
 
 public class NanosFormatUtils {
+    public static final DateFormat DAY_FORMAT;
+    public static final DateFormat HOUR_FORMAT;
+    public static final DateFormat MONTH_FORMAT;
     public static final DateFormat NSEC_UTC_FORMAT;
     public static final DateFormat PG_TIMESTAMP_FORMAT;
     public static final DateFormat USEC_UTC_FORMAT;
     public static final DateFormat UTC_FORMAT;
+    public static final DateFormat WEEK_FORMAT;
+    public static final DateFormat YEAR_FORMAT;
     private static final DateFormat[] FORMATS;
     private static final DateFormat[] HTTP_FORMATS;
     static int prevCenturyLow;
@@ -380,5 +386,11 @@ public class NanosFormatUtils {
         UTC_FORMAT = dateFormats.get(UTC_PATTERN);
         USEC_UTC_FORMAT = dateFormats.get(USEC_UTC_PATTERN);
         NSEC_UTC_FORMAT = dateFormats.get(NSEC_UTC_PATTERN);
+
+        HOUR_FORMAT = dateFormats.get(CommonUtils.HOUR_PATTERN);
+        DAY_FORMAT = dateFormats.get(CommonUtils.DAY_PATTERN);
+        WEEK_FORMAT = dateFormats.get(CommonUtils.WEEK_PATTERN);
+        MONTH_FORMAT = dateFormats.get(CommonUtils.MONTH_PATTERN);
+        YEAR_FORMAT = dateFormats.get(CommonUtils.YEAR_PATTERN);
     }
 }

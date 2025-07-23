@@ -45,9 +45,6 @@ import org.junit.runners.Parameterized;
 import java.util.Arrays;
 import java.util.Collection;
 
-import static io.questdb.test.griffin.AsOfJoinTest.executeWithRewriteTimestamp;
-import static io.questdb.test.griffin.AsOfJoinTest.getTimestampSuffix;
-
 @RunWith(Parameterized.class)
 public class LatestByTest extends AbstractCairoTest {
     private final String timestampType;

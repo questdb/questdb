@@ -114,6 +114,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.griffin.AsOfJoinTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVariableTestSetter;
 import io.questdb.test.tools.BindVariableTestTuple;
@@ -142,6 +143,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     public static final int DEFAULT_SPIN_LOCK_TIMEOUT = 5000;
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
+    protected static final String TIMESTAMP_NS_TYPE_NAME = "TIMESTAMP_NS";
+    protected static final String TIMESTAMP_TYPE_NAME = "TIMESTAMP";
     protected static final PlanSink planSink = new TextPlanSink();
     protected static final StringSink sink = new StringSink();
     private static final double EPSILON = 0.000001;
@@ -457,6 +460,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return doubleEquals(a, b, EPSILON);
     }
 
+    public static void executeWithRewriteTimestamp(CharSequence sqlText, String timestampType) throws SqlException {
+        sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType);
+        engine.execute(sqlText, sqlExecutionContext);
+    }
+
     //ignores:
     // o3, mmap - because they're usually linked with table readers that are kept in pool
     // join map memory - because it's usually a small and can't really be released until the factory is closed
@@ -469,6 +477,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
         }
         return memUsed;
+    }
+
+    public static String getTimestampSuffix(String timestampType) {
+        return AsOfJoinTest.TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? "000Z" : "Z";
     }
 
     public static void printFactoryMemoryUsageDiff() {
@@ -547,6 +559,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     public static void refreshTablesInBaseEngine() {
         engine.reloadTableNames();
+    }
+
+    public static String replaceTimestampSuffix(String expected, String timestampType) {
+        return TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? expected.replace(".00", ".00000") : expected;
+    }
+
+    public static String replaceTimestampSuffix1(String expected, String timestampType) {
+        return TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? expected.replaceAll("00Z", "00000Z").replaceAll("-00000", "-00000000") : expected;
     }
 
     @BeforeClass

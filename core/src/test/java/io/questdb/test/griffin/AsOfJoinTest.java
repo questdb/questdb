@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -47,8 +46,6 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class AsOfJoinTest extends AbstractCairoTest {
-    private static final String TIMESTAMP_NS_TYPE_NAME = "TIMESTAMP_NS";
-    private static final String TIMESTAMP_TYPE_NAME = "TIMESTAMP";
     private final String leftTableTimestampType;
     private final String rightTableTimestampType;
 
@@ -2835,18 +2832,5 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 }
             }
         });
-    }
-
-    static void executeWithRewriteTimestamp(CharSequence sqlText, String timestampType) throws SqlException {
-        sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType);
-        engine.execute(sqlText, sqlExecutionContext);
-    }
-
-    static String getTimestampSuffix(String timestampType) {
-        return TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? "000Z" : "Z";
-    }
-
-    static String replaceTimestampSuffix(String expected, String timestampType) {
-        return TIMESTAMP_NS_TYPE_NAME.equals(timestampType) ? expected.replace(".00000", ".00000000") : expected;
     }
 }

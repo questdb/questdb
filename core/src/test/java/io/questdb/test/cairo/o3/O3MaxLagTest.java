@@ -26,7 +26,6 @@ package io.questdb.test.cairo.o3;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableWriter;
@@ -43,49 +42,66 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix;
+
+@RunWith(Parameterized.class)
 public class O3MaxLagTest extends AbstractO3Test {
-
     private final static Log LOG = LogFactory.getLog(O3MaxLagTest.class);
     private static final Utf8StringSink utf8Sink = new Utf8StringSink();
 
+    public O3MaxLagTest(int timestampType) {
+        super(timestampType);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+        });
+    }
+
     @Test
     public void testBigUncommittedCheckStrColFixedAndVarMappedSizes() throws Exception {
-        executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) -> {
             TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY);
             tableModel
                     .col("id", ColumnType.STRING)
-                    .timestamp("ts");
+                    .timestamp("ts", timestampType);
             testBigUncommittedMove1(engine, compiler, sqlExecutionContext, tableModel);
         });
     }
 
     @Test
     public void testBigUncommittedMovesTimestampOnEdge() throws Exception {
-        executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) -> {
             TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY);
             tableModel
                     .col("id", ColumnType.LONG)
-                    .timestamp("ts");
+                    .timestamp("ts", timestampType);
             testBigUncommittedMove1(engine, compiler, sqlExecutionContext, tableModel);
         });
     }
 
     @Test
     public void testBigUncommittedToMove() throws Exception {
-        executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) -> {
             TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY);
             tableModel
                     .col("id", ColumnType.LONG)
                     .col("ok", ColumnType.FLOAT)
                     .col("str", ColumnType.STRING)
-                    .timestamp("ts");
+                    .timestamp("ts", timestampType);
             testBigUncommittedMove1(engine, compiler, sqlExecutionContext, tableModel);
         });
     }
@@ -207,7 +223,7 @@ public class O3MaxLagTest extends AbstractO3Test {
 
     @Test
     public void testRowCountWhenLagIsNextDay() throws Exception {
-        executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) -> {
             String[] dates = new String[]{
                     "2021-01-01T00:05:00.000000Z",
                     "2021-01-01T00:01:00.000000Z",
@@ -221,7 +237,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 String tableName = "lll" + length;
                 LOG.info().$("========= LENGTH ").$(length).$(" ================").$();
                 engine.execute("create table " + tableName + "( " +
-                        "ts timestamp" +
+                        "ts " + timestampTypeName +
                         ") timestamp(ts) partition by DAY " +
                         " WITH maxUncommittedRows=1, o3MaxLag=120s", sqlExecutionContext);
 
@@ -232,13 +248,13 @@ public class O3MaxLagTest extends AbstractO3Test {
                     }
 
                     for (int i = 0; i < length; i++) {
-                        long ts = MicrosTimestampDriver.floor(dates[i]);
+                        long ts = driver.parseFloorLiteral(dates[i]);
                         Row r = writer.newRow(ts);
                         r.append();
 
                         Assert.assertEquals(i + 1, writer.size());
                         if (effectiveMaxUncommitted < writer.getUncommittedRowCount()) {
-                            writer.ic(CommitMode.NOSYNC);
+                            writer.ic();
                         }
                         Assert.assertEquals(i + 1, writer.size());
                     }
@@ -266,7 +282,8 @@ public class O3MaxLagTest extends AbstractO3Test {
                 (
                         CairoEngine engine,
                         SqlCompiler compiler,
-                        SqlExecutionContext sqlExecutionContext
+                        SqlExecutionContext sqlExecutionContext,
+                        String timestampTypeName
                 ) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
@@ -307,7 +324,8 @@ public class O3MaxLagTest extends AbstractO3Test {
                 (
                         CairoEngine engine,
                         SqlCompiler compiler,
-                        SqlExecutionContext sqlExecutionContext
+                        SqlExecutionContext sqlExecutionContext,
+                        String timestampTypeName
                 ) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
@@ -334,7 +352,8 @@ public class O3MaxLagTest extends AbstractO3Test {
                 (
                         CairoEngine engine,
                         SqlCompiler compiler,
-                        SqlExecutionContext sqlExecutionContext
+                        SqlExecutionContext sqlExecutionContext,
+                        String timestampTypeName
                 ) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
@@ -356,7 +375,8 @@ public class O3MaxLagTest extends AbstractO3Test {
                 (
                         CairoEngine engine,
                         SqlCompiler compiler,
-                        SqlExecutionContext sqlExecutionContext
+                        SqlExecutionContext sqlExecutionContext,
+                        String timestampTypeName
                 ) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     testVarColumnMergeWithColumnTops(
@@ -383,7 +403,8 @@ public class O3MaxLagTest extends AbstractO3Test {
                 (
                         CairoEngine engine,
                         SqlCompiler compiler,
-                        SqlExecutionContext sqlExecutionContext
+                        SqlExecutionContext sqlExecutionContext,
+                        String timestampTypeName
                 ) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
@@ -405,7 +426,8 @@ public class O3MaxLagTest extends AbstractO3Test {
                 (
                         CairoEngine engine,
                         SqlCompiler compiler,
-                        SqlExecutionContext sqlExecutionContext
+                        SqlExecutionContext sqlExecutionContext,
+                        String timestampTypeName
                 ) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
@@ -423,7 +445,7 @@ public class O3MaxLagTest extends AbstractO3Test {
     private void appendRows(TableWriter tw, int count, Rnd rnd) throws NumericException {
         TableMetadata metadata = tw.getMetadata();
         for (int i = 0; i < count; i++) {
-            long timestamp = MicrosTimestampDriver.floor("1970-01-01T11:00:00.000000Z") + rnd.nextLong(Timestamps.DAY_MICROS);
+            long timestamp = driver.parseFloorLiteral("1970-01-01T11:00:00.000000Z") + rnd.nextLong(driver.fromDays(1));
             Row row = tw.newRow(timestamp);
 
             putVariantStr(metadata, row, 0, "cc");
@@ -432,7 +454,7 @@ public class O3MaxLagTest extends AbstractO3Test {
             row.putLong(4, 22222L);
             row.append();
 
-            row = tw.newRow(MicrosTimestampDriver.floor("1970-01-02T11:00:00.000000Z"));
+            row = tw.newRow(driver.parseFloorLiteral("1970-01-02T11:00:00.000000Z"));
             putVariantStr(metadata, row, 0, "cc");
             row.putLong(2, 333333L);
             putVariantStr(metadata, row, 3, "dd");
@@ -444,7 +466,7 @@ public class O3MaxLagTest extends AbstractO3Test {
     private void appendRowsWithDroppedColumn(TableWriter tw, int count, Rnd rnd) throws NumericException {
         TableMetadata metadata = tw.getMetadata();
         for (int i = 0; i < count; i++) {
-            long timestamp = MicrosTimestampDriver.floor("1970-01-01") + rnd.nextLong(Timestamps.DAY_MICROS);
+            long timestamp = driver.parseFloorLiteral("1970-01-01") + rnd.nextLong(driver.fromDays(1));
             Row row = tw.newRow(timestamp);
 
             putVariantStr(metadata, row, 0, "cc");
@@ -453,7 +475,7 @@ public class O3MaxLagTest extends AbstractO3Test {
             row.putLong(5, 22222L);
             row.append();
 
-            row = tw.newRow(MicrosTimestampDriver.floor("1970-01-02T10:00:01.000000Z"));
+            row = tw.newRow(driver.parseFloorLiteral("1970-01-02T10:00:01.000000Z"));
             putVariantStr(metadata, row, 0, "cc");
             row.putLong(2, 333333L);
             putVariantStr(metadata, row, 4, "dd");
@@ -587,7 +609,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         }
     }
 
-    private void testContinuousBatchedCommit0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testContinuousBatchedCommit0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws SqlException {
         int nTotalRows = 50000;
         int nInitialStateRows = 150;
         long microsBetweenRows = 100000000;
@@ -601,7 +623,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " cast(x as int) i," +
                 " rnd_symbol('msft','ibm', 'googl') sym," +
                 " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                 " rnd_boolean() b," +
                 " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                 " rnd_double(2) d," +
@@ -610,7 +632,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                 " rnd_symbol(4,4,4,2) ik," +
                 " rnd_long() j," +
-                " timestamp_sequence(0L," + microsBetweenRows + "L) ts," +
+                " timestamp_sequence(0L," + microsBetweenRows + "L)::" + timestampTypeName + " ts," +
                 " rnd_byte(2,50) l," +
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
@@ -675,13 +697,13 @@ public class O3MaxLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testLargeLagWithRowLimit(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testLargeLagWithRowLimit(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
                 " rnd_symbol('msft','ibm', 'googl') sym," +
                 " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                 " rnd_boolean() b," +
                 " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                 " rnd_double(2) d," +
@@ -690,7 +712,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                 " rnd_symbol(4,4,4,2) ik," +
                 " rnd_long() j," +
-                " timestamp_sequence(500000000000L,100000000L) ts," +
+                " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + " ts," +
                 " rnd_byte(2,50) l," +
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
@@ -715,13 +737,13 @@ public class O3MaxLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testLargeLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testLargeLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
                 " rnd_symbol('msft','ibm', 'googl') sym," +
                 " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                 " rnd_boolean() b," +
                 " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                 " rnd_double(2) d," +
@@ -730,7 +752,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                 " rnd_symbol(4,4,4,2) ik," +
                 " rnd_long() j," +
-                " timestamp_sequence(500000000000L,100000000L) ts," +
+                " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + " ts," +
                 " rnd_byte(2,50) l," +
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
@@ -762,14 +784,15 @@ public class O3MaxLagTest extends AbstractO3Test {
     private void testNoLag0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
     ) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
                 " rnd_symbol('msft','ibm', 'googl') sym," +
                 " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                 " rnd_boolean() b," +
                 " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                 " rnd_double(2) d," +
@@ -778,7 +801,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                 " rnd_symbol(4,4,4,2) ik," +
                 " rnd_long() j," +
-                " timestamp_sequence(500000000000L,100000000L) ts," +
+                " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + " ts," +
                 " rnd_byte(2,50) l," +
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
@@ -810,13 +833,13 @@ public class O3MaxLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testNoLagEndingAtPartitionBoundary(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testNoLagEndingAtPartitionBoundary(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
                 " rnd_symbol('msft','ibm', 'googl') sym," +
                 " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                 " rnd_boolean() b," +
                 " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                 " rnd_double(2) d," +
@@ -825,7 +848,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                 " rnd_symbol(4,4,4,2) ik," +
                 " rnd_long() j," +
-                " timestamp_sequence(500000000000L,100000000L) ts," +
+                " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + " ts," +
                 " rnd_byte(2,50) l," +
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
@@ -857,13 +880,13 @@ public class O3MaxLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testNoLagWithRollback(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testNoLagWithRollback(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
                 " rnd_symbol('msft','ibm', 'googl') sym," +
                 " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000::" + timestampTypeName + " timestamp," +
                 " rnd_boolean() b," +
                 " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                 " rnd_double(2) d," +
@@ -872,7 +895,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                 " rnd_symbol(4,4,4,2) ik," +
                 " rnd_long() j," +
-                " timestamp_sequence(500000000000L,100000000L) ts," +
+                " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + " ts," +
                 " rnd_byte(2,50) l," +
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
@@ -918,13 +941,13 @@ public class O3MaxLagTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testO3MaxLagEndingAtPartitionBoundary0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testO3MaxLagEndingAtPartitionBoundary0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
                 " rnd_symbol('msft','ibm', 'googl') sym," +
                 " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000::" + timestampTypeName + " timestamp," +
                 " rnd_boolean() b," +
                 " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                 " rnd_double(2) d," +
@@ -933,7 +956,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                 " rnd_symbol(4,4,4,2) ik," +
                 " rnd_long() j," +
-                " timestamp_sequence(500000000000L,100000000L) ts," +
+                " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + " ts," +
                 " rnd_byte(2,50) l," +
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
@@ -966,13 +989,13 @@ public class O3MaxLagTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testO3MaxLagEndingAtPartitionBoundaryPlus10(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testO3MaxLagEndingAtPartitionBoundaryPlus10(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
                 " rnd_symbol('msft','ibm', 'googl') sym," +
                 " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                 " rnd_boolean() b," +
                 " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                 " rnd_double(2) d," +
@@ -981,7 +1004,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                 " rnd_symbol(4,4,4,2) ik," +
                 " rnd_long() j," +
-                " timestamp_sequence(500000000000L,100000000L) ts," +
+                " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + " ts," +
                 " rnd_byte(2,50) l," +
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
@@ -1011,13 +1034,13 @@ public class O3MaxLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testO3MaxLagStaggeredPartitions0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testO3MaxLagStaggeredPartitions0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
                 " rnd_symbol('msft','ibm', 'googl') sym," +
                 " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                 " rnd_boolean() b," +
                 " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                 " rnd_double(2) d," +
@@ -1026,7 +1049,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                 " rnd_symbol(4,4,4,2) ik," +
                 " rnd_long() j," +
-                " timestamp_sequence(500000000000L,100000000L) ts," +
+                " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + " ts," +
                 " rnd_byte(2,50) l," +
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
@@ -1050,7 +1073,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " cast(x as int) i," +
                 " rnd_symbol('msft','ibm', 'googl') sym," +
                 " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                 " rnd_boolean() b," +
                 " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                 " rnd_double(2) d," +
@@ -1059,7 +1082,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                 " rnd_symbol(4,4,4,2) ik," +
                 " rnd_long() j," +
-                " timestamp_sequence(500000000000L + 120 * 100000000L + 1,100000000L) ts," +
+                " timestamp_sequence(500000000000L + 120 * 100000000L + 1,100000000L)::" + timestampTypeName + " ts," +
                 " rnd_byte(2,50) l," +
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
@@ -1075,7 +1098,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " cast(x as int) i," +
                 " rnd_symbol('msft','ibm', 'googl') sym," +
                 " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                 " rnd_boolean() b," +
                 " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                 " rnd_double(2) d," +
@@ -1084,7 +1107,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                 " rnd_symbol(4,4,4,2) ik," +
                 " rnd_long() j," +
-                " timestamp_sequence(500000000000L + 170 * 100000000L + 2,100000000L) ts," +
+                " timestamp_sequence(500000000000L + 170 * 100000000L + 2,100000000L)::" + timestampTypeName + " ts," +
                 " rnd_byte(2,50) l," +
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
@@ -1115,13 +1138,13 @@ public class O3MaxLagTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testO3MaxLagWithInOrderBatchFollowedByO3Batch0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testO3MaxLagWithInOrderBatchFollowedByO3Batch0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
                 " rnd_symbol('msft','ibm', 'googl') sym," +
                 " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                 " rnd_boolean() b," +
                 " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                 " rnd_double(2) d," +
@@ -1130,7 +1153,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                 " rnd_symbol(4,4,4,2) ik," +
                 " rnd_long() j," +
-                " timestamp_sequence(500000000000L,100000000L) ts," +
+                " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + " ts," +
                 " rnd_byte(2,50) l," +
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
@@ -1162,13 +1185,13 @@ public class O3MaxLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testO3MaxLagWithLargeO3(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testO3MaxLagWithLargeO3(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
                 " rnd_symbol('msft','ibm', 'googl') sym," +
                 " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                 " rnd_boolean() b," +
                 " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                 " rnd_double(2) d," +
@@ -1177,7 +1200,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                 " rnd_symbol(4,4,4,2) ik," +
                 " rnd_long() j," +
-                " timestamp_sequence(500000000000L,100000000L) ts," +
+                " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + " ts," +
                 " rnd_byte(2,50) l," +
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
@@ -1203,13 +1226,13 @@ public class O3MaxLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testO3MaxLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testO3MaxLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
                 " rnd_symbol('msft','ibm', 'googl') sym," +
                 " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                 " rnd_boolean() b," +
                 " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                 " rnd_double(2) d," +
@@ -1218,7 +1241,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                 " rnd_symbol(4,4,4,2) ik," +
                 " rnd_long() j," +
-                " timestamp_sequence(500000000000L,100000000L) ts," +
+                " timestamp_sequence(500000000000L,100000000L)::" + timestampTypeName + " ts," +
                 " rnd_byte(2,50) l," +
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
@@ -1259,7 +1282,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 "create table x as (" +
                         "select" +
                         " 'aa' as str," +
-                        " timestamp_sequence('1970-01-01T11:00:00',1000L) ts," +
+                        " timestamp_sequence('1970-01-01T11:00:00',1000L)::" + timestampTypeName + " ts," +
                         " x " +
                         " from long_sequence(" + initialCount + ")" +
                         ") timestamp (ts) partition by DAY with maxUncommittedRows = " + maxUncommittedRows,
@@ -1324,7 +1347,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         try (TableWriter tw = TestUtils.getWriter(engine, "x")) {
             int halfCount = appendCount / 2;
             appendRows(tw, halfCount, rnd);
-            tw.ic(Timestamps.HOUR_MICROS);
+            tw.ic(MicrosTimestampDriver.INSTANCE.fromHours(1));
 
             TestUtils.assertEquals(
                     compiler,
@@ -1334,7 +1357,7 @@ public class O3MaxLagTest extends AbstractO3Test {
             );
 
             appendRows(tw, appendCount - halfCount, rnd);
-            tw.ic(Timestamps.HOUR_MICROS);
+            tw.ic(MicrosTimestampDriver.INSTANCE.fromHours(1));
 
             TestUtils.assertEquals(
                     compiler,
@@ -1367,7 +1390,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 "create table x as (" +
                         "select" +
                         " 'aa' as str," +
-                        " timestamp_sequence('1970-01-01T11:00:00',1000L) ts," +
+                        " timestamp_sequence('1970-01-01T11:00:00',1000L)::" + timestampTypeName + " ts," +
                         " x " +
                         " from long_sequence(1)" +
                         ") timestamp (ts) partition by DAY with maxUncommittedRows = " + maxUncommittedRows,
@@ -1397,24 +1420,24 @@ public class O3MaxLagTest extends AbstractO3Test {
         try (TableWriter tw = TestUtils.getWriter(engine, "x")) {
             int halfCount = appendCount / 2;
             appendRowsWithDroppedColumn(tw, halfCount, rnd);
-            tw.ic(Timestamps.HOUR_MICROS);
+            tw.ic(MicrosTimestampDriver.INSTANCE.fromHours(1));
 
             TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
-                    "str\tts\tx\tstr2\ty\n" +
+                    replaceTimestampSuffix("str\tts\tx\tstr2\ty\n" +
                             "aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull\n" +
-                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n"
+                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n", timestampTypeName)
             );
 
             appendRowsWithDroppedColumn(tw, appendCount - halfCount, rnd);
-            tw.ic(Timestamps.HOUR_MICROS);
+            tw.ic(MicrosTimestampDriver.INSTANCE.fromHours(1));
 
             TestUtils.assertSql(
                     compiler,
                     sqlExecutionContext,
                     "select * from x where str = 'aa'", sink,
-                    "str\tts\tx\tstr2\ty\n" +
+                    replaceTimestampSuffix("str\tts\tx\tstr2\ty\n" +
                             "aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull\n" +
-                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n"
+                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n", timestampTypeName)
             );
 
             if (iteration % 2 == 0) {
@@ -1427,9 +1450,9 @@ public class O3MaxLagTest extends AbstractO3Test {
         }
 
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
-                "str\tts\tx\tstr2\ty\n" +
+                replaceTimestampSuffix("str\tts\tx\tstr2\ty\n" +
                         "aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull\n" +
-                        "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n"
+                        "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n", timestampTypeName)
         );
     }
 }

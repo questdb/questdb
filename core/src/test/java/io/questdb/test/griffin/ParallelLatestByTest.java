@@ -52,7 +52,7 @@ import org.junit.runners.Parameterized;
 import java.util.Arrays;
 import java.util.Collection;
 
-import static io.questdb.test.griffin.AsOfJoinTest.replaceTimestampSuffix;
+import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix;
 
 @RunWith(Parameterized.class)
 public class ParallelLatestByTest extends AbstractTest {

@@ -2729,7 +2729,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     if (index == writerTimestampIndex) {
                         timestampIndexFound = i;
-                        if (fromType != ColumnType.TIMESTAMP && fromType != ColumnType.STRING) {
+                        if (!ColumnType.isTimestamp(fromType) && fromType != ColumnType.STRING) {
                             throw SqlException.$(tableNameExpr.position, "expected timestamp column but type is ").put(ColumnType.nameOf(fromType));
                         }
                     }

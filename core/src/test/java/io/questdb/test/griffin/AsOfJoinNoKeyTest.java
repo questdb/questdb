@@ -37,8 +37,6 @@ import org.junit.runners.Parameterized;
 import java.util.Arrays;
 import java.util.Collection;
 
-import static io.questdb.test.griffin.AsOfJoinTest.executeWithRewriteTimestamp;
-
 /**
  * Verifies correctness of both slow and fast non-keyed ASOF/LT join factories.
  * Fast factories skip full scan of right hand table by lazy time frame navigation.

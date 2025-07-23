@@ -46,8 +46,6 @@ import org.junit.runners.Parameterized;
 import java.util.Arrays;
 import java.util.Collection;
 
-import static io.questdb.test.griffin.AsOfJoinTest.executeWithRewriteTimestamp;
-
 @RunWith(Parameterized.class)
 public class AsOfJoinFuzzTest extends AbstractCairoTest {
     private static final boolean RUN_ALL_PERMUTATIONS = false;

@@ -64,7 +64,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
     private static final Comparator<String> CHAR_COMPARATOR = Chars::compare;
     private static final Log LOG = LogFactory.getLog(ShowPartitionsRecordCursor.class);
-    private static final RecordMetadata METADATA;
+    private static final RecordMetadata METADATA_TIMESTAMP;
+    private static final RecordMetadata METADATA_TIMESTAMP_NS;
     private final ShowPartitionsRecordCursor cursor = new ShowPartitionsRecordCursor();
     private final Path path = new Path();
     private final TableToken tableToken;
@@ -72,8 +73,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
     private SqlExecutionContext executionContext;
     private FilesFacade ff;
 
-    public ShowPartitionsRecordCursorFactory(TableToken tableToken) {
-        super(METADATA);
+    public ShowPartitionsRecordCursorFactory(TableToken tableToken, int timestampType) {
+        super(timestampType == ColumnType.TIMESTAMP_MICRO ? METADATA_TIMESTAMP : METADATA_TIMESTAMP_NS);
         this.tableToken = tableToken;
     }
 
@@ -108,8 +109,10 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         PARTITION_INDEX(0, "index", ColumnType.INT),
         PARTITION_BY(1, "partitionBy", ColumnType.STRING),
         PARTITION_NAME(2, "name", ColumnType.STRING),
-        MIN_TIMESTAMP(3, "minTimestamp", ColumnType.TIMESTAMP),
-        MAX_TIMESTAMP(4, "maxTimestamp", ColumnType.TIMESTAMP),
+        MIN_TIMESTAMP(3, "minTimestamp", ColumnType.TIMESTAMP_MICRO),
+        MAX_TIMESTAMP(4, "maxTimestamp", ColumnType.TIMESTAMP_MICRO),
+        MIN_TIMESTAMP_NS(3, "minTimestamp", ColumnType.TIMESTAMP_NANO),
+        MAX_TIMESTAMP_NS(4, "maxTimestamp", ColumnType.TIMESTAMP_NANO),
         NUM_ROWS(5, "numRows", ColumnType.LONG),
         DISK_SIZE(6, "diskSize", ColumnType.LONG),
         DISK_SIZE_HUMAN(7, "diskSizeHuman", ColumnType.STRING),
@@ -157,12 +160,12 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private long minTimestamp = Numbers.LONG_NULL; // so that in absence of metadata is NaN
         private long numRows = -1L;
         private long parquetFileSize;
-        private int timestampType;
         private int partitionBy = -1;
         private int partitionIndex = -1;
         private long partitionSize = -1L;
         private int rootLen;
         private TableReader tableReader;
+        private int timestampType;
         private CharSequence tsColName;
 
         @Override
@@ -487,6 +490,23 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         metadata.add(Column.IS_ATTACHABLE.metadata());
         metadata.add(Column.IS_PARQUET.metadata());
         metadata.add(Column.PARQUET_FILE_SIZE.metadata());
-        METADATA = metadata;
+        METADATA_TIMESTAMP = metadata;
+        final GenericRecordMetadata metadataNs = new GenericRecordMetadata();
+        metadataNs.add(Column.PARTITION_INDEX.metadata());
+        metadataNs.add(Column.PARTITION_BY.metadata());
+        metadataNs.add(Column.PARTITION_NAME.metadata());
+        metadataNs.add(Column.MIN_TIMESTAMP_NS.metadata());
+        metadataNs.add(Column.MAX_TIMESTAMP_NS.metadata());
+        metadataNs.add(Column.NUM_ROWS.metadata());
+        metadataNs.add(Column.DISK_SIZE.metadata());
+        metadataNs.add(Column.DISK_SIZE_HUMAN.metadata());
+        metadataNs.add(Column.IS_READ_ONLY.metadata());
+        metadataNs.add(Column.IS_ACTIVE.metadata());
+        metadataNs.add(Column.IS_ATTACHED.metadata());
+        metadataNs.add(Column.IS_DETACHED.metadata());
+        metadataNs.add(Column.IS_ATTACHABLE.metadata());
+        metadataNs.add(Column.IS_PARQUET.metadata());
+        metadataNs.add(Column.PARQUET_FILE_SIZE.metadata());
+        METADATA_TIMESTAMP_NS = metadataNs;
     }
 }
