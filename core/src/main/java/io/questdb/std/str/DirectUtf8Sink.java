@@ -25,6 +25,7 @@
 package io.questdb.std.str;
 
 import io.questdb.std.MemoryTag;
+import io.questdb.std.SwarUtils;
 import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.bytes.NativeByteSink;
@@ -37,6 +38,7 @@ import java.io.Closeable;
  * UTF-8 sink backed by native memory.
  */
 public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, DirectUtf8Sequence, Closeable {
+    private static final long NON_ASCII_MASK_FULL = SwarUtils.broadcast((byte) 0x80);
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final DirectByteSink sink;
 
@@ -115,6 +117,12 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
         setAscii(isAscii() & b >= 0);
         sink.put(b);
         return this;
+    }
+
+    // writes 8 consequent bytes (long), use with care
+    public void putAnyLong(long w) {
+        setAscii(isAscii() & (w & NON_ASCII_MASK_FULL) == 0);
+        sink.putLong(w);
     }
 
     @Override
