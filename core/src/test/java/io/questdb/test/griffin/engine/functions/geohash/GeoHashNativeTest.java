@@ -97,7 +97,7 @@ public class GeoHashNativeTest extends AbstractCairoTest {
                         indexReader.getValueBaseAddress(),
                         indexReader.getValueMemorySize(),
                         argsAddress,
-                        indexReader.getUnIndexedNullCount(),
+                        indexReader.getColumnTop(),
                         255,
                         0,
                         0,
