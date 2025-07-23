@@ -297,24 +297,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 LOG.error().$("could not truncate partition file [path=").$(path).I$();
             }
             ff.close(fd);
-            // delete all index files unconditionally
-            path.of(pathToTable);
-            setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
-            final int pLen = path.size();
-            for (int i = 0, n = tableWriterMetadata.getColumnCount(); i < n; i++) {
-                if (tableWriterMetadata.getColumnType(i) == ColumnType.SYMBOL && tableWriterMetadata.isColumnIndexed(i)) {
-                    final CharSequence columnName = tableWriterMetadata.getColumnName(i);
-                    final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, i);
-                    final int indexBlockCapacity = tableWriterMetadata.getIndexValueBlockCapacity(i);
-                    if (indexBlockCapacity < 0) {
-                        continue;
-                    }
-
-                    BitmapIndexUtils.keyFileName(path.trimTo(pLen), columnName, columnNameTxn);
-                    BitmapIndexUtils.valueFileName(path.trimTo(pLen), columnName, columnNameTxn);
-                }
-            }
-
             tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
         } finally {
             path.of(pathToTable);
