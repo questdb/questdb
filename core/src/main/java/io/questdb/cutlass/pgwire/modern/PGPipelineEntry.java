@@ -1823,14 +1823,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.putNetworkShort(value);
     }
 
-    private void outColBinTimestamp(PGResponseSink utf8Sink, Record record, int columnIndex) {
+    private void outColBinTimestamp(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType) {
         final long longValue = record.getTimestamp(columnIndex);
         if (longValue == Numbers.LONG_NULL) {
             utf8Sink.setNullValue();
         } else {
             utf8Sink.putNetworkInt(Long.BYTES);
             // PG epoch starts at 2000 rather than 1970
-            utf8Sink.putNetworkLong(longValue - Numbers.JULIAN_EPOCH_OFFSET_USEC);
+            utf8Sink.putNetworkLong(ColumnType.getTimestampDriver(columnType).toMicros(longValue) - Numbers.JULIAN_EPOCH_OFFSET_USEC);
         }
     }
 
@@ -2320,7 +2320,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         outColBinDate(utf8Sink, record, colIndex);
                         break;
                     case BINARY_TYPE_TIMESTAMP:
-                        outColBinTimestamp(utf8Sink, record, colIndex);
+                        outColBinTimestamp(utf8Sink, record, colIndex, columnType);
                         break;
                     case BINARY_TYPE_BYTE:
                         outColBinByte(utf8Sink, record, colIndex);

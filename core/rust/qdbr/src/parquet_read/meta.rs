@@ -8,10 +8,8 @@ use parquet2::schema::types::PrimitiveLogicalType::{Timestamp, Uuid};
 use parquet2::schema::types::{
     IntegerType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
-use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+use qdb_core::col_type::{ColumnType, ColumnTypeTag, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG};
 use std::io::{Read, Seek};
-
-const QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG: i32 = 1 << 10;
 
 /// Extract the questdb-specific metadata from the parquet file metadata.
 /// Error if the JSON is not valid or the version is not supported.

@@ -988,7 +988,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     appendDateColumnBin(record, i);
                     break;
                 case BINARY_TYPE_TIMESTAMP:
-                    appendTimestampColumnBin(record, i);
+                    appendTimestampColumnBin(record, i, columnType);
                     break;
                 case BINARY_TYPE_BYTE:
                     appendByteColumnBin(record, i);
@@ -1116,14 +1116,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void appendTimestampColumnBin(Record record, int columnIndex) {
+    private void appendTimestampColumnBin(Record record, int columnIndex, int timestampType) {
         final long longValue = record.getTimestamp(columnIndex);
         if (longValue == Numbers.LONG_NULL) {
             responseUtf8Sink.setNullValue();
         } else {
             responseUtf8Sink.putNetworkInt(Long.BYTES);
             // PG epoch starts at 2000 rather than 1970
-            responseUtf8Sink.putNetworkLong(longValue - Numbers.JULIAN_EPOCH_OFFSET_USEC);
+            responseUtf8Sink.putNetworkLong(ColumnType.getTimestampDriver(timestampType).toMicros(longValue) - Numbers.JULIAN_EPOCH_OFFSET_USEC);
         }
     }
 
