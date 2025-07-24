@@ -11,6 +11,8 @@ use parquet2::schema::types::{
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use std::io::{Read, Seek};
 
+const QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG: i32 = 1 << 10;
+
 /// Extract the questdb-specific metadata from the parquet file metadata.
 /// Error if the JSON is not valid or the version is not supported.
 /// Returns `None` if the metadata is not present.
@@ -102,7 +104,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         if let Some(col_type) = Self::extract_column_type_from_qdb_meta(qdb_meta, column_id) {
             return Some(col_type);
         }
-
+        let mut extra_type_info = 0;
         let column_type_tag = match (
             des.primitive_type.physical_type,
             des.primitive_type.logical_type,
@@ -113,10 +115,17 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 Some(Timestamp {
                     unit: TimeUnit::Microseconds,
                     is_adjusted_to_utc: _,
-                })
-                | Some(Timestamp { unit: TimeUnit::Nanoseconds, is_adjusted_to_utc: _ }),
+                }),
                 _,
             ) => Some(ColumnTypeTag::Timestamp),
+            (
+                PhysicalType::Int64,
+                Some(Timestamp { unit: TimeUnit::Nanoseconds, is_adjusted_to_utc: _ }),
+                _,
+            ) => {
+                extra_type_info = QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG; // TIMESTAMP_NS flag
+                Some(ColumnTypeTag::Timestamp)
+            }
             (
                 PhysicalType::Int64,
                 Some(Timestamp {
@@ -173,7 +182,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             (PhysicalType::Int96, None, None) => Some(ColumnTypeTag::Timestamp),
             (_, _, _) => None,
         };
-        column_type_tag.map(|tag| ColumnType::new(tag, 0))
+        column_type_tag.map(|tag| ColumnType::new(tag, extra_type_info))
     }
 }
 
