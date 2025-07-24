@@ -117,9 +117,9 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.std.str.AbstractCharSequence;
@@ -8274,16 +8274,21 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     int receiveCount = 0;
+                    int failureRetryCount = 0;
                     while (receiveCount < N * senderCount) {
                         long cursor = subSeq.next();
                         if (cursor < 0) {
                             if (cursor == -1 && completedCount.get() == senderCount) {
-                                Assert.fail("Not all requests successful, test failed, see previous failures");
-                                break;
+                                failureRetryCount++;
+                                if (failureRetryCount >= 3) {
+                                    Assert.fail("Not all requests successful, test failed, see previous failures");
+                                    break;
+                                }
                             }
                             Os.pause();
                             continue;
                         }
+                        failureRetryCount = 0;
                         boolean valid = queue.get(cursor).valid;
                         subSeq.done(cursor);
                         assertTrue(valid);
