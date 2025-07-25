@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -44,13 +45,14 @@ public class SystimestampFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(sqlExecutionContext);
+        return new Func(sqlExecutionContext, ColumnType.TIMESTAMP_MICRO);
     }
 
-    private static class Func extends TimestampFunction implements Function {
-        private final SqlExecutionContext context;
+    static class Func extends TimestampFunction implements Function {
+        protected final SqlExecutionContext context;
 
-        public Func(SqlExecutionContext context) {
+        public Func(SqlExecutionContext context, int columnType) {
+            super(columnType);
             this.context = context;
         }
 

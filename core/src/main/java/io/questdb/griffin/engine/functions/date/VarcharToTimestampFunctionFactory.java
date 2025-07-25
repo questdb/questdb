@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -38,6 +39,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 
 public final class VarcharToTimestampFunctionFactory implements FunctionFactory {
+    private final static String NAME = "to_timestamp";
 
     @Override
     public String getSignature() {
@@ -47,14 +49,17 @@ public final class VarcharToTimestampFunctionFactory implements FunctionFactory 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
-        return new ToTimestampFunction(arg);
+        return new ToTimestampFunction(arg, ColumnType.TIMESTAMP_MICRO, NAME);
     }
 
     public static final class ToTimestampFunction extends TimestampFunction implements UnaryFunction {
         private final Function arg;
+        private final String name;
 
-        public ToTimestampFunction(Function arg) {
+        public ToTimestampFunction(Function arg, int timestampType, String name) {
+            super(timestampType);
             this.arg = arg;
+            this.name = name;
         }
 
         @Override
@@ -64,7 +69,7 @@ public final class VarcharToTimestampFunctionFactory implements FunctionFactory 
 
         @Override
         public String getName() {
-            return "to_timestamp";
+            return name;
         }
 
         @Override

@@ -664,13 +664,13 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
         bindVariableService.setStr("t3", "5d");
 
         assertQuery("generate_series\n" +
-                        "2025-01-01T00:00:00.000000Z\n" +
-                        "2025-01-06T00:00:00.000000Z\n" +
-                        "2025-01-11T00:00:00.000000Z\n" +
-                        "2025-01-16T00:00:00.000000Z\n" +
-                        "2025-01-21T00:00:00.000000Z\n" +
-                        "2025-01-26T00:00:00.000000Z\n" +
-                        "2025-01-31T00:00:00.000000Z\n",
+                        "2025-01-01T00:00:00.000000000Z\n" +
+                        "2025-01-06T00:00:00.000000000Z\n" +
+                        "2025-01-11T00:00:00.000000000Z\n" +
+                        "2025-01-16T00:00:00.000000000Z\n" +
+                        "2025-01-21T00:00:00.000000000Z\n" +
+                        "2025-01-26T00:00:00.000000000Z\n" +
+                        "2025-01-31T00:00:00.000000000Z\n",
                 "generate_series(:t1, :t2, :t3);",
                 "generate_series",
                 true,
@@ -679,11 +679,11 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
         bindVariableService.setStr("t3", "1w");
 
         assertQuery("generate_series\n" +
-                        "2025-01-01T00:00:00.000000Z\n" +
-                        "2025-01-08T00:00:00.000000Z\n" +
-                        "2025-01-15T00:00:00.000000Z\n" +
-                        "2025-01-22T00:00:00.000000Z\n" +
-                        "2025-01-29T00:00:00.000000Z\n",
+                        "2025-01-01T00:00:00.000000000Z\n" +
+                        "2025-01-08T00:00:00.000000000Z\n" +
+                        "2025-01-15T00:00:00.000000000Z\n" +
+                        "2025-01-22T00:00:00.000000000Z\n" +
+                        "2025-01-29T00:00:00.000000000Z\n",
                 "generate_series(:t1, :t2, :t3);",
                 "generate_series",
                 true,
@@ -752,31 +752,6 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                 "generate_series",
                 true,
                 true);
-    }
-
-    @Test
-    public void testTimestampStringNoSizeExpected() throws Exception {
-        assertQuery("generate_series\n" +
-                        "2020-01-01T00:00:00.000000Z\n" +
-                        "2022-01-01T00:00:00.000000Z\n" +
-                        "2024-01-01T00:00:00.000000Z\n",
-                "generate_series('2020-01-01', '2025-02-01', '2y');",
-                "generate_series",
-                false,
-                false);
-        assertQuery("generate_series\n" +
-                        "2020-01-01T00:00:00.000000Z\n" +
-                        "2020-09-01T00:00:00.000000Z\n" +
-                        "2021-05-01T00:00:00.000000Z\n" +
-                        "2022-01-01T00:00:00.000000Z\n" +
-                        "2022-09-01T00:00:00.000000Z\n" +
-                        "2023-05-01T00:00:00.000000Z\n" +
-                        "2024-01-01T00:00:00.000000Z\n" +
-                        "2024-09-01T00:00:00.000000Z\n",
-                "generate_series('2020-01-01', '2025-02-01', '8M');",
-                "generate_series",
-                false,
-                false);
     }
 
     @Test
@@ -849,6 +824,31 @@ public class GenerateSeriesFunctionFactoryTest extends BaseFunctionFactoryTest {
                 "generate_series('2025-01-01', '2025-02-01', '5d');",
                 "generate_series",
                 true,
+                true);
+    }
+
+    @Test
+    public void testTimestampStringSizeExpected() throws Exception {
+        assertQuery("generate_series\n" +
+                        "2020-01-01T00:00:00.000000Z\n" +
+                        "2022-01-01T00:00:00.000000Z\n" +
+                        "2024-01-01T00:00:00.000000Z\n",
+                "generate_series('2020-01-01', '2025-02-01', '2y');",
+                "generate_series",
+                false,
+                true);
+        assertQuery("generate_series\n" +
+                        "2020-01-01T00:00:00.000000Z\n" +
+                        "2020-09-01T00:00:00.000000Z\n" +
+                        "2021-05-01T00:00:00.000000Z\n" +
+                        "2022-01-01T00:00:00.000000Z\n" +
+                        "2022-09-01T00:00:00.000000Z\n" +
+                        "2023-05-01T00:00:00.000000Z\n" +
+                        "2024-01-01T00:00:00.000000Z\n" +
+                        "2024-09-01T00:00:00.000000Z\n",
+                "generate_series('2020-01-01', '2025-02-01', '8M');",
+                "generate_series",
+                false,
                 true);
     }
 

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -45,7 +46,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
     private static final IntMethod GET_INT = SwitchFunctionFactory::getInt;
     private static final LongMethod GET_LONG = SwitchFunctionFactory::getLong;
     private static final IntMethod GET_SHORT = SwitchFunctionFactory::getShort;
-    private static final LongMethod GET_TIMESTAMP = SwitchFunctionFactory::getTimestamp;
 
     @Override
     public String getSignature() {
@@ -131,30 +131,30 @@ public class SwitchFunctionFactory implements FunctionFactory {
 
         switch (ColumnType.tagOf(keyType)) {
             case ColumnType.CHAR:
-                return getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_CHAR);
+                return getIntKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_CHAR);
             case ColumnType.INT:
             case ColumnType.IPv4:
-                return getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_INT);
+                return getIntKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_INT);
             case ColumnType.BYTE:
-                return getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_BYTE);
+                return getIntKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_BYTE);
             case ColumnType.SHORT:
-                return getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_SHORT);
+                return getIntKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_SHORT);
             case ColumnType.LONG:
-                return getLongKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_LONG);
+                return getLongKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_LONG);
             case ColumnType.FLOAT:
-                return getFloatKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
+                return getFloatKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch);
             case ColumnType.DOUBLE:
-                return getDoubleKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
+                return getDoubleKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch);
             case ColumnType.DATE:
-                return getLongKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_DATE);
+                return getLongKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_DATE);
             case ColumnType.TIMESTAMP:
-                return getLongKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_TIMESTAMP);
+                return getTimestampKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch, keyType);
             case ColumnType.BOOLEAN:
-                return getIfElseFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
+                return getIfElseFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch);
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
             case ColumnType.VARCHAR: // varchar is treated as char sequence, this works, but it's suboptimal
-                return getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
+                return getCharSequenceKeyedFunction(configuration, args, argPositions, position, n, keyFunction, returnType, elseBranch);
             default:
                 throw SqlException.
                         $(argPositions.getQuick(0), "type ")
@@ -213,6 +213,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
     }
 
     private Function getCharSequenceKeyedFunction(
+            CairoConfiguration configuration,
             ObjList<Function> args,
             IntList argPositions,
             int position,
@@ -269,10 +270,11 @@ public class SwitchFunctionFactory implements FunctionFactory {
         }
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
-        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(configuration, position, valueType, picker, argsToPoke);
     }
 
     private Function getDoubleKeyedFunction(
+            CairoConfiguration configuration,
             ObjList<Function> args,
             IntList argPositions,
             int position,
@@ -305,7 +307,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
 
-        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(configuration, position, valueType, picker, argsToPoke);
     }
 
     private Function getElseFunction(int valueType, Function elseBranch) {
@@ -313,6 +315,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
     }
 
     private Function getFloatKeyedFunction(
+            CairoConfiguration configuration,
             ObjList<Function> args,
             IntList argPositions,
             int position,
@@ -346,10 +349,11 @@ public class SwitchFunctionFactory implements FunctionFactory {
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
 
-        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(configuration, position, valueType, picker, argsToPoke);
     }
 
     private Function getIfElseFunction(
+            CairoConfiguration configuration,
             ObjList<Function> args,
             IntList argPositions,
             int position,
@@ -402,10 +406,11 @@ public class SwitchFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(5), "too many branches");
         }
 
-        return CaseCommon.getCaseFunction(position, returnType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(configuration, position, returnType, picker, argsToPoke);
     }
 
     private Function getIntKeyedFunction(
+            CairoConfiguration configuration,
             ObjList<Function> args,
             IntList argPositions,
             int position,
@@ -440,10 +445,11 @@ public class SwitchFunctionFactory implements FunctionFactory {
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
 
-        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(configuration, position, valueType, picker, argsToPoke);
     }
 
     private Function getLongKeyedFunction(
+            CairoConfiguration configuration,
             ObjList<Function> args,
             IntList argPositions,
             int position,
@@ -477,7 +483,58 @@ public class SwitchFunctionFactory implements FunctionFactory {
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
 
-        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(configuration, position, valueType, picker, argsToPoke);
+    }
+
+    private Function getTimestampKeyedFunction(
+            CairoConfiguration configuration,
+            ObjList<Function> args,
+            IntList argPositions,
+            int position,
+            int n,
+            Function keyFunction,
+            int valueType,
+            Function elseBranch,
+            int timestampType
+    ) throws SqlException {
+        final LongObjHashMap<Function> map = new LongObjHashMap<>();
+        final ObjList<Function> argsToPoke = new ObjList<>();
+        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        long key;
+        for (int i = 1; i < n; i += 2) {
+            final Function fun = args.getQuick(i);
+            int funType = fun.getType();
+            switch (ColumnType.tagOf(funType)) {
+                case ColumnType.TIMESTAMP:
+                    key = driver.from(fun.getTimestamp(null), funType);
+                    break;
+                case ColumnType.DATE:
+                    key = driver.fromDate(fun.getDate(null));
+                    break;
+                default:
+                    key = driver.from(fun.getTimestamp(null), ColumnType.getTimestampType(funType, configuration));
+            }
+
+            final int index = map.keyIndex(key);
+            if (index < 0) {
+                throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
+            }
+            map.putAt(index, key, args.getQuick(i + 1));
+            argsToPoke.add(args.getQuick(i + 1));
+        }
+
+        final Function elseB = getElseFunction(valueType, elseBranch);
+        final CaseFunctionPicker picker = record -> {
+            final int index = map.keyIndex(keyFunction.getTimestamp(record));
+            if (index < 0) {
+                return map.valueAtQuick(index);
+            }
+            return elseB;
+        };
+        argsToPoke.add(elseB);
+        argsToPoke.add(keyFunction);
+
+        return CaseCommon.getCaseFunction(configuration, position, valueType, picker, argsToPoke);
     }
 
     @FunctionalInterface

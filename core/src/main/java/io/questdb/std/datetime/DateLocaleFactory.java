@@ -34,6 +34,7 @@ import java.util.function.BiFunction;
 public class DateLocaleFactory {
 
     public static final DateLocaleFactory INSTANCE = new DateLocaleFactory(TimeZoneRuleFactory.INSTANCE);
+    public static final DateLocale EN_LOCALE = INSTANCE.getLocale("en");
     private final ConcurrentHashMap<DateLocale> dateLocales = new ConcurrentHashMap<>();
     private final DateLocale dummyLocale = new DateLocale("en-quest", new DateFormatSymbols(), TimeZoneRuleFactory.INSTANCE);
     private final TimeZoneRuleFactory timeZoneRuleFactory;
@@ -70,7 +71,8 @@ public class DateLocaleFactory {
             // Someone was faster than us.
             return val;
         }
-        Locale locale = Locale.forLanguageTag(key.toString());
-        return new DateLocale(key.toString(), new DateFormatSymbols(locale), timeZoneRuleFactory);
+        String keyStr = key.toString();
+        Locale locale = Locale.forLanguageTag(keyStr);
+        return new DateLocale(keyStr, new DateFormatSymbols(locale), timeZoneRuleFactory);
     }
 }

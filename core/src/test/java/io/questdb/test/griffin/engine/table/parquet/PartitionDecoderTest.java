@@ -78,6 +78,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                     " to_long128(rnd_long(), rnd_long()) a_long128," +
                     " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
                     " timestamp_sequence(500000000000, 600) a_ts," +
+                    " timestamp_sequence(500000000000::timestamp_ns, 600000) a_ns," +
                     " timestamp_sequence(400000000000, 500) designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
 

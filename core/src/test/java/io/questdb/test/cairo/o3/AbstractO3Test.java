@@ -30,8 +30,10 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -47,7 +49,6 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractTest;
@@ -67,6 +68,7 @@ import org.junit.rules.Timeout;
 import java.util.concurrent.TimeUnit;
 
 public class AbstractO3Test extends AbstractTest {
+    protected static final TimestampDriver MICRO_DRIVER = MicrosTimestampDriver.INSTANCE;
     protected static final StringSink sink = new StringSink();
     protected static final StringSink sink2 = new StringSink();
     protected static long cairoCommitLatency = 30_000_000;
@@ -77,12 +79,21 @@ public class AbstractO3Test extends AbstractTest {
     protected static int o3ColumnMemorySize = -1;
     protected static int o3MemMaxPages = -1;
     protected static long partitionO3SplitThreshold = -1;
+    protected final TimestampDriver driver;
+    protected final int timestampType;
+    protected final String timestampTypeName;
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
     private RecordToRowCopier copier;
+
+    public AbstractO3Test(int timestampType) {
+        this.timestampType = timestampType;
+        this.timestampTypeName = ColumnType.nameOf(timestampType);
+        this.driver = ColumnType.getTimestampDriver(timestampType);
+    }
 
     @BeforeClass
     public static void setUpClass() {
@@ -164,9 +175,10 @@ public class AbstractO3Test extends AbstractTest {
         try (
                 final TableWriter w = TestUtils.getWriter(engine, "x")
         ) {
+            TimestampDriver driver = ColumnType.getTimestampDriver(w.getTimestampType());
             sink.clear();
             sink.put("max\n");
-            TimestampFormatUtils.appendDateTimeUSec(sink, w.getMaxTimestamp());
+            driver.append(sink, w.getMaxTimestamp());
             sink.put('\n');
             TestUtils.assertEquals(expected, sink);
             Assert.assertEquals(0, w.getO3RowCount());
@@ -287,9 +299,21 @@ public class AbstractO3Test extends AbstractTest {
         executeVanilla(() -> TestUtils.execute(null, code, new DefaultTestCairoConfiguration(root), LOG));
     }
 
-    protected static void executeWithPool(
+    protected static void printSqlResult(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String sql
+    ) throws SqlException {
+        TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
+    }
+
+    protected void executeVanilla(CustomisableRunnableWithTimestampType code) throws Exception {
+        executeVanilla(() -> TestUtils.execute(null, (engine, compiler, context) -> code.run(engine, compiler, context, timestampTypeName), new DefaultTestCairoConfiguration(root), LOG));
+    }
+
+    protected void executeWithPool(
             int workerCount,
-            CustomisableRunnable runnable
+            CustomisableRunnableWithTimestampType runnable
     ) throws Exception {
         executeWithPool(
                 workerCount,
@@ -298,9 +322,9 @@ public class AbstractO3Test extends AbstractTest {
         );
     }
 
-    protected static void executeWithPool(
+    protected void executeWithPool(
             int workerCount,
-            CustomisableRunnable runnable,
+            CustomisableRunnableWithTimestampType runnable,
             FilesFacade ff
     ) throws Exception {
         executeVanilla(() -> {
@@ -362,7 +386,7 @@ public class AbstractO3Test extends AbstractTest {
                     }
                 };
                 WorkerPool pool = new WorkerPool(() -> workerCount);
-                TestUtils.execute(pool, runnable, configuration, LOG);
+                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> runnable.run(engine, compiler, sqlExecutionContext, timestampTypeName), configuration, LOG);
             } else {
                 // we need to create entire engine
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
@@ -445,17 +469,9 @@ public class AbstractO3Test extends AbstractTest {
                         return mixedIOEnabledFFDefault && mixedIOEnabled;
                     }
                 };
-                TestUtils.execute(null, runnable, configuration, LOG);
+                TestUtils.execute(null, (engine, compiler, sqlExecutionContext) -> runnable.run(engine, compiler, sqlExecutionContext, timestampTypeName), configuration, LOG);
             }
         });
-    }
-
-    protected static void printSqlResult(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String sql
-    ) throws SqlException {
-        TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
     }
 
     protected void insertUncommitted(
@@ -491,5 +507,10 @@ public class AbstractO3Test extends AbstractTest {
 
     public enum ParallelMode {
         CONTENDED, PARALLEL
+    }
+
+    @FunctionalInterface
+    public interface CustomisableRunnableWithTimestampType {
+        void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampType) throws Exception;
     }
 }

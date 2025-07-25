@@ -24,13 +24,14 @@
 
 package org.questdb;
 
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.FixedOffsetIntervalIterator;
 import io.questdb.cairo.mv.TimeZoneIntervalIterator;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
-import io.questdb.std.datetime.microtime.TimeZoneRulesMicros;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.TimeZoneRules;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Mode;
@@ -42,7 +43,6 @@ import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
-import java.time.ZoneId;
 import java.util.concurrent.TimeUnit;
 
 @State(Scope.Thread)
@@ -50,27 +50,29 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 public class SampleByIntervalIteratorBenchmark {
     private final FixedOffsetIntervalIterator fixedOffsetIterator = new FixedOffsetIntervalIterator();
+    private final TimestampDriver timestampDriver = MicrosTimestampDriver.INSTANCE;
     private final TimeZoneIntervalIterator tzIterator = new TimeZoneIntervalIterator();
     @Param({"1", "15", "30", "60"})
     private int step;
 
     public SampleByIntervalIteratorBenchmark() {
         try {
-            final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'm', 0);
-            final TimeZoneRulesMicros rules = new TimeZoneRulesMicros(ZoneId.of("Europe/Berlin").getRules());
+            final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'm', 0);
+            final TimeZoneRules rules = timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin");
 
-            final long minTs = TimestampFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
-            final long maxTs = TimestampFormatUtils.parseTimestamp("2030-01-01T00:00:00.000000Z");
+            final long minTs = timestampDriver.parseFloorLiteral("2020-01-01T00:00:00.000000Z");
+            final long maxTs = timestampDriver.parseFloorLiteral("2030-01-01T00:00:00.000000Z");
 
             fixedOffsetIterator.of(
                     sampler,
-                    2 * Timestamps.HOUR_MICROS,
+                    timestampDriver.fromHours(2),
                     null,
                     minTs,
                     maxTs,
                     step
             );
             tzIterator.of(
+                    timestampDriver,
                     sampler,
                     rules,
                     0,

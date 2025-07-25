@@ -203,15 +203,17 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
             private void getTableStats(@NotNull TableToken token) {
                 walEnabled = token.isWal();
                 tableName = token.getTableName();
+                int timestampType;
                 try (TableMetadata tm = engine.getTableMetadata(token)) {
                     partitionBy = tm.getPartitionBy();
+                    timestampType = tm.getTimestampType();
                 }
 
                 final Path path = Path.getThreadLocal(configuration.getDbRoot()).concat(token.getDirName());
                 diskSize = Files.getDirSize(path);
 
                 // TxReader
-                TableUtils.setTxReaderPath(txReader, path, partitionBy); // modifies path
+                TableUtils.setTxReaderPath(txReader, path, timestampType, partitionBy); // modifies path
                 rowCount = txReader.unsafeLoadRowCount();
                 partitionCount = txReader.getPartitionCount();
             }

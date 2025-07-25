@@ -24,25 +24,25 @@
 
 package io.questdb.test.std.datetime.microtime;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.time.temporal.ChronoUnit;
-
 import static io.questdb.cairo.PartitionBy.getPartitionDirFormatMethod;
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 import static io.questdb.std.datetime.microtime.TimestampFormatUtils.parseHTTP;
 
@@ -402,14 +402,14 @@ public class TimestampsTest {
 
     @Test
     public void testGetIsoYearDayOffset() {
-        Assert.assertEquals(-3, Timestamps.getIsoYearDayOffset(2015));
-        Assert.assertEquals(3, Timestamps.getIsoYearDayOffset(2016));
-        Assert.assertEquals(1, Timestamps.getIsoYearDayOffset(2017));
-        Assert.assertEquals(0, Timestamps.getIsoYearDayOffset(2018));
-        Assert.assertEquals(-1, Timestamps.getIsoYearDayOffset(2019));
-        Assert.assertEquals(-2, Timestamps.getIsoYearDayOffset(2020));
-        Assert.assertEquals(3, Timestamps.getIsoYearDayOffset(2021));
-        Assert.assertEquals(2, Timestamps.getIsoYearDayOffset(2022));
+        Assert.assertEquals(-3, CommonUtils.getIsoYearDayOffset(2015));
+        Assert.assertEquals(3, CommonUtils.getIsoYearDayOffset(2016));
+        Assert.assertEquals(1, CommonUtils.getIsoYearDayOffset(2017));
+        Assert.assertEquals(0, CommonUtils.getIsoYearDayOffset(2018));
+        Assert.assertEquals(-1, CommonUtils.getIsoYearDayOffset(2019));
+        Assert.assertEquals(-2, CommonUtils.getIsoYearDayOffset(2020));
+        Assert.assertEquals(3, CommonUtils.getIsoYearDayOffset(2021));
+        Assert.assertEquals(2, CommonUtils.getIsoYearDayOffset(2022));
     }
 
     @Test
@@ -434,9 +434,9 @@ public class TimestampsTest {
 
     @Test
     public void testGetWeeks() {
-        Assert.assertEquals(52, Timestamps.getWeeks(2017));
-        Assert.assertEquals(52, Timestamps.getWeeks(2021));
-        Assert.assertEquals(53, Timestamps.getWeeks(2020));
+        Assert.assertEquals(52, CommonUtils.getWeeks(2017));
+        Assert.assertEquals(52, CommonUtils.getWeeks(2021));
+        Assert.assertEquals(53, CommonUtils.getWeeks(2020));
     }
 
     @Test
@@ -498,8 +498,8 @@ public class TimestampsTest {
     @Test
     public void testNextDSTFixed() throws NumericException {
         String tz = "GMT";
-        TimeZoneRules rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
+        TimeZoneRules rules = EN_LOCALE.getZoneRules(
+                Numbers.decodeLowInt(EN_LOCALE.matchZone(tz, 0, tz.length())),
                 RESOLUTION_MICROS
         );
 
@@ -510,8 +510,8 @@ public class TimestampsTest {
     @Test
     public void testNextDSTHistory() throws NumericException {
         String tz = "Europe/Berlin";
-        TimeZoneRules rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
+        TimeZoneRules rules = EN_LOCALE.getZoneRules(
+                Numbers.decodeLowInt(EN_LOCALE.matchZone(tz, 0, tz.length())),
                 RESOLUTION_MICROS
         );
 
@@ -522,8 +522,8 @@ public class TimestampsTest {
     @Test
     public void testNextDSTHistoryLast() throws NumericException {
         String tz = "Europe/Berlin";
-        TimeZoneRules rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
+        TimeZoneRules rules = EN_LOCALE.getZoneRules(
+                Numbers.decodeLowInt(EN_LOCALE.matchZone(tz, 0, tz.length())),
                 RESOLUTION_MICROS
         );
 
@@ -534,8 +534,8 @@ public class TimestampsTest {
     @Test
     public void testNextDSTRulesAfterFirst() throws NumericException {
         String tz = "Europe/Berlin";
-        TimeZoneRules rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
+        TimeZoneRules rules = EN_LOCALE.getZoneRules(
+                Numbers.decodeLowInt(EN_LOCALE.matchZone(tz, 0, tz.length())),
                 RESOLUTION_MICROS
         );
 
@@ -546,8 +546,8 @@ public class TimestampsTest {
     @Test
     public void testNextDSTRulesAfterLast() throws NumericException {
         String tz = "Europe/Berlin";
-        TimeZoneRules rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
+        TimeZoneRules rules = EN_LOCALE.getZoneRules(
+                Numbers.decodeLowInt(EN_LOCALE.matchZone(tz, 0, tz.length())),
                 RESOLUTION_MICROS
         );
 
@@ -558,8 +558,8 @@ public class TimestampsTest {
     @Test
     public void testNextDSTRulesBeforeFirst() throws NumericException {
         String tz = "Europe/Berlin";
-        TimeZoneRules rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
+        TimeZoneRules rules = EN_LOCALE.getZoneRules(
+                Numbers.decodeLowInt(EN_LOCALE.matchZone(tz, 0, tz.length())),
                 RESOLUTION_MICROS
         );
 
@@ -641,32 +641,32 @@ public class TimestampsTest {
 
     @Test
     public void testParseWW() throws NumericException {
-        DateFormat byWeek = getPartitionDirFormatMethod(PartitionBy.WEEK);
+        DateFormat byWeek = getPartitionDirFormatMethod(ColumnType.TIMESTAMP, PartitionBy.WEEK);
         try {
-            byWeek.parse("2020-W00", DateFormatUtils.EN_LOCALE);
+            byWeek.parse("2020-W00", EN_LOCALE);
             Assert.fail("ISO Week 00 is invalid");
         } catch (NumericException ignore) {
         }
 
         try {
-            byWeek.parse("2020-W54", DateFormatUtils.EN_LOCALE);
+            byWeek.parse("2020-W54", EN_LOCALE);
             Assert.fail();
         } catch (NumericException ignore) {
         }
 
-        Assert.assertEquals("2019-12-30T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W01", DateFormatUtils.EN_LOCALE)));
-        Assert.assertEquals("2020-12-28T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W53", DateFormatUtils.EN_LOCALE)));
-        Assert.assertEquals("2021-01-04T00:00:00.000Z", Timestamps.toString(byWeek.parse("2021-W01", DateFormatUtils.EN_LOCALE)));
+        Assert.assertEquals("2019-12-30T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W01", EN_LOCALE)));
+        Assert.assertEquals("2020-12-28T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W53", EN_LOCALE)));
+        Assert.assertEquals("2021-01-04T00:00:00.000Z", Timestamps.toString(byWeek.parse("2021-W01", EN_LOCALE)));
 
         try {
-            byWeek.parse("2019-W53", DateFormatUtils.EN_LOCALE);
+            byWeek.parse("2019-W53", EN_LOCALE);
             Assert.fail("2019 has 52 ISO weeks");
         } catch (NumericException ignore) {
         }
 
-        Assert.assertEquals("2019-12-30T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W01", DateFormatUtils.EN_LOCALE)));
-        Assert.assertEquals("2014-12-22T00:00:00.000Z", Timestamps.toString(byWeek.parse("2014-W52", DateFormatUtils.EN_LOCALE)));
-        Assert.assertEquals("2015-12-28T00:00:00.000Z", Timestamps.toString(byWeek.parse("2015-W53", DateFormatUtils.EN_LOCALE)));
+        Assert.assertEquals("2019-12-30T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W01", EN_LOCALE)));
+        Assert.assertEquals("2014-12-22T00:00:00.000Z", Timestamps.toString(byWeek.parse("2014-W52", EN_LOCALE)));
+        Assert.assertEquals("2015-12-28T00:00:00.000Z", Timestamps.toString(byWeek.parse("2015-W53", EN_LOCALE)));
     }
 
     @Test(expected = NumericException.class)
@@ -721,28 +721,6 @@ public class TimestampsTest {
         long micros = TimestampFormatUtils.parseTimestamp("2017-04-06T00:00:00.000Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.previousOrSameDayOfWeek(micros, 4));
         TestUtils.assertEquals("2017-04-06T00:00:00.000Z", sink);
-    }
-
-    @Test
-    public void testToMicros() {
-        Assert.assertEquals(1, Timestamps.toMicros(1000, ChronoUnit.NANOS));
-        Assert.assertEquals(1, Timestamps.toMicros(1, ChronoUnit.MICROS));
-        Assert.assertEquals(1000, Timestamps.toMicros(1, ChronoUnit.MILLIS));
-        Assert.assertEquals(1_000_000, Timestamps.toMicros(1, ChronoUnit.SECONDS));
-
-        Assert.assertEquals(60 * 1000 * 1000, Timestamps.toMicros(1, ChronoUnit.MINUTES));
-        Assert.assertEquals(Long.MAX_VALUE, Timestamps.toMicros(Long.MAX_VALUE, ChronoUnit.MICROS));
-
-        Assert.assertEquals(Timestamps.toMicros(1, ChronoUnit.HOURS), Timestamps.toMicros(60, ChronoUnit.MINUTES));
-        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.NANOS));
-        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.MICROS));
-        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.MILLIS));
-        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.SECONDS));
-        Assert.assertEquals(0, Timestamps.toMicros(0, ChronoUnit.MINUTES));
-
-        // micros values remain unchanged
-        Assert.assertEquals(123456789L, Timestamps.toMicros(123456789L, ChronoUnit.MICROS));
-        Assert.assertEquals(123456789L, Timestamps.toMicros(123456789000L, ChronoUnit.NANOS));
     }
 
     @Test(expected = NumericException.class)

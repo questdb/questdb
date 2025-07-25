@@ -54,7 +54,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -71,6 +70,8 @@ import org.junit.Test;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 public class TableReaderTest extends AbstractCairoTest {
     public static final int DO_NOT_CARE = 0;
@@ -2875,9 +2876,9 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 Assert.assertEquals(N * N_PARTITIONS, writer.size());
 
-                DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(PartitionBy.DAY);
+                DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(writer.getMetadata().getTimestampType(), PartitionBy.DAY);
                 assert fmt != null;
-                final long timestamp = fmt.parse("2017-12-14", DateFormatUtils.EN_LOCALE);
+                final long timestamp = fmt.parse("2017-12-14", EN_LOCALE);
 
                 Assert.assertTrue(writer.removePartition(timestamp));
                 Assert.assertFalse(writer.removePartition(timestamp));
@@ -4255,10 +4256,10 @@ public class TableReaderTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals(expectedSize, totalCount);
 
-                    DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+                    DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(reader.getMetadata().getTimestampType(), partitionBy);
                     Assert.assertTrue(
                             // active partition
-                            writer.removePartition(fmt.parse(partitionNameToDelete, DateFormatUtils.EN_LOCALE))
+                            writer.removePartition(fmt.parse(partitionNameToDelete, EN_LOCALE))
                     );
 
                     // check writer
@@ -4309,8 +4310,8 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 Assert.assertEquals(N * N_PARTITIONS, writer.size());
 
-                DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
-                final long timestamp = fmt.parse(partitionNameToDelete, DateFormatUtils.EN_LOCALE);
+                DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(writer.getMetadata().getTimestampType(), partitionBy);
+                final long timestamp = fmt.parse(partitionNameToDelete, EN_LOCALE);
 
                 Assert.assertTrue(writer.removePartition(timestamp));
                 Assert.assertFalse(writer.removePartition(timestamp));
@@ -4391,9 +4392,9 @@ public class TableReaderTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals(N * N_PARTITIONS, totalCount);
 
-                    DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+                    DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(reader.getMetadata().getTimestampType(), partitionBy);
                     Assert.assertTrue(
-                            writer.removePartition(fmt.parse(partitionNameToDelete, DateFormatUtils.EN_LOCALE))
+                            writer.removePartition(fmt.parse(partitionNameToDelete, EN_LOCALE))
                     );
 
                     Assert.assertEquals(N * (N_PARTITIONS - 1), writer.size());

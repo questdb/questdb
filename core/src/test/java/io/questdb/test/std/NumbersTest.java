@@ -1222,83 +1222,83 @@ public class NumbersTest {
     }
 
     @Test
-    public void testParseLongDurationDay() throws Exception {
-        Assert.assertEquals(20 * Timestamps.DAY_MICROS, Numbers.parseLongDuration("20d"));
+    public void testParseLongDurationMicrosDay() throws Exception {
+        Assert.assertEquals(20 * Timestamps.DAY_MICROS, Numbers.parseLongDurationMicros("20d"));
     }
 
     @Test(expected = NumericException.class)
-    public void testParseLongDurationFail() throws Exception {
-        Numbers.parseLongDuration("5year");
+    public void testParseLongDurationMicrosFail() throws Exception {
+        Numbers.parseLongDurationMicros("5year");
     }
 
     @Test
-    public void testParseLongDurationHour() throws Exception {
-        Assert.assertEquals(20 * Timestamps.HOUR_MICROS, Numbers.parseLongDuration("20h"));
+    public void testParseLongDurationMicrosHour() throws Exception {
+        Assert.assertEquals(20 * Timestamps.HOUR_MICROS, Numbers.parseLongDurationMicros("20h"));
     }
 
     @Test
-    public void testParseLongDurationMinute() throws Exception {
-        Assert.assertEquals(20 * Timestamps.MINUTE_MICROS, Numbers.parseLongDuration("20m"));
+    public void testParseLongDurationMicrosMinute() throws Exception {
+        Assert.assertEquals(20 * Timestamps.MINUTE_MICROS, Numbers.parseLongDurationMicros("20m"));
     }
 
     @Test
-    public void testParseLongDurationMonth() throws Exception {
-        Assert.assertEquals(20 * 30 * Timestamps.DAY_MICROS, Numbers.parseLongDuration("20M"));
+    public void testParseLongDurationMicrosMonth() throws Exception {
+        Assert.assertEquals(20 * 30 * Timestamps.DAY_MICROS, Numbers.parseLongDurationMicros("20M"));
     }
 
     @Test(expected = NumericException.class)
-    public void testParseLongDurationOverflowAtDay() throws Exception {
-        Numbers.parseLongDuration("106751992d");
+    public void testParseLongDurationMicrosOverflowAtDay() throws Exception {
+        Numbers.parseLongDurationMicros("106751992d");
     }
 
     @Test(expected = NumericException.class)
-    public void testParseLongDurationOverflowAtHour() throws Exception {
-        Numbers.parseLongDuration("2562047789h");
+    public void testParseLongDurationMicrosOverflowAtHour() throws Exception {
+        Numbers.parseLongDurationMicros("2562047789h");
     }
 
     @Test(expected = NumericException.class)
-    public void testParseLongDurationOverflowAtMinute() throws Exception {
-        Numbers.parseLongDuration("153722867281m");
+    public void testParseLongDurationMicrosOverflowAtMinute() throws Exception {
+        Numbers.parseLongDurationMicros("153722867281m");
     }
 
     @Test(expected = NumericException.class)
-    public void testParseLongDurationOverflowAtMonth() throws Exception {
-        Numbers.parseLongDuration("3558400M");
+    public void testParseLongDurationMicrosOverflowAtMonth() throws Exception {
+        Numbers.parseLongDurationMicros("3558400M");
     }
 
     @Test(expected = NumericException.class)
-    public void testParseLongDurationOverflowAtSecond() throws Exception {
-        Numbers.parseLongDuration("9223372036855s");
+    public void testParseLongDurationMicrosOverflowAtSecond() throws Exception {
+        Numbers.parseLongDurationMicros("9223372036855s");
     }
 
     @Test(expected = NumericException.class)
-    public void testParseLongDurationOverflowAtWeek() throws Exception {
-        Numbers.parseLongDuration("15250285w");
+    public void testParseLongDurationMicrosOverflowAtWeek() throws Exception {
+        Numbers.parseLongDurationMicros("15250285w");
     }
 
     @Test(expected = NumericException.class)
-    public void testParseLongDurationOverflowAtYear() throws Exception {
-        Numbers.parseLongDuration("292472y");
+    public void testParseLongDurationMicrosOverflowAtYear() throws Exception {
+        Numbers.parseLongDurationMicros("292472y");
     }
 
     @Test(expected = NumericException.class)
-    public void testParseLongDurationOverflowNoQualifier() throws Exception {
-        Numbers.parseLongDuration("9223372036854775808");
+    public void testParseLongDurationMicrosOverflowNoQualifier() throws Exception {
+        Numbers.parseLongDurationMicros("9223372036854775808");
     }
 
     @Test
-    public void testParseLongDurationSecond() throws Exception {
-        Assert.assertEquals(20 * Timestamps.SECOND_MICROS, Numbers.parseLongDuration("20s"));
+    public void testParseLongDurationMicrosSecond() throws Exception {
+        Assert.assertEquals(20 * Timestamps.SECOND_MICROS, Numbers.parseLongDurationMicros("20s"));
     }
 
     @Test
-    public void testParseLongDurationWeek() throws Exception {
-        Assert.assertEquals(20 * Timestamps.WEEK_MICROS, Numbers.parseLongDuration("20w"));
+    public void testParseLongDurationMicrosWeek() throws Exception {
+        Assert.assertEquals(20 * Timestamps.WEEK_MICROS, Numbers.parseLongDurationMicros("20w"));
     }
 
     @Test
-    public void testParseLongDurationYear() throws Exception {
-        Assert.assertEquals(20 * 365 * Timestamps.DAY_MICROS, Numbers.parseLongDuration("20y"));
+    public void testParseLongDurationMicrosYear() throws Exception {
+        Assert.assertEquals(20 * 365 * Timestamps.DAY_MICROS, Numbers.parseLongDurationMicros("20y"));
     }
 
     @Test(expected = NumericException.class)

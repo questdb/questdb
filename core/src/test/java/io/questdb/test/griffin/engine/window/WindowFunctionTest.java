@@ -5182,7 +5182,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 0,
-                "inconvertible value: `ZZ` [SYMBOL -> TIMESTAMP]"
+                "inconvertible value: `ZZ` [SYMBOL -> TIMESTAMP_NS]"
         );
 
         assertException(

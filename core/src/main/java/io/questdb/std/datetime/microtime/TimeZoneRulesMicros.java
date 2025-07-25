@@ -25,6 +25,7 @@
 package io.questdb.std.datetime.microtime;
 
 import io.questdb.std.datetime.AbstractTimeZoneRules;
+import io.questdb.std.datetime.CommonUtils;
 
 import java.time.zone.ZoneRules;
 
@@ -41,7 +42,7 @@ public class TimeZoneRulesMicros extends AbstractTimeZoneRules {
 
     @Override
     protected int getDaysPerMonth(int month, boolean leapYear) {
-        return Timestamps.getDaysPerMonth(month, leapYear);
+        return CommonUtils.getDaysPerMonth(month, leapYear);
     }
 
     @Override
@@ -51,7 +52,7 @@ public class TimeZoneRulesMicros extends AbstractTimeZoneRules {
 
     @Override
     protected boolean isLeapYear(int year) {
-        return Timestamps.isLeapYear(year);
+        return CommonUtils.isLeapYear(year);
     }
 
     @Override

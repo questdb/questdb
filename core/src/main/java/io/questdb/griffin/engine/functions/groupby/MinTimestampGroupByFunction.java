@@ -39,7 +39,8 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     private final Function arg;
     private int valueIndex;
 
-    public MinTimestampGroupByFunction(@NotNull Function arg) {
+    public MinTimestampGroupByFunction(@NotNull Function arg, int timestampType) {
+        super(timestampType);
         this.arg = arg;
     }
 

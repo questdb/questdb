@@ -70,7 +70,6 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
@@ -84,6 +83,7 @@ import java.io.IOException;
 import java.util.function.Consumer;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 
 /**
@@ -178,6 +178,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     // input params end
     // index of timestamp column in input file
     private int timestampIndex;
+    private int timestampType;
     private TableWriter writer;
 
     public ParallelCsvFileImporter(CairoEngine cairoEngine, int workerCount) {
@@ -349,6 +350,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         tableToken = null;
         timestampColumn = null;
         timestampIndex = -1;
+        timestampType = ColumnType.TIMESTAMP_MICRO;
         partitionBy = -1;
         columnDelimiter = -1;
         timestampAdapter = null;
@@ -409,6 +411,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
         this.forceHeader = forceHeader;
         this.timestampIndex = -1;
+        this.timestampType = ColumnType.TIMESTAMP_MICRO;
         this.status = CopyTask.STATUS_STARTED;
         this.phase = CopyTask.PHASE_SETUP;
         this.targetTableStatus = -1;
@@ -599,6 +602,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             colIdx,
                             inputFileName,
                             importRoot,
+                            timestampType,
                             partitionBy,
                             columnDelimiter,
                             timestampIndex,
@@ -719,7 +723,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
             final CharSequence partitionDirName = partition.name;
             try {
-                final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, partitionBy);
+                final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, timestampType, partitionBy);
                 writer.attachPartition(timestamp, partition.importedRows);
             } catch (CairoException e) {
                 throw TextImportException.instance(CopyTask.PHASE_ATTACH_PARTITIONS, "could not attach [partition='")
@@ -1195,7 +1199,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 metadata.getWriterIndex(columnIndex),
                                 tmpTableSymbolColumnIndex,
                                 tmpTableCount,
-                                partitionBy
+                                partitionBy,
+                                timestampType
                         );
                         pubSeq.done(seq);
                         queuedCount++;
@@ -1223,7 +1228,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
             tmpPath.of(importRoot).concat(tableToken.getTableName()).put('_').put(t);
 
-            try (TxReader txFile = new TxReader(ff).ofRO(tmpPath.concat(TXN_FILE_NAME).$(), partitionBy)) {
+            try (TxReader txFile = new TxReader(ff).ofRO(tmpPath.concat(TXN_FILE_NAME).$(), timestampType, partitionBy)) {
                 txFile.unsafeLoadAll();
                 final int partitionCount = txFile.getPartitionCount();
 
@@ -1340,14 +1345,15 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             totalSizes.add(size);
         }
 
-        DateFormat dirFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+        // for now CSV importer supports
+        DateFormat dirFormat = PartitionBy.getPartitionDirFormatMethod(timestampType, partitionBy);
 
         for (int i = 0, n = distinctKeys.size(); i < n; i++) {
             long key = distinctKeys.getQuick(i);
             long size = totalSizes.getQuick(i);
 
             partitionNameSink.clear();
-            dirFormat.format(distinctKeys.get(i), DateFormatUtils.EN_LOCALE, null, partitionNameSink);
+            dirFormat.format(distinctKeys.get(i), EN_LOCALE, null, partitionNameSink);
             String dirName = partitionNameSink.toString();
 
             partitions.add(new PartitionInfo(key, dirName, size));

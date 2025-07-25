@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.lt;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -56,7 +58,15 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0), args.getQuick(1));
+        int leftType = ColumnType.getTimestampType(args.getQuick(0).getType(), configuration);
+        int rightType = ColumnType.getTimestampType(args.getQuick(1).getType(), configuration);
+        if (leftType == rightType) {
+            return new Func(args.getQuick(0), args.getQuick(1));
+        } else if (leftType < rightType) {
+            return new LeftConvertFunc(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampDriver(rightType), leftType);
+        } else {
+            return new RightConvertFunc(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampDriver(leftType), rightType);
+        }
     }
 
     private static class Func extends NegatableBooleanFunction implements BinaryFunction {
@@ -73,6 +83,94 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
             return Numbers.lessThan(
                     leftFunc.getTimestamp(rec),
                     rightFunc.getTimestamp(rec),
+                    negated
+            );
+        }
+
+        @Override
+        public Function getLeft() {
+            return leftFunc;
+        }
+
+        @Override
+        public Function getRight() {
+            return rightFunc;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(leftFunc);
+            if (negated) {
+                sink.val(">=");
+            } else {
+                sink.val('<');
+            }
+            sink.val(rightFunc);
+        }
+    }
+
+    private static class LeftConvertFunc extends NegatableBooleanFunction implements BinaryFunction {
+        private final Function leftFunc;
+        private final Function rightFunc;
+        protected TimestampDriver driver;
+        protected int toTimestampType;
+
+        public LeftConvertFunc(Function leftFunc, Function rightFunc, TimestampDriver driver, int toTimestampType) {
+            this.leftFunc = leftFunc;
+            this.rightFunc = rightFunc;
+            this.driver = driver;
+            this.toTimestampType = toTimestampType;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return Numbers.lessThan(
+                    driver.from(leftFunc.getTimestamp(rec), toTimestampType),
+                    rightFunc.getTimestamp(rec),
+                    negated
+            );
+        }
+
+        @Override
+        public Function getLeft() {
+            return leftFunc;
+        }
+
+        @Override
+        public Function getRight() {
+            return rightFunc;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(leftFunc);
+            if (negated) {
+                sink.val(">=");
+            } else {
+                sink.val('<');
+            }
+            sink.val(rightFunc);
+        }
+    }
+
+    private static class RightConvertFunc extends NegatableBooleanFunction implements BinaryFunction {
+        private final Function leftFunc;
+        private final Function rightFunc;
+        protected TimestampDriver driver;
+        protected int toTimestampType;
+
+        public RightConvertFunc(Function leftFunc, Function rightFunc, TimestampDriver driver, int toTimestampType) {
+            this.leftFunc = leftFunc;
+            this.rightFunc = rightFunc;
+            this.driver = driver;
+            this.toTimestampType = toTimestampType;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return Numbers.lessThan(
+                    leftFunc.getTimestamp(rec),
+                    driver.from(rightFunc.getTimestamp(rec), toTimestampType),
                     negated
             );
         }

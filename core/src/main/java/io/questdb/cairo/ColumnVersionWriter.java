@@ -37,21 +37,22 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     private final CairoConfiguration configuration;
     private final MemoryCMARW mem;
     private final boolean partitioned;
+    private final int timestampType;
     private boolean hasChanges;
     private long size;
     private long version;
 
-
     // size should be read from the transaction file
     // it can be zero when there are no columns deviating from the main
     // data branch
-    public ColumnVersionWriter(CairoConfiguration configuration, LPSZ fileName, boolean partitioned) {
+    public ColumnVersionWriter(CairoConfiguration configuration, LPSZ fileName, int timestampType, boolean partitioned) {
         final FilesFacade ff = configuration.getFilesFacade();
         this.mem = Vm.getCMARWInstance(ff, fileName, ff.getPageSize(), 0, MemoryTag.MMAP_TABLE_READER, CairoConfiguration.O_NONE);
         this.configuration = configuration;
         this.partitioned = partitioned;
+        this.timestampType = timestampType;
         this.size = this.mem.size();
-        super.ofRO(mem);
+        super.ofRO(mem, timestampType);
         if (this.size > 0) {
             this.version = super.readUnsafe();
         }
@@ -343,7 +344,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         } else {
             throw CairoException.critical(0)
                     .put("invalid Column Version state ")
-                    .ts(dstTimestamp)
+                    .ts(timestampType, dstTimestamp)
                     .put(" column version state, cannot update partition information");
         }
         hasChanges = true;

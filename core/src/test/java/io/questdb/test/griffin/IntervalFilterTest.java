@@ -522,7 +522,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertException(
                     "select * from x where ts > now() - '3 day' order by ts desc",
                     0,
-                    "inconvertible value: `3 day` [STRING -> TIMESTAMP]"
+                    "inconvertible value: `3 day` [STRING -> TIMESTAMP_NS]"
             );
         });
     }
@@ -542,7 +542,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
             assertException(
                     "select * from x where ts > now() - '3 day'",
                     0,
-                    "inconvertible value: `3 day` [STRING -> TIMESTAMP]"
+                    "inconvertible value: `3 day` [STRING -> TIMESTAMP_NS]"
             );
         });
     }
