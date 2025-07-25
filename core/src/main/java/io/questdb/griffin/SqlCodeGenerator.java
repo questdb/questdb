@@ -3525,6 +3525,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final CharSequence column = orderByColumnNames.getQuick(i);
                     int index = metadata.getColumnIndexQuiet(column);
 
+
                     // check if the column type is supported
                     final int columnType = metadata.getColumnType(index);
                     if (!ColumnType.isComparable(columnType)) {
@@ -3678,26 +3679,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateQuery0(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
-        return generateLimit(
-                generateOrderBy(
-                        generateLatestBy(
-                                generateFilter(
-                                        generateSelect(
-                                                model,
-                                                executionContext,
-                                                processJoins
-                                        ),
-                                        model,
-                                        executionContext
-                                ),
-                                model
-                        ),
-                        model,
-                        executionContext
-                ),
-                model,
-                executionContext
-        );
+        RecordCursorFactory factory;
+        factory = generateSelect(model, executionContext, processJoins);
+        factory = generateFilter(factory, model, executionContext);
+        factory = generateLatestBy(factory, model);
+        factory = generateOrderBy(factory, model, executionContext);
+        factory = generateLimit(factory, model, executionContext);
+        return factory;
     }
 
     @NotNull
@@ -4193,6 +4181,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 QueryColumn queryColumn = columns.getQuick(i);
                 CharSequence columnName = queryColumn.getAlias();
                 int index = metadata.getColumnIndexQuiet(queryColumn.getAst().token);
+
                 assert index > -1 : "wtf? " + queryColumn.getAst().token;
 
                 int updateColumnIndex = updateColumnNames.indexOf(columnName);

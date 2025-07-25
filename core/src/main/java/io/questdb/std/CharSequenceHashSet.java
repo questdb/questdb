@@ -82,6 +82,12 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         }
     }
 
+    public final void addAll(@NotNull ObjList<CharSequence> that) {
+        for (int i = 0, k = that.size(); i < k; i++) {
+            add(that.get(i));
+        }
+    }
+
     public void addAt(int index, @NotNull CharSequence key) {
         final String s = Chars.toString(key);
         keys[index] = s;

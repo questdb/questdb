@@ -210,6 +210,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // IMPORTANT: if you add a new state, make sure to add it to the close() method too!
     // PGPipelineEntry instances are pooled and reused, so we need to make sure
     // that all state is cleared before returning the instance to the pool
+    private boolean selectIsCacheable = true;
 
     public PGPipelineEntry(CairoEngine engine) {
         this.isCopy = false;
@@ -229,7 +230,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             @NotNull AssociativeCache<TypesAndSelectModern> tasCache,
             @NotNull SimpleAssociativeCache<TypesAndInsertModern> taiCache
     ) {
-        if (isPortal() || isPreparedStatement()) {
+        if (isPortal()
+                || isPreparedStatement()) {
             // must not cache prepared statements etc.; we must only cache abandoned pipeline entries (their contents)
             return;
         }
@@ -240,13 +242,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // make sure factory is not released when the pipeline entry is closed
             factory = null;
             // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
-            tasCache.put(sqlText, tas);
+            if (selectIsCacheable) {
+                tasCache.put(sqlText, tas);
+            } else {
+                Misc.freeIfCloseable(sqlText);
+                Misc.freeIfCloseable(tas);
+            }
             tas = null;
         } else if (tai != null) {
             taiCache.put(sqlText, tai);
             // make sure we don't close insert operation when the pipeline entry is closed
             tai = null;
         }
+        selectIsCacheable = true;
     }
 
     @Override
@@ -302,6 +310,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         empty = false;
         errorMessagePosition = 0;
         factory = Misc.free(factory);
+        selectIsCacheable = true;
         msgBindParameterValueCount = 0;
         msgBindSelectFormatCodeCount = 0;
         outResendColumnIndex = 0;
@@ -335,6 +344,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         tas = null;
         arrayViewPool.clear();
         utf8StringSink.clear();
+        selectIsCacheable = false;
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws BadProtocolException {
@@ -1517,6 +1527,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // (The execute stage always does not compile the query, while the first execution corresponds to the prepare stage's cacheHit flag.)
             if (isPreparedStatement()) {
                 cacheHit = true;
+            }
+
+            // don't cache query if the compiler tells us not to - unless it is a portal.
+            if (!selectIsCacheable && !isPortal()) {
+                Misc.free(this.factory);
+                factory = null;
             }
 
             try {
@@ -2757,6 +2773,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         msgParseParameterTypeOIDs,
                         outParameterTypeDescriptionTypes
                 );
+                selectIsCacheable = cq.isCacheable();
                 break;
             case CompiledQuery.PSEUDO_SELECT:
                 // the PSEUDO_SELECT comes from a "copy" SQL, which is why

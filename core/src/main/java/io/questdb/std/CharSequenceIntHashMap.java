@@ -71,6 +71,16 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         }
     }
 
+    public int incrementAndReturnValue(@NotNull CharSequence key) {
+        int index = keyIndex(key);
+        if (index < 0) {
+            return ++values[-index - 1];
+        } else {
+            putAt0(index, Chars.toString(key), 0);
+            return 0;
+        }
+    }
+
     public ObjList<CharSequence> keys() {
         return list;
     }
