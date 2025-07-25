@@ -453,7 +453,7 @@ public class CopyTask {
                             long zeroBytesWord = SwarUtils.markZeroBytes(word ^ MASK_NEW_LINE)
                                     | SwarUtils.markZeroBytes(word ^ MASK_QUOTE);
                             if (zeroBytesWord == 0) {
-                                ptr += 7;
+                                ptr += 8;
                                 continue;
                             } else {
                                 ptr += SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
