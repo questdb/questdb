@@ -49,20 +49,20 @@ public class TimestampFinderTest extends AbstractCairoTest {
 
     @Test
     public void testFuzzAllDuplicates() throws Exception {
-        testFuzz(1000, 1000);
+        testFuzz(1000);
     }
 
     @Test
     public void testFuzzFewDuplicates() throws Exception {
-        testFuzz(1000, 1);
+        testFuzz(1);
     }
 
     @Test
     public void testFuzzSomeDuplicates() throws Exception {
-        testFuzz(1000, 100);
+        testFuzz(100);
     }
 
-    private void testFuzz(int rowCount, int duplicatesPerTick) throws Exception {
+    private void testFuzz(int duplicatesPerTick) throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
             TableModel oracleModel = new TableModel(configuration, "oracle", PartitionBy.YEAR).timestamp();
@@ -78,7 +78,7 @@ public class TimestampFinderTest extends AbstractCairoTest {
                     TableWriter writer = newOffPoolWriter(configuration, "x")
             ) {
                 int ticks = duplicatesPerTick;
-                for (int i = 0; i < rowCount; i++) {
+                for (int i = 0; i < 1000; i++) {
                     oracleWriter.newRow(timestamp).append();
                     writer.newRow(timestamp).append();
                     maxTimestamp = timestamp;
@@ -120,15 +120,30 @@ public class TimestampFinderTest extends AbstractCairoTest {
                 oracleReader.openPartition(0);
                 reader.openPartition(0);
 
-                oracleFinder.of(oracleReader, 0, 0, rowCount);
+                oracleFinder.of(oracleReader, 0, 0, 1000);
                 finder.of(reader, 0, 0);
 
-                Assert.assertEquals(minTimestamp, oracleFinder.minTimestamp());
-                Assert.assertEquals(oracleFinder.minTimestamp(), finder.minTimestamp());
-                Assert.assertEquals(maxTimestamp, oracleFinder.maxTimestamp());
-                Assert.assertEquals(oracleFinder.maxTimestamp(), finder.maxTimestamp());
+                // assert approx timestamps for both finders
+                Assert.assertTrue(oracleFinder.minTimestampApproxFromMetadata() <= oracleFinder.maxTimestampApproxFromMetadata());
+                Assert.assertTrue(finder.minTimestampApproxFromMetadata() <= finder.maxTimestampApproxFromMetadata());
 
-                for (int row = 0; row < rowCount; row++) {
+                // prepare() must be called before accessing exact timestamps
+                oracleFinder.prepare();
+                finder.prepare();
+
+                // assert approx vs. exact timestamps
+                Assert.assertTrue(oracleFinder.minTimestampApproxFromMetadata() <= oracleFinder.minTimestampExact());
+                Assert.assertTrue(finder.minTimestampApproxFromMetadata() <= finder.minTimestampExact());
+                Assert.assertTrue(oracleFinder.maxTimestampApproxFromMetadata() >= oracleFinder.maxTimestampExact());
+                Assert.assertTrue(finder.maxTimestampApproxFromMetadata() >= finder.maxTimestampExact());
+
+                // assert exact timestamps
+                Assert.assertEquals(minTimestamp, oracleFinder.minTimestampExact());
+                Assert.assertEquals(oracleFinder.minTimestampExact(), finder.minTimestampExact());
+                Assert.assertEquals(maxTimestamp, oracleFinder.maxTimestampExact());
+                Assert.assertEquals(oracleFinder.maxTimestampExact(), finder.maxTimestampExact());
+
+                for (int row = 0; row < 1000; row++) {
                     Assert.assertEquals(oracleFinder.timestampAt(row), finder.timestampAt(row));
                 }
 
@@ -137,26 +152,26 @@ public class TimestampFinderTest extends AbstractCairoTest {
                 for (long ts = minTimestamp - Timestamps.MINUTE_MICROS; ts < maxTimestamp + Timestamps.MINUTE_MICROS; ts += Timestamps.MINUTE_MICROS) {
                     // full partition
                     Assert.assertEquals(
-                            oracleFinder.findTimestamp(ts, 0, rowCount - 1),
-                            finder.findTimestamp(ts, 0, rowCount - 1)
+                            oracleFinder.findTimestamp(ts, 0, 1000 - 1),
+                            finder.findTimestamp(ts, 0, 1000 - 1)
                     );
 
                     // first partition half
                     Assert.assertEquals(
-                            oracleFinder.findTimestamp(ts, 0, rowCount / 2),
-                            finder.findTimestamp(ts, 0, rowCount / 2)
+                            oracleFinder.findTimestamp(ts, 0, 1000 / 2),
+                            finder.findTimestamp(ts, 0, 1000 / 2)
                     );
 
                     // second partition half
                     Assert.assertEquals(
-                            oracleFinder.findTimestamp(ts, rowCount / 2, rowCount - 1),
-                            finder.findTimestamp(ts, rowCount / 2, rowCount - 1)
+                            oracleFinder.findTimestamp(ts, 1000 / 2, 1000 - 1),
+                            finder.findTimestamp(ts, 1000 / 2, 1000 - 1)
                     );
 
                     // partition middle
                     Assert.assertEquals(
-                            oracleFinder.findTimestamp(ts, rowCount / 3, 2L * rowCount / 3),
-                            finder.findTimestamp(ts, rowCount / 3, 2L * rowCount / 3)
+                            oracleFinder.findTimestamp(ts, 1000 / 3, 2L * 1000 / 3),
+                            finder.findTimestamp(ts, 1000 / 3, 2L * 1000 / 3)
                     );
 
                     calls += 8;

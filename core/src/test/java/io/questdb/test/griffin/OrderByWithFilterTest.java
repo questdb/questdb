@@ -439,7 +439,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     query,
                     null,
                     true,
-                    true
+                    false
             );
         });
     }
@@ -531,7 +531,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     query,
                     null,
                     true,
-                    true
+                    false
             );
         });
     }
