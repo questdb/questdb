@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
@@ -36,8 +37,27 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class PartitionUpdaterTest extends AbstractCairoTest {
+
+    private final String timestampTypeName;
+
+    public PartitionUpdaterTest(int timestampType) {
+        this.timestampTypeName = ColumnType.nameOf(timestampType);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+        });
+    }
 
     @Test
     public void testBadUpdate() throws Exception {
@@ -47,7 +67,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
             final FilesFacade ff = configuration.getFilesFacade();
             execute("create table " + tableName + " as (select" +
                     " x id," +
-                    " timestamp_sequence(400000000000, 500) designated_ts" +
+                    " timestamp_sequence(400000000000, 500)::" + timestampTypeName + " designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by day");
 
             try (Path path = new Path();

@@ -1368,7 +1368,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 if (designatedTimestampColumnName != null) {
                     GenericRecordMetadata metadata = new GenericRecordMetadata();
-                    metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP, null));
+                    metadata.add(new TableColumnMetadata(designatedTimestampColumnName, tableMetadata.getTimestampType(), null));
                     Function function = functionParser.parseFunction(expr, metadata, executionContext);
                     try {
                         if (function != null && ColumnType.isBoolean(function.getType())) {
