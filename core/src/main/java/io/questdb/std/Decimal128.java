@@ -1,27 +1,63 @@
 package io.questdb.std;
 
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
+
 /**
- * Decimal128 - A 128-bit decimal number implementation using two long values
+ * Decimal128 - A mutable 128-bit decimal number implementation
  * <p>
  * This class represents decimal numbers with a fixed scale (number of decimal places)
- * using 128-bit integer arithmetic for precise calculations.
+ * using 128-bit integer arithmetic for precise calculations. All operations are
+ * performed in-place to eliminate object allocation and improve performance.
  */
-public class Decimal128 {
-    private final long high;  // High 64 bits
-    private final long low;   // Low 64 bits
-    private final int scale;  // Number of decimal places
+public class Decimal128 implements Sinkable {
+    private long high;  // High 64 bits
+    private long low;   // Low 64 bits
+    private int scale;  // Number of decimal places
 
     /**
-     * Constructor
-     *
-     * @param high  High 64 bits of the 128-bit value
-     * @param low   Low 64 bits of the 128-bit value
-     * @param scale Number of decimal places
+     * Default constructor - creates zero with scale 0
+     */
+    public Decimal128() {
+        this.high = 0;
+        this.low = 0;
+        this.scale = 0;
+    }
+
+    /**
+     * Constructor with initial values
      */
     public Decimal128(long high, long low, int scale) {
         this.high = high;
         this.low = low;
         this.scale = scale;
+    }
+
+    /**
+     * Add two Decimal128 numbers and store the result in sink
+     *
+     * @param a    First operand
+     * @param b    Second operand
+     * @param sink Destination for the result
+     */
+    public static void add(Decimal128 a, Decimal128 b, Decimal128 sink) {
+        sink.copyFrom(a);
+        sink.add(b);
+    }
+
+    /**
+     * Divide two Decimal128 numbers and store the result in sink (a / b -> sink)
+     *
+     * @param a           First operand (dividend)
+     * @param b           Second operand (divisor)
+     * @param resultScale Desired scale of the result
+     * @param sink        Destination for the result
+     */
+    public static void divide(Decimal128 a, Decimal128 b, int resultScale, Decimal128 sink) {
+        sink.copyFrom(a);
+        sink.divide(b, resultScale);
     }
 
     /**
@@ -51,260 +87,257 @@ public class Decimal128 {
     }
 
     /**
-     * Example usage
+     * Calculate modulo of two Decimal128 numbers and store the result in sink (a % b -> sink)
+     *
+     * @param a    First operand (dividend)
+     * @param b    Second operand (divisor)
+     * @param sink Destination for the result
      */
-    public static void main(String[] args) {
-        // Create decimal numbers with 2 decimal places
-        Decimal128 a = Decimal128.fromDouble(123.45, 2);  // 12345 (scaled by 100)
-        Decimal128 b = Decimal128.fromDouble(67.89, 2);   // 6789 (scaled by 100)
-
-        // Add them
-        Decimal128 sum = a.add(b);
-
-        System.out.println("Same scale addition:");
-        System.out.println("a = " + a);
-        System.out.println("b = " + b);
-        System.out.println("a + b = " + sum.toString());
-        System.out.println("As double: " + sum.toDouble());
-
-        // Example with different scales
-        System.out.println("\nDifferent scale addition:");
-        Decimal128 price = Decimal128.fromDouble(19.99, 2);    // 2 decimal places
-        Decimal128 tax = Decimal128.fromDouble(1.495, 3);      // 3 decimal places
-        Decimal128 total = price.add(tax);                     // Result will have scale 3
-
-        System.out.println("price (scale 2) = " + price);
-        System.out.println("tax (scale 3) = " + tax);
-        System.out.println("total (scale 3) = " + total.toString());
-        System.out.println("As double: " + total.toDouble());
-
-        // Multiplication example
-        System.out.println("\nMultiplication:");
-        Decimal128 quantity = Decimal128.fromDouble(3.5, 1);    // 3.5 items
-        Decimal128 unitPrice = Decimal128.fromDouble(12.99, 2); // $12.99 per item
-        Decimal128 totalPrice = quantity.multiply(unitPrice);   // Result has scale 3
-
-        System.out.println("quantity = " + quantity);
-        System.out.println("unit price = " + unitPrice);
-        System.out.println("total price = " + totalPrice.toString());
-        System.out.println("As double: " + totalPrice.toDouble());
-
-        // Division example - same scales
-        System.out.println("\nDivision (same scales):");
-        Decimal128 totalAmount = Decimal128.fromDouble(100.00, 2);  // $100.00
-        Decimal128 numPeople = Decimal128.fromDouble(3, 0);         // 3 people
-        Decimal128 perPerson = totalAmount.divide(numPeople, 2);    // Result with 2 decimal places
-
-        System.out.println("total amount = " + totalAmount);
-        System.out.println("number of people = " + numPeople);
-        System.out.println("per person = " + perPerson.toString());
-        System.out.println("As double: " + perPerson.toDouble());
-
-        // Division with different scales
-        System.out.println("\nDivision (different scales):");
-        Decimal128 distance = Decimal128.fromDouble(250.5, 1);      // 250.5 km (scale 1)
-        Decimal128 time = Decimal128.fromDouble(3.25, 2);           // 3.25 hours (scale 2)
-        Decimal128 speed = distance.divide(time, 2);                // km/h with 2 decimal places
-
-        System.out.println("distance = " + distance + " km");
-        System.out.println("time = " + time + " hours");
-        System.out.println("speed = " + speed.toString() + " km/h");
-        System.out.println("As double: " + speed.toDouble());
-
-        // More complex division with different scales
-        System.out.println("\nComplex division example:");
-        Decimal128 amount = Decimal128.fromDouble(1000, 0);         // $1000 (no decimals)
-        Decimal128 rate = Decimal128.fromDouble(0.045, 3);          // 4.5% rate (0.045)
-        Decimal128 result = amount.multiply(rate);                  // $45.000
-
-        System.out.println("amount = $" + amount.toDouble());
-        System.out.println("rate = " + rate.toDouble());
-        System.out.println("interest = $" + result.toDouble());
-
-        // Division: interest / months
-        Decimal128 months = Decimal128.fromDouble(12, 0);
-        Decimal128 monthlyInterest = result.divide(months, 2);      // Monthly interest
-
-        System.out.println("monthly interest = $" + monthlyInterest.toDouble());
-
-        // Negative number operations
-        System.out.println("\nNegative numbers:");
-        Decimal128 positive = Decimal128.fromDouble(50.25, 2);
-        Decimal128 negative = Decimal128.fromDouble(-30.75, 2);
-
-        System.out.println("positive + negative = " + positive.add(negative).toDouble());
-        System.out.println("positive - negative = " + positive.subtract(negative).toDouble());
-        System.out.println("positive * negative = " + positive.multiply(negative).toDouble());
-        System.out.println("negative / positive = " + negative.divide(positive, 4).toDouble());
+    public static void modulo(Decimal128 a, Decimal128 b, Decimal128 sink) {
+        sink.copyFrom(a);
+        sink.modulo(b);
     }
 
     /**
-     * Negate a MutableDecimal128 in place
+     * Multiply two Decimal128 numbers and store the result in sink
      *
-     * @param sink The MutableDecimal128 to negate (modified in-place)
+     * @param a    First operand
+     * @param b    Second operand
+     * @param sink Destination for the result
      */
-    public static void negateInPlace(MutableDecimal128 sink) {
-        long oldLow = sink.getLow();
-        long oldHigh = sink.getHigh();
-
-        // Two's complement: invert all bits and add 1
-        long newLow = ~oldLow + 1;
-        long newHigh = ~oldHigh;
-
-        // Check for carry from low
-        if (newLow == 0 && oldLow != 0) {
-            newHigh += 1;
-        }
-
-        sink.setHigh(newHigh);
-        sink.setLow(newLow);
+    public static void multiply(Decimal128 a, Decimal128 b, Decimal128 sink) {
+        sink.copyFrom(a);
+        sink.multiply(b);
     }
 
     /**
-     * Rescale a MutableDecimal128 to a new scale in-place
+     * Negate a Decimal128 number and store the result in sink
      *
-     * @param sink     The MutableDecimal128 to rescale (modified in-place)
-     * @param newScale The new scale (must be >= current scale)
+     * @param a    Input operand to negate
+     * @param sink Destination for the result
      */
-    public static void rescaleToSink(MutableDecimal128 sink, int newScale) {
-        if (newScale < sink.getScale()) {
-            throw new IllegalArgumentException("Cannot reduce scale (would lose precision)");
-        }
+    public static void negate(Decimal128 a, Decimal128 sink) {
+        sink.copyFrom(a);
+        sink.negateInPlace();
+    }
 
-        if (newScale == sink.getScale()) {
+    /**
+     * Subtract two Decimal128 numbers and store the result in sink (a - b -> sink)
+     *
+     * @param a    First operand (minuend)
+     * @param b    Second operand (subtrahend)
+     * @param sink Destination for the result
+     */
+    public static void subtract(Decimal128 a, Decimal128 b, Decimal128 sink) {
+        sink.copyFrom(a);
+        sink.subtract(b);
+    }
+
+    /**
+     * Add another Decimal128 to this one (in-place)
+     *
+     * @param other The Decimal128 to add
+     */
+    public void add(Decimal128 other) {
+        // If scales match, use direct addition
+        if (this.scale == other.scale) {
+            // Perform 128-bit addition
+            long sumLow = this.low + other.low;
+
+            // Check for carry
+            long carry = hasCarry(this.low, other.low, sumLow) ? 1 : 0;
+
+            // Update values in place
+            this.low = sumLow;
+            this.high = this.high + other.high + carry;
             return;
         }
 
-        // Calculate scale difference
-        int scaleDiff = newScale - sink.getScale();
-
-        // Multiply by 10^scaleDiff in-place
-        for (int i = 0; i < scaleDiff; i++) {
-            multiplyBy10InPlace(sink);
-        }
-
-        // Update scale
-        sink.setScale(newScale);
-    }
-
-    /**
-     * Add two Decimal128 numbers
-     *
-     * @param other The number to add
-     * @return A new Decimal128 representing the sum with the larger scale
-     */
-    public Decimal128 add(Decimal128 other) {
-        // If scales match, use direct addition
-        if (this.scale == other.scale) {
-            return addSameScale(other);
-        }
-
-        // Determine which number has larger scale
-        if (this.scale > other.scale) {
-            // Scale up the other number
-            Decimal128 scaledOther = other.rescale(this.scale);
-            return this.addSameScale(scaledOther);
+        // Handle different scales
+        if (this.scale < other.scale) {
+            // Rescale this to match other's scale
+            rescaleInPlace(other.scale);
+            // Now add with same scale
+            long sumLow = this.low + other.low;
+            long carry = hasCarry(this.low, other.low, sumLow) ? 1 : 0;
+            this.low = sumLow;
+            this.high = this.high + other.high + carry;
         } else {
-            // Scale up this number
-            Decimal128 scaledThis = this.rescale(other.scale);
-            return scaledThis.addSameScale(other);
+            // Need to rescale other - we'll do it mathematically
+            // Scale difference
+            int scaleDiff = this.scale - other.scale;
+            long otherHigh = other.high;
+            long otherLow = other.low;
+
+            // Multiply other by 10^scaleDiff
+            for (int i = 0; i < scaleDiff; i++) {
+                // Multiply by 10: (8x + 2x)
+                long high8 = (otherHigh << 3) | (otherLow >>> 61);
+                long low8 = otherLow << 3;
+                long high2 = (otherHigh << 1) | (otherLow >>> 63);
+                long low2 = otherLow << 1;
+
+                otherLow = low8 + low2;
+                long carry = hasCarry(low8, low2, otherLow) ? 1 : 0;
+                otherHigh = high8 + high2 + carry;
+            }
+
+            // Now add the scaled value
+            long sumLow = this.low + otherLow;
+            long carry = hasCarry(this.low, otherLow, sumLow) ? 1 : 0;
+            this.low = sumLow;
+            this.high = this.high + otherHigh + carry;
         }
     }
 
-    /**
-     * Add another Decimal128 to this one and store result in sink
-     *
-     * @param other The number to add
-     * @param sink  The MutableDecimal128 to store the result in
-     */
-    public void addTo(Decimal128 other, MutableDecimal128 sink) {
-        // Copy this to sink and add other
-        sink.copyFrom(this);
-        sink.addDecimal128(other);
-    }
+    // Static helper methods for non-destructive operations
 
     /**
-     * Compare this to another Decimal128 (must have same scale)
+     * Compare this to another Decimal128 (handles different scales)
      */
     public int compareTo(Decimal128 other) {
-        if (this.scale != other.scale) {
-            throw new IllegalArgumentException("Cannot compare numbers with different scales");
+        if (this.scale == other.scale) {
+            // Same scale - direct comparison
+            if (this.high != other.high) {
+                return Long.compare(this.high, other.high);
+            }
+            return Long.compareUnsigned(this.low, other.low);
         }
 
-        // Compare high parts first
-        if (this.high != other.high) {
-            return Long.compare(this.high, other.high);
-        }
+        // Different scales - need to align for comparison
+        // We'll scale up the one with smaller scale
+        if (this.scale < other.scale) {
+            // Scale up this to match other's scale
+            int scaleDiff = other.scale - this.scale;
+            long scaledHigh = this.high;
+            long scaledLow = this.low;
 
-        // If high parts equal, compare low parts as unsigned
-        return Long.compareUnsigned(this.low, other.low);
+            // Multiply by 10^scaleDiff
+            for (int i = 0; i < scaleDiff; i++) {
+                // Multiply by 10: (8x + 2x)
+                long high8 = (scaledHigh << 3) | (scaledLow >>> 61);
+                long low8 = scaledLow << 3;
+                long high2 = (scaledHigh << 1) | (scaledLow >>> 63);
+                long low2 = scaledLow << 1;
+
+                scaledLow = low8 + low2;
+                long carry = hasCarry(low8, low2, scaledLow) ? 1 : 0;
+                scaledHigh = high8 + high2 + carry;
+            }
+
+            // Compare scaled this with other
+            if (scaledHigh != other.high) {
+                return Long.compare(scaledHigh, other.high);
+            }
+            return Long.compareUnsigned(scaledLow, other.low);
+        } else {
+            // Scale up other to match this scale
+            int scaleDiff = this.scale - other.scale;
+            long scaledHigh = other.high;
+            long scaledLow = other.low;
+
+            // Multiply by 10^scaleDiff
+            for (int i = 0; i < scaleDiff; i++) {
+                // Multiply by 10: (8x + 2x)
+                long high8 = (scaledHigh << 3) | (scaledLow >>> 61);
+                long low8 = scaledLow << 3;
+                long high2 = (scaledHigh << 1) | (scaledLow >>> 63);
+                long low2 = scaledLow << 1;
+
+                scaledLow = low8 + low2;
+                long carry = hasCarry(low8, low2, scaledLow) ? 1 : 0;
+                scaledHigh = high8 + high2 + carry;
+            }
+
+            // Compare this with scaled other
+            if (this.high != scaledHigh) {
+                return Long.compare(this.high, scaledHigh);
+            }
+            return Long.compareUnsigned(this.low, scaledLow);
+        }
     }
 
     /**
-     * Divide this Decimal128 by another
-     *
-     * @param divisor     The divisor
-     * @param resultScale The desired scale of the result
-     * @return A new Decimal128 representing the quotient
-     * @throws ArithmeticException if divisor is zero
+     * Copy values from another Decimal128
      */
-    public Decimal128 divide(Decimal128 divisor, int resultScale) {
+    public void copyFrom(Decimal128 source) {
+        this.high = source.high;
+        this.low = source.low;
+        this.scale = source.scale;
+    }
+
+    /**
+     * Divide this Decimal128 by another (in-place)
+     *
+     * @param divisor     The Decimal128 to divide by
+     * @param resultScale The desired scale of the result
+     */
+    public void divide(Decimal128 divisor, int resultScale) {
         if (divisor.isZero()) {
             throw new ArithmeticException("Division by zero");
         }
 
-        // To perform division with proper precision:
-        // (value1 / 10^scale1) / (value2 / 10^scale2) = (value1 * 10^scale2) / (value2 * 10^scale1)
-        // To get result with resultScale decimal places:
-        // = (value1 * 10^(scale2 + resultScale)) / (value2 * 10^scale1)
+        // For division: dividend/divisor = result
+        // In terms of scales: (dividend * 10^dividend.scale) / (divisor * 10^divisor.scale) = result * 10^result.scale
+        // Rearranging: dividend / divisor = result * 10^(result.scale + divisor.scale - dividend.scale)
+        // To get the correct result, we need to scale up the dividend by (result.scale + divisor.scale - dividend.scale)
+        int scaleAdjustment = resultScale + divisor.scale - this.scale;
 
-        // Calculate how much to scale up the dividend
-        int totalScaleUp = divisor.scale + resultScale - this.scale;
-
-        Decimal128 scaledDividend = this;
-        Decimal128 scaledDivisor = divisor;
-
-        // We need to ensure we don't lose precision
-        // If totalScaleUp is negative, we scale up the divisor instead
-        if (totalScaleUp < 0) {
-            // Scale up the divisor instead
-            for (int i = 0; i < -totalScaleUp; i++) {
-                scaledDivisor = scaledDivisor.multiplyBy10();
-            }
-        } else if (totalScaleUp > 0) {
-            // Scale up the dividend as normal
-            for (int i = 0; i < totalScaleUp; i++) {
-                scaledDividend = scaledDividend.multiplyBy10();
+        // Scale up this (dividend) if needed to get the right precision
+        if (scaleAdjustment > 0) {
+            for (int i = 0; i < scaleAdjustment; i++) {
+                multiplyBy10InPlace();
             }
         }
 
-        // Track sign
-        boolean negative = (this.isNegative() != divisor.isNegative());
+        // Track sign - result is negative if signs differ
+        boolean thisNeg = this.isNegative();
+        boolean divNeg = divisor.isNegative();
+        boolean resultNegative = thisNeg != divNeg;
 
-        // Convert to positive for division
-        Decimal128 absDividend = scaledDividend.isNegative() ? scaledDividend.negate() : scaledDividend;
-        Decimal128 absDivisor = scaledDivisor.isNegative() ? scaledDivisor.negate() : scaledDivisor;
+        // Make both positive for unsigned division
+        if (thisNeg) {
+            negateInPlace();
+        }
 
-        // Perform unsigned division
-        Decimal128 quotient = divideUnsigned(absDividend, absDivisor);
+        // We need divisor as positive - create temp vars (no allocation)
+        long divHigh = divisor.high;
+        long divLow = divisor.low;
+        if (divNeg) {
+            // Negate divisor values using two's complement
+            divLow = ~divLow + 1;
+            divHigh = ~divHigh;
+            if (divLow == 0) { // Carry occurred
+                divHigh += 1;
+            }
+        }
 
-        // Apply sign and scale
-        Decimal128 result = new Decimal128(quotient.high, quotient.low, resultScale);
-        return negative ? result.negate() : result;
-    }
+        // Handle case where we need to scale down the divisor instead
+        if (scaleAdjustment < 0) {
+            // Scale up the divisor by |scaleAdjustment|
+            for (int i = 0; i < -scaleAdjustment; i++) {
+                // Multiply divisor by 10: (8x + 2x)
+                long high8 = (divHigh << 3) | (divLow >>> 61);
+                long low8 = divLow << 3;
+                long high2 = (divHigh << 1) | (divLow >>> 63);
+                long low2 = divLow << 1;
 
-    /**
-     * Divide this Decimal128 by another and store result in sink
-     *
-     * @param divisor     The divisor
-     * @param resultScale The desired scale of the result
-     * @param sink        The MutableDecimal128 to store the result in
-     * @throws ArithmeticException if divisor is zero
-     */
-    public void divideTo(Decimal128 divisor, int resultScale, MutableDecimal128 sink) {
-        // Copy this to sink and divide by divisor (no allocations)
-        sink.copyFrom(this);
-        sink.divideDecimal128(divisor, resultScale);
+                divLow = low8 + low2;
+                long carry = hasCarry(low8, low2, divLow) ? 1 : 0;
+                divHigh = high8 + high2 + carry;
+            }
+        }
+
+        // Perform unsigned division in-place
+        divideUnsignedInPlace(divHigh, divLow);
+
+        // Set result scale
+        this.scale = resultScale;
+
+        // Apply sign if needed
+        if (resultNegative) {
+            negateInPlace();
+        }
     }
 
     @Override
@@ -349,13 +382,11 @@ public class Decimal128 {
     }
 
     /**
-     * Calculate the modulo (remainder) of this Decimal128 divided by another
+     * Calculate modulo in-place
      *
      * @param divisor The divisor
-     * @return A new Decimal128 representing the remainder with the larger scale of the two operands
-     * @throws ArithmeticException if divisor is zero
      */
-    public Decimal128 modulo(Decimal128 divisor) {
+    public void modulo(Decimal128 divisor) {
         if (divisor.isZero()) {
             throw new ArithmeticException("Division by zero");
         }
@@ -363,141 +394,237 @@ public class Decimal128 {
         // Result scale should be the larger of the two scales
         int resultScale = Math.max(this.scale, divisor.scale);
 
-        // Align scales if different
-        Decimal128 dividend = this;
-        Decimal128 div = divisor;
+        // Save original dividend
+        Decimal128 originalDividend = new Decimal128();
+        originalDividend.copyFrom(this);
 
-        if (this.scale < resultScale) {
-            dividend = this.rescale(resultScale);
+        // Use simple repeated subtraction for modulo: a % b = a - (a / b) * b
+        // First compute integer division (a / b)
+        Decimal128 quotient = new Decimal128();
+        quotient.copyFrom(this);
+        quotient.divide(divisor, 0); // Integer division (scale 0)
+
+        // Now compute quotient * divisor
+        quotient.multiply(divisor);
+
+        // Finally compute remainder: a - (a / b) * b
+        this.subtract(quotient);
+
+        // Handle scale adjustment
+        if (this.scale != resultScale) {
+            if (this.scale < resultScale) {
+                int scaleUp = resultScale - this.scale;
+                for (int i = 0; i < scaleUp; i++) {
+                    multiplyBy10InPlace();
+                }
+            } else {
+                int scaleDown = this.scale - resultScale;
+                for (int i = 0; i < scaleDown; i++) {
+                    divideBy10InPlace();
+                }
+            }
+            this.scale = resultScale;
         }
-        if (divisor.scale < resultScale) {
-            div = divisor.rescale(resultScale);
-        }
-
-        // Track sign - modulo result has the same sign as dividend
-        boolean negative = dividend.isNegative();
-
-        // Convert to positive for calculation
-        Decimal128 absDividend = dividend.isNegative() ? dividend.negate() : dividend;
-        Decimal128 absDivisor = div.isNegative() ? div.negate() : div;
-
-        // Perform division and get remainder
-        Decimal128 remainder = moduloUnsigned(absDividend, absDivisor);
-
-        // Apply sign and scale
-        Decimal128 result = new Decimal128(remainder.high, remainder.low, resultScale);
-        return negative && !result.isZero() ? result.negate() : result;
     }
 
     /**
-     * Calculate the modulo (remainder) of this Decimal128 divided by another and store in sink
+     * Multiply this Decimal128 by another (in-place)
      *
-     * @param divisor The divisor
-     * @param sink    The MutableDecimal128 to store the result in
-     * @throws ArithmeticException if divisor is zero
+     * @param other The Decimal128 to multiply by
      */
-    public void moduloTo(Decimal128 divisor, MutableDecimal128 sink) {
-        // Copy this to sink and calculate modulo (no allocations)
-        sink.copyFrom(this);
-        sink.moduloDecimal128(divisor);
-    }
-
-    /**
-     * Multiply two Decimal128 numbers
-     *
-     * @param other The number to multiply by
-     * @return A new Decimal128 representing the product
-     */
-    public Decimal128 multiply(Decimal128 other) {
+    public void multiply(Decimal128 other) {
         // Result scale is sum of scales
         int resultScale = this.scale + other.scale;
 
-        // For simplicity, convert to positive numbers and track sign
-        boolean negative = (this.isNegative() != other.isNegative());
+        // Save the original signs before we modify anything
+        boolean thisNegative = this.isNegative();
+        boolean otherNegative = other.isNegative();
 
-        Decimal128 absThis = this.isNegative() ? this.negate() : this;
-        Decimal128 absOther = other.isNegative() ? other.negate() : other;
+        // Convert to positive values for multiplication algorithm
+        if (thisNegative) {
+            negateInPlace();
+        }
 
-        // Perform unsigned multiplication
-        Decimal128 product = multiplyUnsigned(absThis, absOther);
+        // Get absolute value of other
+        long otherHighAbs = other.high;
+        long otherLowAbs = other.low;
+        if (otherNegative) {
+            // Negate other's values
+            otherLowAbs = ~otherLowAbs + 1;
+            otherHighAbs = ~otherHighAbs;
+            if (otherLowAbs == 0) {
+                otherHighAbs += 1;
+            }
+        }
 
-        // Apply sign and scale
-        Decimal128 result = new Decimal128(product.high, product.low, resultScale);
-        return negative ? result.negate() : result;
+        // Perform multiplication using the algorithm from Decimal128
+        // This is complex but avoids allocations
+        long a3 = this.high >>> 32;
+        long a2 = this.high & 0xFFFFFFFFL;
+        long a1 = this.low >>> 32;
+        long a0 = this.low & 0xFFFFFFFFL;
+
+        long b3 = otherHighAbs >>> 32;
+        long b2 = otherHighAbs & 0xFFFFFFFFL;
+        long b1 = otherLowAbs >>> 32;
+        long b0 = otherLowAbs & 0xFFFFFFFFL;
+
+        // Multiply all combinations
+        long p00 = a0 * b0;
+        long p01 = a0 * b1;
+        long p10 = a1 * b0;
+        long p02 = a0 * b2;
+        long p11 = a1 * b1;
+        long p20 = a2 * b0;
+        long p03 = a0 * b3;
+        long p12 = a1 * b2;
+        long p21 = a2 * b1;
+        long p30 = a3 * b0;
+
+        // Accumulate results
+        long r0 = p00 & 0xFFFFFFFFL;
+        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
+        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
+                (p02 & 0xFFFFFFFFL) + (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
+        long r3 = (r2 >>> 32) + (p02 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
+                (p03 & 0xFFFFFFFFL) + (p12 & 0xFFFFFFFFL) + (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
+
+        this.low = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.high = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+
+        // Handle sign - use the saved original signs
+        boolean negative = (thisNegative != otherNegative);
+        if (negative) {
+            // Negate result
+            this.low = ~this.low + 1;
+            long newHigh = ~this.high;
+            if (this.low == 0) {
+                newHigh += 1;
+            }
+            this.high = newHigh;
+        }
+
+        this.scale = resultScale;
     }
 
     /**
-     * Multiply this by another Decimal128 and store result in sink
-     *
-     * @param other The number to multiply by
-     * @param sink  The MutableDecimal128 to store the result in
+     * Negate this number in-place
      */
-    public void multiplyTo(Decimal128 other, MutableDecimal128 sink) {
-        // Copy this to sink and multiply by other
-        sink.copyFrom(this);
-        sink.multiplyDecimal128(other);
-    }
+    public void negateInPlace() {
+        long oldLow = this.low;
 
-    /**
-     * Negate this number
-     */
-    public Decimal128 negate() {
         // Two's complement: invert all bits and add 1
-        long newLow = ~low + 1;
-        long newHigh = ~high;
+        this.low = ~this.low + 1;
+        this.high = ~this.high;
 
         // Check for carry from low
-        if (newLow == 0 && low != 0) {
-            newHigh += 1;
+        if (this.low == 0 && oldLow != 0) {
+            this.high += 1;
         }
-
-        return new Decimal128(newHigh, newLow, scale);
     }
 
     /**
-     * Rescale this decimal to a new scale (must be larger than current scale)
+     * Set values directly
+     */
+    public void set(long high, long low, int scale) {
+        this.high = high;
+        this.low = low;
+        this.scale = scale;
+    }
+
+    /**
+     * Set from a long value
+     */
+    public void setFromLong(long value, int scale) {
+        this.high = value < 0 ? -1L : 0L;
+        this.low = value;
+        this.scale = scale;
+    }
+
+    // Setters for individual fields
+    public void setHigh(long high) {
+        this.high = high;
+    }
+
+    public void setLow(long low) {
+        this.low = low;
+    }
+
+    public void setScale(int scale) {
+        this.scale = scale;
+    }
+
+    /**
+     * Subtract another Decimal128 from this one (in-place)
      *
-     * @param newScale The new scale (must be >= current scale)
-     * @return A new Decimal128 with the new scale
+     * @param other The Decimal128 to subtract
      */
-    public Decimal128 rescale(int newScale) {
-        if (newScale < this.scale) {
-            throw new IllegalArgumentException("Cannot reduce scale (would lose precision)");
+    public void subtract(Decimal128 other) {
+        // Handle scale differences first
+        if (this.scale < other.scale) {
+            // Rescale this to match other's scale
+            rescaleInPlace(other.scale);
         }
 
-        if (newScale == this.scale) {
-            return this;
+        // Now perform subtraction
+        if (this.scale == other.scale) {
+            // Special case: subtracting zero
+            if (other.isZero()) {
+                // Nothing to do - subtracting zero doesn't change the value
+                return;
+            }
+
+            // Direct subtraction via two's complement addition
+            // Negate other: ~other + 1
+            long otherLow = ~other.low + 1;
+            long otherHigh = ~other.high;
+            if (otherLow == 0 && other.low != 0) {
+                otherHigh += 1;
+            }
+
+            long sumLow = this.low + otherLow;
+            long carry = hasCarry(this.low, otherLow, sumLow) ? 1 : 0;
+            this.low = sumLow;
+            this.high = this.high + otherHigh + carry;
+        } else {
+            // this.scale > other.scale
+
+            // Special case: subtracting zero
+            if (other.isZero()) {
+                // Nothing to do - subtracting zero doesn't change the value
+                return;
+            }
+
+            // Need to scale other up by (this.scale - other.scale)
+            int scaleDiff = this.scale - other.scale;
+            long otherHigh = other.high;
+            long otherLow = other.low;
+
+            // Multiply other by 10^scaleDiff
+            for (int i = 0; i < scaleDiff; i++) {
+                // Multiply by 10: (8x + 2x)
+                long high8 = (otherHigh << 3) | (otherLow >>> 61);
+                long low8 = otherLow << 3;
+                long high2 = (otherHigh << 1) | (otherLow >>> 63);
+                long low2 = otherLow << 1;
+
+                otherLow = low8 + low2;
+                long carry = hasCarry(low8, low2, otherLow) ? 1 : 0;
+                otherHigh = high8 + high2 + carry;
+            }
+
+            // Now negate the scaled value and add
+            long negLow = ~otherLow + 1;
+            long negHigh = ~otherHigh;
+            if (negLow == 0 && otherLow != 0) {
+                negHigh += 1;
+            }
+
+            long sumLow = this.low + negLow;
+            long carry = hasCarry(this.low, negLow, sumLow) ? 1 : 0;
+            this.low = sumLow;
+            this.high = this.high + negHigh + carry;
         }
-
-        // Calculate scale difference
-        int scaleDiff = newScale - this.scale;
-
-        // Multiply by 10^scaleDiff
-        Decimal128 result = this;
-        for (int i = 0; i < scaleDiff; i++) {
-            result = result.multiplyBy10();
-        }
-
-        return new Decimal128(result.high, result.low, newScale);
-    }
-
-    /**
-     * Subtract another Decimal128 from this one
-     */
-    public Decimal128 subtract(Decimal128 other) {
-        return this.add(other.negate());
-    }
-
-    /**
-     * Subtract another Decimal128 from this one and store result in sink
-     *
-     * @param other The number to subtract
-     * @param sink  The MutableDecimal128 to store the result in
-     */
-    public void subtractTo(Decimal128 other, MutableDecimal128 sink) {
-        // Copy this to sink and subtract other (no allocations)
-        sink.copyFrom(this);
-        sink.subtractDecimal128(other);
     }
 
     /**
@@ -542,330 +669,78 @@ public class Decimal128 {
         return result / divisor;
     }
 
-    /**
-     * Convert to string representation
-     */
     @Override
-    public String toString() {
+    public void toSink(@NotNull CharSink<?> sink) {
         if (high == 0 && low >= 0) {
             // Simple case: fits in positive long
-            return longToDecimalString(low, scale);
+            longToDecimalSink(low, scale, sink);
         } else if (high == -1 && low < 0) {
             // Simple negative case
-            return longToDecimalString(low, scale);
+            longToDecimalSink(low, scale, sink);
         } else {
             // Complex case: full 128-bit conversion
-            return fullToString();
+            fullToSink(sink);
+        }
+    }
+
+    @Override
+    public String toString() {
+        // Use StringSink which is already a CharSink - for compatibility
+        StringSink sink = new StringSink();
+        toSink(sink);
+        return sink.toString();
+    }
+
+    /**
+     * Append a long value to sink without allocation
+     */
+    private static void appendLongToSink(long value, CharSink<?> sink) {
+        if (value == 0) {
+            sink.putAscii('0');
+            return;
+        }
+
+        // Find the highest power of 10 that fits in the value
+        long divisor = 1;
+        long temp = value;
+        while (temp >= 10) {
+            divisor *= 10;
+            temp /= 10;
+        }
+
+        // Output digits from most significant to least significant
+        while (divisor > 0) {
+            int digit = (int) (value / divisor);
+            sink.putAscii((char) ('0' + digit));
+            value %= divisor;
+            divisor /= 10;
         }
     }
 
     /**
-     * Add first operand (which can be a MutableDecimal128) to second operand and store in sink
-     * All three can be the same object for in-place operations
+     * Compare two unsigned 128-bit numbers
      *
-     * @param first  First operand (as MutableDecimal128)
-     * @param second Second operand
-     * @param sink   The MutableDecimal128 to store the result in
+     * @return negative if a < b, 0 if a == b, positive if a > b
      */
-    private static void addSameScaleToSink(MutableDecimal128 first, Decimal128 second, MutableDecimal128 sink) {
-        // Perform 128-bit addition
-        long sumLow = first.getLow() + second.getLow();
-
-        // Check for carry from low addition
-        long carry = hasCarry(first.getLow(), second.getLow(), sumLow) ? 1 : 0;
-
-        // Add high 64 bits with carry
-        long sumHigh = first.getHigh() + second.getHigh() + carry;
-
-        // Store result in sink (handles case where sink is same as first)
-        sink.set(sumHigh, sumLow, first.getScale());
-    }
-
-    /**
-     * Add first operand to second operand (which can be a MutableDecimal128) and store in sink
-     *
-     * @param first  First operand
-     * @param second Second operand (as MutableDecimal128)
-     * @param sink   The MutableDecimal128 to store the result in
-     */
-    private static void addSameScaleToSink(Decimal128 first, MutableDecimal128 second, MutableDecimal128 sink) {
-        // Perform 128-bit addition
-        long sumLow = first.getLow() + second.getLow();
-
-        // Check for carry from low addition
-        long carry = hasCarry(first.getLow(), second.getLow(), sumLow) ? 1 : 0;
-
-        // Add high 64 bits with carry
-        long sumHigh = first.getHigh() + second.getHigh() + carry;
-
-        // Store result in sink
-        sink.set(sumHigh, sumLow, first.getScale());
-    }
-
-    /**
-     * Compare two Decimal128 values as unsigned 128-bit integers
-     * Ignores scale - just compares the raw 128-bit values
-     */
-    private static int compareUnsigned(Decimal128 a, Decimal128 b) {
-        // Compare high parts first as unsigned
-        int highCmp = Long.compareUnsigned(a.high, b.high);
+    private static int compareUnsigned(long aHigh, long aLow, long bHigh, long bLow) {
+        int highCmp = Long.compareUnsigned(aHigh, bHigh);
         if (highCmp != 0) {
             return highCmp;
         }
-
-        // If high parts equal, compare low parts as unsigned
-        return Long.compareUnsigned(a.low, b.low);
+        return Long.compareUnsigned(aLow, bLow);
     }
 
     /**
-     * Unsigned 128-bit division
-     * Returns quotient only (no remainder)
+     * Count the number of digits in a positive long value
      */
-    private static Decimal128 divideUnsigned(Decimal128 dividend, Decimal128 divisor) {
-        // Simple but slow division algorithm
-        // For production, consider implementing a more efficient algorithm
-
-        // Work with raw values, ignoring scale during division
-        if (compareUnsigned(dividend, divisor) < 0) {
-            return new Decimal128(0, 0, 0);
+    private static int countDigits(long value) {
+        if (value == 0) return 1;
+        int count = 0;
+        while (value > 0) {
+            count++;
+            value /= 10;
         }
-
-        // Binary long division
-        Decimal128 quotient = new Decimal128(0, 0, 0);
-        Decimal128 remainder = new Decimal128(dividend.high, dividend.low, 0);
-        Decimal128 workingDivisor = new Decimal128(divisor.high, divisor.low, 0);
-
-        // Find the highest bit position where divisor fits
-        int shift = 0;
-        Decimal128 shiftedDivisor = workingDivisor;
-
-        while (compareUnsigned(remainder, shiftedDivisor) >= 0 && shift < 128) {
-            shiftedDivisor = shiftedDivisor.shiftLeft(1);
-            shift++;
-        }
-
-        // Back off one if we went too far
-        if (shift > 0 && compareUnsigned(remainder, shiftedDivisor) < 0) {
-            shiftedDivisor = shiftedDivisor.shiftRight(1);
-            shift--;
-        }
-
-        // Perform division
-        while (shift >= 0) {
-            if (compareUnsigned(remainder, shiftedDivisor) >= 0) {
-                remainder = subtractUnsigned(remainder, shiftedDivisor);
-                quotient = quotient.setBit(shift);
-            }
-            shiftedDivisor = shiftedDivisor.shiftRight(1);
-            shift--;
-        }
-
-        return quotient;
-    }
-
-    /**
-     * Unsigned 128-bit modulo operation
-     * Returns remainder only
-     */
-    private static Decimal128 moduloUnsigned(Decimal128 dividend, Decimal128 divisor) {
-        // If dividend is less than divisor, remainder is dividend
-        if (compareUnsigned(dividend, divisor) < 0) {
-            return dividend;
-        }
-
-        // Binary long division to find remainder
-        Decimal128 remainder = new Decimal128(dividend.high, dividend.low, 0);
-        Decimal128 workingDivisor = new Decimal128(divisor.high, divisor.low, 0);
-
-        // Find the highest bit position where divisor fits
-        int shift = 0;
-        Decimal128 shiftedDivisor = workingDivisor;
-
-        while (compareUnsigned(remainder, shiftedDivisor) >= 0 && shift < 128) {
-            shiftedDivisor = shiftedDivisor.shiftLeft(1);
-            shift++;
-        }
-
-        // Back off one if we went too far
-        if (shift > 0 && compareUnsigned(remainder, shiftedDivisor) < 0) {
-            shiftedDivisor = shiftedDivisor.shiftRight(1);
-            shift--;
-        }
-
-        // Perform division to get remainder
-        while (shift >= 0) {
-            if (compareUnsigned(remainder, shiftedDivisor) >= 0) {
-                remainder = subtractUnsigned(remainder, shiftedDivisor);
-            }
-            shiftedDivisor = shiftedDivisor.shiftRight(1);
-            shift--;
-        }
-
-        return remainder;
-    }
-
-    /**
-     * Multiply a MutableDecimal128 by 10 in-place
-     *
-     * @param sink The MutableDecimal128 to multiply (modified in-place)
-     */
-    private static void multiplyBy10InPlace(MutableDecimal128 sink) {
-        long oldHigh = sink.getHigh();
-        long oldLow = sink.getLow();
-
-        // First multiply by 8 (shift left 3)
-        long high8 = (oldHigh << 3) | (oldLow >>> 61);
-        long low8 = oldLow << 3;
-
-        // Then multiply by 2 (shift left 1)
-        long high2 = (oldHigh << 1) | (oldLow >>> 63);
-        long low2 = oldLow << 1;
-
-        // Add them together (8x + 2x = 10x)
-        long sumLow = low8 + low2;
-        long carry = hasCarry(low8, low2, sumLow) ? 1 : 0;
-        long sumHigh = high8 + high2 + carry;
-
-        // Store result back in sink
-        sink.setHigh(sumHigh);
-        sink.setLow(sumLow);
-    }
-
-    /**
-     * Multiply two unsigned 128-bit numbers (returns lower 128 bits of result)
-     * Uses the standard long multiplication algorithm
-     */
-    private static Decimal128 multiplyUnsigned(Decimal128 a, Decimal128 b) {
-        // Split each 128-bit number into four 32-bit chunks
-        long a3 = a.high >>> 32;
-        long a2 = a.high & 0xFFFFFFFFL;
-        long a1 = a.low >>> 32;
-        long a0 = a.low & 0xFFFFFFFFL;
-
-        long b3 = b.high >>> 32;
-        long b2 = b.high & 0xFFFFFFFFL;
-        long b1 = b.low >>> 32;
-        long b0 = b.low & 0xFFFFFFFFL;
-
-        // Multiply all combinations (only keep lower 128 bits)
-        // Result = a0*b0 + (a0*b1 + a1*b0)<<32 + (a0*b2 + a1*b1 + a2*b0)<<64 + ...
-
-        long p00 = a0 * b0;
-        long p01 = a0 * b1;
-        long p10 = a1 * b0;
-        long p02 = a0 * b2;
-        long p11 = a1 * b1;
-        long p20 = a2 * b0;
-        long p03 = a0 * b3;
-        long p12 = a1 * b2;
-        long p21 = a2 * b1;
-        long p30 = a3 * b0;
-
-        // Accumulate results
-        long r0 = p00 & 0xFFFFFFFFL;
-        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
-        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
-                (p02 & 0xFFFFFFFFL) + (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
-        long r3 = (r2 >>> 32) + (p02 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
-                (p03 & 0xFFFFFFFFL) + (p12 & 0xFFFFFFFFL) + (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
-
-        long low = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
-        long high = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
-
-        return new Decimal128(high, low, 0);
-    }
-
-    /**
-     * Multiply two numbers and store result in sink (handles signs properly)
-     *
-     * @param a    First operand
-     * @param b    Second operand
-     * @param sink The MutableDecimal128 to store the result in
-     */
-    private static void multiplyUnsignedToSink(Decimal128 a, Decimal128 b, MutableDecimal128 sink) {
-        // Get absolute values for multiplication
-        long aHigh = a.high;
-        long aLow = a.low;
-        long bHigh = b.high;
-        long bLow = b.low;
-
-        // Handle negative values by converting to positive
-        boolean aNeg = a.isNegative();
-        boolean bNeg = b.isNegative();
-
-        if (aNeg) {
-            // Two's complement negation
-            aLow = ~aLow + 1;
-            aHigh = ~aHigh;
-            if (aLow == 0 && a.low != 0) {
-                aHigh += 1;
-            }
-        }
-
-        if (bNeg) {
-            // Two's complement negation
-            bLow = ~bLow + 1;
-            bHigh = ~bHigh;
-            if (bLow == 0 && b.low != 0) {
-                bHigh += 1;
-            }
-        }
-
-        // Split each 128-bit number into four 32-bit chunks
-        long a3 = aHigh >>> 32;
-        long a2 = aHigh & 0xFFFFFFFFL;
-        long a1 = aLow >>> 32;
-        long a0 = aLow & 0xFFFFFFFFL;
-
-        long b3 = bHigh >>> 32;
-        long b2 = bHigh & 0xFFFFFFFFL;
-        long b1 = bLow >>> 32;
-        long b0 = bLow & 0xFFFFFFFFL;
-
-        // Multiply all combinations (only keep lower 128 bits)
-        long p00 = a0 * b0;
-        long p01 = a0 * b1;
-        long p10 = a1 * b0;
-        long p02 = a0 * b2;
-        long p11 = a1 * b1;
-        long p20 = a2 * b0;
-        long p03 = a0 * b3;
-        long p12 = a1 * b2;
-        long p21 = a2 * b1;
-        long p30 = a3 * b0;
-
-        // Accumulate results
-        long r0 = p00 & 0xFFFFFFFFL;
-        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
-        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
-                (p02 & 0xFFFFFFFFL) + (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
-        long r3 = (r2 >>> 32) + (p02 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
-                (p03 & 0xFFFFFFFFL) + (p12 & 0xFFFFFFFFL) + (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
-
-        long low = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
-        long high = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
-
-        // Store result in sink
-        sink.set(high, low, 0);
-    }
-
-    /**
-     * Subtract two unsigned 128-bit numbers
-     * a must be >= b (unsigned comparison)
-     */
-    private static Decimal128 subtractUnsigned(Decimal128 a, Decimal128 b) {
-        // Perform subtraction
-        long diffLow = a.low - b.low;
-        long borrow = 0;
-
-        // Check if we need to borrow
-        if (Long.compareUnsigned(a.low, b.low) < 0) {
-            borrow = 1;
-        }
-
-        long diffHigh = a.high - b.high - borrow;
-
-        return new Decimal128(diffHigh, diffLow, 0);
+        return count;
     }
 
     /**
@@ -884,150 +759,274 @@ public class Decimal128 {
     }
 
     /**
-     * Add two Decimal128 numbers with the same scale
-     *
-     * @param other The number to add (must have same scale)
-     * @return A new Decimal128 representing the sum
+     * Divide this by 10 in place
      */
-    private Decimal128 addSameScale(Decimal128 other) {
-        // Perform 128-bit addition
-        // First add the low 64 bits
-        long sumLow = this.low + other.low;
-
-        // Check for carry from low addition
-        long carry = 0;
-        if (hasCarry(this.low, other.low, sumLow)) {
-            carry = 1;
+    private void divideBy10InPlace() {
+        // Simple case
+        if (this.high == 0 && this.low < 10) {
+            this.low = 0;
+            return;
         }
 
-        // Add high 64 bits with carry
-        long sumHigh = this.high + other.high + carry;
+        // Use our division algorithm for dividing by 10
+        long quotientHigh = 0;
+        long quotientLow = 0;
+        long remainder = 0;
 
-        return new Decimal128(sumHigh, sumLow, this.scale);
+        // Divide high part
+        if (this.high != 0) {
+            quotientHigh = Long.divideUnsigned(this.high, 10);
+            remainder = Long.remainderUnsigned(this.high, 10);
+        }
+
+        // Combine remainder with low part for division
+        // We need to compute (remainder * 2^64 + low) / 10
+        // Do this bit by bit to avoid overflow
+        for (int i = 63; i >= 0; i--) {
+            remainder = remainder * 2 + ((this.low >>> i) & 1);
+            if (remainder >= 10) {
+                quotientLow |= (1L << i);
+                remainder -= 10;
+            }
+        }
+
+        this.high = quotientHigh;
+        this.low = quotientLow;
     }
 
     /**
-     * Add two Decimal128 numbers with the same scale and store in sink
+     * Perform unsigned division in-place using binary long division
      *
-     * @param other The number to add (must have same scale)
-     * @param sink  The MutableDecimal128 to store the result in
+     * @param divHigh High 64 bits of divisor
+     * @param divLow  Low 64 bits of divisor
      */
-    private void addSameScaleTo(Decimal128 other, MutableDecimal128 sink) {
-        // Perform 128-bit addition
-        long sumLow = this.low + other.low;
+    private void divideUnsignedInPlace(long divHigh, long divLow) {
+        // Handle simple cases first
+        if (divHigh == 0 && divLow == 1) {
+            // Division by 1 - result is unchanged
+            return;
+        }
 
-        // Check for carry from low addition
-        long carry = hasCarry(this.low, other.low, sumLow) ? 1 : 0;
+        if (divHigh == 0 && this.high == 0) {
+            // Both operands fit in single long - use simple division
+            this.low = Long.divideUnsigned(this.low, divLow);
+            return;
+        }
 
-        // Add high 64 bits with carry
-        long sumHigh = this.high + other.high + carry;
+        // Handle division by zero (should not happen, but safety check)
+        if (divHigh == 0 && divLow == 0) {
+            throw new ArithmeticException("Division by zero");
+        }
 
-        // Store result in sink
-        sink.set(sumHigh, sumLow, this.scale);
+        // Save dividend values
+        long dividendHigh = this.high;
+        long dividendLow = this.low;
+
+        // Initialize result (quotient) to zero
+        this.high = 0;
+        this.low = 0;
+
+        // If dividend is smaller than divisor, result is 0
+        if (compareUnsigned(dividendHigh, dividendLow, divHigh, divLow) < 0) {
+            return;
+        }
+
+        // Binary long division - process bit by bit from left to right
+        for (int i = 127; i >= 0; i--) {
+            // Shift quotient left by 1
+            this.high = (this.high << 1) | (this.low >>> 63);
+            this.low = this.low << 1;
+
+            // Get bit i from dividend and shift remainder left
+            boolean dividendBit;
+            if (i >= 64) {
+                dividendBit = ((dividendHigh >>> (i - 64)) & 1) == 1;
+            } else {
+                dividendBit = ((dividendLow >>> i) & 1) == 1;
+            }
+
+            // Shift remainder left and add dividend bit
+            long remainderHigh = this.high;
+            long remainderLow = this.low;
+
+            if (dividendBit) {
+                remainderLow |= 1;
+            }
+
+            // Check if remainder >= divisor
+            if (compareUnsigned(remainderHigh, remainderLow, divHigh, divLow) >= 0) {
+                // Subtract divisor from remainder
+                long newLow = remainderLow - divLow;
+                long borrow = (Long.compareUnsigned(remainderLow, divLow) < 0) ? 1 : 0;
+                remainderHigh = remainderHigh - divHigh - borrow;
+                remainderLow = newLow;
+
+                // Set bit in quotient
+                this.low |= 1;
+            }
+
+            // Update remainder for next iteration
+            this.high = remainderHigh;
+            this.low = remainderLow;
+        }
+
+        // The quotient is now in the registers - we built it bit by bit
+        // But we need to move it since we were using the registers for remainder too
+        // Actually, let's restart with a cleaner approach
+
+        // Reset and use proper binary division
+        long quotientHigh = 0;
+        long quotientLow = 0;
+        long remainderHigh = 0;
+        long remainderLow = 0;
+
+        // Process each bit of the dividend from MSB to LSB
+        for (int i = 127; i >= 0; i--) {
+            // Shift remainder left by 1
+            remainderHigh = (remainderHigh << 1) | (remainderLow >>> 63);
+            remainderLow = remainderLow << 1;
+
+            // Get bit i from dividend
+            boolean dividendBit;
+            if (i >= 64) {
+                dividendBit = ((dividendHigh >>> (i - 64)) & 1) == 1;
+            } else {
+                dividendBit = ((dividendLow >>> i) & 1) == 1;
+            }
+
+            if (dividendBit) {
+                remainderLow |= 1;
+            }
+
+            // Check if remainder >= divisor
+            if (compareUnsigned(remainderHigh, remainderLow, divHigh, divLow) >= 0) {
+                // Subtract divisor from remainder
+                long newLow = remainderLow - divLow;
+                long borrow = (Long.compareUnsigned(remainderLow, divLow) < 0) ? 1 : 0;
+                remainderHigh = remainderHigh - divHigh - borrow;
+                remainderLow = newLow;
+
+                // Set bit in quotient
+                if (i >= 64) {
+                    quotientHigh |= (1L << (i - 64));
+                } else {
+                    quotientLow |= (1L << i);
+                }
+            }
+        }
+
+        // Store final quotient
+        this.high = quotientHigh;
+        this.low = quotientLow;
     }
 
+    // Note: moduloUnsignedInPlace method removed - modulo now uses division-based approach
+
     /**
-     * Full 128-bit to string conversion (simplified version)
+     * Full 128-bit to sink conversion (simplified version)
      * For production use, consider using BigInteger for complex cases
      */
-    private String fullToString() {
+    private void fullToSink(CharSink<?> sink) {
         // This is a simplified implementation
         // For full production use, you'd want a complete 128-bit division algorithm
-        return String.format("Decimal128[high=%d, low=%d, scale=%d]", high, low, scale);
+        sink.putAscii("Decimal128[high=")
+                .put(high)
+                .putAscii(", low=")
+                .put(low)
+                .putAscii(", scale=")
+                .put(scale)
+                .putAscii("]");
     }
 
     /**
-     * Convert a long to decimal string with scale
+     * Convert a long to decimal representation in a sink with scale (allocation-free)
      */
-    private String longToDecimalString(long value, int scale) {
+    private void longToDecimalSink(long value, int scale, CharSink<?> sink) {
         if (scale == 0) {
-            return Long.toString(value);
+            sink.put(value);
+            return;
         }
 
-        String str = Long.toString(Math.abs(value));
+        // Handle negative numbers
+        boolean negative = value < 0;
+        long absValue = negative ? -value : value;
 
-        // Pad with zeros if necessary
-        while (str.length() <= scale) {
-            str = "0" + str;
+        if (negative) {
+            sink.putAscii('-');
         }
 
-        // Insert decimal point
-        int pointPos = str.length() - scale;
-        String result = str.substring(0, pointPos) + "." + str.substring(pointPos);
+        // Calculate number of digits in absValue
+        int digits = countDigits(absValue);
 
-        // Add negative sign if needed
-        if (value < 0) {
-            result = "-" + result;
+        if (digits <= scale) {
+            // Need to pad with leading zeros: 0.00...value
+            sink.putAscii('0').putAscii('.');
+            // Add leading zeros
+            for (int i = 0; i < scale - digits; i++) {
+                sink.putAscii('0');
+            }
+            // Add the actual digits
+            appendLongToSink(absValue, sink);
+        } else {
+            // Split into integer and fractional parts
+            // Extract integer part
+            long divisor = 1;
+            for (int i = 0; i < scale; i++) {
+                divisor *= 10;
+            }
+            long integerPart = absValue / divisor;
+            long fractionalPart = absValue % divisor;
+
+            // Output integer part
+            appendLongToSink(integerPart, sink);
+
+            // Output decimal point
+            sink.putAscii('.');
+
+            // Output fractional part with leading zeros if needed
+            int fracDigits = countDigits(fractionalPart);
+            for (int i = 0; i < scale - fracDigits; i++) {
+                sink.putAscii('0');
+            }
+            if (fractionalPart > 0) {
+                appendLongToSink(fractionalPart, sink);
+            }
         }
-
-        return result;
     }
 
     /**
-     * Multiply this number by 10 (used for rescaling)
-     *
-     * @return A new Decimal128 that is 10 times this value
+     * Multiply this by 10 in place
      */
-    private Decimal128 multiplyBy10() {
-        // First multiply by 8 (shift left 3)
+    private void multiplyBy10InPlace() {
+        // Multiply by 10: (8x + 2x)
         long high8 = (this.high << 3) | (this.low >>> 61);
         long low8 = this.low << 3;
-
-        // Then multiply by 2 (shift left 1)
         long high2 = (this.high << 1) | (this.low >>> 63);
         long low2 = this.low << 1;
 
-        // Add them together (8x + 2x = 10x)
-        long sumLow = low8 + low2;
-        long carry = hasCarry(low8, low2, sumLow) ? 1 : 0;
-        long sumHigh = high8 + high2 + carry;
-
-        return new Decimal128(sumHigh, sumLow, this.scale);
+        this.low = low8 + low2;
+        long carry = hasCarry(low8, low2, this.low) ? 1 : 0;
+        this.high = high8 + high2 + carry;
     }
 
     /**
-     * Set a specific bit
+     * Rescale this Decimal128 in place
+     *
+     * @param newScale The new scale (must be >= current scale)
      */
-    private Decimal128 setBit(int bit) {
-        if (bit < 64) {
-            return new Decimal128(high, low | (1L << bit), scale);
-        } else {
-            return new Decimal128(high | (1L << (bit - 64)), low, scale);
+    private void rescaleInPlace(int newScale) {
+        if (newScale < this.scale) {
+            throw new IllegalArgumentException("Cannot reduce scale");
         }
-    }
 
-    /**
-     * Shift left by one bit
-     */
-    private Decimal128 shiftLeft(int bits) {
-        if (bits == 0) return this;
-        if (bits >= 128) return new Decimal128(0, 0, scale);
+        int scaleDiff = newScale - this.scale;
 
-        if (bits < 64) {
-            long newHigh = (high << bits) | (low >>> (64 - bits));
-            long newLow = low << bits;
-            return new Decimal128(newHigh, newLow, scale);
-        } else {
-            long newHigh = low << (bits - 64);
-            return new Decimal128(newHigh, 0, scale);
+        // Multiply by 10^scaleDiff
+        for (int i = 0; i < scaleDiff; i++) {
+            multiplyBy10InPlace();
         }
-    }
 
-    /**
-     * Shift right by one bit
-     */
-    private Decimal128 shiftRight(int bits) {
-        if (bits == 0) return this;
-        if (bits >= 128) return new Decimal128(0, 0, scale);
-
-        if (bits < 64) {
-            long newLow = (low >>> bits) | (high << (64 - bits));
-            long newHigh = high >> bits;
-            return new Decimal128(newHigh, newLow, scale);
-        } else {
-            long newLow = high >> (bits - 64);
-            return new Decimal128(high < 0 ? -1L : 0L, newLow, scale);
-        }
+        this.scale = newScale;
     }
 
     /**
@@ -1042,4 +1041,5 @@ public class Decimal128 {
         // Using a for consistency, b parameter kept for clarity
         return Long.compareUnsigned(sum, a) < 0;
     }
+
 }
