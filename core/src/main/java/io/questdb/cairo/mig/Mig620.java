@@ -32,7 +32,13 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
+import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
@@ -251,7 +257,7 @@ public class Mig620 {
         tops.add(partitionTimestamp);
 
         path.trimTo(pathLen);
-        setPathForNativePartition(path, ColumnType.TIMESTAMP, partitionBy, partitionTimestamp, partitionNameTxn);
+        setPathForNativePartition(path, ColumnType.TIMESTAMP_MICRO, partitionBy, partitionTimestamp, partitionNameTxn);
         int partitionPathLen = path.size();
 
         if (ff.exists(path.put(Files.SEPARATOR).$())) {

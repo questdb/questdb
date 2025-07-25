@@ -1435,7 +1435,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),
                     DateLocaleFactory.INSTANCE,
-                    new MicrosFormatFactory(),
+                    MicrosFormatFactory.INSTANCE,
                     this.locale
             );
 

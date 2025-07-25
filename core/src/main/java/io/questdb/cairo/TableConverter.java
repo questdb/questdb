@@ -109,8 +109,7 @@ public class TableConverter {
                                 if (txWriter == null) {
                                     txWriter = new TxWriter(ff, configuration);
                                 }
-                                // todo: this is inconveniently hardcoded, resetting values after metadata reload does not work
-                                txWriter.ofRW(path.trimTo(rootLen).concat(dirNameSink).concat(TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+                                txWriter.ofRW(path.trimTo(rootLen).concat(dirNameSink).concat(TXN_FILE_NAME).$(), ColumnType.UNDEFINED, PartitionBy.DAY);
                                 txWriter.resetLagValuesUnsafe();
 
                                 if (walEnabled) {

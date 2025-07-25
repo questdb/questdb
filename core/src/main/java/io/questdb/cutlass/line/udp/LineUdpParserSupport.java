@@ -24,7 +24,11 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -62,7 +66,7 @@ public class LineUdpParserSupport {
                     return valueLen == 1 ? ColumnType.SYMBOL : defaultIntegerColumnType;
                 case 't':
                     if (valueLen > 1 && ((first >= '0' && first <= '9') || first == '-')) {
-                        return ColumnType.TIMESTAMP;
+                        return ColumnType.TIMESTAMP_MICRO;
                     }
                     // fall through
                 case 'T':

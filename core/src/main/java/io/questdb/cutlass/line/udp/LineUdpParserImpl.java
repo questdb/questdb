@@ -598,7 +598,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         @Override
         public int getColumnType(int columnIndex) {
             if (columnIndex == getTimestampIndex()) {
-                return ColumnType.TIMESTAMP;
+                return ColumnType.TIMESTAMP_MICRO;
             }
             return (int) columnNameType.getQuick(columnIndex * 2 + 1);
         }

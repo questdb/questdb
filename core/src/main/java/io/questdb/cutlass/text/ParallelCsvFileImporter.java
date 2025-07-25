@@ -350,7 +350,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         tableToken = null;
         timestampColumn = null;
         timestampIndex = -1;
-        timestampType = ColumnType.TIMESTAMP;
+        timestampType = ColumnType.TIMESTAMP_MICRO;
         partitionBy = -1;
         columnDelimiter = -1;
         timestampAdapter = null;
@@ -411,7 +411,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
         this.forceHeader = forceHeader;
         this.timestampIndex = -1;
-        this.timestampType = ColumnType.TIMESTAMP;
+        this.timestampType = ColumnType.TIMESTAMP_MICRO;
         this.status = CopyTask.STATUS_STARTED;
         this.phase = CopyTask.PHASE_SETUP;
         this.targetTableStatus = -1;
@@ -723,7 +723,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
             final CharSequence partitionDirName = partition.name;
             try {
-                final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, ColumnType.TIMESTAMP, partitionBy);
+                final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, timestampType, partitionBy);
                 writer.attachPartition(timestamp, partition.importedRows);
             } catch (CairoException e) {
                 throw TextImportException.instance(CopyTask.PHASE_ATTACH_PARTITIONS, "could not attach [partition='")
@@ -1428,7 +1428,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             for (int i = 0, n = names.size(); i < n; i++) {
                 if (Chars.equalsIgnoreCase(names.get(i), timestampColumn)) {
                     timestampIndex = i;
-                    timestampType = ColumnType.TIMESTAMP;
                     break;
                 }
             }

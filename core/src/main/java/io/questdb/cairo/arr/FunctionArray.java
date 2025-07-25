@@ -46,7 +46,7 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
     @Override
     public void appendToMemFlat(MemoryA mem, int offset, int length) {
         final short elemType = getElemType();
-        switch (elemType) {
+        switch (ColumnType.tagOf(elemType)) {
             case ColumnType.BYTE:
                 for (int i = 0; i < length; i++) {
                     mem.putByte(functions.getQuick(offset + i).getByte(record));

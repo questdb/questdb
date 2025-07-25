@@ -119,14 +119,14 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
     }
 
     @Override
-    public void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel) {
+    public void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel, int timestampType) {
         if (tableToken != baseTableReader.getTableToken()) {
             return;
         }
         // Cannot re-use function instances, they will be cached in the query plan
         // and then can be re-used in another execution context.
-        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(1, ColumnType.TIMESTAMP, 0));
-        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(2, ColumnType.TIMESTAMP, 0));
+        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(1, timestampType, 0));
+        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(2, timestampType, 0));
     }
 
     @Override
@@ -150,7 +150,7 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
 
     private long getTimestamp(int index) {
         final Function func = getBindVariableService().getFunction(index);
-        if (func == null || func.getType() != ColumnType.TIMESTAMP) {
+        if (func == null || ColumnType.isTimestamp(func.getType())) {
             return Numbers.LONG_NULL;
         }
         return func.getTimestamp(null);

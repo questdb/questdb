@@ -209,7 +209,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // This method is used to override intrinsic values in the query execution context
     // Its initial usage is in the materialized view refresh
     // where the queried timestamp of the base table is limited to the range affected since last refresh
-    default void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel) {
+    default void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel, int timestampType) {
     }
 
     void popTimestampRequiredFlag();

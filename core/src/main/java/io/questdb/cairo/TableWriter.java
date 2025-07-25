@@ -4651,7 +4651,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 colDataMem.jumpTo(colDataOffset);
             } else {
                 // Timestamp column
-                int shl = ColumnType.pow2SizeOf(ColumnType.TIMESTAMP);
+                int shl = ColumnType.pow2SizeOf(timestampType);
                 MemoryMA srcDataMem = getPrimaryColumn(columnIndex);
                 // this cannot have "top"
                 long srcFixOffset = committedTransientRowCount << shl;
@@ -8550,7 +8550,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int timestampIndex = metadata.getTimestampIndex();
             parquetColumnIdsAndTypes.clear();
             parquetColumnIdsAndTypes.add(timestampIndex);
-            parquetColumnIdsAndTypes.add(ColumnType.TIMESTAMP);
+            parquetColumnIdsAndTypes.add(timestampType);
             parquetDecoder.readRowGroupStats(parquetStatBuffers, parquetColumnIdsAndTypes, 0);
             return parquetStatBuffers.getMinValueLong(0);
         } finally {
@@ -8655,7 +8655,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int timestampIndex = metadata.getTimestampIndex();
             parquetColumnIdsAndTypes.clear();
             parquetColumnIdsAndTypes.add(timestampIndex);
-            parquetColumnIdsAndTypes.add(ColumnType.TIMESTAMP);
+            parquetColumnIdsAndTypes.add(timestampType);
             parquetDecoder.readRowGroupStats(parquetStatBuffers, parquetColumnIdsAndTypes, 0);
             attachMinTimestamp = parquetStatBuffers.getMinValueLong(0);
             final int rowGroupCount = parquetDecoder.metadata().rowGroupCount();

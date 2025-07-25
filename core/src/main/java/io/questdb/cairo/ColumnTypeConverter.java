@@ -130,7 +130,7 @@ public class ColumnTypeConverter {
     }
 
     public static Var2FixedConverter<CharSequence> getConverterFromVarToFixed(short srcType, int dstColumnType) {
-        switch (dstColumnType) {
+        switch (ColumnType.tagOf(dstColumnType)) {
             case ColumnType.IPv4:
                 return converterStr2IPv4;
             case ColumnType.UUID:
@@ -858,7 +858,7 @@ public class ColumnTypeConverter {
     }
 
     private static Fixed2VarConverter getFixedToVarConverter(int srcColumnType, int dstColumnType) {
-        switch (srcColumnType) {
+        switch (ColumnType.tagOf(srcColumnType)) {
             case ColumnType.INT:
                 return converterFromInt2String;
             case ColumnType.UUID:

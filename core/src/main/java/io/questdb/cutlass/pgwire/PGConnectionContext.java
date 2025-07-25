@@ -1208,7 +1208,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         bindVariableService.define(j, ColumnType.LONG, 0);
                         break;
                     case X_B_PG_TIMESTAMP:
-                        bindVariableService.define(j, ColumnType.TIMESTAMP, 0);
+                        bindVariableService.define(j, ColumnType.TIMESTAMP_MICRO, 0);
                         break;
                     case X_B_PG_INT2:
                         bindVariableService.define(j, ColumnType.SHORT, 0);

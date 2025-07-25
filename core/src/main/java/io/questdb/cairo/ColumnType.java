@@ -337,7 +337,7 @@ public final class ColumnType {
     }
 
     public static int getWalDataColumnShl(int columnType, boolean designatedTimestamp) {
-        if (ColumnType.tagOf(columnType) == ColumnType.TIMESTAMP && designatedTimestamp) {
+        if (ColumnType.isTimestamp(columnType) && designatedTimestamp) {
             return 4; // 128 bit column
         }
         return pow2SizeOf(columnType);
@@ -667,7 +667,8 @@ public final class ColumnType {
                         toType == INT ||
                         toType == LONG ||
                         toType == DATE ||
-                        toType == TIMESTAMP ||
+                        toType == TIMESTAMP_MICRO ||
+                        toType == TIMESTAMP_NANO ||
                         toType == FLOAT ||
                         toType == DOUBLE ||
                         toType == CHAR ||

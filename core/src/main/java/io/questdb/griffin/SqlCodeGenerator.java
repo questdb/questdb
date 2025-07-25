@@ -4882,7 +4882,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 if (targetColumnType != -1 && targetColumnType != columnType) {
                     // This is an update and the target column does not match with column the update is trying to perform
-                    if (ColumnType.isBuiltInWideningCast(function.getType(), targetColumnType)) {
+                    if (ColumnType.isBuiltInWideningCast(ColumnType.tagOf(function.getType()), targetColumnType)) {
                         // All functions will be able to getLong() if they support getInt(), no need to generate cast here
                         columnType = targetColumnType;
                     } else {
@@ -5789,7 +5789,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // When we run materialized view refresh we want to restrict queries to the base table
             // to the timestamp range that is updated by the previous transactions.
-            executionContext.overrideWhereIntrinsics(reader.getTableToken(), intrinsicModel);
+            executionContext.overrideWhereIntrinsics(reader.getTableToken(), intrinsicModel, reader.getMetadata().getTimestampType());
 
             // intrinsic parser can collapse where clause when removing parts it can replace
             // need to make sure that filter is updated on the model in case it is processed up the call stack
