@@ -79,7 +79,9 @@ pub fn column_type_to_parquet_type(
             Some(column_id),
         )?),
         ColumnTypeTag::Timestamp => {
-            if column_type.code() & QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG == QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG {
+            if column_type.code() & QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG
+                == QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG
+            {
                 Ok(ParquetType::try_from_primitive(
                     name,
                     PhysicalType::Int64,

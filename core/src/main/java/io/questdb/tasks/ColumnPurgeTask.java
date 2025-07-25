@@ -24,7 +24,9 @@
 
 package io.questdb.tasks;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Transient;
@@ -42,6 +44,7 @@ public class ColumnPurgeTask implements Mutable {
     private int partitionBy;
     private int tableId;
     private TableToken tableName;
+    private TimestampDriver timestampDriver;
     private int timestampType;
     private long truncateVersion;
     private long updateTxn;
@@ -70,6 +73,7 @@ public class ColumnPurgeTask implements Mutable {
         this.truncateVersion = inTask.truncateVersion;
         this.updatedColumnInfo.clear();
         this.updatedColumnInfo.add(inTask.updatedColumnInfo);
+        this.timestampDriver = inTask.timestampDriver;
     }
 
     public CharSequence getColumnName() {
@@ -94,6 +98,10 @@ public class ColumnPurgeTask implements Mutable {
 
     public int getTimestampType() {
         return timestampType;
+    }
+
+    public TimestampDriver getTimestampTypeDriver() {
+        return timestampDriver;
     }
 
     public long getTruncateVersion() {
@@ -132,6 +140,7 @@ public class ColumnPurgeTask implements Mutable {
         this.updateTxn = updateTxn;
         this.truncateVersion = truncateVersion;
         this.updatedColumnInfo.clear();
+        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
     }
 
     public void of(

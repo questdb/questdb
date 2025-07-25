@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -274,17 +275,19 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         int tableId = rec.getInt(TABLE_ID_COLUMN);
                         long truncateVersion = rec.getLong(TABLE_TRUNCATE_VERSION);
                         int columnType = rec.getInt(COLUMN_TYPE_COLUMN);
-                        // todo: this information has to be stored in the table we're processing
-                        //    for compatibility purposes, we might be able to get away from storing extra bits
-                        //    of the timestamp type on the partition by integer value
-                        int timestampType = ColumnType.TIMESTAMP;
                         int partitionBy = rec.getInt(PARTITION_BY_COLUMN);
                         long updateTxn = rec.getLong(UPDATE_TXN_COLUMN);
                         TableToken token = engine.getTableTokenByDirName(tableName);
 
                         if (token == null || token.getTableId() != tableId) {
                             LOG.debug().$("table deleted, skipping [tableDir=").$safe(tableName).I$();
+                            taskPool.push(task);
+                            task = null;
                             continue;
+                        }
+                        int timestampType;
+                        try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                            timestampType = metadata.getTimestampType();
                         }
 
                         taskInitialized = true;
@@ -302,7 +305,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         );
                     }
                     long columnVersion = rec.getLong(COLUMN_VERSION_COLUMN);
-                    long partitionTs = rec.getLong(PARTITION_TIMESTAMP_COLUMN);
+                    long partitionTs = task.getTimestampTypeDriver().fromMicros(rec.getLong(PARTITION_TIMESTAMP_COLUMN));
                     long partitionNameTxn = rec.getLong(PARTITION_NAME_COLUMN);
                     task.appendColumnInfo(columnVersion, partitionTs, partitionNameTxn, rec.getUpdateRowId());
                 }
@@ -369,7 +372,9 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     row.putInt(PARTITION_BY_COLUMN, cleanTask.getPartitionBy());
                     row.putLong(UPDATE_TXN_COLUMN, cleanTask.getUpdateTxn());
                     row.putLong(COLUMN_VERSION_COLUMN, updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_COLUMN_VERSION));
-                    row.putTimestamp(PARTITION_TIMESTAMP_COLUMN, updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP));
+                    // We always store `timestamp_micro` types in `column_versions_purge_log` to maintain uniformity in table output.
+                    // This doesn't result in any loss of precision when restore from table, as the `PARTITION BY` unit is larger than nanos (the nanosecond portion is always 0).
+                    row.putTimestamp(PARTITION_TIMESTAMP_COLUMN, cleanTask.getTimestampTypeDriver().toMicros(updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP)));
                     row.putLong(PARTITION_NAME_COLUMN, updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN));
                     row.append();
                     updatedColumnInfo.setQuick(

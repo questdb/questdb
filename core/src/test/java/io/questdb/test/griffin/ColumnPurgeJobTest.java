@@ -25,7 +25,12 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnPurgeJob;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.Sequence;
 import io.questdb.std.LongList;
@@ -41,9 +46,29 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class ColumnPurgeJobTest extends AbstractCairoTest {
+    private final TimestampDriver timestampDriver;
+    private final String timestampTypeName;
     private int iteration = 1;
+
+    public ColumnPurgeJobTest(int timestampType) {
+        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+        this.timestampTypeName = ColumnType.nameOf(timestampType);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+        });
+    }
 
     @Before
     public void setUpUpdates() {
@@ -57,7 +82,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 execute("create table up_part_o3_many as" +
-                        " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
+                        " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L)::" + timestampTypeName + " ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
@@ -100,7 +125,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 execute("create table up_part_o3_many as" +
-                        " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
+                        " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L)::" + timestampTypeName + " ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
@@ -197,12 +222,12 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             }
 
             assertSql(
-                    "ts\tx\tstr\tsym1\tsym2\n" +
+                    replaceTimestampSuffix("ts\tx\tstr\tsym1\tsym2\n" +
                             "1970-01-01T02:00:00.000000Z\t1\ta\tA\t2\n" +
                             "1970-01-02T02:00:00.000000Z\t2\tb\tC\t4\n" +
                             "1970-01-03T02:00:00.000000Z\t100\tabcd\tA\tEE\n" +
                             "1970-01-04T02:00:00.000000Z\t100\tabcd\tA\tEE\n" +
-                            "1970-01-05T02:00:00.000000Z\t100\tabcd\tD\tEE\n",
+                            "1970-01-05T02:00:00.000000Z\t100\tabcd\tD\tEE\n", timestampTypeName),
                     "up_part_o3_2"
             );
 
@@ -222,7 +247,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 execute("create table up_part_o3_many as" +
-                        " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
+                        " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L)::" + timestampTypeName + " ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
@@ -269,7 +294,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 }
 
                 assertSql(
-                        "ts\tx\tstr\tsym1\tsym2\n" +
+                        replaceTimestampSuffix("ts\tx\tstr\tsym1\tsym2\n" +
                                 "1970-01-01T02:00:00.000000Z\t1\ta\tC\t2\n" +
                                 "1970-01-02T01:00:00.000000Z\t1\ta\tA\t2\n" +
                                 "1970-01-02T02:00:00.000000Z\t2\td\tB\t4\n" +
@@ -277,7 +302,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                                 "1970-01-03T02:00:00.000000Z\t200\tu2\tD\tEE\n" +
                                 "1970-01-04T01:00:00.000000Z\t200\tu2\tA\tEE\n" +
                                 "1970-01-04T02:00:00.000000Z\t200\tu2\tA\tEE\n" +
-                                "1970-01-05T02:00:00.000000Z\t200\tu2\tD\tEE\n", "up_part_o3_many"
+                                "1970-01-05T02:00:00.000000Z\t200\tu2\tD\tEE\n", timestampTypeName), "up_part_o3_many"
                 );
 
                 assertSql("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
@@ -312,7 +337,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 TableToken tn1 = new TableToken("tbl_name", "tbl_name", 123, false, false, false);
                 ColumnPurgeTask task = createTask(tn1, "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
-                task.appendColumnInfo(-1, MicrosTimestampDriver.floor("2022-04-05"), 2);
+                task.appendColumnInfo(-1, timestampDriver.parseFloorLiteral("2022-04-05"), 2);
                 appendTaskToQueue(task);
 
                 TableToken tn2 = new TableToken("tbl_name2", "tbl_name2", 123, false, false, false);
@@ -359,7 +384,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 execute("create table up_part as" +
-                        " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
+                        " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L)::" + timestampTypeName + " ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
@@ -383,12 +408,12 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 }
 
                 assertSql(
-                        "ts\tx\tstr\tsym1\tsym2\n" +
+                        replaceTimestampSuffix("ts\tx\tstr\tsym1\tsym2\n" +
                                 "1970-01-01T00:00:00.000000Z\t1\ta\tC\t2\n" +
                                 "1970-01-02T00:00:00.000000Z\t100\tabcd\tB\tEE\n" +
                                 "1970-01-03T00:00:00.000000Z\t100\tabcd\tD\tEE\n" +
                                 "1970-01-04T00:00:00.000000Z\t100\tabcd\tA\tEE\n" +
-                                "1970-01-05T00:00:00.000000Z\t100\tabcd\tD\tEE\n", "up_part"
+                                "1970-01-05T00:00:00.000000Z\t100\tabcd\tD\tEE\n", timestampTypeName), "up_part"
                 );
 
                 assertSql("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n", purgeJob.getLogTableName());
@@ -403,7 +428,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             setCurrentMicros(Timestamps.DAY_MICROS * 30);
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 execute("create table up_part_o3 as" +
-                        " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
+                        " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L)::" + timestampTypeName + " ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
@@ -445,7 +470,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                     assertFilesExist(partitions, path, "up_part_o3", "", false);
 
                     assertSql(
-                            "ts\tx\tstr\tsym1\tsym2\n" +
+                            replaceTimestampSuffix("ts\tx\tstr\tsym1\tsym2\n" +
                                     "1970-01-01T02:00:00.000000Z\t1\ta\tC\t2\n" +
                                     "1970-01-02T01:00:00.000000Z\t1\ta\tA\t2\n" +
                                     "1970-01-02T02:00:00.000000Z\t2\td\tB\t4\n" +
@@ -453,7 +478,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                                     "1970-01-03T02:00:00.000000Z\t100\tabcd\tD\tEE\n" +
                                     "1970-01-04T01:00:00.000000Z\t100\tabcd\tA\tEE\n" +
                                     "1970-01-04T02:00:00.000000Z\t100\tabcd\tA\tEE\n" +
-                                    "1970-01-05T02:00:00.000000Z\t100\tabcd\tD\tEE\n", "up_part_o3"
+                                    "1970-01-05T02:00:00.000000Z\t100\tabcd\tD\tEE\n", timestampTypeName), "up_part_o3"
                     );
 
                     assertSql("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
@@ -492,7 +517,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 execute("create table up_part as" +
-                        " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
+                        " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L)::" + timestampTypeName + " ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
@@ -523,12 +548,12 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 }
 
                 assertSql(
-                        "ts\tx\tstr\tsym1\tsym2\n" +
+                        replaceTimestampSuffix("ts\tx\tstr\tsym1\tsym2\n" +
                                 "1970-01-01T00:00:00.000000Z\t1\ta\tC\t2\n" +
                                 "1970-01-02T00:00:00.000000Z\t100\tabcd\tB\tEE\n" +
                                 "1970-01-03T00:00:00.000000Z\t100\tabcd\tD\tEE\n" +
                                 "1970-01-04T00:00:00.000000Z\t100\tabcd\tA\tEE\n" +
-                                "1970-01-05T00:00:00.000000Z\t100\tabcd\tD\tEE\n", "up_part"
+                                "1970-01-05T00:00:00.000000Z\t100\tabcd\tD\tEE\n", timestampTypeName), "up_part"
                 );
 
                 assertSql("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
@@ -556,7 +581,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             setCurrentMicros(0);
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 execute("create table up_part_o3 as" +
-                        " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
+                        " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L)::" + timestampTypeName + " ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
@@ -587,7 +612,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
                     assertFilesExist(partitions, path, "up_part_o3", "", false);
                     assertSql(
-                            "ts\tx\tstr\tsym1\tsym2\n" +
+                            replaceTimestampSuffix("ts\tx\tstr\tsym1\tsym2\n" +
                                     "1970-01-01T02:00:00.000000Z\t1\ta\tC\t2\n" +
                                     "1970-01-02T01:00:00.000000Z\t1\ta\tA\t2\n" +
                                     "1970-01-02T02:00:00.000000Z\t2\td\tB\t4\n" +
@@ -595,7 +620,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                                     "1970-01-03T02:00:00.000000Z\t100\tabcd\tD\tEE\n" +
                                     "1970-01-04T01:00:00.000000Z\t100\tabcd\tA\tEE\n" +
                                     "1970-01-04T02:00:00.000000Z\t100\tabcd\tA\tEE\n" +
-                                    "1970-01-05T02:00:00.000000Z\t100\tabcd\tD\tEE\n", "up_part_o3"
+                                    "1970-01-05T02:00:00.000000Z\t100\tabcd\tD\tEE\n", timestampTypeName), "up_part_o3"
                     );
 
                     assertSql("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n", purgeJob.getLogTableName()
@@ -612,7 +637,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             setCurrentMicros(0);
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 execute("create table up_part as" +
-                        " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
+                        " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L)::" + timestampTypeName + " ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
@@ -636,12 +661,12 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 }
 
                 assertSql(
-                        "ts\tx\tstr\tsym1\tsym2\n" +
+                        replaceTimestampSuffix("ts\tx\tstr\tsym1\tsym2\n" +
                                 "1970-01-01T00:00:00.000000Z\t1\ta\tC\t2\n" +
                                 "1970-01-02T00:00:00.000000Z\t100\tabcd\tB\tEE\n" +
                                 "1970-01-03T00:00:00.000000Z\t100\tabcd\tD\tEE\n" +
                                 "1970-01-04T00:00:00.000000Z\t100\tabcd\tA\tEE\n" +
-                                "1970-01-05T00:00:00.000000Z\t100\tabcd\tD\tEE\n", "up_part"
+                                "1970-01-05T00:00:00.000000Z\t100\tabcd\tD\tEE\n", timestampTypeName), "up_part"
                 );
 
                 assertSql("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
@@ -667,7 +692,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 execute("create table up as" +
-                        " (select timestamp_sequence(0, 1000000) ts," +
+                        " (select timestamp_sequence(0, 1000000)::" + timestampTypeName + " ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
@@ -689,12 +714,12 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 }
 
                 assertSql(
-                        "ts\tx\tstr\tsym1\tsym2\n" +
+                        replaceTimestampSuffix("ts\tx\tstr\tsym1\tsym2\n" +
                                 "1970-01-01T00:00:00.000000Z\t100\tabcd\tC\tEE\n" +
                                 "1970-01-01T00:00:01.000000Z\t100\tabcd\tB\tEE\n" +
                                 "1970-01-01T00:00:02.000000Z\t100\tabcd\tD\tEE\n" +
                                 "1970-01-01T00:00:03.000000Z\t100\tabcd\tA\tEE\n" +
-                                "1970-01-01T00:00:04.000000Z\t100\tabcd\tD\tEE\n", "up"
+                                "1970-01-01T00:00:04.000000Z\t100\tabcd\tD\tEE\n", timestampTypeName), "up"
                 );
 
                 assertSql("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
@@ -711,7 +736,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 execute("create table up as" +
-                        " (select timestamp_sequence(0, 1000000) ts," +
+                        " (select timestamp_sequence(0, 1000000)::" + timestampTypeName + " ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
@@ -730,7 +755,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 execute("drop table up");
 
                 execute("create table up as" +
-                        " (select timestamp_sequence(0, 1000000) ts," +
+                        " (select timestamp_sequence(0, 1000000)::" + timestampTypeName + " ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
@@ -741,12 +766,12 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 runPurgeJob(purgeJob);
 
                 assertSql(
-                        "ts\tx\tstr\tsym1\tsym2\n" +
+                        replaceTimestampSuffix("ts\tx\tstr\tsym1\tsym2\n" +
                                 "1970-01-01T00:00:00.000000Z\t1\ta\tA\t2\n" +
                                 "1970-01-01T00:00:01.000000Z\t2\tb\tC\t4\n" +
                                 "1970-01-01T00:00:02.000000Z\t3\td\tA\t2\n" +
                                 "1970-01-01T00:00:03.000000Z\t4\td\tA\t3\n" +
-                                "1970-01-01T00:00:04.000000Z\t5\ta\tD\t1\n", "up"
+                                "1970-01-01T00:00:04.000000Z\t5\ta\tD\t1\n", timestampTypeName), "up"
                 );
             }
         });
@@ -757,7 +782,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 execute("create table testPurgeRespectsTableTruncates as" +
-                        " (select timestamp_sequence(0, 1000000) ts," +
+                        " (select timestamp_sequence(0, 1000000)::" + timestampTypeName + " ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
@@ -786,12 +811,12 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 runPurgeJob(purgeJob);
 
                 assertSql(
-                        "ts\tx\tstr\tsym1\tsym2\n" +
+                        replaceTimestampSuffix("ts\tx\tstr\tsym1\tsym2\n" +
                                 "1970-01-01T00:00:00.000000Z\t1\ta\tA\t2\n" +
                                 "1970-01-01T00:00:01.000000Z\t2\tb\tC\t4\n" +
                                 "1970-01-01T00:00:02.000000Z\t3\td\tA\t2\n" +
                                 "1970-01-01T00:00:03.000000Z\t4\td\tA\t3\n" +
-                                "1970-01-01T00:00:04.000000Z\t5\ta\tD\t1\n", "testPurgeRespectsTableTruncates"
+                                "1970-01-01T00:00:04.000000Z\t5\ta\tD\t1\n", timestampTypeName), "testPurgeRespectsTableTruncates"
                 );
             }
         });
@@ -803,7 +828,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             setCurrentMicros(0);
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 execute("create table up_part_o3 as" +
-                        " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
+                        " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L)::" + timestampTypeName + " ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
@@ -840,7 +865,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 }
 
                 assertSql(
-                        "ts\tx\tstr\tsym1\tsym2\n" +
+                        replaceTimestampSuffix("ts\tx\tstr\tsym1\tsym2\n" +
                                 "1970-01-01T02:00:00.000000Z\t1\ta\tC\t2\n" +
                                 "1970-01-02T01:00:00.000000Z\t1\ta\tA\t2\n" +
                                 "1970-01-02T02:00:00.000000Z\t2\td\tB\t4\n" +
@@ -848,7 +873,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                                 "1970-01-03T02:00:00.000000Z\t100\tabcd\tD\tEE\n" +
                                 "1970-01-04T01:00:00.000000Z\t100\tabcd\tA\tEE\n" +
                                 "1970-01-04T02:00:00.000000Z\t100\tabcd\tA\tEE\n" +
-                                "1970-01-05T02:00:00.000000Z\t100\tabcd\tD\tEE\n", "up_part_o3"
+                                "1970-01-05T02:00:00.000000Z\t100\tabcd\tD\tEE\n", timestampTypeName), "up_part_o3"
                 );
 
                 // cleaned everything, table is truncated
@@ -863,7 +888,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 execute("create table up_part_o3_many as" +
-                        " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
+                        " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L)::" + timestampTypeName + " ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
@@ -899,7 +924,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             setCurrentMicros(0);
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 execute("create table up_part_o3 as" +
-                        " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
+                        " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L)::" + timestampTypeName + " ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
@@ -934,7 +959,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 }
 
                 assertSql(
-                        "ts\tx\tstr\tsym1\tsym2\n" +
+                        replaceTimestampSuffix("ts\tx\tstr\tsym1\tsym2\n" +
                                 "1970-01-01T02:00:00.000000Z\t1\ta\tC\t2\n" +
                                 "1970-01-02T01:00:00.000000Z\t1\ta\tA\t2\n" +
                                 "1970-01-02T02:00:00.000000Z\t2\td\tB\t4\n" +
@@ -942,7 +967,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                                 "1970-01-03T02:00:00.000000Z\t100\tabcd\tD\tEE\n" +
                                 "1970-01-04T01:00:00.000000Z\t100\tabcd\tA\tEE\n" +
                                 "1970-01-04T02:00:00.000000Z\t100\tabcd\tA\tEE\n" +
-                                "1970-01-05T02:00:00.000000Z\t100\tabcd\tD\tEE\n", "up_part_o3"
+                                "1970-01-05T02:00:00.000000Z\t100\tabcd\tD\tEE\n", timestampTypeName), "up_part_o3"
                 );
 
                 assertSql(
@@ -969,7 +994,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 TableToken tn1 = new TableToken("tbl_name", "tbl_name", 123, false, false, false);
                 ColumnPurgeTask task = createTask(tn1, "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
-                task.appendColumnInfo(-1, MicrosTimestampDriver.floor("2022-04-05"), 2);
+                task.appendColumnInfo(-1, timestampDriver.parseFloorLiteral("2022-04-05"), 2);
                 appendTaskToQueue(task);
 
 
@@ -990,17 +1015,6 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000001Z\ttbl_name2\tcol2\t2\t0\t12\t3\t33\t-1\t2022-02-13T00:00:00.000000Z\t3\t1970-01-01T00:00:00.000010Z\n", purgeJob.getLogTableName());
             }
         });
-    }
-
-    private static void createTable(String upPartO3) throws SqlException {
-        execute("create table " + upPartO3 + " as" +
-                " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
-                " x," +
-                " rnd_str('a', 'b', 'c', 'd') str," +
-                " rnd_symbol('A', 'B', 'C', 'D') sym1," +
-                " rnd_symbol('1', '2', '3', '4') sym2" +
-                " from long_sequence(5)), index(sym2)" +
-                " timestamp(ts) PARTITION BY DAY WAL");
     }
 
     private void appendTaskToQueue(ColumnPurgeTask task) {
@@ -1061,6 +1075,17 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         return new ColumnPurgeJob(engine);
     }
 
+    private void createTable(String upPartO3) throws SqlException {
+        execute("create table " + upPartO3 + " as" +
+                " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L)::" + timestampTypeName + " ts," +
+                " x," +
+                " rnd_str('a', 'b', 'c', 'd') str," +
+                " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                " rnd_symbol('1', '2', '3', '4') sym2" +
+                " from long_sequence(5)), index(sym2)" +
+                " timestamp(ts) PARTITION BY DAY WAL");
+    }
+
     private ColumnPurgeTask createTask(
             TableToken tblName,
             String colName,
@@ -1072,8 +1097,8 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             long partitionNameTxn
     ) throws NumericException {
         ColumnPurgeTask tsk = new ColumnPurgeTask();
-        tsk.of(tblName, colName, tableId, 0, columnType, ColumnType.TIMESTAMP, PartitionBy.NONE, updateTxn, new LongList());
-        tsk.appendColumnInfo(columnVersion, MicrosTimestampDriver.floor(partitionTs), partitionNameTxn);
+        tsk.of(tblName, colName, tableId, 0, columnType, timestampDriver.getColumnType(), PartitionBy.NONE, updateTxn, new LongList());
+        tsk.appendColumnInfo(columnVersion, timestampDriver.parseFloorLiteral(partitionTs), partitionNameTxn);
         return tsk;
     }
 
