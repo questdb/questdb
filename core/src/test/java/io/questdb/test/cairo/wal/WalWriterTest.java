@@ -2016,7 +2016,7 @@ public class WalWriterTest extends AbstractCairoTest {
     public void testOverlappingStructureChangeCannotCreateFile() throws Exception {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "0" + Files.SEPARATOR + "c.d")) {
                     return -1;
                 }
@@ -3733,7 +3733,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     if (Utf8s.endsWithAscii(name, WAL_INDEX_FILE_NAME)) {
                         // Set errno to path does not exist
                         this.openRO(Path.getThreadLocal2("does-not-exist").$());

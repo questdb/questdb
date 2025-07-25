@@ -299,7 +299,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             AtomicInteger count = new AtomicInteger();
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     if (Utf8s.containsAscii(name, "str2.i") && count.incrementAndGet() == 2) {
                         return -1;
                     }

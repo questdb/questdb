@@ -42,7 +42,7 @@ public class CopyWalSegmentUtils {
 
     public static void rollColumnToSegment(
             FilesFacade ff,
-            long options,
+            int options,
             MemoryMA primaryColumn,
             MemoryMA secondaryColumn,
             @Transient Path walPath,

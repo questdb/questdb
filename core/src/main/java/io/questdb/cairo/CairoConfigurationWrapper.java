@@ -1212,7 +1212,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getWriterFileOpenOpts() {
+    public int getWriterFileOpenOpts() {
         return getDelegate().getWriterFileOpenOpts();
     }
 

@@ -9385,7 +9385,7 @@ nodejs code:
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     if (Utf8s.endsWithAscii(name, "_meta.swp")) {
                         queryStartedCountDown.await();
                         Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() * 2);
@@ -9409,7 +9409,7 @@ nodejs code:
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     if (Utf8s.endsWithAscii(name, "_meta.swp")) {
                         queryStartedCountDown.await();
                         // wait for twice the time to allow busy wait to time out
@@ -9429,7 +9429,7 @@ nodejs code:
             node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 1);
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     if (Utf8s.endsWithAscii(name, "_meta.swp")) {
                         Os.sleep(50);
                     }

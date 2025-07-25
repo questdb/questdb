@@ -423,7 +423,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
         AtomicInteger count = new AtomicInteger();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "sym2.k")) {
                     if (count.incrementAndGet() == 29) {
                         return -1;

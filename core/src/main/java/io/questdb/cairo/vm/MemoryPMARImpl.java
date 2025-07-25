@@ -47,7 +47,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private long pageAddress = 0;
 
     @TestOnly
-    public MemoryPMARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag, long opts) {
+    public MemoryPMARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag, int opts) {
         this(null);
         of(ff, name, pageSize, 0, memoryTag, opts, -1);
     }
@@ -108,17 +108,17 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
+    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, int opts) {
         of(ff, name, extendSegmentSize, 0, memoryTag, opts, -1);
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts) {
         of(ff, name, extendSegmentSize, memoryTag, opts);
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts, int madviseOpts) {
         close();
         this.memoryTag = memoryTag;
         this.madviseOpts = madviseOpts;

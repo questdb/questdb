@@ -1285,7 +1285,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     if (Utf8s.endsWithAscii(name, fileUnderAttack)) {
                         this.fd = super.openRW(name, opts);
                         return this.fd;
@@ -1433,7 +1433,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     // remember FD of the file we are targeting
                     if (Utf8s.endsWithAscii(name, fileUnderAttack)) {
                         return fd = super.openRW(name, opts);
@@ -1619,7 +1619,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     // remember FD of the file we are targeting
                     if (Utf8s.endsWithAscii(name, fileUnderAttack)) {
                         return fd = super.openRW(name, opts);
