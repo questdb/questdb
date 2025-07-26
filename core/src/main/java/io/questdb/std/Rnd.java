@@ -109,6 +109,50 @@ public class Rnd {
         }
     }
 
+    /**
+     * Generate a random Decimal128 into the provided sink.
+     * This method generates a mix of small, medium, and large values with random scales.
+     *
+     * @param sink The Decimal128 instance to populate with random values
+     */
+    public void nextDecimal128(Decimal128 sink) {
+        // Generate random scale between 0 and 8
+        int scale = nextInt(9);
+
+        // Generate random value - mix of small, medium and large values
+        long value;
+        int valueType = nextInt(4);
+
+        switch (valueType) {
+            case 0: // Small values (-1000 to 1000)
+                value = nextLong() % 2000 - 1000;
+                break;
+            case 1: // Medium values (up to int range)
+                value = nextInt();
+                break;
+            case 2: // Large positive values
+                value = Math.abs(nextLong() % (Long.MAX_VALUE / 1000000));
+                break;
+            default: // Large negative values
+                value = -(Math.abs(nextLong() % (Long.MAX_VALUE / 1000000)));
+                break;
+        }
+
+        sink.copyFrom(Decimal128.fromLong(value, scale));
+    }
+
+    /**
+     * Generate a random Decimal128 and return a new instance.
+     * This method generates a mix of small, medium, and large values with random scales.
+     *
+     * @return A new Decimal128 instance with random values
+     */
+    public Decimal128 nextDecimal128() {
+        Decimal128 result = new Decimal128();
+        nextDecimal128(result);
+        return result;
+    }
+
     public double nextDouble() {
         return (((long) (nextIntForDouble(26)) << 27) + nextIntForDouble(27)) * DOUBLE_UNIT;
     }

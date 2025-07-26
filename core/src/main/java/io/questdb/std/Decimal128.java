@@ -5,6 +5,8 @@ import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
+import java.math.RoundingMode;
+
 /**
  * Decimal128 - A mutable 128-bit decimal number implementation
  * <p>
@@ -57,7 +59,21 @@ public class Decimal128 implements Sinkable {
      */
     public static void divide(Decimal128 a, Decimal128 b, int resultScale, Decimal128 sink) {
         sink.copyFrom(a);
-        sink.divide(b, resultScale);
+        sink.divide(b, resultScale, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Divide two Decimal128 numbers and store the result in sink with specified rounding
+     *
+     * @param a            First operand (dividend)
+     * @param b            Second operand (divisor)
+     * @param resultScale  Desired scale of the result
+     * @param roundingMode The rounding mode to use
+     * @param sink         Destination for the result
+     */
+    public static void divide(Decimal128 a, Decimal128 b, int resultScale, RoundingMode roundingMode, Decimal128 sink) {
+        sink.copyFrom(a);
+        sink.divide(b, resultScale, roundingMode);
     }
 
     /**
@@ -156,7 +172,7 @@ public class Decimal128 implements Sinkable {
         // Handle different scales
         if (this.scale < other.scale) {
             // Rescale this to match other's scale
-            rescaleInPlace(other.scale);
+            rescale(other.scale);
             // Now add with same scale
             long sumLow = this.low + other.low;
             long carry = hasCarry(this.low, other.low, sumLow) ? 1 : 0;
@@ -267,12 +283,23 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Divide this Decimal128 by another (in-place)
+     * Divide this Decimal128 by another (in-place) using HALF_UP rounding
      *
      * @param divisor     The Decimal128 to divide by
      * @param resultScale The desired scale of the result
      */
     public void divide(Decimal128 divisor, int resultScale) {
+        divide(divisor, resultScale, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Divide this Decimal128 by another (in-place) with specified rounding
+     *
+     * @param divisor      The Decimal128 to divide by
+     * @param resultScale  The desired scale of the result
+     * @param roundingMode The rounding mode to use
+     */
+    public void divide(Decimal128 divisor, int resultScale, RoundingMode roundingMode) {
         if (divisor.isZero()) {
             throw new ArithmeticException("Division by zero");
         }
@@ -329,7 +356,7 @@ public class Decimal128 implements Sinkable {
         }
 
         // Perform unsigned division in-place
-        divideUnsignedInPlace(divHigh, divLow);
+        divideUnsignedInPlace(divHigh, divLow, roundingMode, resultNegative);
 
         // Set result scale
         this.scale = resultScale;
@@ -511,6 +538,11 @@ public class Decimal128 implements Sinkable {
      * Negate this number in-place
      */
     public void negateInPlace() {
+        // Special case: negating zero should remain zero
+        if (this.high == 0 && this.low == 0) {
+            return;
+        }
+
         long oldLow = this.low;
 
         // Two's complement: invert all bits and add 1
@@ -521,6 +553,132 @@ public class Decimal128 implements Sinkable {
         if (this.low == 0 && oldLow != 0) {
             this.high += 1;
         }
+    }
+
+    /**
+     * Round this Decimal128 to the specified scale using the given rounding mode
+     * This method performs in-place rounding without requiring a divisor
+     *
+     * @param targetScale  The desired scale (number of decimal places)
+     * @param roundingMode The rounding mode to use
+     */
+    public void round(int targetScale, RoundingMode roundingMode) {
+        if (targetScale < 0) {
+            throw new IllegalArgumentException("Target scale cannot be negative");
+        }
+
+        // UNNECESSARY mode should be a complete no-op
+        if (roundingMode == RoundingMode.UNNECESSARY) {
+            return;
+        }
+
+        if (this.scale == targetScale) {
+            // No rounding needed
+            return;
+        }
+
+        if (this.scale < targetScale) {
+            // Need to increase scale (add trailing zeros)
+            int scaleIncrease = targetScale - this.scale;
+            for (int i = 0; i < scaleIncrease; i++) {
+                multiplyBy10InPlace();
+            }
+            this.scale = targetScale;
+            return;
+        }
+
+        // Need to decrease scale (remove decimal places with rounding)
+        int scaleDecrease = this.scale - targetScale;
+
+        // Handle zero specially
+        if (isZero()) {
+            this.scale = targetScale;
+            return;
+        }
+
+        // Save the sign and work with absolute value
+        boolean isNegative = isNegative();
+        if (isNegative) {
+            negateInPlace();
+        }
+
+        // Perform the rounding by dividing by 10^scaleDecrease
+        long divisor = 1;
+        for (int i = 0; i < scaleDecrease; i++) {
+            divisor *= 10;
+        }
+
+        // Calculate remainder for rounding decision
+        long remainder;
+        if (this.high == 0) {
+            // Simple case - fits in single long
+            remainder = this.low % divisor;
+            this.low = this.low / divisor;
+        } else {
+            // Complex 128-bit case - calculate remainder and quotient
+            remainder = calculateRemainder(divisor);
+            divideUnsignedInPlace(0, divisor, RoundingMode.DOWN, false);
+        }
+
+        // Apply rounding based on remainder and rounding mode
+        boolean shouldRoundUp;
+
+        if (remainder != 0) {
+            long halfDivisor = divisor / 2;
+
+            switch (roundingMode) {
+                case UP:
+                    shouldRoundUp = true;
+                    break;
+                case DOWN:
+                    shouldRoundUp = false;
+                    break;
+                case CEILING:
+                    // Round towards positive infinity
+                    shouldRoundUp = !isNegative;
+                    break;
+                case FLOOR:
+                    // Round towards negative infinity
+                    shouldRoundUp = isNegative;
+                    break;
+                case HALF_UP:
+                    shouldRoundUp = remainder >= halfDivisor;
+                    break;
+                case HALF_DOWN:
+                    shouldRoundUp = remainder > halfDivisor;
+                    break;
+                case HALF_EVEN:
+                    if (remainder > halfDivisor) {
+                        shouldRoundUp = true;
+                    } else if (remainder == halfDivisor) {
+                        // Tie case - round to even
+                        shouldRoundUp = (this.low & 1) == 1;
+                    } else {
+                        shouldRoundUp = false;
+                    }
+                    break;
+                default:
+                    shouldRoundUp = false;
+            }
+        } else {
+            shouldRoundUp = false;
+        }
+
+        if (shouldRoundUp) {
+            // Add 1 to the result
+            this.low++;
+            if (this.low == 0) { // Overflow in low part
+                this.high++;
+            }
+        }
+
+        // Restore sign if needed
+        if (isNegative) {
+            negateInPlace();
+        }
+
+        // Set the new scale
+        this.scale = targetScale;
     }
 
     /**
@@ -563,7 +721,7 @@ public class Decimal128 implements Sinkable {
         // Handle scale differences first
         if (this.scale < other.scale) {
             // Rescale this to match other's scale
-            rescaleInPlace(other.scale);
+            rescale(other.scale);
         }
 
         // Now perform subtraction
@@ -628,6 +786,17 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
+     * Convert to BigDecimal with full precision
+     *
+     * @return BigDecimal representation of this Decimal128
+     */
+    public java.math.BigDecimal toBigDecimal() {
+        StringSink sink = new StringSink();
+        toSink(sink);
+        return new java.math.BigDecimal(sink.toString());
+    }
+
+    /**
      * Convert to double (may lose precision)
      */
     public double toDouble() {
@@ -671,11 +840,18 @@ public class Decimal128 implements Sinkable {
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        if (high == 0 && low >= 0) {
-            // Simple case: fits in positive long
-            longToDecimalSink(low, scale, sink);
+        if (high == 0) {
+            // Case: value fits in 64 bits (could be large unsigned)
+            if (low >= 0) {
+                // Positive value - use signed arithmetic
+                longToDecimalSink(low, scale, sink);
+            } else {
+                // Large unsigned value that appears negative as signed long
+                // Convert to unsigned string first, then format
+                unsignedLongToDecimalSink(low, scale, sink);
+            }
         } else if (high == -1 && low < 0) {
-            // Simple negative case
+            // Simple negative case: small negative number
             longToDecimalSink(low, scale, sink);
         } else {
             // Complex case: full 128-bit conversion
@@ -759,6 +935,58 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
+     * Calculate the remainder when dividing this 128-bit value by a single long divisor
+     */
+    private long calculateRemainder(long divisor) {
+        // Save original values
+        long originalHigh = this.high;
+        long originalLow = this.low;
+
+        // Use binary long division to find remainder
+        long remainderHigh = 0;
+        long remainderLow = 0;
+
+        // Process each bit of the dividend from MSB to LSB
+        for (int i = 127; i >= 0; i--) {
+            // Shift remainder left by 1
+            remainderHigh = (remainderHigh << 1) | (remainderLow >>> 63);
+            remainderLow = remainderLow << 1;
+
+            // Get bit i from dividend
+            boolean dividendBit;
+            if (i >= 64) {
+                dividendBit = ((originalHigh >>> (i - 64)) & 1) == 1;
+            } else {
+                dividendBit = ((originalLow >>> i) & 1) == 1;
+            }
+
+            if (dividendBit) {
+                remainderLow |= 1;
+            }
+
+            // Check if remainder >= divisor (divisor has high part = 0)
+            if (remainderHigh > 0 || Long.compareUnsigned(remainderLow, divisor) >= 0) {
+                // Subtract divisor from remainder
+                if (remainderHigh > 0 || Long.compareUnsigned(remainderLow, divisor) >= 0) {
+                    remainderLow = remainderLow - divisor;
+                    if (Long.compareUnsigned(remainderLow + divisor, remainderLow) < 0) {
+                        // There was a borrow
+                        remainderHigh--;
+                    }
+                }
+            }
+        }
+
+        // The remainder should fit in a single long since divisor is single long
+        if (remainderHigh != 0) {
+            // This shouldn't happen for proper inputs, but let's handle it gracefully
+            return remainderLow;
+        }
+
+        return remainderLow;
+    }
+
+    /**
      * Divide this by 10 in place
      */
     private void divideBy10InPlace() {
@@ -800,7 +1028,7 @@ public class Decimal128 implements Sinkable {
      * @param divHigh High 64 bits of divisor
      * @param divLow  Low 64 bits of divisor
      */
-    private void divideUnsignedInPlace(long divHigh, long divLow) {
+    private void divideUnsignedInPlace(long divHigh, long divLow, RoundingMode roundingMode, boolean resultNegative) {
         // Handle simple cases first
         if (divHigh == 0 && divLow == 1) {
             // Division by 1 - result is unchanged
@@ -915,6 +1143,74 @@ public class Decimal128 implements Sinkable {
             }
         }
 
+        // Apply rounding based on remainder and rounding mode
+        // remainderHigh:remainderLow contains the final remainder
+        boolean shouldRoundUp = false;
+
+        // Only apply rounding if there's a remainder
+        if (remainderHigh != 0 || remainderLow != 0) {
+            switch (roundingMode) {
+                case UP:
+                    shouldRoundUp = true;
+                    break;
+                case DOWN:
+                    shouldRoundUp = false;
+                    break;
+                case CEILING:
+                    // Round towards positive infinity
+                    shouldRoundUp = !resultNegative;
+                    break;
+                case FLOOR:
+                    // Round towards negative infinity  
+                    shouldRoundUp = resultNegative;
+                    break;
+                case HALF_UP:
+                case HALF_DOWN:
+                case HALF_EVEN:
+                    // Calculate divisor/2 for comparison
+                    long halfDivisorHigh = divHigh;
+                    long halfDivisorLow = divLow;
+
+                    // Divide by 2: shift right by 1 bit
+                    halfDivisorLow = (halfDivisorHigh << 63) | (halfDivisorLow >>> 1);
+                    halfDivisorHigh = halfDivisorHigh >>> 1;
+
+                    int cmp = compareUnsigned(remainderHigh, remainderLow, halfDivisorHigh, halfDivisorLow);
+                    if (cmp > 0) {
+                        // remainder > divisor/2 - always round up
+                        shouldRoundUp = true;
+                    } else if (cmp < 0) {
+                        // remainder < divisor/2 - always round down
+                        shouldRoundUp = false;
+                    } else {
+                        // remainder == divisor/2 - tie case
+                        switch (roundingMode) {
+                            case HALF_UP:
+                                shouldRoundUp = true;
+                                break;
+                            case HALF_DOWN:
+                                shouldRoundUp = false;
+                                break;
+                            case HALF_EVEN:
+                                // Round to even - check if quotient is odd
+                                shouldRoundUp = (quotientLow & 1) == 1;
+                                break;
+                        }
+                    }
+                    break;
+                case UNNECESSARY:
+                    throw new ArithmeticException("Rounding necessary");
+            }
+        }
+
+        if (shouldRoundUp) {
+            // Add 1 to quotient
+            quotientLow++;
+            if (quotientLow == 0) { // Overflow in low part
+                quotientHigh++;
+            }
+        }
+
         // Store final quotient
         this.high = quotientHigh;
         this.low = quotientLow;
@@ -927,15 +1223,71 @@ public class Decimal128 implements Sinkable {
      * For production use, consider using BigInteger for complex cases
      */
     private void fullToSink(CharSink<?> sink) {
-        // This is a simplified implementation
-        // For full production use, you'd want a complete 128-bit division algorithm
-        sink.putAscii("Decimal128[high=")
-                .put(high)
-                .putAscii(", low=")
-                .put(low)
-                .putAscii(", scale=")
-                .put(scale)
-                .putAscii("]");
+        // Convert the 128-bit value to BigInteger first, then handle sign and formatting
+        java.math.BigInteger bigInt;
+
+        // Create BigInteger from the 128-bit representation
+        if (high == 0) {
+            // Simple positive case: fits in 64 bits
+            bigInt = java.math.BigInteger.valueOf(low);
+        } else if (high == -1 && low < 0) {
+            // Simple negative case: small negative number that fits in signed long
+            bigInt = java.math.BigInteger.valueOf(low);
+        } else if (high < 0) {
+            // Negative 128-bit number - use two's complement to get absolute value
+            long absHigh = ~high;
+            long absLow = ~low + 1;
+            if (low == 0 && absLow == 0) {
+                absHigh++; // Handle carry
+            }
+
+            // Create positive BigInteger for absolute value
+            java.math.BigInteger absBigInt;
+            if (absHigh == 0) {
+                absBigInt = new java.math.BigInteger(Long.toUnsignedString(absLow));
+            } else {
+                absBigInt = java.math.BigInteger.valueOf(absHigh).shiftLeft(64).add(new java.math.BigInteger(Long.toUnsignedString(absLow)));
+            }
+
+            // Make it negative
+            bigInt = absBigInt.negate();
+        } else {
+            // Positive 128-bit number
+            bigInt = java.math.BigInteger.valueOf(high).shiftLeft(64).add(new java.math.BigInteger(Long.toUnsignedString(low)));
+        }
+
+        // Convert to string (BigInteger handles the sign)
+        String valueStr = bigInt.toString();
+
+        // Handle sign separately for formatting
+        boolean negative = valueStr.startsWith("-");
+        String digits = negative ? valueStr.substring(1) : valueStr;
+
+        // Apply decimal formatting based on scale
+        if (negative) {
+            sink.putAscii('-');
+        }
+
+        if (scale == 0) {
+            // Integer
+            sink.put(digits);
+        } else {
+            // Decimal
+            if (digits.length() <= scale) {
+                // Number < 1: output 0.00...digits
+                sink.putAscii('0').putAscii('.');
+                for (int i = 0; i < scale - digits.length(); i++) {
+                    sink.putAscii('0');
+                }
+                sink.put(digits);
+            } else {
+                // Number >= 1: split into integer.fractional
+                int splitPoint = digits.length() - scale;
+                sink.put(digits.substring(0, splitPoint));
+                sink.putAscii('.');
+                sink.put(digits.substring(splitPoint));
+            }
+        }
     }
 
     /**
@@ -984,11 +1336,17 @@ public class Decimal128 implements Sinkable {
             sink.putAscii('.');
 
             // Output fractional part with leading zeros if needed
-            int fracDigits = countDigits(fractionalPart);
-            for (int i = 0; i < scale - fracDigits; i++) {
-                sink.putAscii('0');
-            }
-            if (fractionalPart > 0) {
+            if (fractionalPart == 0) {
+                // Special case: all trailing zeros
+                for (int i = 0; i < scale; i++) {
+                    sink.putAscii('0');
+                }
+            } else {
+                // Pad with leading zeros and append fractional part
+                int fracDigits = countDigits(fractionalPart);
+                for (int i = 0; i < scale - fracDigits; i++) {
+                    sink.putAscii('0');
+                }
                 appendLongToSink(fractionalPart, sink);
             }
         }
@@ -1014,7 +1372,7 @@ public class Decimal128 implements Sinkable {
      *
      * @param newScale The new scale (must be >= current scale)
      */
-    private void rescaleInPlace(int newScale) {
+    private void rescale(int newScale) {
         if (newScale < this.scale) {
             throw new IllegalArgumentException("Cannot reduce scale");
         }
@@ -1027,6 +1385,40 @@ public class Decimal128 implements Sinkable {
         }
 
         this.scale = newScale;
+    }
+
+    /**
+     * Convert an unsigned long to decimal representation in a sink with scale (allocation-free)
+     */
+    private void unsignedLongToDecimalSink(long value, int scale, CharSink<?> sink) {
+        if (scale == 0) {
+            // Integer case - output as unsigned
+            sink.put(Long.toUnsignedString(value));
+            return;
+        }
+
+        // Convert to string as unsigned
+        String digits = Long.toUnsignedString(value);
+
+        if (digits.length() <= scale) {
+            // Need to pad with leading zeros: 0.00...digits
+            sink.putAscii('0').putAscii('.');
+            // Add leading zeros
+            for (int i = 0; i < scale - digits.length(); i++) {
+                sink.putAscii('0');
+            }
+            // Add the actual digits
+            sink.put(digits);
+        } else {
+            // Split into integer and fractional parts
+            // Extract integer part
+            int splitPoint = digits.length() - scale;
+            sink.put(digits.substring(0, splitPoint));
+            // Output decimal point
+            sink.putAscii('.');
+            // Output fractional part
+            sink.put(digits.substring(splitPoint));
+        }
     }
 
     /**
