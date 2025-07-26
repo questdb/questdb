@@ -1,3 +1,4 @@
+use std::cmp;
 use std::collections::VecDeque;
 use std::io::Write;
 
@@ -13,11 +14,13 @@ use parquet2::write::{
 use parquet2::FallibleStreamingIterator;
 
 use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
-use crate::parquet_write::{binary, boolean, fixed_len_bytes, primitive, string, symbol, varchar};
+use crate::parquet_write::{
+    array, binary, boolean, fixed_len_bytes, primitive, string, symbol, varchar,
+};
 use qdb_core::col_type::ColumnTypeTag;
 
 use super::{util, GeoByte, GeoInt, GeoLong, GeoShort, IPv4};
-use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
+use crate::parquet::error::{ParquetError, ParquetResult};
 use crate::POOL;
 use rayon::prelude::*;
 
@@ -144,7 +147,7 @@ impl<W: Write> ParquetWriter<W> {
             version: options.version,
         };
 
-        let created_by = Some("QuestDB version 8.0".to_string());
+        let created_by = Some("QuestDB version 9.0".to_string());
         let writer = FileWriter::with_sorting_columns(
             self.writer,
             parquet_schema.clone(),
@@ -372,7 +375,10 @@ fn column_chunk_to_pages(
 
     let number_of_rows = chunk_length;
     let max_page_size = options.data_page_size.unwrap_or(DEFAULT_PAGE_SIZE);
-    let rows_per_page = max_page_size / bytes_per_type(primitive_type.physical_type);
+    let rows_per_page = cmp::max(
+        max_page_size / bytes_per_type(primitive_type.physical_type),
+        1,
+    );
 
     let rows = (0..number_of_rows)
         .step_by(rows_per_page)
@@ -587,6 +593,18 @@ fn chunk_to_page(
                 encoding,
             )
         }
+        ColumnTypeTag::Array => {
+            let data = column.primary_data;
+            let aux: &[[u8; 16]] = unsafe { util::transmute_slice(column.secondary_data) };
+            array::array_to_page(
+                &aux[lower_bound..upper_bound],
+                data,
+                adjusted_column_top,
+                options,
+                primitive_type,
+                encoding,
+            )
+        }
         ColumnTypeTag::Long128 | ColumnTypeTag::Uuid => {
             let reversed = column.data_type.tag() == ColumnTypeTag::Uuid;
             let column: &[[u8; 16]] = unsafe { util::transmute_slice(column.primary_data) };
@@ -611,10 +629,6 @@ fn chunk_to_page(
         ColumnTypeTag::Symbol => {
             panic!("Symbol type is encoded in column_chunk_to_pages()")
         }
-        ColumnTypeTag::Array => Err(fmt_err!(
-            InvalidType,
-            "tables with array columns cannot be converted to Parquet partitions yet"
-        )),
     }
 }
 

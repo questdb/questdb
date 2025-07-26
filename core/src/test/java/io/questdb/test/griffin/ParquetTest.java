@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -68,16 +67,20 @@ public class ParquetTest extends AbstractCairoTest {
             execute("insert into x values(" + arr1 + ", '2024-04-10T00:00:00.000000Z');");
             execute("insert into x values(" + arr1 + ", '2024-05-10T00:00:00.000000Z');");
             execute("insert into x values(" + arr1 + ", '2024-06-10T00:00:00.000000Z');");
-            assertSql(
-                    "a1\tts\n"
-                            + arr1exp + "\t2024-04-10T00:00:00.000000Z\n"
-                            + arr1exp + "\t2024-05-10T00:00:00.000000Z\n"
-                            + arr1exp + "\t2024-06-10T00:00:00.000000Z\n"
-                    ,
-                    "x");
+            execute("insert into x values(null, '2024-07-10T00:00:00.000000Z');");
 
-            final SqlException ex = Assert.assertThrows(SqlException.class, () -> execute("alter table x convert partition to parquet where ts >= 0"));
-            TestUtils.assertContains(ex.getMessage(), "tables with array columns cannot be converted to Parquet partitions yet");
+            final String expected = "a1\tts\n"
+                    + arr1exp + "\t2024-04-10T00:00:00.000000Z\n"
+                    + arr1exp + "\t2024-05-10T00:00:00.000000Z\n"
+                    + arr1exp + "\t2024-06-10T00:00:00.000000Z\n"
+                    + "null\t2024-07-10T00:00:00.000000Z\n";
+            assertSql(expected, "x");
+
+            execute("alter table x convert partition to parquet where ts >= 0");
+            assertSql(expected, "x");
+
+            execute("alter table x convert partition to native where ts >= 0");
+            assertSql(expected, "x");
         });
     }
 
@@ -228,18 +231,24 @@ public class ParquetTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("x\tts\n" +
-                    "1\t2020-01-01T00:00:00.000000Z\n" +
-                    "2\t2020-01-02T00:00:00.000000Z\n" +
-                    "3\t2020-01-03T00:00:00.000000Z\n", "x");
+            assertSql(
+                    "x\tts\n" +
+                            "1\t2020-01-01T00:00:00.000000Z\n" +
+                            "2\t2020-01-02T00:00:00.000000Z\n" +
+                            "3\t2020-01-03T00:00:00.000000Z\n",
+                    "x"
+            );
 
             drainWalQueue();
 
             execute("alter table x convert partition to parquet list '2020-01-01', '2020-01-02';");
-            assertSql("x\tts\n" +
-                    "1\t2020-01-01T00:00:00.000000Z\n" +
-                    "2\t2020-01-02T00:00:00.000000Z\n" +
-                    "3\t2020-01-03T00:00:00.000000Z\n", "x");
+            assertSql(
+                    "x\tts\n" +
+                            "1\t2020-01-01T00:00:00.000000Z\n" +
+                            "2\t2020-01-02T00:00:00.000000Z\n" +
+                            "3\t2020-01-03T00:00:00.000000Z\n",
+                    "x"
+            );
 
             drainWalQueue();
 
@@ -251,13 +260,16 @@ public class ParquetTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("x\tts\n" +
-                    "1\t2020-01-01T00:00:00.000000Z\n" +
-                    "100000000001\t2020-01-01T00:00:00.000000Z\n" +
-                    "2\t2020-01-02T00:00:00.000000Z\n" +
-                    "200000000002\t2020-01-02T00:00:00.000000Z\n" +
-                    "3\t2020-01-03T00:00:00.000000Z\n" +
-                    "33\t2020-01-03T00:00:00.000000Z\n", "x");
+            assertSql(
+                    "x\tts\n" +
+                            "1\t2020-01-01T00:00:00.000000Z\n" +
+                            "100000000001\t2020-01-01T00:00:00.000000Z\n" +
+                            "2\t2020-01-02T00:00:00.000000Z\n" +
+                            "200000000002\t2020-01-02T00:00:00.000000Z\n" +
+                            "3\t2020-01-03T00:00:00.000000Z\n" +
+                            "33\t2020-01-03T00:00:00.000000Z\n",
+                    "x"
+            );
         });
     }
 
