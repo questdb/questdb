@@ -464,16 +464,15 @@ public class Decimal128Test {
 
     @Test
     public void testToSinkComplex128Bit() {
-        // Test complex 128-bit number (fallback to debug format)
+        // Test complex 128-bit number conversion to decimal
         Decimal128 decimal = new Decimal128(0x123456789ABCDEFL, 0xFEDCBA9876543210L, 2);
         StringSink sink = new StringSink();
 
         decimal.toSink(sink);
 
         String result = sink.toString();
-        Assert.assertTrue(result.startsWith("Decimal128[high="));
-        Assert.assertTrue(result.contains("low="));
-        Assert.assertTrue(result.contains("scale=2"));
+        // Should convert large 128-bit number to proper decimal representation
+        Assert.assertEquals("15123660752041709473323553696831370.40", result);
     }
 
     @Test

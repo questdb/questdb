@@ -19,6 +19,18 @@ public class Decimal128 implements Sinkable {
     private long low;   // Low 64 bits
     private int scale;  // Number of decimal places
 
+    /** Maximum allowed scale (number of decimal places) */
+    public static final int MAX_SCALE = 16;
+
+    /**
+     * Validates that the scale is within allowed bounds
+     */
+    private static void validateScale(int scale) {
+        if (scale < 0 || scale > MAX_SCALE) {
+            throw new IllegalArgumentException("Scale must be between 0 and " + MAX_SCALE + ", got: " + scale);
+        }
+    }
+
     /**
      * Default constructor - creates zero with scale 0
      */
@@ -32,6 +44,7 @@ public class Decimal128 implements Sinkable {
      * Constructor with initial values
      */
     public Decimal128(long high, long low, int scale) {
+        validateScale(scale);
         this.high = high;
         this.low = low;
         this.scale = scale;
@@ -58,6 +71,7 @@ public class Decimal128 implements Sinkable {
      * @param sink        Destination for the result
      */
     public static void divide(Decimal128 a, Decimal128 b, int resultScale, Decimal128 sink) {
+        validateScale(resultScale);
         sink.copyFrom(a);
         sink.divide(b, resultScale, RoundingMode.HALF_UP);
     }
@@ -72,6 +86,7 @@ public class Decimal128 implements Sinkable {
      * @param sink         Destination for the result
      */
     public static void divide(Decimal128 a, Decimal128 b, int resultScale, RoundingMode roundingMode, Decimal128 sink) {
+        validateScale(resultScale);
         sink.copyFrom(a);
         sink.divide(b, resultScale, roundingMode);
     }
@@ -83,6 +98,7 @@ public class Decimal128 implements Sinkable {
      * @param scale Number of decimal places
      */
     public static Decimal128 fromDouble(double value, int scale) {
+        validateScale(scale);
         long scaleFactor = 1;
         for (int i = 0; i < scale; i++) {
             scaleFactor *= 10;
@@ -98,6 +114,7 @@ public class Decimal128 implements Sinkable {
      * @param scale Number of decimal places
      */
     public static Decimal128 fromLong(long value, int scale) {
+        validateScale(scale);
         long h = value < 0 ? -1L : 0L;
         return new Decimal128(h, value, scale);
     }
@@ -289,6 +306,7 @@ public class Decimal128 implements Sinkable {
      * @param resultScale The desired scale of the result
      */
     public void divide(Decimal128 divisor, int resultScale) {
+        validateScale(resultScale);
         divide(divisor, resultScale, RoundingMode.HALF_UP);
     }
 
@@ -300,6 +318,7 @@ public class Decimal128 implements Sinkable {
      * @param roundingMode The rounding mode to use
      */
     public void divide(Decimal128 divisor, int resultScale, RoundingMode roundingMode) {
+        validateScale(resultScale);
         if (divisor.isZero()) {
             throw new ArithmeticException("Division by zero");
         }
@@ -563,9 +582,7 @@ public class Decimal128 implements Sinkable {
      * @param roundingMode The rounding mode to use
      */
     public void round(int targetScale, RoundingMode roundingMode) {
-        if (targetScale < 0) {
-            throw new IllegalArgumentException("Target scale cannot be negative");
-        }
+        validateScale(targetScale);
 
         // UNNECESSARY mode should be a complete no-op
         if (roundingMode == RoundingMode.UNNECESSARY) {
@@ -694,6 +711,7 @@ public class Decimal128 implements Sinkable {
      * Set from a long value
      */
     public void setFromLong(long value, int scale) {
+        validateScale(scale);
         this.high = value < 0 ? -1L : 0L;
         this.low = value;
         this.scale = scale;
@@ -709,6 +727,7 @@ public class Decimal128 implements Sinkable {
     }
 
     public void setScale(int scale) {
+        validateScale(scale);
         this.scale = scale;
     }
 
@@ -1059,50 +1078,7 @@ public class Decimal128 implements Sinkable {
             return;
         }
 
-        // Binary long division - process bit by bit from left to right
-        for (int i = 127; i >= 0; i--) {
-            // Shift quotient left by 1
-            this.high = (this.high << 1) | (this.low >>> 63);
-            this.low = this.low << 1;
-
-            // Get bit i from dividend and shift remainder left
-            boolean dividendBit;
-            if (i >= 64) {
-                dividendBit = ((dividendHigh >>> (i - 64)) & 1) == 1;
-            } else {
-                dividendBit = ((dividendLow >>> i) & 1) == 1;
-            }
-
-            // Shift remainder left and add dividend bit
-            long remainderHigh = this.high;
-            long remainderLow = this.low;
-
-            if (dividendBit) {
-                remainderLow |= 1;
-            }
-
-            // Check if remainder >= divisor
-            if (compareUnsigned(remainderHigh, remainderLow, divHigh, divLow) >= 0) {
-                // Subtract divisor from remainder
-                long newLow = remainderLow - divLow;
-                long borrow = (Long.compareUnsigned(remainderLow, divLow) < 0) ? 1 : 0;
-                remainderHigh = remainderHigh - divHigh - borrow;
-                remainderLow = newLow;
-
-                // Set bit in quotient
-                this.low |= 1;
-            }
-
-            // Update remainder for next iteration
-            this.high = remainderHigh;
-            this.low = remainderLow;
-        }
-
-        // The quotient is now in the registers - we built it bit by bit
-        // But we need to move it since we were using the registers for remainder too
-        // Actually, let's restart with a cleaner approach
-
-        // Reset and use proper binary division
+        // Use proper binary division
         long quotientHigh = 0;
         long quotientLow = 0;
         long remainderHigh = 0;
@@ -1139,6 +1115,28 @@ public class Decimal128 implements Sinkable {
                     quotientHigh |= (1L << (i - 64));
                 } else {
                     quotientLow |= (1L << i);
+                }
+            }
+            
+            // Early exit optimization: if remainder is zero and no more significant dividend bits remain
+            if (remainderHigh == 0 && remainderLow == 0) {
+                // Check if all remaining dividend bits are zero
+                boolean hasMoreSignificantBits = false;
+                if (i >= 64) {
+                    // Check remaining bits in dividendHigh and all of dividendLow
+                    long mask = (1L << (i - 64)) - 1; // Mask for bits 0 to i-64-1
+                    hasMoreSignificantBits = (dividendHigh & mask) != 0 || dividendLow != 0;
+                } else {
+                    // Check remaining bits in dividendLow
+                    if (i > 0) {
+                        long mask = (1L << i) - 1; // Mask for bits 0 to i-1
+                        hasMoreSignificantBits = (dividendLow & mask) != 0;
+                    }
+                }
+                
+                if (!hasMoreSignificantBits) {
+                    // No more work to do - remainder and quotient are final
+                    break;
                 }
             }
         }

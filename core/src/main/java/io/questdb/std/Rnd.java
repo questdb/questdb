@@ -116,8 +116,8 @@ public class Rnd {
      * @param sink The Decimal128 instance to populate with random values
      */
     public void nextDecimal128(Decimal128 sink) {
-        // Generate random scale between 0 and 8
-        int scale = nextInt(9);
+        // Generate random scale between 0 and MAX_SCALE
+        int scale = nextInt(Decimal128.MAX_SCALE + 1);
 
         // Generate random value - mix of small, medium and large values
         long value;
