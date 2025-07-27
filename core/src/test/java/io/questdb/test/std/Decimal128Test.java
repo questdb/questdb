@@ -27,6 +27,8 @@ package io.questdb.test.std;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
+
+import java.math.RoundingMode;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -129,7 +131,8 @@ public class Decimal128Test {
         Decimal128 a = Decimal128.fromDouble(100.0, 2);
         Decimal128 zero = Decimal128.fromDouble(0.0, 2);
 
-        a.divide(zero, 2);
+        a.divide(zero);
+        a.round(2, RoundingMode.HALF_UP);
     }
 
     @Test
@@ -185,7 +188,8 @@ public class Decimal128Test {
         Decimal128 a = Decimal128.fromDouble(100.0, 2);
         Decimal128 b = Decimal128.fromDouble(4.0, 1);
 
-        a.divide(b, 2);
+        a.divide(b);
+        a.round(2, RoundingMode.HALF_UP);
 
         Assert.assertEquals(25.0, a.toDouble(), 0.01);
         Assert.assertEquals(2, a.getScale());
@@ -365,7 +369,8 @@ public class Decimal128Test {
         Decimal128 b = Decimal128.fromDouble(4.0, 1);
         Decimal128 result = new Decimal128();
 
-        Decimal128.divide(a, b, 2, result);
+        Decimal128.divide(a, b, result);
+        result.round(2, RoundingMode.HALF_UP);
 
         Assert.assertEquals(25.0, result.toDouble(), 0.01);
         Assert.assertEquals(2, result.getScale());
@@ -592,7 +597,8 @@ public class Decimal128Test {
 
         // Divide by 5 -> 45
         Decimal128 divisor = Decimal128.fromLong(5, 0);
-        accumulator.divide(divisor, 2);
+        accumulator.divide(divisor);
+        accumulator.round(2, RoundingMode.HALF_UP);
         Assert.assertEquals(45.0, accumulator.toDouble(), 0.01);
 
         // Modulo 10 -> 5
@@ -677,7 +683,8 @@ public class Decimal128Test {
         bCopy.copyFrom(b);
 
         // Test static divide method
-        Decimal128.divide(aCopy, bCopy, resultScale, result);
+        Decimal128.divide(aCopy, bCopy, result);
+        result.round(resultScale, RoundingMode.HALF_UP);
 
         // Verify operands unchanged
         Assert.assertEquals("Division modified first operand at iteration " + iteration,
@@ -686,7 +693,8 @@ public class Decimal128Test {
                 b.toBigDecimal(), bCopy.toBigDecimal());
 
         // Test in-place divide method
-        aCopy.divide(bCopy, resultScale);
+        aCopy.divide(bCopy);
+        aCopy.round(resultScale, RoundingMode.HALF_UP);
 
         // Results should be the same
         Assert.assertEquals("Static and in-place division differ at iteration " + iteration,
@@ -1201,7 +1209,7 @@ public class Decimal128Test {
                     "toString()=%s\n" +
                     "Error: %s",
                     i, decimal.getHigh(), decimal.getLow(), decimal.getScale(),
-                    decimal.toString(), e.getMessage()
+                        decimal, e.getMessage()
                 );
                 Assert.fail(errorMsg);
                 return; // unreachable but makes compiler happy
@@ -1230,7 +1238,7 @@ public class Decimal128Test {
                         originalBigDecimal.toPlainString(), decimal.getScale(),
                         targetScale, roundingMode,
                         testDecimal.getHigh(), testDecimal.getLow(), testDecimal.getScale(),
-                        testDecimal.toString(), e.getMessage()
+                            testDecimal, e.getMessage()
                     );
                     Assert.fail(errorMsg);
                     return; // unreachable but makes compiler happy
@@ -1289,11 +1297,11 @@ public class Decimal128Test {
     public void testRoundFuzzWithUnnecessaryMode() {
         // Separate fuzz test for UNNECESSARY mode which has special semantics
         final int iterations = 1000;
-        final Rnd rnd = new Rnd(0xbadcafe, 0xfeedface);
-        
+        final Rnd rnd = TestUtils.generateRandom(null);
+        final Decimal128 decimal = new Decimal128();
+
         for (int i = 0; i < iterations; i++) {
             // Generate random decimal
-            Decimal128 decimal = new Decimal128();
             rnd.nextDecimal128(decimal);
             
             // For UNNECESSARY mode, we need to ensure no rounding is actually needed

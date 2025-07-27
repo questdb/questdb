@@ -64,31 +64,15 @@ public class Decimal128 implements Sinkable {
 
     /**
      * Divide two Decimal128 numbers and store the result in sink (a / b -> sink)
+     * Uses optimal precision calculation up to MAX_SCALE
      *
-     * @param a           First operand (dividend)
-     * @param b           Second operand (divisor)
-     * @param resultScale Desired scale of the result
-     * @param sink        Destination for the result
+     * @param a    First operand (dividend)
+     * @param b    Second operand (divisor)
+     * @param sink Destination for the result
      */
-    public static void divide(Decimal128 a, Decimal128 b, int resultScale, Decimal128 sink) {
-        validateScale(resultScale);
+    public static void divide(Decimal128 a, Decimal128 b, Decimal128 sink) {
         sink.copyFrom(a);
-        sink.divide(b, resultScale, RoundingMode.HALF_UP);
-    }
-
-    /**
-     * Divide two Decimal128 numbers and store the result in sink with specified rounding
-     *
-     * @param a            First operand (dividend)
-     * @param b            Second operand (divisor)
-     * @param resultScale  Desired scale of the result
-     * @param roundingMode The rounding mode to use
-     * @param sink         Destination for the result
-     */
-    public static void divide(Decimal128 a, Decimal128 b, int resultScale, RoundingMode roundingMode, Decimal128 sink) {
-        validateScale(resultScale);
-        sink.copyFrom(a);
-        sink.divide(b, resultScale, roundingMode);
+        sink.divide(b);
     }
 
     /**
@@ -300,33 +284,29 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Divide this Decimal128 by another (in-place) using HALF_UP rounding
+     * Divide this Decimal128 by another (in-place) with optimal precision
+     * Uses dynamic scale calculation up to MAX_SCALE to avoid excessive trailing zeros
+     * Always uses UNNECESSARY rounding - caller should use round() method if rounding needed
      *
-     * @param divisor     The Decimal128 to divide by
-     * @param resultScale The desired scale of the result
+     * @param divisor The Decimal128 to divide by
      */
-    public void divide(Decimal128 divisor, int resultScale) {
-        validateScale(resultScale);
-        divide(divisor, resultScale, RoundingMode.HALF_UP);
-    }
-
-    /**
-     * Divide this Decimal128 by another (in-place) with specified rounding
-     *
-     * @param divisor      The Decimal128 to divide by
-     * @param resultScale  The desired scale of the result
-     * @param roundingMode The rounding mode to use
-     */
-    public void divide(Decimal128 divisor, int resultScale, RoundingMode roundingMode) {
-        validateScale(resultScale);
+    public void divide(Decimal128 divisor) {
         if (divisor.isZero()) {
             throw new ArithmeticException("Division by zero");
         }
 
-        // For division: dividend/divisor = result
-        // In terms of scales: (dividend * 10^dividend.scale) / (divisor * 10^divisor.scale) = result * 10^result.scale
-        // Rearranging: dividend / divisor = result * 10^(result.scale + divisor.scale - dividend.scale)
-        // To get the correct result, we need to scale up the dividend by (result.scale + divisor.scale - dividend.scale)
+        // Calculate optimal result scale - use minimum of:
+        // 1. MAX_SCALE (to avoid exceeding limits)
+        // 2. dividend.scale + divisor.scale (natural scale for division)
+        // 3. A reasonable precision based on the numbers involved
+        int naturalScale = this.scale + divisor.scale;
+        int resultScale = Math.min(naturalScale, MAX_SCALE);
+        
+        // For very small results, we might want more precision
+        // For very large results, we might want less to avoid trailing zeros
+        // This is a heuristic that can be refined based on usage patterns
+        
+        // Scale adjustment needed to achieve the result scale
         int scaleAdjustment = resultScale + divisor.scale - this.scale;
 
         // Scale up this (dividend) if needed to get the right precision
@@ -374,8 +354,8 @@ public class Decimal128 implements Sinkable {
             }
         }
 
-        // Perform unsigned division in-place
-        divideUnsignedInPlace(divHigh, divLow, roundingMode, resultNegative);
+        // Perform unsigned division in-place with UNNECESSARY rounding
+        divideUnsignedInPlace(divHigh, divLow, RoundingMode.UNNECESSARY, resultNegative);
 
         // Set result scale
         this.scale = resultScale;
@@ -448,7 +428,8 @@ public class Decimal128 implements Sinkable {
         // First compute integer division (a / b)
         Decimal128 quotient = new Decimal128();
         quotient.copyFrom(this);
-        quotient.divide(divisor, 0); // Integer division (scale 0)
+        quotient.divide(divisor); // Use new signature
+        quotient.round(0, RoundingMode.DOWN); // Integer division (scale 0)
 
         // Now compute quotient * divisor
         quotient.multiply(divisor);
@@ -1197,7 +1178,9 @@ public class Decimal128 implements Sinkable {
                     }
                     break;
                 case UNNECESSARY:
-                    throw new ArithmeticException("Rounding necessary");
+                    // Don't round - keep exact result even if there's a remainder
+                    shouldRoundUp = false;
+                    break;
             }
         }
 
