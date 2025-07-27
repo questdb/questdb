@@ -15,21 +15,13 @@ import java.math.RoundingMode;
  * performed in-place to eliminate object allocation and improve performance.
  */
 public class Decimal128 implements Sinkable {
+    /**
+     * Maximum allowed scale (number of decimal places)
+     */
+    public static final int MAX_SCALE = 16;
     private long high;  // High 64 bits
     private long low;   // Low 64 bits
     private int scale;  // Number of decimal places
-
-    /** Maximum allowed scale (number of decimal places) */
-    public static final int MAX_SCALE = 16;
-
-    /**
-     * Validates that the scale is within allowed bounds
-     */
-    private static void validateScale(int scale) {
-        if (scale < 0 || scale > MAX_SCALE) {
-            throw new IllegalArgumentException("Scale must be between 0 and " + MAX_SCALE + ", got: " + scale);
-        }
-    }
 
     /**
      * Default constructor - creates zero with scale 0
@@ -135,7 +127,7 @@ public class Decimal128 implements Sinkable {
      */
     public static void negate(Decimal128 a, Decimal128 sink) {
         sink.copyFrom(a);
-        sink.negateInPlace();
+        sink.negate();
     }
 
     /**
@@ -207,8 +199,6 @@ public class Decimal128 implements Sinkable {
         }
     }
 
-    // Static helper methods for non-destructive operations
-
     /**
      * Compare this to another Decimal128 (handles different scales)
      */
@@ -274,6 +264,8 @@ public class Decimal128 implements Sinkable {
         }
     }
 
+    // Static helper methods for non-destructive operations
+
     /**
      * Copy values from another Decimal128
      */
@@ -295,25 +287,52 @@ public class Decimal128 implements Sinkable {
             throw new ArithmeticException("Division by zero");
         }
 
-        // Calculate optimal result scale - use minimum of:
-        // 1. MAX_SCALE (to avoid exceeding limits)
-        // 2. dividend.scale + divisor.scale (natural scale for division)
-        // 3. A reasonable precision based on the numbers involved
-        int naturalScale = this.scale + divisor.scale;
-        int resultScale = Math.min(naturalScale, MAX_SCALE);
-        
-        // For very small results, we might want more precision
-        // For very large results, we might want less to avoid trailing zeros
-        // This is a heuristic that can be refined based on usage patterns
-        
-        // Scale adjustment needed to achieve the result scale
-        int scaleAdjustment = resultScale + divisor.scale - this.scale;
+        // Calculate optimal result scale
+        // We want to maximize precision without causing overflow during calculation
 
-        // Scale up this (dividend) if needed to get the right precision
+        // First, determine the natural scale for the division
+        int resultScale = MAX_SCALE;
+
+        // Calculate scale adjustment needed
+        int scaleAdjustment = MAX_SCALE + divisor.scale - this.scale;
+
+        // Limit scale adjustment to prevent overflow
+        // We need to be conservative because multiplication by 10^n can overflow
+        // Rule of thumb: each multiplication by 10 adds about 3.32 bits
+        // For a value using k bits, we can multiply by 10^n where n <= (127-k)/3.32
         if (scaleAdjustment > 0) {
-            for (int i = 0; i < scaleAdjustment; i++) {
-                multiplyBy10InPlace();
+            // Estimate bits used by current value
+            int bitsUsed;
+            if (this.high == 0 || this.high == -1) {
+                // Value fits in low part
+                bitsUsed = 64 - Long.numberOfLeadingZeros(Math.abs(this.low));
+            } else {
+                // Value uses high part
+                bitsUsed = 128 - Long.numberOfLeadingZeros(Math.abs(this.high));
             }
+
+            // Maximum safe multiplications (conservative estimate)
+            int maxSafeMultiplications = Math.max(0, (125 - bitsUsed) / 4);
+
+            if (scaleAdjustment > maxSafeMultiplications) {
+                // Reduce scale adjustment to safe level
+                scaleAdjustment = maxSafeMultiplications;
+                // Adjust result scale accordingly
+                resultScale = this.scale - divisor.scale + scaleAdjustment;
+                // Ensure result scale is non-negative
+                if (resultScale < 0) {
+                    resultScale = 0;
+                    scaleAdjustment = divisor.scale - this.scale;
+                    if (scaleAdjustment < 0) {
+                        scaleAdjustment = 0;
+                    }
+                }
+            }
+        }
+
+        // Scale up this (dividend) if needed
+        for (int i = 0; i < scaleAdjustment; i++) {
+            multiplyBy10InPlace();
         }
 
         // Track sign - result is negative if signs differ
@@ -323,7 +342,7 @@ public class Decimal128 implements Sinkable {
 
         // Make both positive for unsigned division
         if (thisNeg) {
-            negateInPlace();
+            negate();
         }
 
         // We need divisor as positive - create temp vars (no allocation)
@@ -355,14 +374,14 @@ public class Decimal128 implements Sinkable {
         }
 
         // Perform unsigned division in-place with UNNECESSARY rounding
-        divideUnsignedInPlace(divHigh, divLow, RoundingMode.UNNECESSARY, resultNegative);
+        divide(divHigh, divLow, RoundingMode.UNNECESSARY, resultNegative);
 
         // Set result scale
         this.scale = resultScale;
 
         // Apply sign if needed
         if (resultNegative) {
-            negateInPlace();
+            negate();
         }
     }
 
@@ -469,7 +488,7 @@ public class Decimal128 implements Sinkable {
 
         // Convert to positive values for multiplication algorithm
         if (thisNegative) {
-            negateInPlace();
+            negate();
         }
 
         // Get absolute value of other
@@ -537,7 +556,7 @@ public class Decimal128 implements Sinkable {
     /**
      * Negate this number in-place
      */
-    public void negateInPlace() {
+    public void negate() {
         // Special case: negating zero should remain zero
         if (this.high == 0 && this.low == 0) {
             return;
@@ -597,7 +616,7 @@ public class Decimal128 implements Sinkable {
         // Save the sign and work with absolute value
         boolean isNegative = isNegative();
         if (isNegative) {
-            negateInPlace();
+            negate();
         }
 
         // Perform the rounding by dividing by 10^scaleDecrease
@@ -610,12 +629,12 @@ public class Decimal128 implements Sinkable {
         long remainder;
         if (this.high == 0) {
             // Simple case - fits in single long
-            remainder = this.low % divisor;
-            this.low = this.low / divisor;
+            remainder = Long.remainderUnsigned(this.low, divisor);
+            this.low = Long.divideUnsigned(this.low, divisor);
         } else {
             // Complex 128-bit case - calculate remainder and quotient
             remainder = calculateRemainder(divisor);
-            divideUnsignedInPlace(0, divisor, RoundingMode.DOWN, false);
+            divide(0, divisor, RoundingMode.DOWN, false);
         }
 
         // Apply rounding based on remainder and rounding mode
@@ -672,7 +691,7 @@ public class Decimal128 implements Sinkable {
 
         // Restore sign if needed
         if (isNegative) {
-            negateInPlace();
+            negate();
         }
 
         // Set the new scale
@@ -935,6 +954,15 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
+     * Validates that the scale is within allowed bounds
+     */
+    private static void validateScale(int scale) {
+        if (scale < 0 || scale > MAX_SCALE) {
+            throw new IllegalArgumentException("Scale must be between 0 and " + MAX_SCALE + ", got: " + scale);
+        }
+    }
+
+    /**
      * Calculate the remainder when dividing this 128-bit value by a single long divisor
      */
     private long calculateRemainder(long divisor) {
@@ -987,48 +1015,12 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Divide this by 10 in place
-     */
-    private void divideBy10InPlace() {
-        // Simple case
-        if (this.high == 0 && this.low < 10) {
-            this.low = 0;
-            return;
-        }
-
-        // Use our division algorithm for dividing by 10
-        long quotientHigh = 0;
-        long quotientLow = 0;
-        long remainder = 0;
-
-        // Divide high part
-        if (this.high != 0) {
-            quotientHigh = Long.divideUnsigned(this.high, 10);
-            remainder = Long.remainderUnsigned(this.high, 10);
-        }
-
-        // Combine remainder with low part for division
-        // We need to compute (remainder * 2^64 + low) / 10
-        // Do this bit by bit to avoid overflow
-        for (int i = 63; i >= 0; i--) {
-            remainder = remainder * 2 + ((this.low >>> i) & 1);
-            if (remainder >= 10) {
-                quotientLow |= (1L << i);
-                remainder -= 10;
-            }
-        }
-
-        this.high = quotientHigh;
-        this.low = quotientLow;
-    }
-
-    /**
      * Perform unsigned division in-place using binary long division
      *
      * @param divHigh High 64 bits of divisor
      * @param divLow  Low 64 bits of divisor
      */
-    private void divideUnsignedInPlace(long divHigh, long divLow, RoundingMode roundingMode, boolean resultNegative) {
+    private void divide(long divHigh, long divLow, RoundingMode roundingMode, boolean resultNegative) {
         // Handle simple cases first
         if (divHigh == 0 && divLow == 1) {
             // Division by 1 - result is unchanged
@@ -1098,7 +1090,7 @@ public class Decimal128 implements Sinkable {
                     quotientLow |= (1L << i);
                 }
             }
-            
+
             // Early exit optimization: if remainder is zero and no more significant dividend bits remain
             if (remainderHigh == 0 && remainderLow == 0) {
                 // Check if all remaining dividend bits are zero
@@ -1114,7 +1106,7 @@ public class Decimal128 implements Sinkable {
                         hasMoreSignificantBits = (dividendLow & mask) != 0;
                     }
                 }
-                
+
                 if (!hasMoreSignificantBits) {
                     // No more work to do - remainder and quotient are final
                     break;
@@ -1140,7 +1132,7 @@ public class Decimal128 implements Sinkable {
                     shouldRoundUp = !resultNegative;
                     break;
                 case FLOOR:
-                    // Round towards negative infinity  
+                    // Round towards negative infinity
                     shouldRoundUp = resultNegative;
                     break;
                 case HALF_UP:
@@ -1193,6 +1185,42 @@ public class Decimal128 implements Sinkable {
         }
 
         // Store final quotient
+        this.high = quotientHigh;
+        this.low = quotientLow;
+    }
+
+    /**
+     * Divide this by 10 in place
+     */
+    private void divideBy10InPlace() {
+        // Simple case
+        if (this.high == 0 && this.low < 10) {
+            this.low = 0;
+            return;
+        }
+
+        // Use our division algorithm for dividing by 10
+        long quotientHigh = 0;
+        long quotientLow = 0;
+        long remainder = 0;
+
+        // Divide high part
+        if (this.high != 0) {
+            quotientHigh = Long.divideUnsigned(this.high, 10);
+            remainder = Long.remainderUnsigned(this.high, 10);
+        }
+
+        // Combine remainder with low part for division
+        // We need to compute (remainder * 2^64 + low) / 10
+        // Do this bit by bit to avoid overflow
+        for (int i = 63; i >= 0; i--) {
+            remainder = remainder * 2 + ((this.low >>> i) & 1);
+            if (remainder >= 10) {
+                quotientLow |= (1L << i);
+                remainder -= 10;
+            }
+        }
+
         this.high = quotientHigh;
         this.low = quotientLow;
     }
