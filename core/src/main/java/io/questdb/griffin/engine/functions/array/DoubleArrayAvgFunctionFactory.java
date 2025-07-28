@@ -31,6 +31,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -44,15 +46,23 @@ public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         return new Func(args.getQuick(0));
     }
 
-    static class Func extends DoubleArraySumFunctionFactory.Func {
+    static class Func extends DoubleFunction implements UnaryFunction, DoubleUnaryArrayAccessor {
+        private final Function arrayArg;
         private int count = 0;
+        private double sum = 0d;
 
         Func(Function arrayArg) {
-            super(arrayArg);
+            this.arrayArg = arrayArg;
         }
 
         @Override
@@ -70,6 +80,16 @@ public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void applyToNullArray() {
+            sum = Double.NaN;
+        }
+
+        @Override
+        public Function getArg() {
+            return arrayArg;
+        }
+
+        @Override
         public double getDouble(Record rec) {
             ArrayView arr = arrayArg.getArray(rec);
             count = 0;
@@ -82,6 +102,11 @@ public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
         @Override
         public String getName() {
             return FUNCTION_NAME;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
     }
 }

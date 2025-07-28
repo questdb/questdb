@@ -46,15 +46,21 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         return new Func(args.getQuick(0));
     }
 
     static class Func extends DoubleFunction implements UnaryFunction, DoubleUnaryArrayAccessor {
 
-        protected final Function arrayArg;
-        protected double compensation = 0d;
-        protected double sum = 0d;
+        private final Function arrayArg;
+        private double compensation = 0d;
+        private double sum = 0d;
 
         Func(Function arrayArg) {
             this.arrayArg = arrayArg;
