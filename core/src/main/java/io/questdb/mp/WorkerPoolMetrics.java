@@ -25,164 +25,89 @@
 package io.questdb.mp;
 
 import io.questdb.std.MemoryTag;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 
 /**
  * High-performance metrics collection for worker pools that avoids false sharing.
  * Each worker gets a dedicated cache-line padded slot to record utilization and parking state.
- * 
+ * <p>
  * The structure provides:
  * - Utilization percentage recording per worker (double precision)
  * - Parking flags indicating which workers should park on the monitor
  * - Shared monitor object for worker coordination
- * 
+ * <p>
  * False sharing is prevented by ensuring each worker's data occupies a full cache line (64 bytes).
  */
-public final class WorkerPoolMetrics {
-    
+public final class WorkerPoolMetrics implements QuietCloseable {
+
     // Cache line size for most modern CPUs
     private static final int CACHE_LINE_SIZE = 64;
-    
-    // Size of each worker's metrics slot (padded to cache line)
-    private static final int WORKER_SLOT_SIZE = CACHE_LINE_SIZE;
-    
+    private static final int PARKING_FLAG_OFFSET = 8; // boolean (1 byte)
     // Offsets within each worker slot
     private static final int UTILIZATION_OFFSET = 0;  // double (8 bytes)
-    private static final int PARKING_FLAG_OFFSET = 8; // boolean (1 byte)
-    
-    private final int workerCount;
-    private final long baseAddress;
+    // Size of each worker's metrics slot (padded to cache line)
+    private static final int WORKER_SLOT_SIZE = CACHE_LINE_SIZE;
     private final Object[] parkingMonitors;
-    
+    private final int workerCount;
+    private long baseAddress;
+
     public WorkerPoolMetrics(int workerCount) {
         this.workerCount = workerCount;
         // Allocate memory: workerCount * WORKER_SLOT_SIZE
         long totalSize = (long) workerCount * WORKER_SLOT_SIZE;
         this.baseAddress = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
-        
+
         // Create individual monitor objects for each worker
         this.parkingMonitors = new Object[workerCount];
         for (int i = 0; i < workerCount; i++) {
             parkingMonitors[i] = new Object();
         }
-        
+
         // Initialize all values to zero
         Unsafe.getUnsafe().setMemory(baseAddress, totalSize, (byte) 0);
     }
-    
+
     /**
-     * Records the utilization percentage for a specific worker.
-     * This method is designed to be called frequently from worker threads with minimal overhead.
-     * 
-     * @param workerId the worker ID (0-based index)
-     * @param utilizationPercentage utilization value (0.0 to 100.0)
+     * Free the allocated native memory. Must be called to prevent memory leaks.
      */
-    public void recordUtilization(int workerId, double utilizationPercentage) {
-        assert workerId >= 0 && workerId < workerCount;
-        long slotAddress = baseAddress + ((long) workerId * WORKER_SLOT_SIZE);
-        Unsafe.getUnsafe().putDouble(slotAddress + UTILIZATION_OFFSET, utilizationPercentage);
+    @Override
+    public void close() {
+        if (baseAddress != 0) {
+            Unsafe.free(baseAddress, (long) workerCount * WORKER_SLOT_SIZE, MemoryTag.NATIVE_DEFAULT);
+            baseAddress = 0;
+        }
     }
-    
+
     /**
-     * Gets the current utilization percentage for a specific worker.
-     * 
-     * @param workerId the worker ID (0-based index)
-     * @return utilization percentage (0.0 to 100.0)
+     * Gets the count of active (non-parked) workers.
+     *
+     * @return number of workers that are not parked
      */
-    public double getUtilization(int workerId) {
-        assert workerId >= 0 && workerId < workerCount;
-        long slotAddress = baseAddress + ((long) workerId * WORKER_SLOT_SIZE);
-        return Unsafe.getUnsafe().getDouble(slotAddress + UTILIZATION_OFFSET);
+    public int getActiveWorkerCount() {
+        return workerCount - getParkedWorkerCount();
     }
-    
-    /**
-     * Sets the parking flag for a specific worker, indicating it should park on the monitor.
-     * 
-     * @param workerId the worker ID (0-based index)
-     * @param shouldPark true if worker should park, false otherwise
-     */
-    public void setParkingFlag(int workerId, boolean shouldPark) {
-        assert workerId >= 0 && workerId < workerCount;
-        long slotAddress = baseAddress + ((long) workerId * WORKER_SLOT_SIZE);
-        Unsafe.getUnsafe().putByte(slotAddress + PARKING_FLAG_OFFSET, shouldPark ? (byte) 1 : (byte) 0);
-    }
-    
-    /**
-     * Gets the parking flag for a specific worker.
-     * 
-     * @param workerId the worker ID (0-based index)
-     * @return true if worker should park, false otherwise
-     */
-    public boolean shouldPark(int workerId) {
-        assert workerId >= 0 && workerId < workerCount;
-        long slotAddress = baseAddress + ((long) workerId * WORKER_SLOT_SIZE);
-        return Unsafe.getUnsafe().getByte(slotAddress + PARKING_FLAG_OFFSET) != 0;
-    }
-    
-    /**
-     * Returns the individual monitor object for a specific worker to park on.
-     * Each worker has its own monitor to enable selective parking/unparking.
-     * 
-     * @param workerId the worker ID (0-based index)
-     * @return monitor object for this specific worker
-     */
-    public Object getParkingMonitor(int workerId) {
-        assert workerId >= 0 && workerId < workerCount;
-        return parkingMonitors[workerId];
-    }
-    
-    /**
-     * Gets the total number of workers this metrics structure supports.
-     * 
-     * @return worker count
-     */
-    public int getWorkerCount() {
-        return workerCount;
-    }
-    
+
     /**
      * Calculates the overall pool utilization as the average of all workers.
-     * 
+     *
      * @return average utilization percentage across all workers
      */
     public double getOverallUtilization() {
         if (workerCount == 0) {
             return 0.0;
         }
-        
+
         double sum = 0.0;
         for (int i = 0; i < workerCount; i++) {
             sum += getUtilization(i);
         }
         return sum / workerCount;
     }
-    
-    /**
-     * Parks a specific worker by setting its parking flag and notifying any management thread.
-     * The worker should check its parking flag and wait on its individual monitor.
-     * 
-     * @param workerId the worker ID to park
-     */
-    public void parkWorker(int workerId) {
-        setParkingFlag(workerId, true);
-        // Note: Worker will check flag and park itself on its monitor
-    }
-    
-    /**
-     * Unparks a specific worker by clearing its parking flag and notifying the worker.
-     * 
-     * @param workerId the worker ID to unpark
-     */
-    public void unparkWorker(int workerId) {
-        setParkingFlag(workerId, false);
-        synchronized (parkingMonitors[workerId]) {
-            parkingMonitors[workerId].notifyAll();
-        }
-    }
-    
+
     /**
      * Gets the count of currently parked workers.
-     * 
+     *
      * @return number of workers that have their parking flag set
      */
     public int getParkedWorkerCount() {
@@ -194,22 +119,97 @@ public final class WorkerPoolMetrics {
         }
         return count;
     }
-    
+
     /**
-     * Gets the count of active (non-parked) workers.
-     * 
-     * @return number of workers that are not parked
+     * Returns the individual monitor object for a specific worker to park on.
+     * Each worker has its own monitor to enable selective parking/unparking.
+     *
+     * @param workerId the worker ID (0-based index)
+     * @return monitor object for this specific worker
      */
-    public int getActiveWorkerCount() {
-        return workerCount - getParkedWorkerCount();
+    public Object getParkingMonitor(int workerId) {
+        assert workerId >= 0 && workerId < workerCount;
+        return parkingMonitors[workerId];
     }
-    
+
     /**
-     * Free the allocated native memory. Must be called to prevent memory leaks.
+     * Gets the current utilization percentage for a specific worker.
+     *
+     * @param workerId the worker ID (0-based index)
+     * @return utilization percentage (0.0 to 100.0)
      */
-    public void close() {
-        if (baseAddress != 0) {
-            Unsafe.free(baseAddress, (long) workerCount * WORKER_SLOT_SIZE, MemoryTag.NATIVE_DEFAULT);
+    public double getUtilization(int workerId) {
+        assert workerId >= 0 && workerId < workerCount;
+        long slotAddress = baseAddress + ((long) workerId * WORKER_SLOT_SIZE);
+        return Unsafe.getUnsafe().getDouble(slotAddress + UTILIZATION_OFFSET);
+    }
+
+    /**
+     * Gets the total number of workers this metrics structure supports.
+     *
+     * @return worker count
+     */
+    public int getWorkerCount() {
+        return workerCount;
+    }
+
+    /**
+     * Parks a specific worker by setting its parking flag and notifying any management thread.
+     * The worker should check its parking flag and wait on its individual monitor.
+     *
+     * @param workerId the worker ID to park
+     */
+    public void parkWorker(int workerId) {
+        setParkingFlag(workerId, true);
+        // Note: Worker will check flag and park itself on its monitor
+    }
+
+    /**
+     * Records the utilization percentage for a specific worker.
+     * This method is designed to be called frequently from worker threads with minimal overhead.
+     *
+     * @param workerId              the worker ID (0-based index)
+     * @param utilizationPercentage utilization value (0.0 to 100.0)
+     */
+    public void recordUtilization(int workerId, double utilizationPercentage) {
+        assert workerId >= 0 && workerId < workerCount;
+        long slotAddress = baseAddress + ((long) workerId * WORKER_SLOT_SIZE);
+        Unsafe.getUnsafe().putDouble(slotAddress + UTILIZATION_OFFSET, utilizationPercentage);
+    }
+
+    /**
+     * Sets the parking flag for a specific worker, indicating it should park on the monitor.
+     *
+     * @param workerId   the worker ID (0-based index)
+     * @param shouldPark true if worker should park, false otherwise
+     */
+    public void setParkingFlag(int workerId, boolean shouldPark) {
+        assert workerId >= 0 && workerId < workerCount;
+        long slotAddress = baseAddress + ((long) workerId * WORKER_SLOT_SIZE);
+        Unsafe.getUnsafe().putByte(slotAddress + PARKING_FLAG_OFFSET, shouldPark ? (byte) 1 : (byte) 0);
+    }
+
+    /**
+     * Gets the parking flag for a specific worker.
+     *
+     * @param workerId the worker ID (0-based index)
+     * @return true if worker should park, false otherwise
+     */
+    public boolean shouldPark(int workerId) {
+        assert workerId >= 0 && workerId < workerCount;
+        long slotAddress = baseAddress + ((long) workerId * WORKER_SLOT_SIZE);
+        return Unsafe.getUnsafe().getByte(slotAddress + PARKING_FLAG_OFFSET) != 0;
+    }
+
+    /**
+     * Unparks a specific worker by clearing its parking flag and notifying the worker.
+     *
+     * @param workerId the worker ID to unpark
+     */
+    public void unparkWorker(int workerId) {
+        setParkingFlag(workerId, false);
+        synchronized (parkingMonitors[workerId]) {
+            parkingMonitors[workerId].notifyAll();
         }
     }
 }

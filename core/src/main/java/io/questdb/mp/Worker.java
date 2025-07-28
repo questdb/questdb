@@ -202,14 +202,20 @@ public class Worker extends Thread {
                     stats.recordIteration(usefulJobs > 0);
                     
                     // Update pool metrics periodically (every 100 iterations)
-                    if (stats.getTotalIterations() % 100 == 0) {
-                        poolMetrics.recordUtilization(workerId, stats.getUtilizationPercentage());
-                    }
+                    poolMetrics.recordUtilization(workerId, stats.getUtilizationPercentage());
 
                     if (runAsap) {
                         ticker = 0;
                         continue;
                     }
+                    
+                    // Check if this worker should park
+                    if (poolMetrics.shouldPark(workerId)) {
+                        parkWorker();
+                        ticker = 0; // Reset ticker after parking
+                        continue;
+                    }
+                    
                     if (++ticker < 0) {
                         ticker = sleepThreshold + 1; // overflow
                     }
@@ -250,6 +256,39 @@ public class Worker extends Thread {
 
     long getJobStartMicros() {
         return jobStartMicros.get();
+    }
+    
+    /**
+     * Parks this worker thread by waiting on its individual monitor until unparked.
+     * The worker will repeatedly check the parking flag and wait if it should remain parked.
+     * This method is called from within the worker's main loop when poolMetrics indicates
+     * this worker should be parked.
+     */
+    private void parkWorker() {
+        Object monitor = poolMetrics.getParkingMonitor(workerId);
+        
+        if (log != null) {
+            log.info().$("Worker parking [pool=").$(poolName).$(", workerId=").$(workerId).I$();
+        }
+        
+        while (poolMetrics.shouldPark(workerId) && lifecycle.get() == Lifecycle.RUNNING) {
+            synchronized (monitor) {
+                // Double-check the condition while holding the monitor lock
+                if (poolMetrics.shouldPark(workerId) && lifecycle.get() == Lifecycle.RUNNING) {
+                    try {
+                        monitor.wait(sleepMs); // Wait with timeout to periodically check conditions
+                    } catch (InterruptedException e) {
+                        // Restore interrupt status and exit parking
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
+        }
+        
+        if (log != null) {
+            log.info().$("Worker unparked [pool=").$(poolName).$(", workerId=").$(workerId).I$();
+        }
     }
 
     private enum Lifecycle {
