@@ -58,8 +58,8 @@ public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
 
     static class Func extends DoubleFunction implements UnaryFunction, DoubleUnaryArrayAccessor {
         private final Function arrayArg;
-        private int count = 0;
-        private double sum = 0d;
+        private int count;
+        private double sum;
 
         Func(Function arrayArg) {
             this.arrayArg = arrayArg;

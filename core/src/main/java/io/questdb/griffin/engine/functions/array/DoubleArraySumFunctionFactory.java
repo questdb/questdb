@@ -59,8 +59,8 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
     static class Func extends DoubleFunction implements UnaryFunction, DoubleUnaryArrayAccessor {
 
         private final Function arrayArg;
-        private double compensation = 0d;
-        private double sum = 0d;
+        private double compensation;
+        private double sum;
 
         Func(Function arrayArg) {
             this.arrayArg = arrayArg;
