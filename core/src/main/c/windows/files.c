@@ -210,11 +210,10 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
     overlapped.Offset = (DWORD)(offset & 0xFFFFFFFF);
     overlapped.OffsetHigh = (DWORD)(offset >> 32);
 
-    if (ReadFile(handle, (LPVOID) address, (DWORD) len, &count, &overlapped)) {
-        return count;
+    if (!ReadFile(handle, (LPVOID) address, (DWORD) len, &count, &overlapped)) {
+        SaveLastError();
     }
-    SaveLastError();
-    return -1;
+    return count;
 }
 
 JNIEXPORT jbyte JNICALL Java_io_questdb_std_Files_readNonNegativeByte
