@@ -465,7 +465,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: y1\n" +
                             "        Hash\n" +
-                            "            Sort light lo: 1\n" +
+                            "            Async Top K lo: 1 workers: 1\n" +
+                            "              filter: null\n" +
                             "              keys: [LAST desc]\n" +
                             "                SelectedRecord\n" +
                             "                    PageFrame\n" +
@@ -1887,11 +1888,15 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    LIMIT 1000000;";
 
             assertQuery("select-choose s, ts from (select [s, ts] from t1 timestamp (ts)) order by s, ts limit 1000000", query);
-            assertPlanNoLeakCheck(query, "Sort light lo: 1000000\n" +
-                    "  keys: [s, ts]\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Frame forward scan on: t1\n");
+            assertPlanNoLeakCheck(
+                    query,
+                    "Async Top K lo: 1000000 workers: 1\n" +
+                            "  filter: null\n" +
+                            "  keys: [s, ts]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t1\n"
+            );
 
             Misc.free(select(query, sqlExecutionContext));
         });
@@ -2105,15 +2110,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "on y2.LAST = y1.ts";
             String queryNew = query + " union \n" + query;
             final QueryModel model = compileModel(queryNew);
-            TestUtils.assertEquals("select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x, " +
-                    "y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) left join " +
-                    "select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from (select-choose " +
-                    "[ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc limit 1) y2 on " +
-                    "y2.LAST = y1.ts) union select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x," +
-                    " y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) " +
-                    "left join select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from " +
-                    "(select-choose [ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc " +
-                    "limit 1) y2 on y2.LAST = y1.ts)", model.toString0());
+            TestUtils.assertEquals(
+                    "select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x, " +
+                            "y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) left join " +
+                            "select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from (select-choose " +
+                            "[ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc limit 1) y2 on " +
+                            "y2.LAST = y1.ts) union select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x," +
+                            " y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) " +
+                            "left join select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from " +
+                            "(select-choose [ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc " +
+                            "limit 1) y2 on y2.LAST = y1.ts)",
+                    model.toString0()
+            );
             assertPlanNoLeakCheck(
                     query,
                     "SelectedRecord\n" +
@@ -2129,13 +2137,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: y1\n" +
                             "        Hash\n" +
-                            "            Sort light lo: 1\n" +
+                            "            Async Top K lo: 1 workers: 1\n" +
+                            "              filter: null\n" +
                             "              keys: [LAST desc]\n" +
                             "                SelectedRecord\n" +
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
-                            "                        Frame forward scan on: y2\n");
-
+                            "                        Frame forward scan on: y2\n"
+            );
         });
     }
 

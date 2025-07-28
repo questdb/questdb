@@ -217,7 +217,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.receivedBytes = 0;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.authenticator.close();
-        Misc.free(selectCache);
         LOG.debug().$("closed [fd=").$(fd).I$();
     }
 
