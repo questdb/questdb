@@ -1,0 +1,171 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2025 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package org.questdb;
+
+import io.questdb.std.Decimal128;
+import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.runner.Runner;
+import org.openjdk.jmh.runner.RunnerException;
+import org.openjdk.jmh.runner.options.Options;
+import org.openjdk.jmh.runner.options.OptionsBuilder;
+
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
+import java.util.concurrent.TimeUnit;
+
+@BenchmarkMode(Mode.AverageTime)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
+@Warmup(iterations = 5, time = 1)
+@Measurement(iterations = 5, time = 1)
+@Fork(1)
+@State(Scope.Benchmark)
+public class Decimal128AddBenchmark {
+
+    @Param({"SIMPLE", "LARGE_NUMBERS", "SMALL_NUMBERS", "DIFFERENT_SCALES", "SAME_MAGNITUDE", "NEGATIVE_POSITIVE"})
+    private String scenario;
+
+    private Decimal128 decimal128Addend1;
+    private Decimal128 decimal128Addend2;
+    private Decimal128 decimal128Result;
+
+    private BigDecimal bigDecimalAddend1;
+    private BigDecimal bigDecimalAddend2;
+    private MathContext mathContext;
+
+    @Setup
+    public void setup() {
+        decimal128Result = new Decimal128();
+        mathContext = new MathContext(16, RoundingMode.HALF_UP);
+
+        switch (scenario) {
+            case "SIMPLE":
+                // Simple addition: 123.456 + 789.123
+                decimal128Addend1 = Decimal128.fromDouble(123.456, 3);
+                decimal128Addend2 = Decimal128.fromDouble(789.123, 3);
+                bigDecimalAddend1 = new BigDecimal("123.456");
+                bigDecimalAddend2 = new BigDecimal("789.123");
+                break;
+
+            case "LARGE_NUMBERS":
+                // Large number addition: 987654321.123 + 123456789.456
+                decimal128Addend1 = Decimal128.fromDouble(987654321.123, 3);
+                decimal128Addend2 = Decimal128.fromDouble(123456789.456, 3);
+                bigDecimalAddend1 = new BigDecimal("987654321.123");
+                bigDecimalAddend2 = new BigDecimal("123456789.456");
+                break;
+
+            case "SMALL_NUMBERS":
+                // Small number addition: 0.00123 + 0.00456
+                decimal128Addend1 = Decimal128.fromDouble(0.00123, 5);
+                decimal128Addend2 = Decimal128.fromDouble(0.00456, 5);
+                bigDecimalAddend1 = new BigDecimal("0.00123");
+                bigDecimalAddend2 = new BigDecimal("0.00456");
+                break;
+
+            case "DIFFERENT_SCALES":
+                // Different scales: 123.456 + 7.8901234
+                decimal128Addend1 = Decimal128.fromDouble(123.456, 3);
+                decimal128Addend2 = Decimal128.fromDouble(7.8901234, 7);
+                bigDecimalAddend1 = new BigDecimal("123.456");
+                bigDecimalAddend2 = new BigDecimal("7.8901234");
+                break;
+
+            case "SAME_MAGNITUDE":
+                // Same magnitude: 123.456 + 123.789
+                decimal128Addend1 = Decimal128.fromDouble(123.456, 3);
+                decimal128Addend2 = Decimal128.fromDouble(123.789, 3);
+                bigDecimalAddend1 = new BigDecimal("123.456");
+                bigDecimalAddend2 = new BigDecimal("123.789");
+                break;
+
+            case "NEGATIVE_POSITIVE":
+                // Negative + positive: -123.456 + 789.123
+                decimal128Addend1 = Decimal128.fromDouble(-123.456, 3);
+                decimal128Addend2 = Decimal128.fromDouble(789.123, 3);
+                bigDecimalAddend1 = new BigDecimal("-123.456");
+                bigDecimalAddend2 = new BigDecimal("789.123");
+                break;
+        }
+    }
+
+    @Benchmark
+    public Decimal128 decimal128Add() {
+        decimal128Result.copyFrom(decimal128Addend1);
+        decimal128Result.add(decimal128Addend2);
+        return decimal128Result;
+    }
+
+    @Benchmark
+    public BigDecimal bigDecimalAdd() {
+        return bigDecimalAddend1.add(bigDecimalAddend2);
+    }
+
+    @Benchmark
+    public BigDecimal bigDecimalAddWithContext() {
+        return bigDecimalAddend1.add(bigDecimalAddend2, mathContext);
+    }
+
+    @Benchmark
+    public void decimal128Add64Bit() {
+        // Test addition of two 64-bit values
+        Decimal128 val1 = Decimal128.fromDouble(123456.789, 3);
+        Decimal128 val2 = Decimal128.fromDouble(987654.321, 3);
+        
+        decimal128Result.copyFrom(val1);
+        decimal128Result.add(val2);
+    }
+
+    @Benchmark
+    public void decimal128Add128By64() {
+        // Test addition of 128-bit and 64-bit values
+        Decimal128 largeAddend = new Decimal128();
+        largeAddend.set(123456789L, 987654321098765432L, 6);
+        
+        decimal128Result.copyFrom(largeAddend);
+        decimal128Result.add(decimal128Addend2);
+    }
+
+    @Benchmark
+    public void decimal128AddNearCancel() {
+        // Test addition that nearly cancels out: 123.456 + (-123.455)
+        Decimal128 val1 = Decimal128.fromDouble(123.456, 3);
+        Decimal128 val2 = Decimal128.fromDouble(-123.455, 3);
+        
+        decimal128Result.copyFrom(val1);
+        decimal128Result.add(val2);
+    }
+
+    public static void main(String[] args) throws RunnerException {
+        Options opt = new OptionsBuilder()
+                .include(Decimal128AddBenchmark.class.getSimpleName())
+                .warmupIterations(5)
+                .measurementIterations(10)
+                .forks(1)
+                .build();
+
+        new Runner(opt).run();
+    }
+}

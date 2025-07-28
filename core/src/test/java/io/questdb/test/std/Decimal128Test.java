@@ -109,6 +109,70 @@ public class Decimal128Test {
     }
 
     @Test
+    public void testDivideLargeScale() {
+        Decimal128 a = Decimal128.fromDouble(3.141592653589793, 15);
+        Decimal128 b = Decimal128.fromDouble(2.718281828459045, 15);
+        BigDecimal bdA = a.toBigDecimal();
+        BigDecimal bdB = b.toBigDecimal();
+
+        int tgtScale = 6;
+        Decimal128 result = new Decimal128();
+//        for (int i = 0; i < 100_000_000; i++) {
+            Decimal128.divide(a, b, result);
+//        }
+        result.round(tgtScale, RoundingMode.HALF_UP);
+        System.out.println(result);
+        System.out.println("------------------");
+
+        BigDecimal bdResult = bdA.divide(bdB, tgtScale, RoundingMode.HALF_UP);
+        System.out.println(bdResult);
+        Assert.assertEquals(bdResult, result.toBigDecimal());
+    }
+
+    @Test
+    public void testDivideLarge() {
+        Decimal128 a = Decimal128.fromDouble(987654321.123456789, 9);
+        Decimal128 b = Decimal128.fromDouble(123.456, 3);
+        BigDecimal bdA = a.toBigDecimal();
+        BigDecimal bdB = b.toBigDecimal();
+
+        int tgtScale = 2;
+        Decimal128 result = new Decimal128();
+//        for (int i = 0; i < 100_000_000; i++) {
+            Decimal128.divide(a, b, result);
+//        }
+        result.round(tgtScale, RoundingMode.HALF_UP);
+        System.out.println(result);
+        System.out.println("------------------");
+
+        BigDecimal bdResult = bdA.divide(bdB, tgtScale, RoundingMode.HALF_UP);
+        System.out.println(bdResult);
+        Assert.assertEquals(result.toBigDecimal(), bdResult);
+
+    }
+
+    @Test
+    public void testDivide64() {
+        Decimal128 a = Decimal128.fromDouble(123.456, 3);
+        Decimal128 b = Decimal128.fromDouble(7.89, 2);
+        BigDecimal bdA = a.toBigDecimal();
+        BigDecimal bdB = b.toBigDecimal();
+
+        int tgtScale = 2;
+        Decimal128 result = new Decimal128();
+        for (int i = 0; i < 100_000_000; i++) {
+            Decimal128.divide(a, b, result);
+        }
+        result.round(tgtScale, RoundingMode.HALF_UP);
+        System.out.println(result);
+        System.out.println("------------------");
+
+        BigDecimal bdResult = bdA.divide(bdB, tgtScale, RoundingMode.HALF_UP);
+        System.out.println(bdResult);
+        Assert.assertEquals(result.toBigDecimal(), bdResult);
+    }
+
+    @Test
     public void testDivideOverflow() {
         Decimal128 a = Decimal128.fromDouble(-328049473, 0);
         Decimal128 b = Decimal128.fromDouble(-50582053256.05, 2);
@@ -116,8 +180,12 @@ public class Decimal128Test {
         BigDecimal bdB = b.toBigDecimal();
 
         int tgtScale = 2;
-        a.divide(b);
+        Decimal128 result = new Decimal128();
+        for (int i = 0; i < 10_000_000; i++) {
+            Decimal128.divide(a, b, result);
+        }
         System.out.println(a);
+        System.out.println(result);
         a.round(tgtScale, RoundingMode.HALF_UP);
         System.out.println(a);
         System.out.println("------------------");
@@ -1194,20 +1262,7 @@ public class Decimal128Test {
         // Perform division with the same scale and rounding mode as our implementation should use
         java.math.BigDecimal expected = bigA.divide(bigB, resultScale, java.math.RoundingMode.HALF_UP);
         java.math.BigDecimal actual = result.toBigDecimal();
-
-        // Allow some tolerance for edge cases where overflow limits precision
-        // If the values differ significantly (wrong sign or order of magnitude), it's a real error
-        double expectedDouble = expected.doubleValue();
-        double actualDouble = actual.doubleValue();
-
-        // Check for sign mismatch or huge errors
-        if (Math.signum(expectedDouble) != Math.signum(actualDouble) ||
-                Math.abs(actualDouble) > Math.abs(expectedDouble) * 1000 ||
-                Math.abs(actualDouble) < Math.abs(expectedDouble) / 1000) {
-            Assert.fail("Division accuracy failed at iteration " + iteration +
-                    " (a=" + a.toBigDecimal() + ", b=" + b.toBigDecimal() + ") " +
-                    "expected: " + expected + " but was: " + actual + ", resultScale: " + resultScale);
-        }
+        Assert.assertEquals(expected, actual);
     }
 
     private void testFuzzIteration(Rnd rnd, int iteration) {
