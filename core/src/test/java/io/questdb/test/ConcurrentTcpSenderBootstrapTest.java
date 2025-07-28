@@ -28,6 +28,7 @@ import io.questdb.ServerMain;
 import io.questdb.client.Sender;
 import io.questdb.std.Files;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.test.cutlass.line.tcp.AbstractLineTcpReceiverTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
@@ -103,17 +104,20 @@ public class ConcurrentTcpSenderBootstrapTest extends AbstractBootstrapTest {
                 threads.add(th);
                 th.start();
             }
-            for (int i = startingOffset; i < nThreads + startingOffset; i++) {
-                while (serverMain.getEngine().getTableTokenIfExists("test" + i) == null) {
-                    // intentionally empty
-                }
-            }
 
             for (int i = 0, n = threads.size(); i < n; i++) {
                 threads.getQuick(i).join();
             }
+
             if (error.get() != null) {
                 throw new RuntimeException(error.get());
+            }
+
+            for (int i = startingOffset; i < nThreads + startingOffset; i++) {
+                while (serverMain.getEngine().getTableTokenIfExists("test" + i) == null) {
+                    // intentionally empty
+                    Os.sleep(1);
+                }
             }
         }
     }
