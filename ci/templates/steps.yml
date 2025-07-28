@@ -25,9 +25,9 @@ steps:
     displayName: "Cache .cargo/registry"
     continueOnError: true
     inputs:
-      key: '"cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)" | "$(LINUX_GLIBC_VERSION)" | **/Cargo.lock'
+      key: '"cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)" | "$(LINUX_LIBC_VERSION)" | **/Cargo.lock'
       restoreKeys: |
-        "cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)" | "$(LINUX_GLIBC_VERSION)"
+        "cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)" | "$(LINUX_LIBC_VERSION)"
       path: $(CARGO_HOME)/registry
     condition: |
       and(
@@ -40,7 +40,7 @@ steps:
   - bash: mkdir -p "$HOME/.m2/repository"
     displayName: "Ensure .m2/repository exists (bash)"
     condition: ne(variables['os'], 'Windows')
-  - script: 'wget https://archive.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip'
+  - script: "wget https://archive.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip"
     displayName: "Get non-default Maven (bash)"
     condition: |
       and(
@@ -59,8 +59,8 @@ steps:
       )
   - task: ExtractFiles@1
     inputs:
-      archiveFilePatterns: 'apache-maven-$(MAVEN_VERSION)-bin.zip'
-      destinationFolder: '$(build.sourcesdirectory)/maven'
+      archiveFilePatterns: "apache-maven-$(MAVEN_VERSION)-bin.zip"
+      destinationFolder: "$(build.sourcesdirectory)/maven"
     condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'))
 
   - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
@@ -80,11 +80,10 @@ steps:
     displayName: "Compile with Maven"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
-      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
+      mavenDirectory: "$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)"
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
-      options:
-        "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -P qdbr-release $(MAVEN_RUN_OPTS)"
+      options: "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -P qdbr-release $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     condition: |
       or(
@@ -95,17 +94,16 @@ steps:
     displayName: "Run tests"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
-      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
+      mavenDirectory: "$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)"
       mavenPomFile: "pom.xml"
       mavenOptions: "-Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
       goals: "clean test"
-      options:
-        "--batch-mode --quiet -Dtest.include=$(includeTests)
+      options: "--batch-mode --quiet -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
-         $(MAVEN_RUN_OPTS)"
+        $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
@@ -119,14 +117,13 @@ steps:
     displayName: "Run tests with Coverage"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
-      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
+      mavenDirectory: "$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)"
       mavenPomFile: "core/pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "test"
-      options:
-        "--batch-mode -Dtest.include=$(includeTests)
+      options: "--batch-mode -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -P qdbr-coverage
         $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)

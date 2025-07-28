@@ -3,7 +3,6 @@ set(CMAKE_SYSTEM_PROCESSOR          aarch64)
 set (ARM True)
 set (AARCH64 True)
 
-
 set(CMAKE_CXX_FLAGS                 "${CMAKE_C_FLAGS} -fno-exceptions" CACHE INTERNAL "")
 
 set(CMAKE_C_FLAGS_DEBUG             "-Os -g" CACHE INTERNAL "")
