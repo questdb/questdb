@@ -60,8 +60,10 @@ public final class JavaTlsClientSocket implements Socket {
         }
     }};
     private static final long CAPACITY_FIELD_OFFSET;
+    private static final byte CAPACITY_FIELD_SIZE;
     private static final int INITIAL_BUFFER_CAPACITY_BYTES = 256 * 1024;
     private static final long LIMIT_FIELD_OFFSET;
+    private static final byte LIMIT_FIELD_SIZE;
     private static final int STATE_CLOSING = 3;
     private static final int STATE_EMPTY = 0;
     private static final int STATE_PLAINTEXT = 1;
@@ -417,6 +419,12 @@ public final class JavaTlsClientSocket implements Socket {
     private static long expandBuffer(ByteBuffer buffer, long oldAddress) {
         int oldCapacity = buffer.capacity();
         int newCapacity = oldCapacity * 2;
+        if (newCapacity < 0) {
+            newCapacity = Integer.MAX_VALUE;
+        }
+        if (newCapacity == oldCapacity) {
+            throw new LineSenderException("buffer capacity overflow");
+        }
         long newAddress = Unsafe.realloc(oldAddress, oldCapacity, newCapacity, MemoryTag.NATIVE_TLS_RSS);
         resetBufferToPointer(buffer, newAddress, newCapacity);
         return newAddress;
@@ -439,8 +447,16 @@ public final class JavaTlsClientSocket implements Socket {
     private static void resetBufferToPointer(ByteBuffer buffer, long ptr, int len) {
         assert buffer.isDirect();
         Unsafe.getUnsafe().putLong(buffer, ADDRESS_FIELD_OFFSET, ptr);
-        Unsafe.getUnsafe().putLong(buffer, LIMIT_FIELD_OFFSET, len);
-        Unsafe.getUnsafe().putLong(buffer, CAPACITY_FIELD_OFFSET, len);
+        if (LIMIT_FIELD_SIZE == 4) {
+            Unsafe.getUnsafe().putInt(buffer, LIMIT_FIELD_OFFSET, len);
+        } else {
+            Unsafe.getUnsafe().putLong(buffer, LIMIT_FIELD_OFFSET, len);
+        }
+        if (CAPACITY_FIELD_SIZE == 4) {
+            Unsafe.getUnsafe().putInt(buffer, CAPACITY_FIELD_OFFSET, len);
+        } else {
+            Unsafe.getUnsafe().putLong(buffer, CAPACITY_FIELD_OFFSET, len);
+        }
         buffer.position(0);
     }
 
@@ -559,7 +575,17 @@ public final class JavaTlsClientSocket implements Socket {
         try {
             addressField = Buffer.class.getDeclaredField("address");
             limitField = Buffer.class.getDeclaredField("limit");
+            if (limitField.getType() == int.class) {
+                LIMIT_FIELD_SIZE = 4;
+            } else {
+                LIMIT_FIELD_SIZE = 8;
+            }
             capacityField = Buffer.class.getDeclaredField("capacity");
+            if (capacityField.getType() == int.class) {
+                CAPACITY_FIELD_SIZE = 4;
+            } else {
+                CAPACITY_FIELD_SIZE = 8;
+            }
         } catch (NoSuchFieldException e) {
             // possible improvement: implement a fallback strategy when reflection is unavailable for any reason.
             throw new ExceptionInInitializerError(e);
