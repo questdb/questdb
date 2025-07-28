@@ -77,6 +77,7 @@ public class Metrics implements Target, Mutable {
         createMemoryGauges(metricsRegistry);
         this.metricsRegistry = metricsRegistry;
         this.workerMetrics = new WorkerMetrics(metricsRegistry);
+        metricsRegistry.addTarget(gcMetrics);
     }
 
     @Override
@@ -128,9 +129,6 @@ public class Metrics implements Target, Mutable {
     @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         metricsRegistry.scrapeIntoPrometheus(sink);
-        if (enabled) {
-            gcMetrics.scrapeIntoPrometheus(sink);
-        }
     }
 
     public TableWriterMetrics tableWriterMetrics() {

@@ -45,6 +45,11 @@ public class CounterImpl implements Counter {
     }
 
     @Override
+    public CharSequence getName() {
+        return name;
+    }
+
+    @Override
     public long getValue() {
         return counter.sum();
     }

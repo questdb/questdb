@@ -24,11 +24,14 @@
 
 package io.questdb.metrics;
 
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsRecord;
 import org.jetbrains.annotations.TestOnly;
 
 public interface Counter extends Target {
 
     void add(long value);
+
+    CharSequence getName();
 
     long getValue();
 
@@ -38,4 +41,14 @@ public interface Counter extends Target {
 
     @TestOnly
     void reset();
+
+    @Override
+    default int scrapeIntoRecord(PrometheusMetricsRecord record) {
+        record
+                .setCounterName(getName())
+                .setType("counter")
+                .setValue(getValue())
+                .setKind("LONG");
+        return 1;
+    }
 }

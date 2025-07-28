@@ -27,6 +27,7 @@ package io.questdb.metrics;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class MetricsRegistryImpl implements MetricsRegistry {
     private final ObjList<Target> metrics = new ObjList<>();
@@ -34,6 +35,21 @@ public class MetricsRegistryImpl implements MetricsRegistry {
     @Override
     public void addTarget(Target target) {
         metrics.add(target);
+    }
+
+    @Override
+    public void clear() {
+        metrics.clear();
+    }
+
+    @Override
+    public int getSize() {
+        return metrics.size();
+    }
+
+    @Override
+    public @Nullable Target getTarget(int index) {
+        return metrics.getQuiet(index);
     }
 
     @Override
@@ -60,8 +76,10 @@ public class MetricsRegistryImpl implements MetricsRegistry {
     @Override
     public CounterWithTwoLabels newCounter(
             CharSequence name,
-            CharSequence labelName0, CharSequence[] labelValues0,
-            CharSequence labelName1, CharSequence[] labelValues1
+            CharSequence labelName0,
+            CharSequence[] labelValues0,
+            CharSequence labelName1,
+            CharSequence[] labelValues1
     ) {
         CounterWithTwoLabels counter = new CounterWithTwoLabelsImpl(name, labelName0, labelValues0, labelName1, labelValues1);
         metrics.add(counter);

@@ -356,6 +356,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String posthogApiKey;
     private final boolean posthogEnabled;
     private final int preferencesStringPoolCapacity;
+    private final int prometheusMetricsSinkCapacity;
     private final String publicDirectory;
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
@@ -1387,6 +1388,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
             this.sqlMaxArrayElementCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT, 10_000_000);
             this.preferencesStringPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_PREFERENCES_STRING_POOL_CAPACITY, 64);
+            this.prometheusMetricsSinkCapacity = getInt(properties, env, PropertyKey.CAIRO_PROMETHEUS_METRICS_SINK_CAPACITY, 255);
 
             this.writerDataIndexKeyAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, 512 * 1024));
             this.writerDataIndexValueAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 16 * Numbers.SIZE_1MB));
@@ -3237,6 +3239,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPreferencesStringPoolCapacity() {
             return preferencesStringPoolCapacity;
+        }
+
+        @Override
+        public int getPrometheusMetricsSinkCapacity() {
+            return prometheusMetricsSinkCapacity;
         }
 
         @Override

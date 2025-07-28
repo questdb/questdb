@@ -394,6 +394,8 @@ public interface CairoConfiguration {
 
     int getPreferencesStringPoolCapacity();
 
+    int getPrometheusMetricsSinkCapacity();
+
     int getQueryCacheEventQueueCapacity();
 
     int getQueryRegistryPoolSize();

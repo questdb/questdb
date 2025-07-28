@@ -38,6 +38,11 @@ public class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwo
     }
 
     @Override
+    public CharSequence getName() {
+        return "null";
+    }
+
+    @Override
     public long getValue() {
         return 0;
     }
@@ -51,7 +56,7 @@ public class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwo
     }
 
     @Override
-    public void inc(short label0, short label1) {
+    public void inc(int label0, int label1) {
     }
 
     @Override

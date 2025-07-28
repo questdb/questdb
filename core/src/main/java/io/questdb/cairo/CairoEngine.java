@@ -59,6 +59,7 @@ import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -1232,6 +1233,11 @@ public class CairoEngine implements Closeable, WriterSource {
         ) {
             CursorPrinter.println(cursor, factory.getMetadata(), sink);
         }
+    }
+
+    public void print(@NotNull RecordCursor cursor, RecordMetadata metadata, MutableCharSink<?> sink) throws SqlException {
+        sink.clear();
+        CursorPrinter.println(cursor, metadata, sink);
     }
 
     public void reconcileTableNameRegistryState() {
