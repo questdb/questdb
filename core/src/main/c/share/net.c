@@ -364,7 +364,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_connectAddrInfo
         (JNIEnv *e, jclass cl, jint fd, jlong lpAddrInfo) {
     struct addrinfo *addr = (struct addrinfo *) lpAddrInfo;
     jint result;
-    jboolean retry = 0;
+    int retry = 0;
 
     do {
         result = connect((int) fd, addr->ai_addr, (int) addr->ai_addrlen);
