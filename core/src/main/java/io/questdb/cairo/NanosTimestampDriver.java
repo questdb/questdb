@@ -869,28 +869,28 @@ public class NanosTimestampDriver implements TimestampDriver {
         switch (timeUnit) {
             case 'n':
                 // nanos
-                return new BaseTimestampSampler(interval);
+                return new BaseTimestampSampler(interval, ColumnType.TIMESTAMP_NANO);
             case 'U':
                 // micros
-                return new BaseTimestampSampler(interval * Nanos.MICRO_NANOS);
+                return new BaseTimestampSampler(interval * Nanos.MICRO_NANOS, ColumnType.TIMESTAMP_NANO);
             case 'T':
                 // millis
-                return new BaseTimestampSampler(Nanos.MILLI_NANOS * interval);
+                return new BaseTimestampSampler(Nanos.MILLI_NANOS * interval, ColumnType.TIMESTAMP_NANO);
             case 's':
                 // seconds
-                return new BaseTimestampSampler(Nanos.SECOND_NANOS * interval);
+                return new BaseTimestampSampler(Nanos.SECOND_NANOS * interval, ColumnType.TIMESTAMP_NANO);
             case 'm':
                 // minutes
-                return new BaseTimestampSampler(Nanos.MINUTE_NANOS * interval);
+                return new BaseTimestampSampler(Nanos.MINUTE_NANOS * interval, ColumnType.TIMESTAMP_NANO);
             case 'h':
                 // hours
-                return new BaseTimestampSampler(Nanos.HOUR_NANOS * interval);
+                return new BaseTimestampSampler(Nanos.HOUR_NANOS * interval, ColumnType.TIMESTAMP_NANO);
             case 'd':
                 // days
-                return new BaseTimestampSampler(Nanos.DAY_NANOS * interval);
+                return new BaseTimestampSampler(Nanos.DAY_NANOS * interval, ColumnType.TIMESTAMP_NANO);
             case 'w':
                 // weeks
-                return new BaseTimestampSampler(Nanos.WEEK_NANOS * interval);
+                return new BaseTimestampSampler(Nanos.WEEK_NANOS * interval, ColumnType.TIMESTAMP_NANO);
             case 'M':
                 // months
                 return new MonthTimestampNanosSampler((int) interval);

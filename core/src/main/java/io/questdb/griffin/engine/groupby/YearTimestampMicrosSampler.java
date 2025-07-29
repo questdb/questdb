@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
@@ -46,6 +47,11 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
     @Override
     public long getApproxBucketSize() {
         return Timestamps.YEAR_MICROS_NONLEAP * stepYears;
+    }
+
+    @Override
+    public int getTimestampType() {
+        return ColumnType.TIMESTAMP_MICRO;
     }
 
     @Override

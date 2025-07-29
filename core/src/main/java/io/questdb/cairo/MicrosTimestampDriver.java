@@ -854,25 +854,25 @@ public class MicrosTimestampDriver implements TimestampDriver {
         switch (timeUnit) {
             case 'U':
                 // micros
-                return new BaseTimestampSampler(interval);
+                return new BaseTimestampSampler(interval, ColumnType.TIMESTAMP_MICRO);
             case 'T':
                 // millis
-                return new BaseTimestampSampler(Timestamps.MILLI_MICROS * interval);
+                return new BaseTimestampSampler(Timestamps.MILLI_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 's':
                 // seconds
-                return new BaseTimestampSampler(Timestamps.SECOND_MICROS * interval);
+                return new BaseTimestampSampler(Timestamps.SECOND_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'm':
                 // minutes
-                return new BaseTimestampSampler(Timestamps.MINUTE_MICROS * interval);
+                return new BaseTimestampSampler(Timestamps.MINUTE_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'h':
                 // hours
-                return new BaseTimestampSampler(Timestamps.HOUR_MICROS * interval);
+                return new BaseTimestampSampler(Timestamps.HOUR_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'd':
                 // days
-                return new BaseTimestampSampler(Timestamps.DAY_MICROS * interval);
+                return new BaseTimestampSampler(Timestamps.DAY_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'w':
                 // weeks
-                return new BaseTimestampSampler(Timestamps.WEEK_MICROS * interval);
+                return new BaseTimestampSampler(Timestamps.WEEK_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
             case 'M':
                 // months
                 return new MonthTimestampMicrosSampler((int) interval);

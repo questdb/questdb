@@ -66,6 +66,7 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -120,6 +121,109 @@ public class MatViewTest extends AbstractCairoTest {
         if (rowsPerQuery > 0) {
             setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
         }
+    }
+
+    @Test
+    public void testAlterAddIndexInvalidStatement() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = 0;
+            execute("create materialized view price_1h as select sym, last(price) as price, ts from base_price sample by 1h");
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter",
+                    38,
+                    "'column' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter;",
+                    38,
+                    "'column' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter blah",
+                    39,
+                    "'column' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column",
+                    45,
+                    "column name expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column;",
+                    45,
+                    "column name expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column xyz",
+                    46,
+                    "column 'xyz' does not exist in materialized view 'price_1h'"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column price",
+                    51,
+                    "'symbol capacity', 'add index' or 'drop index' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column price;",
+                    51,
+                    "'symbol capacity', 'add index' or 'drop index' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column price x",
+                    52,
+                    "'symbol capacity', 'add index' or 'drop index' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column price ADD",
+                    55,
+                    "'index' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column price ADD something",
+                    56,
+                    "'index' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column price ADD index",
+                    46,
+                    "column 'price' is of type 'DOUBLE'. Index supports column type 'SYMBOL' only."
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym ADD index xxx",
+                    60,
+                    "'capacity' keyword expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym ADD index Capacity",
+                    68,
+                    "index capacity value expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym ADD index Capacity S",
+                    69,
+                    "index capacity value must be numeric"
+            );
+        });
     }
 
     @Test
@@ -850,109 +954,6 @@ public class MatViewTest extends AbstractCairoTest {
                             "order by view_name",
                     null,
                     true
-            );
-        });
-    }
-
-    @Test
-    public void testAlterAddIndexInvalidStatement() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    "create table base_price (" +
-                            "  sym symbol, price double, ts timestamp" +
-                            ") timestamp(ts) partition by DAY WAL"
-            );
-            currentMicros = 0;
-            execute("create materialized view price_1h as select sym, last(price) as price, ts from base_price sample by 1h");
-
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h alter",
-                    38,
-                    "'column' expected"
-            );
-
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h alter;",
-                    38,
-                    "'column' expected"
-            );
-
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h alter blah",
-                    39,
-                    "'column' expected"
-            );
-
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h alter column",
-                    45,
-                    "column name expected"
-            );
-
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h alter column;",
-                    45,
-                    "column name expected"
-            );
-
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h alter column xyz",
-                    46,
-                    "column 'xyz' does not exist in materialized view 'price_1h'"
-            );
-
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h alter column price",
-                    51,
-                    "'symbol capacity', 'add index' or 'drop index' expected"
-            );
-
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h alter column price;",
-                    51,
-                    "'symbol capacity', 'add index' or 'drop index' expected"
-            );
-
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h alter column price x",
-                    52,
-                    "'symbol capacity', 'add index' or 'drop index' expected"
-            );
-
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h alter column price ADD",
-                    55,
-                    "'index' expected"
-            );
-
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h alter column price ADD something",
-                    56,
-                    "'index' expected"
-            );
-
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h alter column price ADD index",
-                    46,
-                    "column 'price' is of type 'DOUBLE'. Index supports column type 'SYMBOL' only."
-            );
-
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h alter column sym ADD index xxx",
-                    60,
-                    "'capacity' keyword expected"
-            );
-
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h alter column sym ADD index Capacity",
-                    68,
-                    "index capacity value expected"
-            );
-
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h alter column sym ADD index Capacity S",
-                    69,
-                    "index capacity value must be numeric"
             );
         });
     }
@@ -1707,6 +1708,98 @@ public class MatViewTest extends AbstractCairoTest {
                             "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
                             "from materialized_views",
                     null
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableTimestampTypeChange() throws Exception {
+        Assume.assumeTrue(timestampDriver.getColumnType() == ColumnType.TIMESTAMP_MICRO);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp_ns" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\tbase_table_name\tview_status\n" +
+                            "price_1h\tbase_price\tvalid\n",
+                    "select view_name, base_table_name, view_status from materialized_views",
+                    null,
+                    false
+            );
+
+            execute("drop table base_price;");
+            drainQueues();
+            assertQueryNoLeakCheck(
+                    "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
+                            "price_1h\tbase_price\tinvalid\tbase table is dropped or renamed\n",
+                    "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
+                    null,
+                    false
+            );
+            // recreate the base table with a different timestamp type
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+            drainQueues();
+            // revalidate the view
+            execute("refresh materialized view price_1h full;)");
+            drainQueues();
+            assertQueryNoLeakCheck(
+                    "view_name\tbase_table_name\tview_status\n" +
+                            "price_1h\tbase_price\tvalid\n",
+                    "select view_name, base_table_name, view_status from materialized_views",
+                    null,
+                    false
+            );
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T14:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T14:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T15:02')"
+            );
+            drainQueues();
+
+            // todo. This is clearly not the expected result.
+            //  The reason is that the matView's timestampType didn't change.
+            //  Evidently, when the SQL timestamp column type used in the matView query changes, the timestamp column
+            //  type in the materialized view should be updated synchronously.
+            //  We need to recompile the SQL during matView revalidation to determine if the timestamp type of the materialized view has changed.
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t1970-01-20T23:26:09.600000000Z\n" +
+                            "jpyusd\t103.21\t1970-01-20T23:26:09.600000000Z\n" +
+                            "gbpusd\t1.321\t1970-01-20T23:26:13.200000000Z\n" +
+                            "gbpusd\t1.323\t1970-01-20T23:26:16.800000000Z\n" +
+                            "jpyusd\t103.21\t1970-01-20T23:26:16.800000000Z\n" +
+                            "gbpusd\t1.321\t1970-01-20T23:26:20.400000000Z\n",
+                    "select * from price_1h",
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -2954,6 +3047,108 @@ public class MatViewTest extends AbstractCairoTest {
                         "WHERE ts > 0 or ts < '2040-01-01' " +
                         "sample by 1h"
         );
+    }
+
+    @Test
+    public void testIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym symbol, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            execute("create materialized view price_1h as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY");
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.310, '2024-09-10T12:05')" +
+                            ",('gbpusd', 1.311, '2024-09-11T13:03')" +
+                            ",('eurusd', 1.312, '2024-09-12T13:03')" +
+                            ",('gbpusd', 1.313, '2024-09-13T13:03')" +
+                            ",('eurusd', 1.314, '2024-09-14T13:03')"
+            );
+
+            drainQueues();
+
+            execute("alter materialized view price_1h alter column sym add index");
+
+            drainQueues();
+
+            // index already exists - exception
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym add index",
+                    46,
+                    "column 'sym' already indexed"
+            );
+
+            String sql = "select * from price_1h where sym = 'eurusd';";
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "eurusd\t1.312\t2024-09-12T13:00:00.000000Z\n" +
+                            "eurusd\t1.314\t2024-09-14T13:00:00.000000Z\n",
+                    sql,
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "DeferredSingleSymbolFilterPageFrame\n" +
+                            "    Index forward scan on: sym\n" +
+                            "      filter: sym=2\n" +
+                            "    Frame forward scan on: price_1h\n",
+                    "explain " + sql
+            );
+
+            execute("alter materialized view price_1h alter column sym drop index");
+
+            drainQueues();
+
+            // not indexed
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym drop index",
+                    46,
+                    "column 'sym' is not indexed"
+            );
+
+            drainQueues();
+
+            if (JitUtil.isJitSupported()) {
+                assertSql(
+                        "QUERY PLAN\n" +
+                                "Async JIT Filter workers: 1\n" +
+                                "  filter: sym='eurusd' [pre-touch]\n" +
+                                "    PageFrame\n" +
+                                "        Row forward scan\n" +
+                                "        Frame forward scan on: price_1h\n",
+                        "explain " + sql
+                );
+            } else {
+                assertSql(
+                        "QUERY PLAN\n" +
+                                "Async Filter workers: 1\n" +
+                                "  filter: sym='eurusd' [pre-touch]\n" +
+                                "    PageFrame\n" +
+                                "        Row forward scan\n" +
+                                "        Frame forward scan on: price_1h\n",
+                        "explain " + sql
+                );
+            }
+
+            execute("alter materialized view price_1h alter column sym add index");
+
+            drainQueues();
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "DeferredSingleSymbolFilterPageFrame\n" +
+                            "    Index forward scan on: sym\n" +
+                            "      filter: sym=2\n" +
+                            "    Frame forward scan on: price_1h\n",
+                    "explain " + sql
+            );
+        });
     }
 
     @Test
@@ -5596,108 +5791,6 @@ public class MatViewTest extends AbstractCairoTest {
                     "ts",
                     true,
                     true
-            );
-        });
-    }
-
-    @Test
-    public void testIndex() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    "create table base_price (" +
-                            "sym symbol, price double, ts timestamp" +
-                            ") timestamp(ts) partition by DAY WAL"
-            );
-
-            execute("create materialized view price_1h as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY");
-
-            execute(
-                    "insert into base_price values('gbpusd', 1.310, '2024-09-10T12:05')" +
-                            ",('gbpusd', 1.311, '2024-09-11T13:03')" +
-                            ",('eurusd', 1.312, '2024-09-12T13:03')" +
-                            ",('gbpusd', 1.313, '2024-09-13T13:03')" +
-                            ",('eurusd', 1.314, '2024-09-14T13:03')"
-            );
-
-            drainQueues();
-
-            execute("alter materialized view price_1h alter column sym add index");
-
-            drainQueues();
-
-            // index already exists - exception
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h alter column sym add index",
-                    46,
-                    "column 'sym' already indexed"
-            );
-
-            String sql = "select * from price_1h where sym = 'eurusd';";
-            assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "eurusd\t1.312\t2024-09-12T13:00:00.000000Z\n" +
-                            "eurusd\t1.314\t2024-09-14T13:00:00.000000Z\n",
-                    sql,
-                    "ts",
-                    true,
-                    false
-            );
-
-            assertSql(
-                    "QUERY PLAN\n" +
-                            "DeferredSingleSymbolFilterPageFrame\n" +
-                            "    Index forward scan on: sym\n" +
-                            "      filter: sym=2\n" +
-                            "    Frame forward scan on: price_1h\n",
-                    "explain " + sql
-            );
-
-            execute("alter materialized view price_1h alter column sym drop index");
-
-            drainQueues();
-
-            // not indexed
-            assertExceptionNoLeakCheck(
-                    "alter materialized view price_1h alter column sym drop index",
-                    46,
-                    "column 'sym' is not indexed"
-            );
-
-            drainQueues();
-
-            if (JitUtil.isJitSupported()) {
-                assertSql(
-                        "QUERY PLAN\n" +
-                                "Async JIT Filter workers: 1\n" +
-                                "  filter: sym='eurusd' [pre-touch]\n" +
-                                "    PageFrame\n" +
-                                "        Row forward scan\n" +
-                                "        Frame forward scan on: price_1h\n",
-                        "explain " + sql
-                );
-            } else {
-                assertSql(
-                        "QUERY PLAN\n" +
-                                "Async Filter workers: 1\n" +
-                                "  filter: sym='eurusd' [pre-touch]\n" +
-                                "    PageFrame\n" +
-                                "        Row forward scan\n" +
-                                "        Frame forward scan on: price_1h\n",
-                        "explain " + sql
-                );
-            }
-
-            execute("alter materialized view price_1h alter column sym add index");
-
-            drainQueues();
-
-            assertSql(
-                    "QUERY PLAN\n" +
-                            "DeferredSingleSymbolFilterPageFrame\n" +
-                            "    Index forward scan on: sym\n" +
-                            "      filter: sym=2\n" +
-                            "    Frame forward scan on: price_1h\n",
-                    "explain " + sql
             );
         });
     }

@@ -4837,7 +4837,7 @@ public class SampleByTest extends AbstractCairoTest {
             new SampleByFirstLastRecordCursorFactory(
                     configuration,
                     null,
-                    new BaseTimestampSampler(100L),
+                    new BaseTimestampSampler(100L, ColumnType.TIMESTAMP_MICRO),
                     groupByMeta,
                     columns,
                     meta,
@@ -4878,7 +4878,7 @@ public class SampleByTest extends AbstractCairoTest {
             new SampleByFirstLastRecordCursorFactory(
                     configuration,
                     null,
-                    new BaseTimestampSampler(100L),
+                    new BaseTimestampSampler(100L, ColumnType.TIMESTAMP_MICRO),
                     groupByMeta,
                     columns,
                     meta,

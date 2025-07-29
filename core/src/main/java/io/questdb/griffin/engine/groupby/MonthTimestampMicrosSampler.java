@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
@@ -47,6 +48,11 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
     @Override
     public long getApproxBucketSize() {
         return Timestamps.MONTH_MICROS_APPROX * stepMonths;
+    }
+
+    @Override
+    public int getTimestampType() {
+        return ColumnType.TIMESTAMP_MICRO;
     }
 
     @Override

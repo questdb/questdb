@@ -29,10 +29,12 @@ import org.jetbrains.annotations.NotNull;
 
 public class BaseTimestampSampler implements TimestampSampler {
     private final long bucket;
+    private final int timestampType;
     private long start;
 
-    public BaseTimestampSampler(long bucket) {
+    public BaseTimestampSampler(long bucket, int timestampType) {
         this.bucket = bucket;
+        this.timestampType = timestampType;
     }
 
     @Override
@@ -43,6 +45,11 @@ public class BaseTimestampSampler implements TimestampSampler {
     @Override
     public long getBucketSize() {
         return bucket;
+    }
+
+    @Override
+    public int getTimestampType() {
+        return timestampType;
     }
 
     @Override
