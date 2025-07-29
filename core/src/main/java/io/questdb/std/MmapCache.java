@@ -24,11 +24,18 @@
 
 package io.questdb.std;
 
+/**
+ * Thread-safe cache for memory-mapped file regions with reference counting.
+ * Reuses existing mappings for the same file when possible to reduce system calls.
+ */
 public class MmapCache {
     private final LongObjHashMap<MmapCacheRecord> mmapAddrCache = new LongObjHashMap<>();
     private final LongObjHashMap<MmapCacheRecord> mmapFileCache = new LongObjHashMap<>();
     private long mmapReuseCount = 0;
 
+    /**
+     * Maps file region into memory, reusing existing mapping if available.
+     */
     public long cacheMmap(int fd, long fileCacheKey, long len, long offset, int flags, int memoryTag) {
         // TODO: handle the offset
         if (offset != 0 || fileCacheKey == 0) {
@@ -65,15 +72,18 @@ public class MmapCache {
         }
     }
 
+    /** Returns number of times cached memory mappings were reused. */
     public long getReuseCount() {
         return mmapReuseCount;
     }
 
+    /** Checks if memory mapping has only one active reference. */
     public boolean isSingleUse(long address) {
         var cacheRecord = mmapAddrCache.get(address);
         return cacheRecord != null && cacheRecord.count == 1;
     }
 
+    /** Resizes existing memory mapping, reusing or creating new mapping as needed. */
     public long mremap(int fd, long fileCacheKey, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
         // TODO: handle the offset
         if (offset != 0 || fileCacheKey == 0) {
@@ -158,6 +168,7 @@ public class MmapCache {
         return newAddress;
     }
 
+    /** Unmaps memory region, decrements reference count, and removes from cache if last reference. */
     public void unmap(long address, long len, int memoryTag) {
         if (address == 0 || len <= 0) {
             return;
@@ -230,6 +241,7 @@ public class MmapCache {
         }
     }
 
+    /** Cache record holding memory mapping details and reference count. */
     private static class MmapCacheRecord {
         long address;
         int count;
