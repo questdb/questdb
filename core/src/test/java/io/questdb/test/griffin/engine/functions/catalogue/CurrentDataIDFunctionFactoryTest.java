@@ -22,14 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.network;
+package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.std.Misc;
+import io.questdb.std.Rnd;
+import io.questdb.std.Uuid;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Test;
 
-public interface IOContextFactory<C extends IOContext<C>> {
-    default void done(C context) {
-        Misc.free(context);
+public class CurrentDataIDFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testUninitializedDataID() throws Exception {
+        assertSql("current_data_id\n\n",
+                "select current_data_id();");
     }
 
-    C newInstance(long fd);
+    @Test
+    public void testSetDataID() throws Exception {
+        final Uuid newID = new Uuid();
+        Rnd rnd = configuration.getRandom();
+        newID.of(rnd.nextLong(), rnd.nextLong());
+        sink.clear();
+        newID.toSink(sink);
+        engine.getDataID().set(newID.getLo(), newID.getHi());
+        final String id = sink.toString();
+        assertSql("current_data_id\n" + id + "\n",
+                "select current_data_id();");
+    }
 }

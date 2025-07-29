@@ -1972,6 +1972,29 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullArrayComparisons() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql("eq\ntrue\n", "SELECT (null::double[] = null::double[]) eq FROM long_sequence(1)");
+            assertSql("eq\ntrue\n", "SELECT (null::double[] = NaN::double[]) eq FROM long_sequence(1)");
+            assertSql("eq\ntrue\n", "SELECT (NaN::double[] = null::double[]) eq FROM long_sequence(1)");
+            assertSql("eq\ntrue\n", "SELECT (NaN::double[] = NaN::double[]) eq FROM long_sequence(1)");
+
+            assertSql("eq\nfalse\n", "SELECT (null::double[] = ARRAY[1.0, 2.0]) eq FROM long_sequence(1)");
+            assertSql("eq\nfalse\n", "SELECT (ARRAY[1.0, 2.0] = null::double[]) eq FROM long_sequence(1)");
+            assertSql("eq\nfalse\n", "SELECT (NaN::double[] = ARRAY[1.0, 2.0]) eq FROM long_sequence(1)");
+            assertSql("eq\nfalse\n", "SELECT (ARRAY[1.0, 2.0] = NaN::double[]) eq FROM long_sequence(1)");
+
+            assertSql("eq\ntrue\n", "SELECT (ARRAY[null::double, null::double] = ARRAY[null::double, null::double]) eq FROM long_sequence(1)");
+            assertSql("eq\ntrue\n", "SELECT (ARRAY[NaN, NaN] = ARRAY[NaN, NaN]) eq FROM long_sequence(1)");
+            assertSql("eq\ntrue\n", "SELECT (ARRAY[null::double, NaN] = ARRAY[null::double, NaN]) eq FROM long_sequence(1)");
+            assertSql("eq\ntrue\n", "SELECT (ARRAY[NaN, null::double] = ARRAY[NaN, null::double]) eq FROM long_sequence(1)");
+
+            assertSql("eq\nfalse\n", "SELECT (ARRAY[1.0, 2.0] = ARRAY[NaN, 2.0]) eq FROM long_sequence(1)");
+            assertSql("eq\nfalse\n", "SELECT (ARRAY[1.0, null::double] = ARRAY[1.0, 2.0]) eq FROM long_sequence(1)");
+        });
+    }
+
+    @Test
     public void testOpComposition() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0,2.0],[3.0,4.0],[5.0,6.0]] arr FROM long_sequence(1))");
