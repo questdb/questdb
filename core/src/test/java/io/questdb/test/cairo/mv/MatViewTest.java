@@ -3737,12 +3737,12 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             execute(
-                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2023-09-10T12:10')" +
-                            ",('jpyusd', 103.21, '2023-09-10T12:10')"
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2023-09-10T12:00')" +
+                            ",('jpyusd', 103.21, '2023-09-10T12:00')"
             );
             drainQueues();
 
-            // We've only inserted '2023-09-10T12:10' timestamps, so only this second should be refreshed
+            // We've only inserted '2023-09-10T12:00' timestamps, so only this second should be refreshed
             // and inserted in the last transaction.
             final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
             Assert.assertNotNull(viewToken);
@@ -3755,8 +3755,8 @@ public class MatViewTest extends AbstractCairoTest {
                 final long seqTxn = viewReader.getSeqTxn();
                 txnRangeLoader.load(engine, path, viewToken, intervals, seqTxn - 1, seqTxn);
                 Assert.assertEquals(2, intervals.size());
-                Assert.assertEquals(parseFloorPartialTimestamp("2023-09-10T12:10:00.000000Z"), intervals.getQuick(0));
-                Assert.assertEquals(parseFloorPartialTimestamp("2023-09-10T12:10:00.999999Z"), intervals.getQuick(1));
+                Assert.assertEquals(parseFloorPartialTimestamp("2023-09-10T12:00:00.000000Z"), intervals.getQuick(0));
+                Assert.assertEquals(parseFloorPartialTimestamp("2023-09-10T12:00:00.999999Z"), intervals.getQuick(1));
             }
 
             assertQueryNoLeakCheck(
@@ -3770,10 +3770,10 @@ public class MatViewTest extends AbstractCairoTest {
             );
             assertQueryNoLeakCheck(
                     "sym\tprice\tts\n" +
+                            "gbpusd\t1.32\t2023-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.323\t2023-09-10T12:01:00.000000Z\n" +
-                            "gbpusd\t1.32\t2023-09-10T12:10:00.000000Z\n" +
-                            "jpyusd\t103.22\t2023-09-10T12:01:00.000000Z\n" +
-                            "jpyusd\t103.21\t2023-09-10T12:10:00.000000Z\n",
+                            "jpyusd\t103.21\t2023-09-10T12:00:00.000000Z\n" +
+                            "jpyusd\t103.22\t2023-09-10T12:01:00.000000Z\n",
                     "price_1h order by sym, ts"
             );
         });
