@@ -68,6 +68,7 @@ public final class Files {
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
     private final static FdCache fdCache = new FdCache();
     private static final MmapCache mmapCache = new MmapCache();
+    public static boolean FS_CACHE_ENABLED = true;
     // To be set in tests to check every call for using OPEN file descriptor
     public static boolean VIRTIO_FS_DETECTED = false;
 
@@ -402,7 +403,11 @@ public final class Files {
     public native static int openCleanRW(long lpszName, long size);
 
     public static long openRO(LPSZ lpsz) {
-        return fdCache.openROCached(lpsz);
+        if (FS_CACHE_ENABLED) {
+            return fdCache.openROCached(lpsz);
+        } else {
+            return fdCache.createUniqueFdNonCached(openRO(lpsz.ptr()));
+        }
     }
 
     public static long openRODir(LPSZ path) {
@@ -410,7 +415,11 @@ public final class Files {
     }
 
     public static long openRW(LPSZ lpsz) {
-        return fdCache.openRWCached(lpsz, 0);
+        if (FS_CACHE_ENABLED) {
+            return fdCache.openRWCached(lpsz, 0);
+        } else {
+            return fdCache.createUniqueFdNonCached(openRW(lpsz.ptr()));
+        }
     }
 
     public static long openRW(LPSZ lpsz, int opts) {

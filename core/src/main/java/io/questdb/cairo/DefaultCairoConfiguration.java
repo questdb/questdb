@@ -336,6 +336,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getFileDescriptorCacheEnabled() {
+        return true;
+    }
+
+    @Override
     public @NotNull FilesFacade getFilesFacade() {
         return FilesFacadeImpl.INSTANCE;
     }

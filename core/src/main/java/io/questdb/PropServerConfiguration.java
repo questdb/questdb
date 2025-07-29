@@ -208,6 +208,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean devModeEnabled;
     private final Set<? extends ConfigPropertyKey> dynamicProperties;
     private final boolean enableTestFactories;
+    private final boolean fileDescriptorCacheEnabled;
     private final int fileOperationRetryCount;
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
@@ -1438,6 +1439,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.writerFileOpenOpts = lopts;
 
             this.writerMixedIOEnabled = getBoolean(properties, env, PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, ff.allowMixedIO(this.dbRoot));
+            // By default File Descriptor Cache is disabled on ZFS file systems, it results a measurable slow-down in the performance.
+            this.fileDescriptorCacheEnabled = getBoolean(properties, env, PropertyKey.CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED, ff.allowMixedIO(this.dbRoot));
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),
@@ -2887,6 +2890,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull FactoryProvider getFactoryProvider() {
             return factoryProvider;
+        }
+
+        @Override
+        public boolean getFileDescriptorCacheEnabled() {
+            return fileDescriptorCacheEnabled;
         }
 
         @Override

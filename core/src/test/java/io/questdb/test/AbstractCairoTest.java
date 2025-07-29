@@ -540,6 +540,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1 = newNode(Chars.toString(root), false, 1, staticOverrides, getEngineFactory(), getConfigurationFactory());
         configuration = node1.getConfiguration();
         securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getRootContext();
+        Files.FS_CACHE_ENABLED = configuration.getFileDescriptorCacheEnabled();
         engine = node1.getEngine();
         engine.load();
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {

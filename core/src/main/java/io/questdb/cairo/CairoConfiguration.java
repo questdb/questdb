@@ -212,6 +212,8 @@ public interface CairoConfiguration {
 
     int getFileOperationRetryCount();
 
+    boolean getFileDescriptorCacheEnabled();
+
     @NotNull
     FilesFacade getFilesFacade();
 

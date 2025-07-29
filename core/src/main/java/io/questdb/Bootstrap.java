@@ -223,6 +223,7 @@ public class Bootstrap {
             log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors").$();
         }
         Unsafe.setRssMemLimit(config.getMemoryConfiguration().getResolvedRamUsageLimitBytes());
+        Files.FS_CACHE_ENABLED = config.getCairoConfiguration().getFileDescriptorCacheEnabled();
     }
 
     public static String[] getServerMainArgs(CharSequence root) {

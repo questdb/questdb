@@ -37,8 +37,7 @@ public class MmapCache {
      * Maps file region into memory, reusing existing mapping if available.
      */
     public long cacheMmap(int fd, long fileCacheKey, long len, long offset, int flags, int memoryTag) {
-        // TODO: handle the offset
-        if (offset != 0 || fileCacheKey == 0) {
+        if (offset != 0 || fileCacheKey == 0 || !Files.FS_CACHE_ENABLED) {
             return mmap0(fd, len, offset, flags, memoryTag);
         }
 
@@ -92,7 +91,7 @@ public class MmapCache {
      */
     public long mremap(int fd, long fileCacheKey, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
         // TODO: handle the offset
-        if (offset != 0 || fileCacheKey == 0) {
+        if (offset != 0 || fileCacheKey == 0 || !Files.FS_CACHE_ENABLED) {
             return mremap0(fd, address, previousSize, newSize, offset, flags, memoryTag, memoryTag);
         }
 
@@ -179,6 +178,11 @@ public class MmapCache {
      */
     public void unmap(long address, long len, int memoryTag) {
         if (address == 0 || len <= 0) {
+            return;
+        }
+
+        if (!Files.FS_CACHE_ENABLED) {
+            unmap0(address, len, memoryTag);
             return;
         }
 

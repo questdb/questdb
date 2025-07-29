@@ -307,6 +307,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getFileDescriptorCacheEnabled() {
+        return getDelegate().getFileDescriptorCacheEnabled();
+    }
+
+    @Override
     public @NotNull FilesFacade getFilesFacade() {
         return getDelegate().getFilesFacade();
     }
