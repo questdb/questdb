@@ -61,7 +61,9 @@ public class FdCache {
         }
     }
 
-    /** Closes file descriptor, decrements reference count, and removes from cache if last reference. */
+    /**
+     * Closes file descriptor, decrements reference count, and removes from cache if last reference.
+     */
     public synchronized int close(long fd) {
         int keyIndex = openFdMapByFd.keyIndex(fd);
         if (keyIndex > -1) {
@@ -97,7 +99,9 @@ public class FdCache {
         return 0;
     }
 
-    /** Creates unique file descriptor wrapper for non-cached OS file descriptor. */
+    /**
+     * Creates unique file descriptor wrapper for non-cached OS file descriptor.
+     */
     public synchronized long createUniqueFdNonCached(int fd) {
         if (fd > -1) {
             int index = fdCounter.getAndIncrement();
@@ -109,7 +113,9 @@ public class FdCache {
         return fd;
     }
 
-    /** Creates unique file descriptor wrapper for stdout without validation checks. */
+    /**
+     * Creates unique file descriptor wrapper for stdout without validation checks.
+     */
     public synchronized long createUniqueFdNonCachedStdOut(int fd) {
         int index = fdCounter.getAndIncrement();
         long markedFd = Numbers.encodeLowHighInts(index | NON_CACHED, fd);
@@ -117,7 +123,9 @@ public class FdCache {
         return markedFd;
     }
 
-    /** Removes file descriptor from cache without closing underlying OS descriptor. */
+    /**
+     * Removes file descriptor from cache without closing underlying OS descriptor.
+     */
     public synchronized void detach(long fd) {
         int keyIndex = openFdMapByFd.keyIndex(fd);
         if (keyIndex < 0) {
@@ -135,7 +143,9 @@ public class FdCache {
         Files.OPEN_FILE_COUNT.decrementAndGet();
     }
 
-    /** Returns comma-separated list of open file descriptor IDs for debugging. */
+    /**
+     * Returns comma-separated list of open file descriptor IDs for debugging.
+     */
     public synchronized String getOpenFdDebugInfo() {
         final StringSink sink = Misc.getThreadLocalSink();
         openFdMapByFd.forEach((key, value) -> {
@@ -147,17 +157,23 @@ public class FdCache {
         return sink.toString();
     }
 
-    /** Returns number of times cached file descriptors were reused. */
+    /**
+     * Returns number of times cached file descriptors were reused.
+     */
     public long getReuseCount() {
         return fdReuseCount;
     }
 
-    /** Removes file path from cache when file is deleted. */
+    /**
+     * Removes file path from cache when file is deleted.
+     */
     public synchronized void markPathRemoved(LPSZ lpsz) {
         openFdMapByPath.remove(lpsz);
     }
 
-    /** Opens file in read-only mode with caching support. */
+    /**
+     * Opens file in read-only mode with caching support.
+     */
     public synchronized long openROCached(LPSZ lpsz) {
         final FdCacheRecord holder = getFdCacheRecord(lpsz, O_RO);
         if (holder == null) {
@@ -172,7 +188,9 @@ public class FdCache {
         return uniqROFd;
     }
 
-    /** Opens file in read-write mode with caching support and creation options. */
+    /**
+     * Opens file in read-write mode with caching support and creation options.
+     */
     public synchronized long openRWCached(LPSZ lpsz, int opts) {
         final FdCacheRecord holder = getFdCacheRecord(lpsz, opts | O_CREAT);
         if (holder == null) {
@@ -187,7 +205,9 @@ public class FdCache {
         return uniqROFd;
     }
 
-    /** Retrieves memory map cache file descriptor for given file descriptor. */
+    /**
+     * Retrieves memory map cache file descriptor for given file descriptor.
+     */
     public synchronized long toMmapCacheFd(long fd) {
         var cacheRecord = openFdMapByFd.get(fd);
         if (cacheRecord == null) {
@@ -196,7 +216,9 @@ public class FdCache {
         return cacheRecord.mmapCacheFd;
     }
 
-    /** Extracts underlying OS file descriptor from cached file descriptor. */
+    /**
+     * Extracts underlying OS file descriptor from cached file descriptor.
+     */
     public int toOsFd(long fd) {
         if (FD_PARANOIA_MODE && fd != -1) {
             synchronized (this) {
@@ -209,7 +231,9 @@ public class FdCache {
         return osFd;
     }
 
-    /** Extracts OS file descriptor with write permission validation. */
+    /**
+     * Extracts OS file descriptor with write permission validation.
+     */
     public int toOsFd(long fd, boolean write) {
         assert !write || (Numbers.decodeLowInt(fd) >>> 30) != 0 : "RO fd cannot be used for writing: " + fd;
         return toOsFd(fd);
@@ -261,7 +285,9 @@ public class FdCache {
         }
     }
 
-    /** Cache record holding file path, OS file descriptor, reference count, and mmap cache link. */
+    /**
+     * Cache record holding file path, OS file descriptor, reference count, and mmap cache link.
+     */
     private static class FdCacheRecord {
         private static final FdCacheRecord EMPTY = new FdCacheRecord(null, 0);
 
