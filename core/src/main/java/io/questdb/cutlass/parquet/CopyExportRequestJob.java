@@ -60,7 +60,6 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
     private final Sequence requestSubSeq;
     private final TableToken statusTableToken;
     private final Utf8StringSink utf8StringSink = new Utf8StringSink();
-    private Path other;
     private Path path;
     private SerialParquetExporter serialExporter;
     private SqlExecutionContextImpl sqlExecutionContext;
@@ -69,9 +68,10 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
 
     public CopyExportRequestJob(final CairoEngine engine) throws SqlException {
         try {
-            this.requestQueue = engine.getMessageBus().getTextExportRequestQueue();
-            this.requestSubSeq = engine.getMessageBus().getTextExportRequestSubSeq();
-            this.serialExporter = new SerialParquetExporter(engine);
+            this.requestQueue = engine.getMessageBus().getCopyExportRequestQueue();
+            this.requestSubSeq = engine.getMessageBus().getCopyExportRequestSubSeq();
+            this.path = new Path();
+            this.serialExporter = new SerialParquetExporter(engine, path);
 
             CairoConfiguration configuration = engine.getConfiguration();
             this.clock = configuration.getMicrosecondClock();
@@ -93,15 +93,15 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                                 "status SYMBOL, " + // 5
                                 "message VARCHAR," + // 6
                                 "errors LONG" + // 7
-                                ") timestamp(ts) PARTITION BY DAY WAL\n" +
-                                "TTL " + logRetentionDays + " DAYS;"
+                                ") timestamp(ts) PARTITION BY DAY\n" +
+                                "TTL " + logRetentionDays + " DAYS WAL;"
                         )
                         .createTable(sqlExecutionContext);
             }
 
             this.writer = engine.getWalWriter(statusTableToken);
             this.copyContext = engine.getCopyContext();
-            this.path = new Path();
+
             this.engine = engine;
         } catch (Throwable t) {
             close();
@@ -140,7 +140,7 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                 writer.commit();
             } catch (Throwable th) {
                 LOG.error()
-                        .$("could not update status table [importId=").$hexPadded(task.getCopyID())
+                        .$("could not update status table [exportId=").$hexPadded(task.getCopyID())
                         .$(", statusTableName=").$(statusTableToken)
                         .$(", tableName=").$(task.getTableName())
                         .$(", fileName=").$(task.getFileName())
@@ -170,35 +170,31 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
     @Override
     protected boolean runSerially() {
         long cursor = requestSubSeq.next();
+
+        if (cursor > -1) {
+            task = requestQueue.get(cursor);
+            try {
+                serialExporter.of(
+                        task.getTableName(),
+                        task.getFileName(),
+                        task.getCopyID(),
+                        copyContext.getCircuitBreaker(),
+                        this::updateStatus
+                );
+                serialExporter.process(task.getSecurityContext());
+            } catch (CopyExportException e) {
+                updateStatus(
+                        CopyExportTask.NO_PHASE,
+                        e.isCancelled() ? CopyExportTask.STATUS_CANCELLED : CopyExportTask.STATUS_FAILED,
+                        e.getMessage(),
+                        0
+                );
+            } finally {
+                requestSubSeq.done(cursor);
+                copyContext.clear();
+            }
+            return true;
+        }
         return false;
-//        if (cursor > -1) {
-//            task = requestQueue.get(cursor);
-//            try {
-//                    serialExporter.of(
-//                            task.getTableName(),
-//                            task.getFileName(),
-//                            task.getCopyID(),
-//                            copyContext.getCircuitBreaker(),
-//                            this::updateStatus
-//                    );
-//                    serialExporter.process(task.getSecurityContext());
-//                }
-//            } catch (TextImportException e) {
-//                updateStatus(
-//                        CopyImportTask.NO_PHASE,
-//                        e.isCancelled() ? CopyImportTask.STATUS_CANCELLED : CopyImportTask.STATUS_FAILED,
-//                        e.getMessage(),
-//                        0,
-//                        0,
-//                        0
-//                );
-//            } finally {
-//                requestSubSeq.done(cursor);
-//                copyContext.clear();
-//            }
-//            enforceLogRetention();
-//            return true;
-//        }
-//        return false;
     }
 }

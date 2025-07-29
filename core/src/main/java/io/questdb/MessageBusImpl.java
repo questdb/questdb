@@ -63,6 +63,19 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<ColumnTask> columnTaskQueue;
     private final MCSequence columnTaskSubSeq;
     private final CairoConfiguration configuration;
+    private final SPSequence copyExportPubSeq;
+    private final RingQueue<CopyExportTask> copyExportQueue;
+    private final MPSequence copyExportRequestPubSeq;
+    private final RingQueue<CopyExportRequestTask> copyExportRequestQueue;
+    private final SCSequence copyExportRequestSubSeq;
+    private final MCSequence copyExportSubSeq;
+    private final SCSequence copyImportColSeq;
+    private final SPSequence copyImportPubSeq;
+    private final RingQueue<CopyImportTask> copyImportQueue;
+    private final MPSequence copyImportRequestPubSeq;
+    private final RingQueue<CopyImportRequestTask> copyImportRequestQueue;
+    private final SCSequence copyImportRequestSubSeq;
+    private final MCSequence copyImportSubSeq;
     private final MPSequence groupByMergeShardPubSeq;
     private final RingQueue<GroupByMergeShardTask> groupByMergeShardQueue;
     private final MCSequence groupByMergeShardSubSeq;
@@ -95,19 +108,6 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence tableWriterEventPubSeq;
     private final RingQueue<TableWriterTask> tableWriterEventQueue;
     private final FanOut tableWriterEventSubSeq;
-    private final SPSequence textExportPubSeq;
-    private final RingQueue<CopyExportTask> textExportQueue;
-    private final MPSequence textExportRequestPubSeq;
-    private final RingQueue<CopyExportRequestTask> textExportRequestQueue;
-    private final SCSequence textExportRequestSubSeq;
-    private final MCSequence textExportSubSeq;
-    private final SCSequence textImportColSeq;
-    private final SPSequence textImportPubSeq;
-    private final RingQueue<CopyImportTask> textImportQueue;
-    private final MPSequence textImportRequestPubSeq;
-    private final RingQueue<CopyImportRequestTask> textImportRequestQueue;
-    private final SCSequence textImportRequestSubSeq;
-    private final MCSequence textImportSubSeq;
     private final MPSequence vectorAggregatePubSeq;
     private final RingQueue<VectorAggregateTask> vectorAggregateQueue;
     private final MCSequence vectorAggregateSubSeq;
@@ -197,28 +197,28 @@ public class MessageBusImpl implements MessageBus {
                 reducePubSeq.then(reduceSubSeq).then(collectFanOut).then(reducePubSeq);
             }
 
-            this.textImportQueue = new RingQueue<>(CopyImportTask::new, configuration.getSqlCopyQueueCapacity());
-            this.textImportPubSeq = new SPSequence(textImportQueue.getCycle());
-            this.textImportSubSeq = new MCSequence(textImportQueue.getCycle());
-            this.textImportColSeq = new SCSequence();
-            textImportPubSeq.then(textImportSubSeq).then(textImportColSeq).then(textImportPubSeq);
+            this.copyImportQueue = new RingQueue<>(CopyImportTask::new, configuration.getSqlCopyQueueCapacity());
+            this.copyImportPubSeq = new SPSequence(copyImportQueue.getCycle());
+            this.copyImportSubSeq = new MCSequence(copyImportQueue.getCycle());
+            this.copyImportColSeq = new SCSequence();
+            copyImportPubSeq.then(copyImportSubSeq).then(copyImportColSeq).then(copyImportPubSeq);
 
-            this.textExportQueue = new RingQueue<>(CopyExportTask::new, configuration.getSqlCopyQueueCapacity());
-            this.textExportPubSeq = new SPSequence(textExportQueue.getCycle());
-            this.textExportSubSeq = new MCSequence(textExportQueue.getCycle());
-            textImportPubSeq.then(textExportSubSeq).then(textExportPubSeq);
+            this.copyExportQueue = new RingQueue<>(CopyExportTask::new, configuration.getSqlCopyQueueCapacity());
+            this.copyExportPubSeq = new SPSequence(copyExportQueue.getCycle());
+            this.copyExportSubSeq = new MCSequence(copyExportQueue.getCycle());
+            copyExportPubSeq.then(copyExportSubSeq).then(copyExportPubSeq);
 
             // We allow only a single parallel import to be in-flight, hence queue size of 1.
-            this.textImportRequestQueue = new RingQueue<>(CopyImportRequestTask::new, 1);
-            this.textImportRequestPubSeq = new MPSequence(textImportRequestQueue.getCycle());
-            this.textImportRequestSubSeq = new SCSequence();
-            textImportRequestPubSeq.then(textImportRequestSubSeq).then(textImportRequestPubSeq);
+            this.copyImportRequestQueue = new RingQueue<>(CopyImportRequestTask::new, 1);
+            this.copyImportRequestPubSeq = new MPSequence(copyImportRequestQueue.getCycle());
+            this.copyImportRequestSubSeq = new SCSequence();
+            copyImportRequestPubSeq.then(copyImportRequestSubSeq).then(copyImportRequestPubSeq);
 
             // We allow only a single parallel export to be in-flight, hence queue size of 1.
-            this.textExportRequestQueue = new RingQueue<>(CopyExportRequestTask::new, 1);
-            this.textExportRequestPubSeq = new MPSequence(textExportRequestQueue.getCycle());
-            this.textExportRequestSubSeq = new SCSequence();
-            textExportRequestPubSeq.then(textExportRequestSubSeq).then(textExportRequestPubSeq);
+            this.copyExportRequestQueue = new RingQueue<>(CopyExportRequestTask::new, 1);
+            this.copyExportRequestPubSeq = new MPSequence(copyExportRequestQueue.getCycle());
+            this.copyExportRequestSubSeq = new SCSequence();
+            copyExportRequestPubSeq.then(copyExportRequestSubSeq).then(copyExportRequestPubSeq);
 
             this.walTxnNotificationQueue = new RingQueue<>(WalTxnNotificationTask::new, configuration.getWalTxnNotificationQueueCapacity());
             this.walTxnNotificationPubSequence = new MPSequence(walTxnNotificationQueue.getCycle());
@@ -252,9 +252,11 @@ public class MessageBusImpl implements MessageBus {
         o3OpenColumnSubSeq.clear();
         o3PartitionSubSeq.clear();
         o3PurgeDiscoverySubSeq.clear();
-        textImportColSeq.clear();
-        textImportRequestSubSeq.clear();
-        textImportSubSeq.clear();
+        copyImportColSeq.clear();
+        copyImportRequestSubSeq.clear();
+        copyImportSubSeq.clear();
+        copyExportRequestSubSeq.clear();
+        copyExportSubSeq.clear();
         vectorAggregateSubSeq.clear();
         walTxnNotificationSubSequence.clear();
         walTxnNotificationSubSequence.clear();
@@ -316,8 +318,63 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MPSequence getCopyRequestPubSeq() {
-        return textImportRequestPubSeq;
+    public RingQueue<CopyExportTask> getCopyExportQueue() {
+        return copyExportQueue;
+    }
+
+    @Override
+    public MPSequence getCopyExportRequestPubSeq() {
+        return copyExportRequestPubSeq;
+    }
+
+    @Override
+    public RingQueue<CopyExportRequestTask> getCopyExportRequestQueue() {
+        return copyExportRequestQueue;
+    }
+
+    @Override
+    public SCSequence getCopyExportRequestSubSeq() {
+        return copyExportRequestSubSeq;
+    }
+
+    @Override
+    public MCSequence getCopyExportSubSeq() {
+        return copyExportSubSeq;
+    }
+
+    @Override
+    public SCSequence getCopyImportColSeq() {
+        return copyImportColSeq;
+    }
+
+    @Override
+    public SPSequence getCopyImportPubSeq() {
+        return copyImportPubSeq;
+    }
+
+    @Override
+    public RingQueue<CopyImportTask> getCopyImportQueue() {
+        return copyImportQueue;
+    }
+
+    @Override
+    public MPSequence getCopyImportRequestPubSeq() {
+        return copyImportRequestPubSeq;
+    }
+
+    @Override
+    public RingQueue<CopyImportRequestTask> getCopyImportRequestQueue() {
+        return copyImportRequestQueue;
+    }
+
+    @Override
+    public SCSequence getCopyImportRequestSubSeq() {
+        return copyImportRequestSubSeq;
+    }
+
+    @Override
+    public MCSequence getCopyImportSubSeq() {
+        return copyImportSubSeq;
     }
 
     @Override
@@ -478,46 +535,6 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public RingQueue<TableWriterTask> getTableWriterEventQueue() {
         return tableWriterEventQueue;
-    }
-
-    @Override
-    public RingQueue<CopyExportRequestTask> getTextExportRequestQueue() {
-        return textExportRequestQueue;
-    }
-
-    @Override
-    public SCSequence getTextExportRequestSubSeq() {
-        return textExportRequestSubSeq;
-    }
-
-    @Override
-    public SCSequence getTextImportColSeq() {
-        return textImportColSeq;
-    }
-
-    @Override
-    public SPSequence getTextImportPubSeq() {
-        return textImportPubSeq;
-    }
-
-    @Override
-    public RingQueue<CopyImportTask> getTextImportQueue() {
-        return textImportQueue;
-    }
-
-    @Override
-    public RingQueue<CopyImportRequestTask> getTextImportRequestQueue() {
-        return textImportRequestQueue;
-    }
-
-    @Override
-    public SCSequence getTextImportRequestSubSeq() {
-        return textImportRequestSubSeq;
-    }
-
-    @Override
-    public MCSequence getTextImportSubSeq() {
-        return textImportSubSeq;
     }
 
     @Override

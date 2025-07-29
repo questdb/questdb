@@ -1353,6 +1353,12 @@ public final class TestUtils {
         return ts;
     }
 
+    public static void drainCopyImportJobQueue(CairoEngine engine) throws Exception {
+        try (CopyImportRequestJob copyRequestJob = new CopyImportRequestJob(engine, 1)) {
+            copyRequestJob.drain(0);
+        }
+    }
+
     @SuppressWarnings("StatementWithEmptyBody")
     public static void drainCursor(RecordCursor cursor) {
         while (cursor.hasNext()) {
@@ -1371,12 +1377,6 @@ public final class TestUtils {
         )) {
             engine.setWalPurgeJobRunLock(job.getRunLock());
             job.drain(0);
-        }
-    }
-
-    public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
-        try (CopyImportRequestJob copyRequestJob = new CopyImportRequestJob(engine, 1)) {
-            copyRequestJob.drain(0);
         }
     }
 

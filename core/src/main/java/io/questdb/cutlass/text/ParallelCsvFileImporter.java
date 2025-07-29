@@ -186,7 +186,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         MessageBus bus = cairoEngine.getMessageBus();
-        RingQueue<CopyImportTask> queue = bus.getTextImportQueue();
+        RingQueue<CopyImportTask> queue = bus.getCopyImportQueue();
         if (queue.getCycle() < 1) {
             throw TextImportException.instance(CopyImportTask.PHASE_SETUP, "Parallel import queue size cannot be zero!");
         }
@@ -194,8 +194,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.cairoEngine = cairoEngine;
         this.workerCount = workerCount;
         this.queue = queue;
-        this.pubSeq = bus.getTextImportPubSeq();
-        this.collectSeq = bus.getTextImportColSeq();
+        this.pubSeq = bus.getCopyImportPubSeq();
+        this.collectSeq = bus.getCopyImportColSeq();
 
         try {
             this.localImportJob = new CopyImportJob(bus);

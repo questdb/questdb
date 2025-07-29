@@ -46,6 +46,8 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.StaticHttpAuthenticatorFactory;
 import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
+import io.questdb.cutlass.parquet.CopyExportJob;
+import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
@@ -362,6 +364,16 @@ public class ServerMain implements Closeable {
                                     engine,
                                     // save CPU resources for collecting and processing jobs
                                     Math.max(1, sharedPool.getWorkerCount() - 2)
+                            );
+                            sharedPool.assign(copyRequestJob);
+                            sharedPool.freeOnExit(copyRequestJob);
+                        }
+
+                        // copy export
+                        CopyExportJob.assignToPool(engine.getMessageBus(), sharedPool);
+                        if (!Chars.empty(cairoConfig.getSqlCopyInputRoot())) {
+                            final CopyExportRequestJob copyRequestJob = new CopyExportRequestJob(
+                                    engine
                             );
                             sharedPool.assign(copyRequestJob);
                             sharedPool.freeOnExit(copyRequestJob);

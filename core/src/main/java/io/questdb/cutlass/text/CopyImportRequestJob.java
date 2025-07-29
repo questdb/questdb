@@ -75,8 +75,8 @@ public class CopyImportRequestJob extends SynchronizedJob implements Closeable {
 
     public CopyImportRequestJob(final CairoEngine engine, int workerCount) throws SqlException {
         try {
-            this.requestQueue = engine.getMessageBus().getTextImportRequestQueue();
-            this.requestSubSeq = engine.getMessageBus().getTextImportRequestSubSeq();
+            this.requestQueue = engine.getMessageBus().getCopyImportRequestQueue();
+            this.requestSubSeq = engine.getMessageBus().getCopyImportRequestSubSeq();
             this.parallelImporter = new ParallelCsvFileImporter(engine, workerCount);
             this.serialImporter = new SerialCsvFileImporter(engine);
 

@@ -76,17 +76,17 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final RingQueue<CopyExportRequestTask> textExportRequestQueue = messageBus.getTextExportRequestQueue();
-        final MPSequence copyRequestPubSeq = messageBus.getCopyRequestPubSeq();
+        final RingQueue<CopyExportRequestTask> copyExportRequestQueue = messageBus.getCopyExportRequestQueue();
+        final MPSequence copyRequestPubSeq = messageBus.getCopyExportRequestPubSeq();
         final AtomicBooleanCircuitBreaker circuitBreaker = copyContext.getCircuitBreaker();
 
-        long activeCopyID = copyContext.getActiveCopyID();
+        long activeCopyID = copyContext.getActiveExportID();
         if (activeCopyID == CopyContext.INACTIVE_COPY_ID) {
             long processingCursor = copyRequestPubSeq.next();
             if (processingCursor > -1) {
-                final CopyExportRequestTask task = textExportRequestQueue.get(processingCursor);
+                final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
 
-                long copyID = copyContext.assignActiveImportId(executionContext.getSecurityContext());
+                long copyID = copyContext.assignActiveExportId(executionContext.getSecurityContext());
                 task.of(
                         executionContext.getSecurityContext(),
                         copyID,

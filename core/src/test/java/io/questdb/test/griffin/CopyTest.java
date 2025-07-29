@@ -396,7 +396,7 @@ public class CopyTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getMessage(), "copy cancel ID format is invalid: 'foobar'");
             }
 
-            TestUtils.drainTextImportJobQueue(engine);
+            TestUtils.drainCopyImportJobQueue(engine);
         });
     }
 

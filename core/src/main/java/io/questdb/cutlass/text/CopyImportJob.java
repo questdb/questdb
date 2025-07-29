@@ -50,7 +50,7 @@ public class CopyImportJob extends AbstractQueueConsumerJob<CopyImportTask> impl
     private DirectUtf8Sink utf8Sink;
 
     public CopyImportJob(MessageBus messageBus) {
-        super(messageBus.getTextImportQueue(), messageBus.getTextImportSubSeq());
+        super(messageBus.getCopyImportQueue(), messageBus.getCopyImportSubSeq());
         try {
             this.tlw = new TextLexerWrapper(messageBus.getConfiguration().getTextConfiguration());
             this.fileBufSize = messageBus.getConfiguration().getSqlCopyBufferSize();

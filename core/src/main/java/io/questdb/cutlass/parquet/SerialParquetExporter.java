@@ -26,25 +26,28 @@ package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cutlass.text.SerialCsvFileImporter;
 import io.questdb.griffin.engine.table.parquet.MappedMemoryPartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.io.IOException;
+
+import static io.questdb.cairo.TableUtils.createDirsOrFail;
 
 public class SerialParquetExporter implements Closeable {
 
@@ -62,11 +65,12 @@ public class SerialParquetExporter implements Closeable {
     TableReader tableReader;
     TableToken tableToken;
 
-    public SerialParquetExporter(CairoEngine engine) {
+    public SerialParquetExporter(CairoEngine engine, Path path) {
         this.cairoEngine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = this.configuration.getFilesFacade();
         this.copyRoot = this.configuration.getSqlCopyInputRoot();
+        this.toParquet = path;
     }
 
     @Override
@@ -86,47 +90,54 @@ public class SerialParquetExporter implements Closeable {
         this.statusReporter = statusReporter;
     }
 
-
-    public void process(SecurityContext securityContext) throws IOException {
-        final int memoryTag = MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER;
-
-//        setPathForNativePartition(fromNative.trimTo(pathSize), partitionBy, partitionTimestamp, partitionNameTxn);
+    public void process(SecurityContext securityContext) {
+        tableToken = cairoEngine.getTableTokenIfExists(tableName);
+        final CharSequence inputRoot = configuration.getSqlCopyInputRoot();
+        final int compressionCodec = configuration.getPartitionEncoderParquetCompressionCodec();
+        final int compressionLevel = configuration.getPartitionEncoderParquetCompressionLevel();
+        final int rowGroupSize = configuration.getPartitionEncoderParquetRowGroupSize();
+        final int dataPageSize = configuration.getPartitionEncoderParquetDataPageSize();
+        final boolean statisticsEnabled = configuration.isPartitionEncoderParquetStatisticsEnabled();
+        final int parquetVersion = configuration.getPartitionEncoderParquetVersion();
 
         try (TableReader reader = cairoEngine.getReader(tableToken)) {
-            TableReaderMetadata metadata = reader.getMetadata();
             final int partitionCount = reader.getPartitionCount();
 
             for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+
+                reader.openPartition(partitionIndex);
+                final int partitionBy = reader.getPartitionedBy();
                 final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
 
                 try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor(ff)) {
-                    final long partitionRowCount = reader.getPartitionRowCount(partitionIndex);
-                    final int timestampIndex = metadata.getTimestampIndex();
-                    partitionDescriptor.of(tableToken.getTableName(), partitionRowCount, (int) timestampIndex);
+                    PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
 
-                    final int columnCount = metadata.getColumnCount();
+                    toParquet.trimTo(0).concat(inputRoot).concat(fileName);
+
+                    PartitionBy.getPartitionDirFormatMethod(partitionBy)
+                            .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, toParquet.slash());
+
+                    toParquet.put(".parquet");
 
 
-                    for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                        final int columnType = metadata.getColumnType(columnIndex);
-                        if (columnType <= 0) {
-                            // column is deleted
-                            continue;
-                        }
-                        final String columnName = metadata.getColumnName(columnIndex);
-                        final int columnId = metadata.getColumnMetadata(columnIndex).getWriterIndex();
+                    createDirsOrFail(ff, toParquet, configuration.getMkDirMode());
 
-                        ColumnVersionReader columnReader = reader.getColumnVersionReader();
-                        final long columnNameTxn = columnReader.getColumnNameTxn(partitionTimestamp, columnIndex);
-                        final long columnTop = columnReader.getColumnTop(partitionTimestamp, columnIndex);
-                        final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
+                    PartitionEncoder.encodeWithOptions(
+                            partitionDescriptor,
+                            toParquet,
+                            ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                            statisticsEnabled,
+                            rowGroupSize,
+                            dataPageSize,
+                            parquetVersion
+                    );
 
-                    }
+                    long parquetFileLength = ff.length(toParquet.$());
+
                 }
             }
 
         }
-
     }
 
     @FunctionalInterface

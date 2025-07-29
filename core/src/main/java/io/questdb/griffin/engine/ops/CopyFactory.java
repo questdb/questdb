@@ -88,11 +88,11 @@ public class CopyFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final RingQueue<CopyImportRequestTask> textImportRequestQueue = messageBus.getTextImportRequestQueue();
-        final MPSequence copyRequestPubSeq = messageBus.getCopyRequestPubSeq();
+        final RingQueue<CopyImportRequestTask> textImportRequestQueue = messageBus.getCopyImportRequestQueue();
+        final MPSequence copyRequestPubSeq = messageBus.getCopyImportRequestPubSeq();
         final AtomicBooleanCircuitBreaker circuitBreaker = copyContext.getCircuitBreaker();
 
-        long activeCopyID = copyContext.getActiveCopyID();
+        long activeCopyID = copyContext.getActiveImportID();
         if (activeCopyID == CopyContext.INACTIVE_COPY_ID) {
             long processingCursor = copyRequestPubSeq.next();
             if (processingCursor > -1) {

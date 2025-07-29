@@ -35,38 +35,54 @@ import java.util.function.LongSupplier;
 
 public class CopyContext implements Mutable {
     public static final long INACTIVE_COPY_ID = -1;
-    private final AtomicLong activeCopyID = new AtomicLong(INACTIVE_COPY_ID);
+    private final AtomicLong activeExportId = new AtomicLong(INACTIVE_COPY_ID);
+    private final AtomicLong activeImportID = new AtomicLong(INACTIVE_COPY_ID);
     private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
     // Important assumption: We never access the rnd concurrently, so no need for additional synchronization.
     private final LongSupplier copyIDSupplier;
-    private SecurityContext originatorSecurityContext = DenyAllSecurityContext.INSTANCE;
+    private SecurityContext exportOriginatorSecurityContext = DenyAllSecurityContext.INSTANCE;
+    private SecurityContext importOriginatorSecurityContext = DenyAllSecurityContext.INSTANCE;
+
 
     public CopyContext(CairoConfiguration configuration) {
         this.copyIDSupplier = configuration.getCopyIDSupplier();
     }
 
+    public long assignActiveExportId(SecurityContext securityContext) {
+        final long id = copyIDSupplier.getAsLong();
+        activeExportId.set(id);
+        this.exportOriginatorSecurityContext = securityContext;
+        return id;
+    }
+
     public long assignActiveImportId(SecurityContext securityContext) {
         final long id = copyIDSupplier.getAsLong();
-        activeCopyID.set(id);
-        this.originatorSecurityContext = securityContext;
+        activeImportID.set(id);
+        this.importOriginatorSecurityContext = securityContext;
         return id;
     }
 
     @Override
     public void clear() {
-        activeCopyID.set(INACTIVE_COPY_ID);
-        originatorSecurityContext = DenyAllSecurityContext.INSTANCE;
+        activeImportID.set(INACTIVE_COPY_ID);
+        importOriginatorSecurityContext = DenyAllSecurityContext.INSTANCE; // todo: review if split needed
+        activeExportId.set(INACTIVE_COPY_ID);
+        exportOriginatorSecurityContext = DenyAllSecurityContext.INSTANCE;
     }
 
-    public long getActiveCopyID() {
-        return activeCopyID.get();
+    public long getActiveExportID() {
+        return activeExportId.get();
+    }
+
+    public long getActiveImportID() {
+        return activeImportID.get();
     }
 
     public AtomicBooleanCircuitBreaker getCircuitBreaker() {
         return circuitBreaker;
     }
 
-    public SecurityContext getOriginatorSecurityContext() {
-        return originatorSecurityContext;
+    public SecurityContext getImportOriginatorSecurityContext() {
+        return importOriginatorSecurityContext;
     }
 }

@@ -36,7 +36,7 @@ public class CopyExportTask {
 
     public static final byte NO_PHASE = -1;
     public static final byte PHASE_CLEANUP = 2;
-    public static final byte PHASE_MOVE_PARTITIONS = 7;
+    public static final byte PHASE_MOVE_PARTITION = 7;
     public static final byte PHASE_PARTITION_EXPORT = 1;
     public static final byte PHASE_SETUP = 0;
     public static final byte STATUS_CANCELLED = 3;
@@ -47,7 +47,6 @@ public class CopyExportTask {
     private static final Log LOG = LogFactory.getLog(CopyExportTask.class);
     private static final IntObjHashMap<String> PHASE_NAME_MAP = new IntObjHashMap<>();
     private static final IntObjHashMap<String> STATUS_NAME_MAP = new IntObjHashMap<>();
-    private int chunkIndex;
     private @Nullable ExecutionCircuitBreaker circuitBreaker;
     private @Nullable CharSequence errorMessage;
     private byte phase;
@@ -62,24 +61,9 @@ public class CopyExportTask {
     }
 
     public void clear() {
-//        if (phase == PHASE_BOUNDARY_CHECK) {
-//            phaseBoundaryCheck.clear();
-//        } else if (phase == PHASE_INDEXING) {
-//            phaseIndexing.clear();
-//        } else if (phase == PHASE_PARTITION_IMPORT) {
-//            phasePartitionImport.clear();
-//        } else if (phase == PHASE_SYMBOL_TABLE_MERGE) {
-//            phaseSymbolTableMerge.clear();
-//        } else if (phase == PHASE_UPDATE_SYMBOL_KEYS) {
-//            phaseUpdateSymbolKeys.clear();
-//        } else if (phase == PHASE_BUILD_SYMBOL_INDEX) {
-//            phaseBuildSymbolIndex.clear();
-//        } else {
-//            throw TextException.$("Unexpected phase ").put(phase);
-//        }
-
+        // todo
     }
-    
+
     public @Nullable CharSequence getErrorMessage() {
         return errorMessage;
     }
@@ -99,6 +83,50 @@ public class CopyExportTask {
     public boolean isFailed() {
         return this.status == STATUS_FAILED;
     }
+//
+//    public boolean run() {
+//        try {
+//            LOG.debug().$("starting [phase=").$(getPhaseName(phase)).$(",index=").$(chunkIndex).I$();
+//
+//            this.status = STATUS_STARTED;
+//            this.errorMessage = null;
+//
+//            throwIfCancelled();
+//
+//            if (phase == PHASE_BOUNDARY_CHECK) {
+//                phaseBoundaryCheck.run(fileBufAddr, fileBufSize);
+//            } else if (phase == PHASE_INDEXING) {
+//                phaseIndexing.run(indexer, fileBufAddr, fileBufSize);
+//            } else if (phase == PHASE_PARTITION_IMPORT) {
+//                phasePartitionImport.run(lf, fileBufAddr, fileBufSize, utf16Sink, utf8Sink, unmergedIndexes, p1, p2);
+//            } else if (phase == PHASE_SYMBOL_TABLE_MERGE) {
+//                phaseSymbolTableMerge.run(p1);
+//            } else if (phase == PHASE_UPDATE_SYMBOL_KEYS) {
+//                phaseUpdateSymbolKeys.run(p1);
+//            } else if (phase == PHASE_BUILD_SYMBOL_INDEX) {
+//                phaseBuildSymbolIndex.run();
+//            } else {
+//                throw TextException.$("Unexpected phase ").put(phase);
+//            }
+//
+//            LOG.debug().$("finished [phase=").$(getPhaseName(phase)).$(",index=").$(chunkIndex).I$();
+//        } catch (CopyExportException e) {
+//            this.status = STATUS_CANCELLED;
+//            this.errorMessage = e.getMessage();
+//            LOG.error().$("export cancelled [phase=").$(getPhaseName(e.getPhase())).I$();
+//            return false;
+//        } catch (Throwable t) {
+//            LOG.error()
+//                    .$("could not export [phase=").$(getPhaseName(phase))
+//                    .$(", ex=").$(t)
+//                    .I$();
+//            this.status = STATUS_FAILED;
+//            this.errorMessage = t.getMessage();
+//            return false;
+//        }
+//
+//        return true;
+//    }
 
     public void setCircuitBreaker(@Nullable ExecutionCircuitBreaker circuitBreaker) {
         this.circuitBreaker = circuitBreaker;
@@ -116,10 +144,9 @@ public class CopyExportTask {
         }
     }
 
-
     static {
         PHASE_NAME_MAP.put(PHASE_SETUP, "setup");
-        PHASE_NAME_MAP.put(PHASE_MOVE_PARTITIONS, "move_partitions");
+        PHASE_NAME_MAP.put(PHASE_PARTITION_EXPORT, "partition_export");
         PHASE_NAME_MAP.put(PHASE_CLEANUP, "cleanup");
 
         STATUS_NAME_MAP.put(STATUS_STARTED, "started");
