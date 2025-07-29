@@ -111,6 +111,21 @@ public abstract class AbstractArray implements QuietCloseable {
         memA = array.startMemoryA();
     }
 
+    /**
+     * Closes this array and releases all associated native memory resources.
+     * <p>
+     * <strong>Important:</strong> After calling this method, the array becomes unusable.
+     * Any subsequent operations (append, set, reshape, etc.) will result in undefined
+     * behavior or exceptions.
+     * <p>
+     * This method is idempotent - calling it multiple times has no additional effect.
+     * <p>
+     * <strong>Memory Management:</strong> Since arrays use native memory, failing to call
+     * this method will result in memory leaks. Use try-with-resources or ensure explicit
+     * cleanup in finally blocks.
+     *
+     * @see java.lang.AutoCloseable#close()
+     */
     @Override
     public void close() {
         if (!closed) {
