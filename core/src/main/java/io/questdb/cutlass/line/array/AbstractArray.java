@@ -138,35 +138,18 @@ public abstract class AbstractArray implements QuietCloseable {
      * Reshapes the array to the specified dimensions.
      * <p>This method allows changing the array's shape after creation, enabling
      * dynamic resizing based on runtime requirements.
+     * <br>
+     * Note: It resets the append position to the start of the array.
      *
      * @param shape the new dimensions for the array
      * @throws IllegalStateException    if the array is already closed
      * @throws IllegalArgumentException if shape has invalid dimensions
      */
     public void reshape(int... shape) {
-        reshape(shape, shape.length);
-    }
-
-
-    /**
-     * Reshapes the array to the specified dimensions using the first nDim elements of the shape array.
-     * <p>This method provides fine-grained control over array reshaping by allowing specification
-     * of how many dimensions from the shape array to use.
-     *
-     * @param shape array containing the new dimensions
-     * @param nDim  number of dimensions to use from the shape array
-     * @throws IllegalStateException    if the array is already closed
-     * @throws IllegalArgumentException if nDim exceeds shape array length, exceeds maximum
-     *                                  supported dimensionality, or is zero
-     */
-    public void reshape(int[] shape, int nDim) {
         if (closed) {
             throw new IllegalStateException("Cannot reshape a closed array");
         }
-        if (nDim > shape.length) {
-            throw new IllegalArgumentException("Shape array length must be at least as long as nDim (" + nDim + "), but got " + shape.length);
-        }
-
+        int nDim = shape.length;
         if (nDim > ColumnType.ARRAY_NDIMS_LIMIT) {
             throw new IllegalArgumentException("Maximum supported dimensionality is " +
                     ColumnType.ARRAY_NDIMS_LIMIT + "D, but got " + nDim + "D");

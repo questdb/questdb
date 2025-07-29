@@ -213,21 +213,6 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             } catch (IllegalArgumentException e) {
                 Assert.assertTrue(e.getMessage().contains("Array size must not be negative"));
             }
-
-            int[] shape = {3, 3};
-            try {
-                array.reshape(shape, 0);
-                Assert.fail("Should throw IllegalArgumentException for zero dimensions");
-            } catch (IllegalArgumentException e) {
-                Assert.assertTrue(e.getMessage().contains("Shape must have at least one dimension"));
-            }
-
-            try {
-                array.reshape(shape, 5);
-                Assert.fail("Should throw IllegalArgumentException when nDim exceeds shape length");
-            } catch (IllegalArgumentException e) {
-                Assert.assertTrue(e.getMessage().contains("Shape array length must be at least as long as nDim"));
-            }
         }
     }
 
@@ -336,9 +321,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         array.append(i + 1.0);
                     }
 
-                    // Reshape using first 2 dimensions of {2, 8, 4}
-                    int[] shape = {2, 8, 4};
-                    array.reshape(shape, 2);
+                    int[] shape = {2, 8};
+                    array.reshape(shape);
 
                     String tableName = "reshape_ndim_test";
                     int port = serverMain.getHttpServerPort();
