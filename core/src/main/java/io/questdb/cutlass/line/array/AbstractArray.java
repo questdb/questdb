@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.BorrowedFlatArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.std.QuietCloseable;
 
@@ -35,30 +36,31 @@ import io.questdb.std.QuietCloseable;
  * `AbstractArray` provides an interface for Java client users to create multi-dimensional arrays,
  * supporting up to 32 dimensions.
  * <p>It manages a contiguous block of memory to store the actual array data.
- * To prevent memory leaks, please ensure to invoke the {@link #close()}  method after usage.
+ * To prevent memory leaks, please ensure to invoke the {@link #close()} method after usage.
  * <p>Example of usage:
  * <pre>{@code
- *    // Creates a 2x3x2 matrix (of rank 3)
- *    try (
- *        DoubleArray matrix3d = DoubleArray.create(2, 3, 2)) {
- *              matrix3d.set(DoubleArray.create(new double[]{1.0, 2.0}), true, 0, 0)
- *                  .set(DoubleArray.create(new double[]{3.0, 4.0}), true, 0, 1)
- *                  .set(DoubleArray.create(new double[]{5.0, 6.0}), true, 0, 2)
- *                  .set(DoubleArray.create(new double[]{7.0, 8.0}), true, 1, 0)
- *                  .set(DoubleArray.create(new double[]{9.0, 10.0}), true, 1, 1)
- *                  .set(DoubleArray.create(new double[]{11.0, 12.0}), true, 1, 2);
+ *    // Creates a 2x3 matrix (2D array)
+ *    DoubleArray matrix = new DoubleArray(2, 3);
  *
- *                  // send matrix3d to line
- *                  sender.table(tableName).doubleArray(columnName, matrix3d);
- *        }
+ *    // Fill with data using append (row-major order)
+ *    matrix.append(1.0).append(2.0).append(3.0)  // first row
+ *          .append(4.0).append(5.0).append(6.0); // second row
  *
+ *    // Or set specific coordinates
+ *    matrix.set(1.5, 0, 1);  // set element at row 0, column 1
+ *
+ *    // Send to QuestDB
+ *    sender.table("my_table").doubleArray("matrix_column", matrix).atNow();
+ *
+ *    // Remember to close when done
+ *    matrix.close();
  * }</pre>
  */
 public abstract class AbstractArray implements QuietCloseable {
 
     protected final DirectArray array = new DirectArray();
-    protected final int flatLength;
     protected boolean closed = false;
+    protected int flatLength;
     protected MemoryA memA = array.startMemoryA();
 
     protected AbstractArray(int[] shape, short columnType) {
@@ -86,12 +88,107 @@ public abstract class AbstractArray implements QuietCloseable {
         }
     }
 
+    /**
+     * Resets the append position to the beginning of the array without modifying any data.
+     * <p>
+     * This method only resets the internal append position counter. The actual array data
+     * remains unchanged. Subsequent {@code append()} calls will start overwriting from
+     * the first element.
+     * <p>
+     * <strong>Use cases:</strong>
+     * <ul>
+     * <li>Error recovery after {@link Sender#cancelRow()} when array is partially filled</li>
+     * <li>Starting fresh without waiting for auto-wrapping behavior</li>
+     * </ul>
+     * <p>
+     * <strong>Note:</strong> To change the array dimensions, use {@code reshape()} instead.
+     * This method only resets the position within the current shape.
+     *
+     * @see #reshape(int...)
+     */
+    public void clear() {
+        assert !closed;
+        memA = array.startMemoryA();
+    }
+
     @Override
     public void close() {
         if (!closed) {
             array.close();
         }
         closed = true;
+    }
+
+    /**
+     * Reshapes the array to the specified dimensions.
+     * <p>This method allows changing the array's shape after creation, enabling
+     * dynamic resizing based on runtime requirements.
+     *
+     * @param shape the new dimensions for the array
+     * @throws IllegalStateException    if the array is already closed
+     * @throws IllegalArgumentException if shape has invalid dimensions
+     */
+    public void reshape(int... shape) {
+        reshape(shape, shape.length);
+    }
+
+
+    /**
+     * Reshapes the array to the specified dimensions using the first nDim elements of the shape array.
+     * <p>This method provides fine-grained control over array reshaping by allowing specification
+     * of how many dimensions from the shape array to use.
+     *
+     * @param shape array containing the new dimensions
+     * @param nDim  number of dimensions to use from the shape array
+     * @throws IllegalStateException    if the array is already closed
+     * @throws IllegalArgumentException if nDim exceeds shape array length, exceeds maximum
+     *                                  supported dimensionality, or is zero
+     */
+    public void reshape(int[] shape, int nDim) {
+        if (closed) {
+            throw new IllegalStateException("Cannot reshape a closed array");
+        }
+        if (nDim > shape.length) {
+            throw new IllegalArgumentException("Shape array length must be at least as long as nDim (" + nDim + "), but got " + shape.length);
+        }
+
+        if (nDim > ColumnType.ARRAY_NDIMS_LIMIT) {
+            throw new IllegalArgumentException("Maximum supported dimensionality is " +
+                    ColumnType.ARRAY_NDIMS_LIMIT + "D, but got " + nDim + "D");
+        }
+        if (nDim == 0) {
+            throw new IllegalArgumentException("Shape must have at least one dimension");
+        }
+        array.setType(ColumnType.encodeArrayType(array.getElemType(), nDim));
+        for (int dim = 0; dim < nDim; dim++) {
+            array.setDimLen(dim, shape[dim]);
+        }
+        array.applyShape();
+        flatLength = array.getFlatViewLength();
+        memA = array.startMemoryA();
+    }
+
+    /**
+     * Reshapes the array to a single dimension with the specified length.
+     * <p>This is a convenience method for converting multi-dimensional arrays to
+     * one-dimensional arrays or resizing existing one-dimensional arrays without allocating an array for the shape.
+     *
+     * @param dimLen the length of the single dimension
+     * @throws IllegalStateException    if the array is already closed
+     * @throws IllegalArgumentException if dimLen is negative
+     */
+    public void reshape(int dimLen) {
+        if (closed) {
+            throw new IllegalStateException("Cannot reshape a closed array");
+        }
+        if (dimLen < 0) {
+            throw new IllegalArgumentException("Array size must not be negative, but got " + dimLen);
+        }
+        array.setType(ColumnType.encodeArrayType(array.getElemType(), 1));
+        array.setDimLen(0, dimLen);
+        array.applyShape();
+        flatLength = array.getFlatViewLength();
+        memA = array.startMemoryA();
     }
 
     protected void ensureLegalAppendPosition() {
