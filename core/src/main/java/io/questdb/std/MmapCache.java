@@ -72,18 +72,24 @@ public class MmapCache {
         }
     }
 
-    /** Returns number of times cached memory mappings were reused. */
+    /**
+     * Returns number of times cached memory mappings were reused.
+     */
     public long getReuseCount() {
         return mmapReuseCount;
     }
 
-    /** Checks if memory mapping has only one active reference. */
+    /**
+     * Checks if memory mapping has only one active reference.
+     */
     public boolean isSingleUse(long address) {
         var cacheRecord = mmapAddrCache.get(address);
         return cacheRecord != null && cacheRecord.count == 1;
     }
 
-    /** Resizes existing memory mapping, reusing or creating new mapping as needed. */
+    /**
+     * Resizes existing memory mapping, reusing or creating new mapping as needed.
+     */
     public long mremap(int fd, long fileCacheKey, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
         // TODO: handle the offset
         if (offset != 0 || fileCacheKey == 0) {
@@ -168,7 +174,9 @@ public class MmapCache {
         return newAddress;
     }
 
-    /** Unmaps memory region, decrements reference count, and removes from cache if last reference. */
+    /**
+     * Unmaps memory region, decrements reference count, and removes from cache if last reference.
+     */
     public void unmap(long address, long len, int memoryTag) {
         if (address == 0 || len <= 0) {
             return;
@@ -241,7 +249,9 @@ public class MmapCache {
         }
     }
 
-    /** Cache record holding memory mapping details and reference count. */
+    /**
+     * Cache record holding memory mapping details and reference count.
+     */
     private static class MmapCacheRecord {
         long address;
         int count;
