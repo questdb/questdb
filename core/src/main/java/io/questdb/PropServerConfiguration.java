@@ -2424,12 +2424,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CAIRO_SQL_MAP_KEY_CAPACITY,
                     PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY
             );
-            registerDeprecated(PropertyKey.PG_INSERT_POOL_CAPACITY);
-            registerDeprecated(PropertyKey.LINE_UDP_TIMESTAMP);
-            registerDeprecated(PropertyKey.LINE_TCP_TIMESTAMP);
-            registerDeprecated(PropertyKey.CAIRO_SQL_JIT_ROWS_THRESHOLD);
-            registerDeprecated(PropertyKey.CAIRO_COMPACT_MAP_LOAD_FACTOR);
-            registerDeprecated(PropertyKey.CAIRO_DEFAULT_MAP_TYPE);
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY,
                     PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY
@@ -2462,18 +2456,17 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY,
                     PropertyKey.CAIRO_SQL_CREATE_TABLE_COLUMN_MODEL_POOL_CAPACITY
             );
-            registerDeprecated(
-                    PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE
-            );
-            registerDeprecated(
-                    PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE
-            );
-            registerDeprecated(
-                    PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE
-            );
-            registerDeprecated(
-                    PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE
-            );
+            registerDeprecated(PropertyKey.PG_INSERT_POOL_CAPACITY);
+            registerDeprecated(PropertyKey.LINE_UDP_TIMESTAMP);
+            registerDeprecated(PropertyKey.LINE_TCP_TIMESTAMP);
+            registerDeprecated(PropertyKey.CAIRO_SQL_JIT_ROWS_THRESHOLD);
+            registerDeprecated(PropertyKey.CAIRO_COMPACT_MAP_LOAD_FACTOR);
+            registerDeprecated(PropertyKey.CAIRO_DEFAULT_MAP_TYPE);
+            registerDeprecated(PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE);
+            registerDeprecated(PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE);
+            registerDeprecated(PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE);
+            registerDeprecated(PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE);
+            registerDeprecated(PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL);
         }
 
         public ValidationResult validate(Properties properties) {
