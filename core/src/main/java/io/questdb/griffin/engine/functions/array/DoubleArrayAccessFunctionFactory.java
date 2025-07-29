@@ -177,12 +177,12 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 long hi = range.getHi();
                 if (lo < 1 && lo != Numbers.INT_NULL) {
                     throw SqlException.position(argPositions.getQuick(i))
-                            .put("array slice bounds must be positive [dim=").put(i)
+                            .put("lower bound for array slicing must be positive [dim=").put(i)
                             .put(", lowerBound=").put(lo)
                             .put(']');
-                } else if (hi < 1 && hi != Numbers.INT_NULL) {
+                } else if (hi == 0) {
                     throw SqlException.position(argPositions.getQuick(i))
-                            .put("array slice bounds must be positive [dim=").put(i)
+                            .put("upper bound for array slicing must be non-zero [dim=").put(i)
                             .put(", upperBound=").put(hi)
                             .put(']');
                 }
@@ -325,6 +325,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             for (int i = 1, n = allArgs.size(); i < n; i++) {
                 final Function rangeFn = allArgs.getQuick(i);
                 final int argPos = allArgPositions.get(i);
+                int dimLen = derivedArray.getDimLen(dim);
                 if (ColumnType.isInterval(rangeFn.getType())) {
                     Interval range = rangeFn.getInterval(rec);
                     long loLong = range.getLo();
@@ -334,15 +335,37 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                         return derivedArray;
                     }
                     int lo = (int) loLong;
+                    assert lo == loLong : "int overflow on interval lower bound: " + loLong;
+
                     int hi = (int) hiLong;
                     if (hiLong == Long.MAX_VALUE) {
                         hi = Integer.MAX_VALUE;
                     } else {
                         assert hi == hiLong : "int overflow on interval upper bound: " + hiLong;
-                        // Decrement the index in the argument because Postgres uses 1-based array indexing
-                        hi--;
+                        if (hi < 0) {
+                            hi += dimLen; // This automatically accounts for 1-based indexing
+                            if (hi < 0) {
+                                hi = 0;
+                            }
+                        } else if (hi > 0) {
+                            // Decrement the index in the argument because Postgres uses 1-based array indexing
+                            hi--;
+                        } else {
+                            throw CairoException.nonCritical()
+                                    .position(argPos)
+                                    .put("upper bound for array slicing must be non-zero [dim=").put(dim + 1)
+                                    .put(", upperBound=").put(hi)
+                                    .put(']');
+                        }
                     }
-                    assert lo == loLong : "int overflow on interval lower bound: " + loLong;
+                    if (lo < 1) {
+                        throw CairoException.nonCritical()
+                                .position(argPos)
+                                .put("lower bound for array slicing must be positive [dim=").put(dim + 1)
+                                .put(", lowerBound=").put(lo)
+                                .put(']');
+                    }
+
                     // Decrement the index in the argument because Postgres uses 1-based array indexing
                     lo--;
                     derivedArray.slice(dim++, lo, hi, argPos);
@@ -350,7 +373,6 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                     // Decrement the index in the argument because Postgres uses 1-based array indexing
                     int index = rangeFn.getInt(rec) - 1;
                     if (index < 0) {
-                        int dimLen = derivedArray.getDimLen(dim);
                         throw CairoException.nonCritical()
                                 .position(argPos)
                                 .put("array index must be positive [dim=").put(dim + 1)

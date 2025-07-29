@@ -2485,17 +2485,27 @@ public class ArrayTest extends AbstractCairoTest {
                     11, "undefined bind variable: :1"
             );
             assertExceptionNoLeakCheck("SELECT arr[0:1] FROM tango",
-                    12, "array slice bounds must be positive [dim=1, lowerBound=0]"
+                    12, "lower bound for array slicing must be positive [dim=1, lowerBound=0]"
             );
             assertExceptionNoLeakCheck("SELECT arr[1:0] FROM tango",
-                    12, "array slice bounds must be positive [dim=1, upperBound=0]"
+                    12, "upper bound for array slicing must be non-zero [dim=1, upperBound=0]"
             );
             assertExceptionNoLeakCheck("SELECT arr[1:(arr[1, 1] - 1)::int] FROM tango",
-                    12, "array slice bounds must be positive [dim=1, dimLen=3, lowerBound=1, upperBound=0]"
+                    12, "upper bound for array slicing must be non-zero [dim=1, upperBound=0]"
             );
             assertExceptionNoLeakCheck("SELECT arr[(arr[1, 1] - 1)::int : 2] FROM tango",
-                    32, "array slice bounds must be positive [dim=1, dimLen=3, lowerBound=0, upperBound=2]"
+                    32, "lower bound for array slicing must be positive [dim=1, lowerBound=0]"
             );
+        });
+    }
+
+    @Test
+    public void testSliceNegativeUpperBound() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[1.0,2.0,3.0,4.0,5.0] arr FROM long_sequence(1))");
+            assertSql("slice\n[1.0,2.0,3.0,4.0]\n", "SELECT arr[1:-1] slice FROM tango");
+            assertSql("slice\n[2.0,3.0,4.0]\n", "SELECT arr[2:-1] slice FROM tango");
+            assertSql("slice\n[1.0,2.0,3.0]\n", "SELECT arr[1:-2] slice FROM tango");
         });
     }
 
@@ -2506,6 +2516,8 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("x\n[[1.0,2.0],[3.0,4.0],[5.0,6.0]]\n", "SELECT arr[1:5] x FROM tango");
             assertSql("x\n[]\n", "SELECT arr[4:5] x FROM tango");
             assertSql("x\n[]\n", "SELECT arr[2:1] x FROM tango");
+            assertSql("x\n[]\n", "SELECT arr[1:-3] x FROM tango");
+            assertSql("x\n[]\n", "SELECT arr[1:-100] x FROM tango");
         });
     }
 

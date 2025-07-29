@@ -244,6 +244,9 @@ public class DerivedArrayView extends ArrayView {
      * @param argPos SQL syntax position where to report an error if needed
      */
     public void slice(int dim, int lo, int hi, int argPos) {
+        if (lo < 0 || hi < 0) {
+            throw new IllegalArgumentException("lo and hi must be non-negative");
+        }
         if (dim < 0 || dim >= getDimCount()) {
             throw CairoException.nonCritical().position(argPos)
                     .put("array dimension doesn't exist [dim=").put(dim + 1)
@@ -252,17 +255,6 @@ public class DerivedArrayView extends ArrayView {
         int dimLen = getDimLen(dim);
         if (hi > dimLen) {
             hi = dimLen;
-        }
-        if (lo < 0 || hi < 0) {
-            // Report bounds + 1 because that's what the user entered, the caller subtracted 1
-            // to align with Postgres' 1-based array indexing
-            throw CairoException.nonCritical()
-                    .position(argPos)
-                    .put("array slice bounds must be positive [dim=").put(dim + 1)
-                    .put(", dimLen=").put(dimLen)
-                    .put(", lowerBound=").put(lo + 1)
-                    .put(", upperBound=").put(hi + 1)
-                    .put(']');
         }
         if (lo == 0 && hi == dimLen) {
             return;
