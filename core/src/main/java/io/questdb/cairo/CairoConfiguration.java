@@ -700,6 +700,8 @@ public interface CairoConfiguration {
 
     boolean isParallelIndexingEnabled();
 
+    boolean isPartitionEncoderParquetRawArrayEncoding();
+
     boolean isPartitionEncoderParquetStatisticsEnabled();
 
     boolean isPartitionO3OverwriteControlEnabled();

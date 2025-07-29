@@ -192,6 +192,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     dest_path_len: i32,
     compression_codec: jlong,
     statistics_enabled: jboolean,
+    raw_array_encoding: jboolean,
     row_group_size: jlong,
     data_page_size: jlong,
     version: jint,
@@ -217,6 +218,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             compression_from_i64(compression_codec).context("CompressionCodec")?;
 
         let statistics_enabled = statistics_enabled != 0;
+        let raw_array_encoding = raw_array_encoding != 0;
         let row_group_size = if row_group_size > 0 {
             Some(row_group_size as usize)
         } else {
@@ -245,6 +247,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .with_version(version)
             .with_compression(compression_options)
             .with_statistics(statistics_enabled)
+            .with_raw_array_encoding(raw_array_encoding)
             .with_row_group_size(row_group_size)
             .with_data_page_size(data_page_size)
             .with_sorting_columns(sorting_columns)

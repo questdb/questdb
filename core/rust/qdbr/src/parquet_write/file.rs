@@ -47,6 +47,8 @@ pub struct ParquetWriter<W: Write> {
     compression: CompressionOptions,
     /// Compute and write column statistics.
     statistics: bool,
+    /// Encode arrays in native QDB format instead of nested lists.
+    raw_array_encoding: bool,
     /// If `None` will be all written to a single row group.
     row_group_size: Option<usize>,
     /// if `None` will be DEFAULT_PAGE_SIZE bytes
@@ -68,6 +70,7 @@ impl<W: Write> ParquetWriter<W> {
             writer,
             compression: CompressionOptions::Uncompressed,
             statistics: true,
+            raw_array_encoding: false,
             row_group_size: None,
             data_page_size: None,
             sorting_columns: None,
@@ -87,6 +90,13 @@ impl<W: Write> ParquetWriter<W> {
     #[allow(dead_code)]
     pub fn with_statistics(mut self, statistics: bool) -> Self {
         self.statistics = statistics;
+        self
+    }
+
+    /// Encode arrays in native QDB format instead of nested lists.
+    #[allow(dead_code)]
+    pub fn with_raw_array_encoding(mut self, raw_array_encoding: bool) -> Self {
+        self.raw_array_encoding = raw_array_encoding;
         self
     }
 

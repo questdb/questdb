@@ -1512,6 +1512,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final int rowGroupSize = config.getPartitionEncoderParquetRowGroupSize();
                 final int dataPageSize = config.getPartitionEncoderParquetDataPageSize();
                 final boolean statisticsEnabled = config.isPartitionEncoderParquetStatisticsEnabled();
+                final boolean rawArrayEncoding = config.isPartitionEncoderParquetRawArrayEncoding();
                 final int parquetVersion = config.getPartitionEncoderParquetVersion();
 
                 PartitionEncoder.encodeWithOptions(
@@ -1519,6 +1520,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         other,
                         ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
                         statisticsEnabled,
+                        rawArrayEncoding,
                         rowGroupSize,
                         dataPageSize,
                         parquetVersion

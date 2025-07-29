@@ -362,6 +362,7 @@ public class ParquetTest extends AbstractTest {
                         path,
                         (5L << 32) | ParquetCompression.COMPRESSION_ZSTD,
                         true,
+                        true,
                         ROW_GROUP_SIZE,
                         DATA_PAGE_SIZE,
                         ParquetVersion.PARQUET_VERSION_V1
