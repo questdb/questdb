@@ -101,17 +101,14 @@ public class FdCache {
     }
 
     public synchronized String getOpenFdDebugInfo() {
-        var sb = new StringSink();
-        for (int i = 0, n = openFdMapByFd.keys.length; i < n; i++) {
-            var key = openFdMapByFd.keys[i];
-            if (key != -1) {
-                if (sb.length() > 0) {
-                    sb.put(',');
-                }
-                sb.put(key);
+        final StringSink sink = Misc.getThreadLocalSink();
+        openFdMapByFd.forEach((key, value) -> {
+            if (sink.length() > 0) {
+                sink.put(',');
             }
-        }
-        return sb.toString();
+            sink.put(key);
+        });
+        return sink.toString();
     }
 
     public long getReuseCount() {
