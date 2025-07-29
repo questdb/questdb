@@ -74,8 +74,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             let src_path = unsafe { slice::from_raw_parts(src_path_ptr, src_path_len as usize) };
             let src_path = std::str::from_utf8(src_path).unwrap_or("!!invalid path utf8!!");
             err.add_context(format!(
-                "could not open parquet file for update from path {}",
-                src_path
+                "could not open parquet file for update from path {src_path}"
             ));
             err.add_context("error in PartitionUpdater.create");
             err.into_cairo_exception().throw(&mut env)
@@ -265,8 +264,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 .expect("invalid table name utf8")
             };
             err.add_context(format!(
-                "could not encode partition for table {} and timestamp index {}",
-                table_name, timestamp_index
+                "could not encode partition for table {table_name} and timestamp index {timestamp_index}"
             ));
             err.add_context("error in PartitionEncoder.encodePartition");
             err.into_cairo_exception().throw(&mut env)

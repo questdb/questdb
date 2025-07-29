@@ -48,7 +48,7 @@ pub static POOL: Lazy<ThreadPool> = Lazy::new(|| {
         });
     ThreadPoolBuilder::new()
         .num_threads(num_threads)
-        .thread_name(move |i| format!("questdb-parquet-{}", i))
+        .thread_name(move |i| format!("questdb-parquet-{i}"))
         .build()
         .expect("could not spawn threads")
 });

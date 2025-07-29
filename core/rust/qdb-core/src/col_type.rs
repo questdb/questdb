@@ -56,6 +56,7 @@ pub enum ColumnTypeTag {
 }
 
 impl ColumnTypeTag {
+    #[cfg(test)]
     const VALUES: [Self; 23] = [
         Self::Boolean,
         Self::Byte,

@@ -108,18 +108,18 @@ impl ParquetError {
         let last_index = self.context.len().saturating_sub(1);
         for (index, context) in self.context.iter().rev().enumerate() {
             if index == last_index {
-                write!(f, "{}", context)?;
+                write!(f, "{context}")?;
             } else {
-                write!(f, "{}: ", context)?;
+                write!(f, "{context}: ")?;
             }
         }
 
         // Then the source's cause, if there is one.
         if let Some(source) = source {
             if self.context.is_empty() {
-                write!(f, "{}", source)?;
+                write!(f, "{source}")?;
             } else {
-                write!(f, ": {}", source)?;
+                write!(f, ": {source}")?;
             }
         }
         Ok(())
@@ -176,7 +176,7 @@ impl Debug for ParquetError {
         writeln!(f, "ParquetError\n    Reason: {:?}", self.reason)?;
         writeln!(f, "    Context:")?;
         for line in self.context.iter().rev() {
-            writeln!(f, "        {}", line)?;
+            writeln!(f, "        {line}")?;
         }
         if self.backtrace.status() == BacktraceStatus::Captured {
             writeln!(f, "    Backtrace:\n{}", self.backtrace)?;

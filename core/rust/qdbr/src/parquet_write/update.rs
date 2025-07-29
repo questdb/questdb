@@ -57,7 +57,7 @@ impl ParquetUpdater {
             match value {
                 1 => Version::V1,
                 2 => Version::V2,
-                _ => panic!("Invalid version number: {}", value),
+                _ => panic!("Invalid version number: {value}"),
             }
         }
 
@@ -103,7 +103,7 @@ impl ParquetUpdater {
 
         self.parquet_file
             .replace(row_group, Some(row_group_id))
-            .with_context(|_| format!("Failed to replace row group {}", row_group_id))
+            .with_context(|_| format!("Failed to replace row group {row_group_id}"))
     }
 
     pub fn append_row_group(&mut self, partition: &Partition) -> ParquetResult<()> {
