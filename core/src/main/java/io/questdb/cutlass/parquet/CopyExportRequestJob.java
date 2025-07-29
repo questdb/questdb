@@ -101,7 +101,6 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
 
             this.writer = engine.getWalWriter(statusTableToken);
             this.copyContext = engine.getCopyContext();
-
             this.engine = engine;
         } catch (Throwable t) {
             close();
@@ -130,8 +129,8 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                 row.putVarchar(1, utf8StringSink);
                 row.putSym(2, task.getTableName());
                 row.putSym(3, task.getFileName());
-                row.putSym(4, CopyExportTask.getPhaseName(phase));
-                row.putSym(5, CopyExportTask.getStatusName(status));
+                row.putSym(4, null);
+                row.putSym(5, CopyExportRequestTask.getStatusName(status));
                 utf8StringSink.clear();
                 utf8StringSink.put(msg);
                 row.putVarchar(6, utf8StringSink);
@@ -184,8 +183,8 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                 serialExporter.process(task.getSecurityContext());
             } catch (CopyExportException e) {
                 updateStatus(
-                        CopyExportTask.NO_PHASE,
-                        e.isCancelled() ? CopyExportTask.STATUS_CANCELLED : CopyExportTask.STATUS_FAILED,
+                        CopyExportRequestTask.NO_PHASE,
+                        e.isCancelled() ? CopyExportRequestTask.STATUS_CANCELLED : CopyExportRequestTask.STATUS_FAILED,
                         e.getMessage(),
                         0
                 );

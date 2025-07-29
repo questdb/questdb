@@ -55,10 +55,10 @@ import java.util.concurrent.CountDownLatch;
 import static org.junit.Assert.*;
 
 @RunWith(Parameterized.class)
-public class CopyTest extends AbstractCairoTest {
+public class CopyImportTest extends AbstractCairoTest {
     private final boolean walEnabled;
 
-    public CopyTest(boolean walEnabled) {
+    public CopyImportTest(boolean walEnabled) {
         this.walEnabled = walEnabled;
     }
 

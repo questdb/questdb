@@ -35,7 +35,7 @@ import java.util.function.LongSupplier;
 
 public class CopyContext implements Mutable {
     public static final long INACTIVE_COPY_ID = -1;
-    private final AtomicLong activeExportId = new AtomicLong(INACTIVE_COPY_ID);
+    private final AtomicLong activeExportID = new AtomicLong(INACTIVE_COPY_ID);
     private final AtomicLong activeImportID = new AtomicLong(INACTIVE_COPY_ID);
     private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
     // Important assumption: We never access the rnd concurrently, so no need for additional synchronization.
@@ -50,7 +50,7 @@ public class CopyContext implements Mutable {
 
     public long assignActiveExportId(SecurityContext securityContext) {
         final long id = copyIDSupplier.getAsLong();
-        activeExportId.set(id);
+        activeExportID.set(id);
         this.exportOriginatorSecurityContext = securityContext;
         return id;
     }
@@ -66,12 +66,12 @@ public class CopyContext implements Mutable {
     public void clear() {
         activeImportID.set(INACTIVE_COPY_ID);
         importOriginatorSecurityContext = DenyAllSecurityContext.INSTANCE; // todo: review if split needed
-        activeExportId.set(INACTIVE_COPY_ID);
+        activeExportID.set(INACTIVE_COPY_ID);
         exportOriginatorSecurityContext = DenyAllSecurityContext.INSTANCE;
     }
 
     public long getActiveExportID() {
-        return activeExportId.get();
+        return activeExportID.get();
     }
 
     public long getActiveImportID() {

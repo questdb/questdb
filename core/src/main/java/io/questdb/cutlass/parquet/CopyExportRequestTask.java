@@ -26,13 +26,25 @@ package io.questdb.cutlass.parquet;
 
 
 import io.questdb.cairo.SecurityContext;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Mutable;
 
 public class CopyExportRequestTask implements Mutable {
+    public static final byte NO_PHASE = -1;
+    public static final byte STATUS_CANCELLED = 3;
+    public static final byte STATUS_FAILED = 2;
+    public static final byte STATUS_FINISHED = 1;
+    public static final byte STATUS_STARTED = 0;
+    private static final IntObjHashMap<String> PHASE_NAME_MAP = new IntObjHashMap<>();
+    private static final IntObjHashMap<String> STATUS_NAME_MAP = new IntObjHashMap<>();
     private long copyID;
     private String fileName;
     private SecurityContext securityContext;
     private String tableName;
+
+    public static String getStatusName(byte status) {
+        return STATUS_NAME_MAP.get(status);
+    }
 
     @Override
     public void clear() {
@@ -68,5 +80,12 @@ public class CopyExportRequestTask implements Mutable {
         this.copyID = copyID;
         this.tableName = tableName;
         this.fileName = fileName;
+    }
+
+    static {
+        STATUS_NAME_MAP.put(STATUS_STARTED, "started");
+        STATUS_NAME_MAP.put(STATUS_FINISHED, "finished");
+        STATUS_NAME_MAP.put(STATUS_FAILED, "failed");
+        STATUS_NAME_MAP.put(STATUS_CANCELLED, "cancelled");
     }
 }

@@ -49,7 +49,7 @@ import io.questdb.std.str.StringSink;
  * Executes COPY statement lazily, i.e. on record cursor initialization, to play
  * nicely with server-side statements in PG Wire and query caching in general.
  */
-public class CopyFactory extends AbstractRecordCursorFactory {
+public class CopyImportFactory extends AbstractRecordCursorFactory {
 
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private final int atomicity;
@@ -66,7 +66,7 @@ public class CopyFactory extends AbstractRecordCursorFactory {
     private final String timestampColumn;
     private final String timestampFormat;
 
-    public CopyFactory(
+    public CopyImportFactory(
             MessageBus messageBus,
             CopyContext copyContext,
             String tableName,
@@ -88,7 +88,7 @@ public class CopyFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final RingQueue<CopyImportRequestTask> textImportRequestQueue = messageBus.getCopyImportRequestQueue();
+        final RingQueue<CopyImportRequestTask> copyImportRequestQueue = messageBus.getCopyImportRequestQueue();
         final MPSequence copyRequestPubSeq = messageBus.getCopyImportRequestPubSeq();
         final AtomicBooleanCircuitBreaker circuitBreaker = copyContext.getCircuitBreaker();
 
@@ -96,7 +96,7 @@ public class CopyFactory extends AbstractRecordCursorFactory {
         if (activeCopyID == CopyContext.INACTIVE_COPY_ID) {
             long processingCursor = copyRequestPubSeq.next();
             if (processingCursor > -1) {
-                final CopyImportRequestTask task = textImportRequestQueue.get(processingCursor);
+                final CopyImportRequestTask task = copyImportRequestQueue.get(processingCursor);
 
                 long copyID = copyContext.assignActiveImportId(executionContext.getSecurityContext());
                 task.of(

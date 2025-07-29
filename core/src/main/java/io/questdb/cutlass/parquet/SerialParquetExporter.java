@@ -31,6 +31,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cutlass.text.SerialCsvFileImporter;
 import io.questdb.griffin.engine.table.parquet.MappedMemoryPartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
@@ -102,14 +103,22 @@ public class SerialParquetExporter implements Closeable {
 
         try (TableReader reader = cairoEngine.getReader(tableToken)) {
             final int partitionCount = reader.getPartitionCount();
+            final int partitionBy = reader.getPartitionedBy();
 
-            for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+            try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor(ff)) {
 
-                reader.openPartition(partitionIndex);
-                final int partitionBy = reader.getPartitionedBy();
-                final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
+                for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
 
-                try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor(ff)) {
+                    if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
+                        // todo: copy the file directly
+                        continue;
+                    }
+
+                    reader.openPartition(partitionIndex);
+
+                    final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
+
+
                     PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
 
                     toParquet.trimTo(0).concat(inputRoot).concat(fileName);
@@ -118,7 +127,6 @@ public class SerialParquetExporter implements Closeable {
                             .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, toParquet.slash());
 
                     toParquet.put(".parquet");
-
 
                     createDirsOrFail(ff, toParquet, configuration.getMkDirMode());
 
