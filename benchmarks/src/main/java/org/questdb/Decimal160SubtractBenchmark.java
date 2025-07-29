@@ -24,7 +24,7 @@
 
 package org.questdb;
 
-import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal160;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -42,14 +42,14 @@ import java.util.concurrent.TimeUnit;
 @Measurement(iterations = 5, time = 1)
 @Fork(1)
 @State(Scope.Benchmark)
-public class Decimal128SubtractBenchmark {
+public class Decimal160SubtractBenchmark {
 
     @Param({"SIMPLE", "LARGE_NUMBERS", "SMALL_NUMBERS", "DIFFERENT_SCALES", "NEAR_EQUAL", "SIGN_CHANGE"})
     private String scenario;
 
-    private Decimal128 decimal128Minuend;
-    private Decimal128 decimal128Subtrahend;
-    private Decimal128 decimal128Result;
+    private Decimal160 decimal160Minuend;
+    private Decimal160 decimal160Subtrahend;
+    private Decimal160 decimal160Result;
 
     private BigDecimal bigDecimalMinuend;
     private BigDecimal bigDecimalSubtrahend;
@@ -57,54 +57,54 @@ public class Decimal128SubtractBenchmark {
 
     @Setup
     public void setup() {
-        decimal128Result = new Decimal128();
+        decimal160Result = new Decimal160();
         mathContext = new MathContext(16, RoundingMode.HALF_UP);
 
         switch (scenario) {
             case "SIMPLE":
                 // Simple subtraction: 789.123 - 123.456
-                decimal128Minuend = Decimal128.fromDouble(789.123, 3);
-                decimal128Subtrahend = Decimal128.fromDouble(123.456, 3);
+                decimal160Minuend = Decimal160.fromDouble(789.123, 3);
+                decimal160Subtrahend = Decimal160.fromDouble(123.456, 3);
                 bigDecimalMinuend = new BigDecimal("789.123");
                 bigDecimalSubtrahend = new BigDecimal("123.456");
                 break;
 
             case "LARGE_NUMBERS":
                 // Large number subtraction: 987654321.123 - 123456789.456
-                decimal128Minuend = Decimal128.fromDouble(987654321.123, 3);
-                decimal128Subtrahend = Decimal128.fromDouble(123456789.456, 3);
+                decimal160Minuend = Decimal160.fromDouble(987654321.123, 3);
+                decimal160Subtrahend = Decimal160.fromDouble(123456789.456, 3);
                 bigDecimalMinuend = new BigDecimal("987654321.123");
                 bigDecimalSubtrahend = new BigDecimal("123456789.456");
                 break;
 
             case "SMALL_NUMBERS":
                 // Small number subtraction: 0.00789 - 0.00123
-                decimal128Minuend = Decimal128.fromDouble(0.00789, 5);
-                decimal128Subtrahend = Decimal128.fromDouble(0.00123, 5);
+                decimal160Minuend = Decimal160.fromDouble(0.00789, 5);
+                decimal160Subtrahend = Decimal160.fromDouble(0.00123, 5);
                 bigDecimalMinuend = new BigDecimal("0.00789");
                 bigDecimalSubtrahend = new BigDecimal("0.00123");
                 break;
 
             case "DIFFERENT_SCALES":
                 // Different scales: 123.456 - 7.8901234
-                decimal128Minuend = Decimal128.fromDouble(123.456, 3);
-                decimal128Subtrahend = Decimal128.fromDouble(7.8901234, 7);
+                decimal160Minuend = Decimal160.fromDouble(123.456, 3);
+                decimal160Subtrahend = Decimal160.fromDouble(7.8901234, 7);
                 bigDecimalMinuend = new BigDecimal("123.456");
                 bigDecimalSubtrahend = new BigDecimal("7.8901234");
                 break;
 
             case "NEAR_EQUAL":
                 // Near equal subtraction: 123.456789 - 123.456788
-                decimal128Minuend = Decimal128.fromDouble(123.456789, 6);
-                decimal128Subtrahend = Decimal128.fromDouble(123.456788, 6);
+                decimal160Minuend = Decimal160.fromDouble(123.456789, 6);
+                decimal160Subtrahend = Decimal160.fromDouble(123.456788, 6);
                 bigDecimalMinuend = new BigDecimal("123.456789");
                 bigDecimalSubtrahend = new BigDecimal("123.456788");
                 break;
 
             case "SIGN_CHANGE":
                 // Subtraction causing sign change: 123.456 - 789.123
-                decimal128Minuend = Decimal128.fromDouble(123.456, 3);
-                decimal128Subtrahend = Decimal128.fromDouble(789.123, 3);
+                decimal160Minuend = Decimal160.fromDouble(123.456, 3);
+                decimal160Subtrahend = Decimal160.fromDouble(789.123, 3);
                 bigDecimalMinuend = new BigDecimal("123.456");
                 bigDecimalSubtrahend = new BigDecimal("789.123");
                 break;
@@ -112,10 +112,10 @@ public class Decimal128SubtractBenchmark {
     }
 
     @Benchmark
-    public Decimal128 decimal128Subtract() {
-        decimal128Result.copyFrom(decimal128Minuend);
-        decimal128Result.subtract(decimal128Subtrahend);
-        return decimal128Result;
+    public Decimal160 decimal160Subtract() {
+        decimal160Result.copyFrom(decimal160Minuend);
+        decimal160Result.subtract(decimal160Subtrahend);
+        return decimal160Result;
     }
 
     @Benchmark
@@ -129,48 +129,48 @@ public class Decimal128SubtractBenchmark {
     }
 
     @Benchmark
-    public void decimal128Subtract64Bit() {
+    public void decimal160Subtract64Bit() {
         // Test subtraction of two 64-bit values
-        Decimal128 val1 = Decimal128.fromDouble(987654.321, 3);
-        Decimal128 val2 = Decimal128.fromDouble(123456.789, 3);
+        Decimal160 val1 = Decimal160.fromDouble(987654.321, 3);
+        Decimal160 val2 = Decimal160.fromDouble(123456.789, 3);
         
-        decimal128Result.copyFrom(val1);
-        decimal128Result.subtract(val2);
+        decimal160Result.copyFrom(val1);
+        decimal160Result.subtract(val2);
     }
 
     @Benchmark
-    public void decimal128Subtract128By64() {
+    public void decimal160Subtract128By64() {
         // Test subtraction of 128-bit minus 64-bit value
-        Decimal128 largeMinuend = new Decimal128();
+        Decimal160 largeMinuend = new Decimal160();
         largeMinuend.set(123456789L, 987654321098765432L, 6);
         
-        decimal128Result.copyFrom(largeMinuend);
-        decimal128Result.subtract(decimal128Subtrahend);
+        decimal160Result.copyFrom(largeMinuend);
+        decimal160Result.subtract(decimal160Subtrahend);
     }
 
     @Benchmark
-    public void decimal128SubtractNearZero() {
+    public void decimal160SubtractNearZero() {
         // Test subtraction resulting in near-zero: 123.456001 - 123.456000
-        Decimal128 val1 = Decimal128.fromDouble(123.456001, 6);
-        Decimal128 val2 = Decimal128.fromDouble(123.456000, 6);
+        Decimal160 val1 = Decimal160.fromDouble(123.456001, 6);
+        Decimal160 val2 = Decimal160.fromDouble(123.456000, 6);
         
-        decimal128Result.copyFrom(val1);
-        decimal128Result.subtract(val2);
+        decimal160Result.copyFrom(val1);
+        decimal160Result.subtract(val2);
     }
 
     @Benchmark
-    public void decimal128SubtractNegative() {
+    public void decimal160SubtractNegative() {
         // Test subtraction with negative values: -123.456 - 789.123
-        Decimal128 val1 = Decimal128.fromDouble(-123.456, 3);
-        Decimal128 val2 = Decimal128.fromDouble(789.123, 3);
+        Decimal160 val1 = Decimal160.fromDouble(-123.456, 3);
+        Decimal160 val2 = Decimal160.fromDouble(789.123, 3);
         
-        decimal128Result.copyFrom(val1);
-        decimal128Result.subtract(val2);
+        decimal160Result.copyFrom(val1);
+        decimal160Result.subtract(val2);
     }
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(Decimal128SubtractBenchmark.class.getSimpleName())
+                .include(Decimal160SubtractBenchmark.class.getSimpleName())
                 .warmupIterations(5)
                 .measurementIterations(10)
                 .forks(1)

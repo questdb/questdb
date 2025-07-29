@@ -24,7 +24,7 @@
 
 package org.questdb;
 
-import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal160;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -42,14 +42,14 @@ import java.util.concurrent.TimeUnit;
 @Measurement(iterations = 5, time = 1)
 @Fork(1)
 @State(Scope.Benchmark)
-public class Decimal128AddBenchmark {
+public class Decimal160AddBenchmark {
 
     @Param({"SIMPLE", "LARGE_NUMBERS", "SMALL_NUMBERS", "DIFFERENT_SCALES", "SAME_MAGNITUDE", "NEGATIVE_POSITIVE"})
     private String scenario;
 
-    private Decimal128 decimal128Addend1;
-    private Decimal128 decimal128Addend2;
-    private Decimal128 decimal128Result;
+    private Decimal160 decimal160Addend1;
+    private Decimal160 decimal160Addend2;
+    private Decimal160 decimal160Result;
 
     private BigDecimal bigDecimalAddend1;
     private BigDecimal bigDecimalAddend2;
@@ -57,54 +57,54 @@ public class Decimal128AddBenchmark {
 
     @Setup
     public void setup() {
-        decimal128Result = new Decimal128();
+        decimal160Result = new Decimal160();
         mathContext = new MathContext(16, RoundingMode.HALF_UP);
 
         switch (scenario) {
             case "SIMPLE":
                 // Simple addition: 123.456 + 789.123
-                decimal128Addend1 = Decimal128.fromDouble(123.456, 3);
-                decimal128Addend2 = Decimal128.fromDouble(789.123, 3);
+                decimal160Addend1 = Decimal160.fromDouble(123.456, 3);
+                decimal160Addend2 = Decimal160.fromDouble(789.123, 3);
                 bigDecimalAddend1 = new BigDecimal("123.456");
                 bigDecimalAddend2 = new BigDecimal("789.123");
                 break;
 
             case "LARGE_NUMBERS":
                 // Large number addition: 987654321.123 + 123456789.456
-                decimal128Addend1 = Decimal128.fromDouble(987654321.123, 3);
-                decimal128Addend2 = Decimal128.fromDouble(123456789.456, 3);
+                decimal160Addend1 = Decimal160.fromDouble(987654321.123, 3);
+                decimal160Addend2 = Decimal160.fromDouble(123456789.456, 3);
                 bigDecimalAddend1 = new BigDecimal("987654321.123");
                 bigDecimalAddend2 = new BigDecimal("123456789.456");
                 break;
 
             case "SMALL_NUMBERS":
                 // Small number addition: 0.00123 + 0.00456
-                decimal128Addend1 = Decimal128.fromDouble(0.00123, 5);
-                decimal128Addend2 = Decimal128.fromDouble(0.00456, 5);
+                decimal160Addend1 = Decimal160.fromDouble(0.00123, 5);
+                decimal160Addend2 = Decimal160.fromDouble(0.00456, 5);
                 bigDecimalAddend1 = new BigDecimal("0.00123");
                 bigDecimalAddend2 = new BigDecimal("0.00456");
                 break;
 
             case "DIFFERENT_SCALES":
                 // Different scales: 123.456 + 7.8901234
-                decimal128Addend1 = Decimal128.fromDouble(123.456, 3);
-                decimal128Addend2 = Decimal128.fromDouble(7.8901234, 7);
+                decimal160Addend1 = Decimal160.fromDouble(123.456, 3);
+                decimal160Addend2 = Decimal160.fromDouble(7.8901234, 7);
                 bigDecimalAddend1 = new BigDecimal("123.456");
                 bigDecimalAddend2 = new BigDecimal("7.8901234");
                 break;
 
             case "SAME_MAGNITUDE":
                 // Same magnitude: 123.456 + 123.789
-                decimal128Addend1 = Decimal128.fromDouble(123.456, 3);
-                decimal128Addend2 = Decimal128.fromDouble(123.789, 3);
+                decimal160Addend1 = Decimal160.fromDouble(123.456, 3);
+                decimal160Addend2 = Decimal160.fromDouble(123.789, 3);
                 bigDecimalAddend1 = new BigDecimal("123.456");
                 bigDecimalAddend2 = new BigDecimal("123.789");
                 break;
 
             case "NEGATIVE_POSITIVE":
                 // Negative + positive: -123.456 + 789.123
-                decimal128Addend1 = Decimal128.fromDouble(-123.456, 3);
-                decimal128Addend2 = Decimal128.fromDouble(789.123, 3);
+                decimal160Addend1 = Decimal160.fromDouble(-123.456, 3);
+                decimal160Addend2 = Decimal160.fromDouble(789.123, 3);
                 bigDecimalAddend1 = new BigDecimal("-123.456");
                 bigDecimalAddend2 = new BigDecimal("789.123");
                 break;
@@ -112,10 +112,10 @@ public class Decimal128AddBenchmark {
     }
 
     @Benchmark
-    public Decimal128 decimal128Add() {
-        decimal128Result.copyFrom(decimal128Addend1);
-        decimal128Result.add(decimal128Addend2);
-        return decimal128Result;
+    public Decimal160 decimal160Add() {
+        decimal160Result.copyFrom(decimal160Addend1);
+        decimal160Result.add(decimal160Addend2);
+        return decimal160Result;
     }
 
     @Benchmark
@@ -129,38 +129,38 @@ public class Decimal128AddBenchmark {
     }
 
     @Benchmark
-    public void decimal128Add64Bit() {
+    public void decimal160Add64Bit() {
         // Test addition of two 64-bit values
-        Decimal128 val1 = Decimal128.fromDouble(123456.789, 3);
-        Decimal128 val2 = Decimal128.fromDouble(987654.321, 3);
+        Decimal160 val1 = Decimal160.fromDouble(123456.789, 3);
+        Decimal160 val2 = Decimal160.fromDouble(987654.321, 3);
         
-        decimal128Result.copyFrom(val1);
-        decimal128Result.add(val2);
+        decimal160Result.copyFrom(val1);
+        decimal160Result.add(val2);
     }
 
     @Benchmark
-    public void decimal128Add128By64() {
+    public void decimal160Add128By64() {
         // Test addition of 128-bit and 64-bit values
-        Decimal128 largeAddend = new Decimal128();
+        Decimal160 largeAddend = new Decimal160();
         largeAddend.set(123456789L, 987654321098765432L, 6);
         
-        decimal128Result.copyFrom(largeAddend);
-        decimal128Result.add(decimal128Addend2);
+        decimal160Result.copyFrom(largeAddend);
+        decimal160Result.add(decimal160Addend2);
     }
 
     @Benchmark
-    public void decimal128AddNearCancel() {
+    public void decimal160AddNearCancel() {
         // Test addition that nearly cancels out: 123.456 + (-123.455)
-        Decimal128 val1 = Decimal128.fromDouble(123.456, 3);
-        Decimal128 val2 = Decimal128.fromDouble(-123.455, 3);
+        Decimal160 val1 = Decimal160.fromDouble(123.456, 3);
+        Decimal160 val2 = Decimal160.fromDouble(-123.455, 3);
         
-        decimal128Result.copyFrom(val1);
-        decimal128Result.add(val2);
+        decimal160Result.copyFrom(val1);
+        decimal160Result.add(val2);
     }
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(Decimal128AddBenchmark.class.getSimpleName())
+                .include(Decimal160AddBenchmark.class.getSimpleName())
                 .warmupIterations(5)
                 .measurementIterations(10)
                 .forks(1)

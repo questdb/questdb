@@ -8,13 +8,19 @@ import org.jetbrains.annotations.NotNull;
 import java.math.RoundingMode;
 
 /**
- * Decimal128 - A mutable 128-bit decimal number implementation
+ * Decimal160 - A mutable 160-bit decimal number implementation
  * <p>
  * This class represents decimal numbers with a fixed scale (number of decimal places)
- * using 128-bit integer arithmetic for precise calculations. All operations are
+ * using 160-bit integer arithmetic for precise calculations. All operations are
  * performed in-place to eliminate object allocation and improve performance.
+ * <p>
+ * This type doesn't follow IEEE 754; one of the main goals is using 128 bits to store
+ * the sign, trailing significant field (T) and special values.
+ * Using 1 bit for the sign, we have 127 bits for T, which gives us 38 digits of precision.
+ * T valid values are in the (-10^38;10^38) interval, values outside are either invalid
+ * or may be special like NaN or Inf.
  */
-public class Decimal128 implements Sinkable {
+public class Decimal160 implements Sinkable {
     /**
      * Maximum allowed scale (number of decimal places)
      */
@@ -28,7 +34,7 @@ public class Decimal128 implements Sinkable {
     /**
      * Default constructor - creates zero with scale 0
      */
-    public Decimal128() {
+    public Decimal160() {
         this.high = 0;
         this.low = 0;
         this.scale = 0;
@@ -38,7 +44,7 @@ public class Decimal128 implements Sinkable {
     /**
      * Constructor with initial values
      */
-    public Decimal128(long high, long low, int scale) {
+    public Decimal160(long high, long low, int scale) {
         validateScale(scale);
         this.high = high;
         this.low = low;
@@ -47,37 +53,37 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Add two Decimal128 numbers and store the result in sink
+     * Add two Decimal160 numbers and store the result in sink
      *
      * @param a    First operand
      * @param b    Second operand
      * @param sink Destination for the result
      */
-    public static void add(Decimal128 a, Decimal128 b, Decimal128 sink) {
+    public static void add(Decimal160 a, Decimal160 b, Decimal160 sink) {
         sink.copyFrom(a);
         sink.add(b);
     }
 
     /**
-     * Divide two Decimal128 numbers and store the result in sink (a / b -> sink)
+     * Divide two Decimal160 numbers and store the result in sink (a / b -> sink)
      * Uses optimal precision calculation up to MAX_SCALE
      *
      * @param a    First operand (dividend)
      * @param b    Second operand (divisor)
      * @param sink Destination for the result
      */
-    public static void divide(Decimal128 a, Decimal128 b, Decimal128 sink) {
+    public static void divide(Decimal160 a, Decimal160 b, Decimal160 sink) {
         sink.copyFrom(a);
         sink.divide(b);
     }
 
     /**
-     * Create a Decimal128 from a double value
+     * Create a Decimal160 from a double value
      *
      * @param value The double value
      * @param scale Number of decimal places
      */
-    public static Decimal128 fromDouble(double value, int scale) {
+    public static Decimal160 fromDouble(double value, int scale) {
         validateScale(scale);
         long scaleFactor = scale <= 18 ? POWERS_OF_10[scale] : calculatePowerOf10(scale);
         long scaledValue = Math.round(value * scaleFactor);
@@ -85,25 +91,25 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Create a Decimal128 from a long value
+     * Create a Decimal160 from a long value
      *
      * @param value The long value
      * @param scale Number of decimal places
      */
-    public static Decimal128 fromLong(long value, int scale) {
+    public static Decimal160 fromLong(long value, int scale) {
         validateScale(scale);
 
         // Use cached values for common small values with scale 0
         if (scale == 0 && value >= 0 && value <= 10) {
-            return new Decimal128(ZERO_THROUGH_TEN[(int)value]);
+            return new Decimal160(ZERO_THROUGH_TEN[(int)value]);
         }
 
         long h = value < 0 ? -1L : 0L;
-        return new Decimal128(h, value, scale);
+        return new Decimal160(h, value, scale);
     }
 
     // Copy constructor for cached values
-    private Decimal128(Decimal128 other) {
+    private Decimal160(Decimal160 other) {
         this.high = other.high;
         this.low = other.low;
         this.scale = other.scale;
@@ -111,58 +117,58 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Calculate modulo of two Decimal128 numbers and store the result in sink (a % b -> sink)
+     * Calculate modulo of two Decimal160 numbers and store the result in sink (a % b -> sink)
      *
      * @param a    First operand (dividend)
      * @param b    Second operand (divisor)
      * @param sink Destination for the result
      */
-    public static void modulo(Decimal128 a, Decimal128 b, Decimal128 sink) {
+    public static void modulo(Decimal160 a, Decimal160 b, Decimal160 sink) {
         sink.copyFrom(a);
         sink.modulo(b);
     }
 
     /**
-     * Multiply two Decimal128 numbers and store the result in sink
+     * Multiply two Decimal160 numbers and store the result in sink
      *
      * @param a    First operand
      * @param b    Second operand
      * @param sink Destination for the result
      */
-    public static void multiply(Decimal128 a, Decimal128 b, Decimal128 sink) {
+    public static void multiply(Decimal160 a, Decimal160 b, Decimal160 sink) {
         sink.copyFrom(a);
         sink.multiply(b);
     }
 
     /**
-     * Negate a Decimal128 number and store the result in sink
+     * Negate a Decimal160 number and store the result in sink
      *
      * @param a    Input operand to negate
      * @param sink Destination for the result
      */
-    public static void negate(Decimal128 a, Decimal128 sink) {
+    public static void negate(Decimal160 a, Decimal160 sink) {
         sink.copyFrom(a);
         sink.negate();
     }
 
     /**
-     * Subtract two Decimal128 numbers and store the result in sink (a - b -> sink)
+     * Subtract two Decimal160 numbers and store the result in sink (a - b -> sink)
      *
      * @param a    First operand (minuend)
      * @param b    Second operand (subtrahend)
      * @param sink Destination for the result
      */
-    public static void subtract(Decimal128 a, Decimal128 b, Decimal128 sink) {
+    public static void subtract(Decimal160 a, Decimal160 b, Decimal160 sink) {
         sink.copyFrom(a);
         sink.subtract(b);
     }
 
     /**
-     * Add another Decimal128 to this one (in-place)
+     * Add another Decimal160 to this one (in-place)
      *
-     * @param other The Decimal128 to add
+     * @param other The Decimal160 to add
      */
-    public void add(Decimal128 other) {
+    public void add(Decimal160 other) {
         // If scales match, use direct addition
         if (this.scale == other.scale) {
             // Perform 128-bit addition
@@ -218,9 +224,9 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Compare this to another Decimal128 (handles different scales)
+     * Compare this to another Decimal160 (handles different scales)
      */
-    public int compareTo(Decimal128 other) {
+    public int compareTo(Decimal160 other) {
         if (this.scale == other.scale) {
             // Same scale - direct comparison
             if (this.high != other.high) {
@@ -285,9 +291,9 @@ public class Decimal128 implements Sinkable {
     // Static helper methods for non-destructive operations
 
     /**
-     * Copy values from another Decimal128
+     * Copy values from another Decimal160
      */
-    public void copyFrom(Decimal128 source) {
+    public void copyFrom(Decimal160 source) {
         this.high = source.high;
         this.low = source.low;
         this.scale = source.scale;
@@ -295,13 +301,13 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Divide this Decimal128 by another (in-place) with optimal precision
+     * Divide this Decimal160 by another (in-place) with optimal precision
      * Uses dynamic scale calculation up to MAX_SCALE to avoid excessive trailing zeros
      * Always uses UNNECESSARY rounding - caller should use round() method if rounding needed
      *
-     * @param divisor The Decimal128 to divide by
+     * @param divisor The Decimal160 to divide by
      */
-    public void divide(Decimal128 divisor) {
+    public void divide(Decimal160 divisor) {
         if (divisor.isZero()) {
             throw new ArithmeticException("Division by zero");
         }
@@ -362,7 +368,7 @@ public class Decimal128 implements Sinkable {
             this.negate();
         }
 
-        Decimal128 posDivisor = new Decimal128();
+        Decimal160 posDivisor = new Decimal160();
         posDivisor.copyFrom(divisor);
         if (posDivisor.isNegative()) {
             posDivisor.negate();
@@ -383,7 +389,7 @@ public class Decimal128 implements Sinkable {
     /**
      * Conservative 64-bit native division for safe cases only
      */
-    private void divideUsing64BitNativeConservative(Decimal128 divisor) {
+    private void divideUsing64BitNativeConservative(Decimal160 divisor) {
         long dividendMag = this.get64BitMagnitude();
         long divisorMag = divisor.get64BitMagnitude();
         boolean resultNegative = this.isNegative64BitValue() ^ divisor.isNegative64BitValue();
@@ -411,7 +417,7 @@ public class Decimal128 implements Sinkable {
      * Intel optimization 2: Double-precision estimation with integer correction
      * Good balance between speed and accuracy for 64-bit values
      */
-    private boolean divideUsingDoubleEstimation(Decimal128 divisor) {
+    private boolean divideUsingDoubleEstimation(Decimal160 divisor) {
         long dividendMag = this.get64BitMagnitude();
         long divisorMag = divisor.get64BitMagnitude();
         boolean resultNegative = this.isNegative64BitValue() ^ divisor.isNegative64BitValue();
@@ -469,7 +475,7 @@ public class Decimal128 implements Sinkable {
     /**
      * Calculate optimal target scale for the division result
      */
-    private int calculateOptimalTargetScale(Decimal128 divisor) {
+    private int calculateOptimalTargetScale(Decimal160 divisor) {
         // Intel-style: Use smart scale instead of always MAX_SCALE
         // Aim for 16 significant digits in the result
 
@@ -486,7 +492,7 @@ public class Decimal128 implements Sinkable {
     /**
      * Estimate decimal digits for 128-bit value
      */
-    private int estimateDecimalDigits128(Decimal128 value) {
+    private int estimateDecimalDigits128(Decimal160 value) {
         if (value.isZero()) return 1;
 
         // Use binary approximation: log10(x) ≈ log2(x) * 0.30103
@@ -502,7 +508,7 @@ public class Decimal128 implements Sinkable {
      * Intel optimization 3: Full algorithm with smart scaling and estimation
      * For cases that don't fit in 64-bit optimizations
      */
-    private void divideUsingIntelAlgorithm(Decimal128 divisor) {
+    private void divideUsingIntelAlgorithm(Decimal160 divisor) {
         // Smart scale calculation instead of always using MAX_SCALE
         int targetScale = calculateOptimalTargetScale(divisor);
         int scaleAdjustment = targetScale + divisor.scale - this.scale;
@@ -539,7 +545,7 @@ public class Decimal128 implements Sinkable {
             this.negate();
         }
 
-        Decimal128 posDivisor = new Decimal128();
+        Decimal160 posDivisor = new Decimal160();
         posDivisor.copyFrom(divisor);
         if (posDivisor.isNegative()) {
             posDivisor.negate();
@@ -573,17 +579,17 @@ public class Decimal128 implements Sinkable {
     /**
      * Intel-style division with initial estimation and iterative correction
      */
-    private void divideWithEstimationAndCorrection(Decimal128 divisor, long quotientEstimate,
+    private void divideWithEstimationAndCorrection(Decimal160 divisor, long quotientEstimate,
                                                    boolean resultNegative, int targetScale) {
         // Start with the estimate
         long quotient = quotientEstimate;
 
         // Calculate remainder: dividend - quotient * divisor
-        Decimal128 temp = new Decimal128();
+        Decimal160 temp = new Decimal160();
         temp.copyFrom(divisor);
         temp.multiplyByLong(quotient);
 
-        Decimal128 remainder = new Decimal128();
+        Decimal160 remainder = new Decimal160();
         remainder.copyFrom(this);
         remainder.subtract(temp);
 
@@ -667,8 +673,8 @@ public class Decimal128 implements Sinkable {
 
     @Override
     public boolean equals(Object obj) {
-        if (!(obj instanceof Decimal128)) return false;
-        Decimal128 other = (Decimal128) obj;
+        if (!(obj instanceof Decimal160)) return false;
+        Decimal160 other = (Decimal160) obj;
         return this.high == other.high &&
                 this.low == other.low &&
                 this.scale == other.scale;
@@ -711,7 +717,7 @@ public class Decimal128 implements Sinkable {
      *
      * @param divisor The divisor
      */
-    public void modulo(Decimal128 divisor) {
+    public void modulo(Decimal160 divisor) {
         if (divisor.isZero()) {
             throw new ArithmeticException("Division by zero");
         }
@@ -720,12 +726,12 @@ public class Decimal128 implements Sinkable {
         int resultScale = Math.max(this.scale, divisor.scale);
 
         // Save original dividend
-        Decimal128 originalDividend = new Decimal128();
+        Decimal160 originalDividend = new Decimal160();
         originalDividend.copyFrom(this);
 
         // Use simple repeated subtraction for modulo: a % b = a - (a / b) * b
         // First compute integer division (a / b)
-        Decimal128 quotient = new Decimal128();
+        Decimal160 quotient = new Decimal160();
         quotient.copyFrom(this);
         quotient.divide(divisor); // Use new signature
         quotient.round(0, RoundingMode.DOWN); // Integer division (scale 0)
@@ -752,11 +758,11 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Multiply this Decimal128 by another (in-place)
+     * Multiply this Decimal160 by another (in-place)
      *
-     * @param other The Decimal128 to multiply by
+     * @param other The Decimal160 to multiply by
      */
-    public void multiply(Decimal128 other) {
+    public void multiply(Decimal160 other) {
         // Fast path for 64-bit values using magnitude arithmetic
         // TEMPORARILY DISABLED - debugging modulo issue
         // if (this.is64BitValue() && other.is64BitValue()) {
@@ -788,7 +794,7 @@ public class Decimal128 implements Sinkable {
             }
         }
 
-        // Perform multiplication using the algorithm from Decimal128
+        // Perform multiplication using the algorithm from Decimal160
         // This is complex but avoids allocations
         long a3 = this.high >>> 32;
         long a2 = this.high & 0xFFFFFFFFL;
@@ -860,7 +866,7 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Round this Decimal128 to the specified scale using the given rounding mode
+     * Round this Decimal160 to the specified scale using the given rounding mode
      * This method performs in-place rounding without requiring a divisor
      *
      * @param targetScale  The desired scale (number of decimal places)
@@ -1018,11 +1024,11 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Subtract another Decimal128 from this one (in-place)
+     * Subtract another Decimal160 from this one (in-place)
      *
-     * @param other The Decimal128 to subtract
+     * @param other The Decimal160 to subtract
      */
-    public void subtract(Decimal128 other) {
+    public void subtract(Decimal160 other) {
         // Handle scale differences first
         if (this.scale < other.scale) {
             // Rescale this to match other's scale
@@ -1093,7 +1099,7 @@ public class Decimal128 implements Sinkable {
     /**
      * Convert to BigDecimal with full precision
      *
-     * @return BigDecimal representation of this Decimal128
+     * @return BigDecimal representation of this Decimal160
      */
     public java.math.BigDecimal toBigDecimal() {
         StringSink sink = new StringSink();
@@ -1722,13 +1728,13 @@ public class Decimal128 implements Sinkable {
     }
 
     // Cache for common small values
-    private static final Decimal128[] ZERO_THROUGH_TEN = new Decimal128[11];
-    private static final Decimal128 ZERO_CACHE = new Decimal128();
-    private static final Decimal128 ONE_CACHE = new Decimal128(0, 1, 0);
+    private static final Decimal160[] ZERO_THROUGH_TEN = new Decimal160[11];
+    private static final Decimal160 ZERO_CACHE = new Decimal160();
+    private static final Decimal160 ONE_CACHE = new Decimal160(0, 1, 0);
 
     static {
         for (int i = 0; i <= 10; i++) {
-            ZERO_THROUGH_TEN[i] = new Decimal128(0, i, 0);
+            ZERO_THROUGH_TEN[i] = new Decimal160(0, i, 0);
         }
     }
 
@@ -1760,9 +1766,11 @@ public class Decimal128 implements Sinkable {
             return POWERS_OF_10[n];
         }
         long result = 1;
-        for (int i = 0; i < n; i++) {
-            result *= 10;
+        while (n >= 18) {
+            result *= POWERS_OF_10[18];
+            n -= 18;
         }
+        result *= POWERS_OF_10[n];
         return result;
     }
 
@@ -1822,7 +1830,7 @@ public class Decimal128 implements Sinkable {
      * Intel-style optimization: Check if operands can use 64-bit native division
      * This is much faster than 128-bit binary long division.
      */
-    private boolean canUse64BitNativeDivision(Decimal128 divisor) {
+    private boolean canUse64BitNativeDivision(Decimal160 divisor) {
         // Both must be 64-bit values
         if (!this.is64BitValue() || !divisor.is64BitValue()) {
             return false;
@@ -1860,7 +1868,7 @@ public class Decimal128 implements Sinkable {
      * - Scale difference is small (within [-2, 2])
      * - Result will be in a reasonable range
      */
-    private boolean canUseSimple64BitNativeDivision(Decimal128 divisor) {
+    private boolean canUseSimple64BitNativeDivision(Decimal160 divisor) {
         // Both must be 64-bit values
         if (!this.is64BitValue() || !divisor.is64BitValue()) {
             return false;
@@ -1915,7 +1923,7 @@ public class Decimal128 implements Sinkable {
     /**
      * Perform simple 64-bit native division with dynamic precision scaling
      */
-    private void performSimple64BitNativeDivision(Decimal128 divisor) {
+    private void performSimple64BitNativeDivision(Decimal160 divisor) {
         long dividendMag = this.get64BitMagnitude();
         long divisorMag = divisor.get64BitMagnitude();
         boolean resultNegative = this.isNegative() ^ divisor.isNegative();
@@ -2041,7 +2049,7 @@ public class Decimal128 implements Sinkable {
      * Optimized multiplication for 64-bit values using magnitude arithmetic
      * This avoids the need for 128-bit operations when both operands fit in 64 bits
      */
-    private void multiply64BitOptimized(Decimal128 other) {
+    private void multiply64BitOptimized(Decimal160 other) {
         // Extract magnitudes and signs
         long thisMagnitude = this.get64BitMagnitude();
         long otherMagnitude = other.get64BitMagnitude();
@@ -2088,7 +2096,7 @@ public class Decimal128 implements Sinkable {
      * Optimized division for 64-bit values using magnitude arithmetic
      * This avoids the need for 128-bit operations when both operands fit in 64 bits
      */
-    private void divide64BitOptimized(Decimal128 divisor) {
+    private void divide64BitOptimized(Decimal160 divisor) {
         // Extract magnitudes and signs
         long dividendMagnitude = this.get64BitMagnitude();
         long divisorMagnitude = divisor.get64BitMagnitude();
@@ -2123,7 +2131,7 @@ public class Decimal128 implements Sinkable {
         this.set64BitValue(resultMagnitude, resultNegative, finalResultScale);
     }
 
-    private void divideCompact(Decimal128 divisor) {
+    private void divideCompact(Decimal160 divisor) {
         // Both values fit in long, use fast long arithmetic
         // Use more reasonable scale calculation - preserve at least the dividend's scale
         int resultScale = Math.max(this.scale, Math.min(MAX_SCALE, this.scale + 6));
@@ -2156,7 +2164,7 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Rescale this Decimal128 in place
+     * Rescale this Decimal160 in place
      *
      * @param newScale The new scale (must be >= current scale)
      */
@@ -2234,46 +2242,6 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Check if a value is a power of 10
-     */
-    private static boolean isPowerOf10(long value) {
-        if (value <= 0) return false;
-        // Check common powers of 10
-        return value == 1L || value == 10L || value == 100L || value == 1000L ||
-               value == 10000L || value == 100000L || value == 1000000L ||
-               value == 10000000L || value == 100000000L || value == 1000000000L ||
-               value == 10000000000L || value == 100000000000L || value == 1000000000000L ||
-               value == 10000000000000L || value == 100000000000000L || value == 1000000000000000L ||
-               value == 10000000000000000L || value == 100000000000000000L || value == 1000000000000000000L;
-    }
-
-    /**
-     * Get the power of 10 for a given value
-     */
-    private static int getPowerOf10(long value) {
-        if (value == 1L) return 0;
-        if (value == 10L) return 1;
-        if (value == 100L) return 2;
-        if (value == 1000L) return 3;
-        if (value == 10000L) return 4;
-        if (value == 100000L) return 5;
-        if (value == 1000000L) return 6;
-        if (value == 10000000L) return 7;
-        if (value == 100000000L) return 8;
-        if (value == 1000000000L) return 9;
-        if (value == 10000000000L) return 10;
-        if (value == 100000000000L) return 11;
-        if (value == 1000000000000L) return 12;
-        if (value == 10000000000000L) return 13;
-        if (value == 100000000000000L) return 14;
-        if (value == 1000000000000000L) return 15;
-        if (value == 10000000000000000L) return 16;
-        if (value == 100000000000000000L) return 17;
-        if (value == 1000000000000000000L) return 18;
-        return -1;
-    }
-
-    /**
      * Optimized division of 128-bit by 64-bit value
      */
     private void divide128By64(long dividendHigh, long dividendLow, long divisor) {
@@ -2308,5 +2276,4 @@ public class Decimal128 implements Sinkable {
         this.high = quotientHigh;
         this.low = quotientLow;
     }
-
 }

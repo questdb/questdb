@@ -24,7 +24,7 @@
 
 package org.questdb;
 
-import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal160;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -42,7 +42,7 @@ import java.util.concurrent.TimeUnit;
 @Measurement(iterations = 5, time = 1)
 @Fork(1)
 @State(Scope.Benchmark)
-public class Decimal128RoundBenchmark {
+public class Decimal160RoundBenchmark {
 
     @Param({"ROUND_DOWN", "ROUND_UP", "ROUND_HALFWAY", "ROUND_PRECISION", "ROUND_TRAILING_ZEROS", "ROUND_NEGATIVE"})
     private String scenario;
@@ -50,56 +50,56 @@ public class Decimal128RoundBenchmark {
     @Param({"HALF_UP", "HALF_DOWN", "HALF_EVEN", "UP", "DOWN", "CEILING", "FLOOR"})
     private String roundingMode;
 
-    private Decimal128 decimal128Value;
-    private Decimal128 decimal128Result;
+    private Decimal160 decimal160Value;
+    private Decimal160 decimal160Result;
     private BigDecimal bigDecimalValue;
     private RoundingMode javaRoundingMode;
     private int targetScale;
 
     @Setup
     public void setup() {
-        decimal128Result = new Decimal128();
+        decimal160Result = new Decimal160();
         javaRoundingMode = RoundingMode.valueOf(roundingMode);
         
         switch (scenario) {
             case "ROUND_DOWN":
                 // Value that needs rounding down: 123.456789 -> 123.457 (scale 3)
-                decimal128Value = Decimal128.fromDouble(123.456789, 6);
+                decimal160Value = Decimal160.fromDouble(123.456789, 6);
                 bigDecimalValue = new BigDecimal("123.456789");
                 targetScale = 3;
                 break;
 
             case "ROUND_UP":
                 // Value that needs rounding up: 123.456789 -> 123.46 (scale 2)
-                decimal128Value = Decimal128.fromDouble(123.456789, 6);
+                decimal160Value = Decimal160.fromDouble(123.456789, 6);
                 bigDecimalValue = new BigDecimal("123.456789");
                 targetScale = 2;
                 break;
 
             case "ROUND_HALFWAY":
                 // Halfway case: 123.4565 -> depends on rounding mode
-                decimal128Value = Decimal128.fromDouble(123.4565, 4);
+                decimal160Value = Decimal160.fromDouble(123.4565, 4);
                 bigDecimalValue = new BigDecimal("123.4565");
                 targetScale = 3;
                 break;
 
             case "ROUND_PRECISION":
                 // High precision rounding: PI to 10 decimal places
-                decimal128Value = Decimal128.fromDouble(3.141592653589793, 15);
+                decimal160Value = Decimal160.fromDouble(3.141592653589793, 15);
                 bigDecimalValue = new BigDecimal("3.141592653589793");
                 targetScale = 10;
                 break;
 
             case "ROUND_TRAILING_ZEROS":
                 // Value with trailing zeros: 123.450000 -> 123.45
-                decimal128Value = Decimal128.fromDouble(123.450000, 6);
+                decimal160Value = Decimal160.fromDouble(123.450000, 6);
                 bigDecimalValue = new BigDecimal("123.450000");
                 targetScale = 2;
                 break;
 
             case "ROUND_NEGATIVE":
                 // Negative value rounding: -123.456789 -> -123.46
-                decimal128Value = Decimal128.fromDouble(-123.456789, 6);
+                decimal160Value = Decimal160.fromDouble(-123.456789, 6);
                 bigDecimalValue = new BigDecimal("-123.456789");
                 targetScale = 2;
                 break;
@@ -107,10 +107,10 @@ public class Decimal128RoundBenchmark {
     }
 
     @Benchmark
-    public Decimal128 decimal128Round() {
-        decimal128Result.copyFrom(decimal128Value);
-        decimal128Result.round(targetScale, javaRoundingMode);
-        return decimal128Result;
+    public Decimal160 decimal160Round() {
+        decimal160Result.copyFrom(decimal160Value);
+        decimal160Result.round(targetScale, javaRoundingMode);
+        return decimal160Result;
     }
 
     @Benchmark
@@ -125,50 +125,50 @@ public class Decimal128RoundBenchmark {
     }
 
     @Benchmark
-    public void decimal128RoundToZero() {
+    public void decimal160RoundToZero() {
         // Round to integer (scale 0)
-        decimal128Result.copyFrom(decimal128Value);
-        decimal128Result.round(0, javaRoundingMode);
+        decimal160Result.copyFrom(decimal160Value);
+        decimal160Result.round(0, javaRoundingMode);
     }
 
     @Benchmark
-    public void decimal128RoundToTens() {
+    public void decimal160RoundToTens() {
         // Round to tens place (scale -1)
-        decimal128Result.copyFrom(decimal128Value);
-        decimal128Result.round(-1, javaRoundingMode);
+        decimal160Result.copyFrom(decimal160Value);
+        decimal160Result.round(-1, javaRoundingMode);
     }
 
     @Benchmark
-    public void decimal128RoundMultiple() {
+    public void decimal160RoundMultiple() {
         // Test multiple consecutive rounding operations
-        decimal128Result.copyFrom(decimal128Value);
-        decimal128Result.round(targetScale, javaRoundingMode);
-        decimal128Result.round(targetScale - 1, javaRoundingMode);
-        decimal128Result.round(targetScale - 2, javaRoundingMode);
+        decimal160Result.copyFrom(decimal160Value);
+        decimal160Result.round(targetScale, javaRoundingMode);
+        decimal160Result.round(targetScale - 1, javaRoundingMode);
+        decimal160Result.round(targetScale - 2, javaRoundingMode);
     }
 
     @Benchmark
-    public void decimal128RoundLargeNumber() {
+    public void decimal160RoundLargeNumber() {
         // Test rounding of large numbers
-        Decimal128 largeNumber = new Decimal128();
+        Decimal160 largeNumber = new Decimal160();
         largeNumber.set(123456789L, 987654321098765432L, 9);
         
-        decimal128Result.copyFrom(largeNumber);
-        decimal128Result.round(6, javaRoundingMode);
+        decimal160Result.copyFrom(largeNumber);
+        decimal160Result.round(6, javaRoundingMode);
     }
 
     @Benchmark
-    public void decimal128RoundSmallNumber() {
+    public void decimal160RoundSmallNumber() {
         // Test rounding of very small numbers
-        Decimal128 smallNumber = Decimal128.fromDouble(0.000000123456789, 15);
+        Decimal160 smallNumber = Decimal160.fromDouble(0.000000123456789, 15);
         
-        decimal128Result.copyFrom(smallNumber);
-        decimal128Result.round(10, javaRoundingMode);
+        decimal160Result.copyFrom(smallNumber);
+        decimal160Result.round(10, javaRoundingMode);
     }
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(Decimal128RoundBenchmark.class.getSimpleName())
+                .include(Decimal160RoundBenchmark.class.getSimpleName())
                 .warmupIterations(5)
                 .measurementIterations(10)
                 .forks(1)

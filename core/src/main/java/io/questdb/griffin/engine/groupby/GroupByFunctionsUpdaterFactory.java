@@ -127,6 +127,8 @@ public class GroupByFunctionsUpdaterFactory {
         final int setFunctionsSigIndex = asm.poolUtf8("(Lio/questdb/std/ObjList;)V");
         final int mergeIndex = asm.poolUtf8("merge");
         final int mergeSigIndex = asm.poolUtf8("(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/map/MapValue;)V");
+        final int aggregateNonShardedIndex = asm.poolUtf8("aggregateNonSharded");
+        final int aggregateNonShardedSigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/PageFrameMemoryRecord;J;J;L/io/questdb/griffin/engine/groupby/GroupByFunctionsUpdater;...)V");
 
         final int getIndex = asm.poolMethod(ObjList.class, "get", "(I)Ljava/lang/Object;");
 
