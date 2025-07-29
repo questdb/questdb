@@ -187,6 +187,9 @@ public final class ColumnType {
     public static boolean defaultStringImplementationIsUtf8() {
         return Chars.equals(nameOf(STRING), "VARCHAR");
     }
+    public static int encodeArrayType(short elemType, int nDims) {
+        return encodeArrayType(elemType, nDims, true);
+    }
 
     /**
      * Encodes the array type tag from the element type tag and dimensionality.
@@ -204,9 +207,9 @@ public final class ColumnType {
      * @param elemType one of the supported array element type tags.
      * @param nDims    dimensionality, from 1 to {@value ARRAY_NDIMS_LIMIT}.
      */
-    public static int encodeArrayType(short elemType, int nDims) {
+    public static int encodeArrayType(short elemType, int nDims, boolean checkSupportedElementTypes) {
         assert nDims >= 1 && nDims <= ARRAY_NDIMS_LIMIT : "nDims out of range: " + nDims;
-        assert isSupportedArrayElementType(elemType) || elemType == UNDEFINED
+        assert !checkSupportedElementTypes || (isSupportedArrayElementType(elemType) || elemType == UNDEFINED)
                 : "not supported as array element type: " + nameOf(elemType);
 
         nDims--; // 0 == one dimension
@@ -841,25 +844,37 @@ public final class ColumnType {
         nonPersistedTypes.add(REGPROCEDURE);
         nonPersistedTypes.add(ARRAY_STRING);
 
-        // add array type names up to dimension limit
-        // this has to be done after we configured type bit widths
-        for (int i = 0, n = arrayTypeSet.size(); i < n; i++) {
-            short type = (short) arrayTypeSet.get(i);
-            sink.clear();
-            sink.put(nameOf(type));
-            for (int d = 1; d <= ARRAY_NDIMS_LIMIT; d++) {
-                sink.put("[]");
-                int arrayType = encodeArrayType(type, d);
-                String name = sink.toString();
-                typeNameMap.put(arrayType, name);
-                nameTypeMap.put(name, arrayType);
-            }
-        }
+        addArrayTypeName(sink, ColumnType.BOOLEAN);
+        addArrayTypeName(sink, ColumnType.BYTE);
+        addArrayTypeName(sink, ColumnType.SHORT);
+        addArrayTypeName(sink, ColumnType.INT);
+        addArrayTypeName(sink, ColumnType.LONG);
+        addArrayTypeName(sink, ColumnType.FLOAT);
+        addArrayTypeName(sink, ColumnType.DOUBLE);
+        addArrayTypeName(sink, ColumnType.LONG256);
+        addArrayTypeName(sink, ColumnType.VARCHAR);
+        addArrayTypeName(sink, ColumnType.STRING);
+        addArrayTypeName(sink, ColumnType.IPv4);
+        addArrayTypeName(sink, ColumnType.TIMESTAMP);
+        addArrayTypeName(sink, ColumnType.UUID);
+        addArrayTypeName(sink, ColumnType.DATE);
 
         sink.clear();
         for (int i = 0, n = ARRAY_NDIMS_LIMIT + 1; i < n; i++) {
             ARRAY_DIM_SUFFIX[i] = sink.toString();
             sink.put("[]");
+        }
+    }
+
+    private static void addArrayTypeName(StringSink sink, short type) {
+        sink.clear();
+        sink.put(nameOf(type));
+        for (int d = 1; d <= ARRAY_NDIMS_LIMIT; d++) {
+            sink.put("[]");
+            int arrayType = encodeArrayType(type, d, false);
+            String name = sink.toString();
+            typeNameMap.put(arrayType, name);
+            nameTypeMap.put(name, arrayType);
         }
     }
 }
