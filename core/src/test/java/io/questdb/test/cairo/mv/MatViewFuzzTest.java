@@ -209,7 +209,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @Test
     public void testManyTablesTimerView() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = fuzzer.generateRandom(LOG, 2261376719625833L, 1752832047772L);
+            Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 0);
             setFuzzProperties(rnd);
             // Timer refresh tests mess with the clock, so set the spin timeout
