@@ -33,8 +33,11 @@ import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.fuzz.FailureFileFacade;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -679,7 +682,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.preferences.string.pool.capacity\tQDB_CAIRO_PREFERENCES_STRING_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
                                     "http.settings.readonly\tQDB_HTTP_SETTINGS_READONLY\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.column.alias.expression.enabled\tQDB_CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.column.alias.generated.max.size\tQDB_CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE\t64\tdefault\tfalse\tfalse\n"
+                                    "cairo.sql.column.alias.generated.max.size\tQDB_CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE\t64\tdefault\tfalse\tfalse\n" +
+                                    "cairo.file.descriptor.cache.enabled\tQDB_CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED\t" + FilesFacadeImpl.INSTANCE.allowMixedIO(root) + "\tdefault\tfalse\tfalse"
                     )
                             .split("\n");
 
