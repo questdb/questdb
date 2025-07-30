@@ -230,7 +230,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("x\n[]\n", "SELECT arr[3:3] x FROM tango");
             assertSql("x\n[]\n", "SELECT arr[3:5] x FROM tango");
             assertSql("x\n[]\n", "SELECT arr[3:-5] x FROM tango");
-//            assertSql("x\n[]\n", "SELECT arr[-3:3] x FROM tango");
+            assertSql("x\n[]\n", "SELECT arr[-1:-2] x FROM tango");
 
             assertSql("x\n[]\n", "SELECT arr[1, 1:1] x FROM tango");
             assertSql("x\n[]\n", "SELECT arr[1, 2:1] x FROM tango");
