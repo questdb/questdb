@@ -102,8 +102,8 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         if (nArgs > nDims) {
             throw SqlException
                     .position(argPositionsCopy.get(nDims + 1))
-                    .put("too many array access arguments [nArgs=").put(nArgs)
-                    .put(", nDims=").put(nDims)
+                    .put("too many array access arguments [nDims=").put(nDims)
+                    .put(", nArgs=").put(nArgs)
                     .put(']');
         }
         int resultNDims = nDims;
@@ -385,7 +385,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
 
                     // Decrement the index in the argument because Postgres uses 1-based array indexing
                     lo--;
-                    derivedArray.slice(dim++, lo, hi, argPos);
+                    derivedArray.slice(dim++, lo, hi);
                 } else {
                     // Decrement the index in the argument because Postgres uses 1-based array indexing
                     int index = rangeFn.getInt(rec) - 1;
@@ -397,7 +397,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                                 .put(", dimLen=").put(dimLen)
                                 .put(']');
                     }
-                    derivedArray.subArray(dim, index, argPos);
+                    derivedArray.subArray(dim, index);
                     if (derivedArray.isNull()) {
                         return derivedArray;
                     }

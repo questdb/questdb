@@ -148,13 +148,21 @@ public class ArrayTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck("SELECT arr1[1, true] FROM tango",
                     15, "invalid type for array access [type=1]");
             assertExceptionNoLeakCheck("SELECT arr1[1, 1, 1] FROM tango",
-                    18, "too many array access arguments [nArgs=3, nDims=2]");
+                    18, "too many array access arguments [nDims=2, nArgs=3]");
+            assertExceptionNoLeakCheck("SELECT arr1[0] FROM tango",
+                    12, "array index must be positive [dim=1, index=0]");
             assertExceptionNoLeakCheck("SELECT arr1[0, 1] FROM tango",
                     12, "array index must be positive [dim=1, index=0]");
             assertExceptionNoLeakCheck("SELECT arr1[1:2, 0] FROM tango",
                     17, "array index must be positive [dim=2, index=0]");
             assertExceptionNoLeakCheck("SELECT arr1[1, 0] FROM tango",
                     15, "array index must be positive [dim=2, index=0]");
+            assertExceptionNoLeakCheck("SELECT arr1[1, 1, 1] FROM tango",
+                    18, "too many array access arguments [nDims=2, nArgs=3]");
+            assertExceptionNoLeakCheck("SELECT arr1[1][1, 1] FROM tango",
+                    18, "too many array access arguments [nDims=2, nArgs=3]");
+            assertExceptionNoLeakCheck("SELECT arr1[1][1][1] FROM tango",
+                    17, "there is no matching function `[]` with the argument types: (DOUBLE, INT)");
             assertExceptionNoLeakCheck("SELECT arr1[1, arr2[1]::int] FROM tango",
                     22, "array index must be positive [dim=2, index=-1, dimLen=2]");
             assertExceptionNoLeakCheck("SELECT arr1[1:2][arr2[1]::int] FROM tango",
@@ -2493,6 +2501,9 @@ public class ArrayTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck("SELECT arr[1:0] FROM tango",
                     12, "upper bound for array slicing must be non-zero [dim=1, upperBound=0]"
             );
+            assertExceptionNoLeakCheck("SELECT arr[1:2, 1:2, 1:2] FROM tango",
+                    22, "too many array access arguments [nDims=2, nArgs=3]"
+            );
             assertExceptionNoLeakCheck("SELECT arr[1:(arr[1, 1] - 1)::int] FROM tango",
                     12, "upper bound for array slicing must be non-zero [dim=1, upperBound=0]"
             );
@@ -2565,19 +2576,6 @@ public class ArrayTest extends AbstractCairoTest {
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tango\n"
-            );
-        });
-    }
-
-    @Test
-    public void testSubArrayInvalid() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango AS (SELECT ARRAY[[[1.0, 2], [3.0, 4]], [[5.0, 6], [7.0, 8]]] arr FROM long_sequence(1))");
-            assertExceptionNoLeakCheck("SELECT arr[0] FROM tango",
-                    11, "array index must be positive [dim=1, index=0]"
-            );
-            assertExceptionNoLeakCheck("SELECT arr[1, 0] FROM tango",
-                    14, "array index must be positive [dim=2, index=0]"
             );
         });
     }
