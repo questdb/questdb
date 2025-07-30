@@ -50,6 +50,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
     private static final int NUM_FILES = 15;
     private static final int NUM_THREADS = 6;
     private static final int OPERATIONS_PER_THREAD = 500;
+    private Rnd rndRoot;
     private Path[] testFilePaths;
 
     @Before
@@ -83,10 +84,10 @@ public class FilesCacheFuzzTest extends AbstractTest {
             Thread[] threads = new Thread[NUM_THREADS];
 
             for (int i = 0; i < NUM_THREADS; i++) {
+                Rnd rnd = new Rnd(rndRoot.nextLong(), rndRoot.nextLong());
                 threads[i] = new Thread(() -> {
                     try {
                         barrier.await();
-                        Rnd rnd = TestUtils.generateRandom(null);
 
                         for (int op = 0; op < OPERATIONS_PER_THREAD; op++) {
                             if (failed.get()) break;
@@ -146,15 +147,15 @@ public class FilesCacheFuzzTest extends AbstractTest {
 
             if (!exceptions.isEmpty()) {
                 Exception first = exceptions.poll();
-                System.err.println("Total operations: " + totalOperations.get());
-                System.err.println("Open/Close counts: " + openCount.get() + "/" + closeCount.get());
+                LOG.error().$("Total operations: ").$(totalOperations.get()).$();
+                LOG.error().$("Open/Close counts: ").$(openCount.get()).$('/').$(closeCount.get()).$();
                 throw new RuntimeException("File operations test failed", first);
             }
 
             Assert.assertTrue("Should have completed operations", totalOperations.get() > 0);
             Assert.assertEquals("Open and close counts should match", openCount.get(), closeCount.get());
-            System.out.println("File operations - Total: " + totalOperations.get() +
-                    ", Open/Close: " + openCount.get() + "/" + closeCount.get());
+            LOG.info().$("File operations - Total: ").$(totalOperations.get())
+                    .$(", Open/Close: ").$(openCount.get()).$('/').$(closeCount.get()).$();
         });
     }
 
@@ -169,10 +170,10 @@ public class FilesCacheFuzzTest extends AbstractTest {
             Thread[] threads = new Thread[NUM_THREADS];
 
             for (int i = 0; i < NUM_THREADS; i++) {
+                Rnd rnd = new Rnd(rndRoot.nextLong(), rndRoot.nextLong());
                 threads[i] = new Thread(() -> {
                     try {
                         barrier.await();
-                        Rnd rnd = TestUtils.generateRandom(null);
 
                         for (int op = 0; op < OPERATIONS_PER_THREAD / 4; op++) {
                             if (failed.get()) break;
@@ -216,12 +217,12 @@ public class FilesCacheFuzzTest extends AbstractTest {
 
             if (!exceptions.isEmpty()) {
                 Exception first = exceptions.poll();
-                System.err.println("FS operations count: " + operationCount.get());
+                LOG.error().$("FS operations count: ").$(operationCount.get()).$();
                 throw new RuntimeException("File system operations test failed", first);
             }
 
             Assert.assertTrue("Should have completed operations", operationCount.get() > 0);
-            System.out.println("File system operations completed: " + operationCount.get());
+            LOG.info().$("File system operations completed: ").$(operationCount.get()).$();
         });
     }
 
@@ -237,10 +238,10 @@ public class FilesCacheFuzzTest extends AbstractTest {
             Thread[] threads = new Thread[NUM_THREADS];
 
             for (int i = 0; i < NUM_THREADS; i++) {
+                Rnd rnd = new Rnd(rndRoot.nextLong(), rndRoot.nextLong());
                 threads[i] = new Thread(() -> {
                     try {
                         barrier.await();
-                        Rnd rnd = TestUtils.generateRandom(null);
 
                         for (int op = 0; op < OPERATIONS_PER_THREAD / 2; op++) {
                             if (failed.get()) break;
@@ -311,12 +312,12 @@ public class FilesCacheFuzzTest extends AbstractTest {
 
             if (!exceptions.isEmpty()) {
                 Exception first = exceptions.poll();
-                System.err.println("Mmap/Munmap counts: " + mmapCount.get() + "/" + munmapCount.get());
+                LOG.error().$("Mmap/Munmap counts: ").$(mmapCount.get()).$('/').$(munmapCount.get()).$();
                 throw new RuntimeException("Mmap operations test failed", first);
             }
 
             Assert.assertEquals("Mmap and munmap counts should match", mmapCount.get(), munmapCount.get());
-            System.out.println("Mmap operations - Mmap/Munmap: " + mmapCount.get() + "/" + munmapCount.get());
+            LOG.info().$("Mmap operations - Mmap/Munmap: ").$(mmapCount.get()).$('/').$(munmapCount.get()).$();
         });
     }
 
@@ -333,10 +334,10 @@ public class FilesCacheFuzzTest extends AbstractTest {
             Thread[] threads = new Thread[NUM_THREADS];
 
             for (int i = 0; i < NUM_THREADS; i++) {
+                Rnd rnd = new Rnd(rndRoot.nextLong(), rndRoot.nextLong());
                 threads[i] = new Thread(() -> {
                     try {
                         barrier.await();
-                        Rnd rnd = TestUtils.generateRandom(null);
 
                         for (int op = 0; op < OPERATIONS_PER_THREAD / 4; op++) {
                             if (failed.get()) break;
@@ -395,12 +396,12 @@ public class FilesCacheFuzzTest extends AbstractTest {
 
             if (!exceptions.isEmpty()) {
                 Exception first = exceptions.poll();
-                System.err.println("Same file mmap/munmap counts: " + mmapCount.get() + "/" + munmapCount.get());
+                LOG.error().$("Same file mmap/munmap counts: ").$(mmapCount.get()).$('/').$(munmapCount.get()).$();
                 throw new RuntimeException("Same file mmap test failed", first);
             }
 
             Assert.assertEquals("Mmap and munmap counts should match", mmapCount.get(), munmapCount.get());
-            System.out.println("Same file mmap - Mmap/Munmap: " + mmapCount.get() + "/" + munmapCount.get());
+            LOG.info().$("Same file mmap - Mmap/Munmap: ").$(mmapCount.get()).$('/').$(munmapCount.get()).$();
         });
     }
 
@@ -411,7 +412,6 @@ public class FilesCacheFuzzTest extends AbstractTest {
             AtomicBoolean failed = new AtomicBoolean(false);
             ConcurrentLinkedQueue<Exception> exceptions = new ConcurrentLinkedQueue<>();
             AtomicInteger mappingOperations = new AtomicInteger(0);
-            Rnd rndRoot = TestUtils.generateRandom(null);
 
             Path singleFile = testFilePaths[0]; // Use single file for better cache testing
             Thread[] threads = new Thread[NUM_THREADS];
@@ -464,7 +464,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
                                 long address3 = Files.mmap(fd, mapSize3, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
                                 long read2 = Unsafe.getUnsafe().getLong(address2 + writeOffset);
                                 Assert.assertEquals("Read value should match written value",
-                                        testValue, read);
+                                        testValue, read2);
 
                                 Files.munmap(address, mapSize, MemoryTag.MMAP_DEFAULT);
                                 Files.munmap(address2, mapSize, MemoryTag.MMAP_DEFAULT);
@@ -498,12 +498,12 @@ public class FilesCacheFuzzTest extends AbstractTest {
 
             if (!exceptions.isEmpty()) {
                 Exception first = exceptions.poll();
-                System.err.println("MmapCache reuse - Mappings: " + mappingOperations.get());
+                LOG.error().$("MmapCache reuse - Mappings: ").$(mappingOperations.get()).$();
                 throw new RuntimeException("MmapCache reuse test failed", first);
             }
 
             Assert.assertTrue("Should have mapping operations", mappingOperations.get() > 0);
-            LOG.info().$("MmapCache reuse - Mappings: ").$(mappingOperations.get());
+            LOG.info().$("MmapCache reuse - Mappings: ").$(mappingOperations.get()).$();
         });
     }
 
@@ -571,14 +571,14 @@ public class FilesCacheFuzzTest extends AbstractTest {
 
             if (!exceptions.isEmpty()) {
                 Exception first = exceptions.poll();
-                System.err.println("MarkPathRemoved test - Opens: " + openOperations.get() +
-                        ", Removed: " + markRemovedOperations.get() + ", Reopen attempts: " + reopenAfterRemoved.get());
+                LOG.error().$("MarkPathRemoved test - Opens: ").$(openOperations.get())
+                        .$(", Removed: ").$(markRemovedOperations.get()).$(", Reopen attempts: ").$(reopenAfterRemoved.get()).$();
                 throw new RuntimeException("MarkPathRemoved test failed", first);
             }
 
             Assert.assertTrue("Should have open operations", openOperations.get() > 0);
-            System.out.println("MarkPathRemoved test - Opens: " + openOperations.get() +
-                    ", Removed: " + markRemovedOperations.get() + ", Reopen attempts: " + reopenAfterRemoved.get());
+            LOG.info().$("MarkPathRemoved test - Opens: ").$(openOperations.get())
+                    .$(", Removed: ").$(markRemovedOperations.get()).$(", Reopen attempts: ").$(reopenAfterRemoved.get()).$();
         });
     }
 
@@ -588,8 +588,8 @@ public class FilesCacheFuzzTest extends AbstractTest {
             this.testFilePaths = new Path[NUM_FILES];
 
             byte[] data = new byte[FILE_SIZE];
-            Rnd rnd = TestUtils.generateRandom(null);
-            rnd.nextBytes(data);
+            rndRoot = TestUtils.generateRandom(null);
+            rndRoot.nextBytes(data);
 
             for (int i = 0; i < NUM_FILES; i++) {
                 File tempFile = temp.newFile("files_fuzz_test_" + System.nanoTime() + "_" + i + ".dat");
