@@ -183,21 +183,27 @@ pub fn symbol_to_pages(
         }
     });
     let mut data_buffer = vec![];
-    encode_bool_iter(&mut data_buffer, deflevels_iter, options.version)?;
+    let deflevels_len = deflevels_iter.size_hint().1.unwrap();
+    encode_bool_iter(
+        &mut data_buffer,
+        deflevels_iter,
+        deflevels_len,
+        options.version,
+    )?;
     let definition_levels_byte_length = data_buffer.len();
 
     let mut stats = BinaryMaxMin::new(&primitive_type);
     let (dict_buffer, keys, max_key) =
         encode_symbols_dict(column_values, offsets, chars, &mut stats)
             .context("could not write symbols dict map page")?;
-    let bits_per_key = util::get_bit_width(max_key as u64);
+    let bits_per_key = util::bit_width(max_key as u64);
 
     let non_null_len = column_values.len() - null_count;
     let keys = ExactSizedIter::new(keys, non_null_len);
     // bits_per_key as a single byte...
     data_buffer.push(bits_per_key);
     // followed by the encoded keys.
-    encode_u32(&mut data_buffer, keys, bits_per_key as u32)?;
+    encode_u32(&mut data_buffer, keys, non_null_len, bits_per_key as u32)?;
 
     let data_page = build_plain_page(
         data_buffer,

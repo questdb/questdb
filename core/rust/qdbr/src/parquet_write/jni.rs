@@ -28,6 +28,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     timestamp_index: jint,
     compression_codec: jlong,
     statistics_enabled: jboolean,
+    raw_array_encoding: jboolean,
     row_group_size: jlong,
     data_page_size: jlong,
 ) -> *mut ParquetUpdater {
@@ -37,6 +38,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         let allocator = unsafe { &*allocator }.clone();
 
         let statistics_enabled = statistics_enabled != 0;
+        let raw_array_encoding = raw_array_encoding != 0;
 
         let row_group_size = if row_group_size > 0 {
             Some(row_group_size as usize)
@@ -62,6 +64,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             file_size,
             sorting_columns,
             statistics_enabled,
+            raw_array_encoding,
             compression_options,
             row_group_size,
             data_page_size,

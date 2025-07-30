@@ -183,7 +183,8 @@ where
     });
 
     let mut buffer = vec![];
-    encode_bool_iter(&mut buffer, deflevels_iter, options.version)?;
+    let deflevels_len = deflevels_iter.size_hint().1.unwrap();
+    encode_bool_iter(&mut buffer, deflevels_iter, deflevels_len, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
     let buffer = encode_fn(slice, null_count, buffer);

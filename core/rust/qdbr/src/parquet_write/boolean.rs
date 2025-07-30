@@ -20,18 +20,17 @@ pub fn slice_to_page(
     let mut buffer = vec![];
     let mut stats = MaxMin::new();
 
-    bitpacked_encode(
-        &mut buffer,
-        (0..num_rows).map(|i| {
-            let x = if i < column_top {
-                0
-            } else {
-                slice[i - column_top]
-            };
-            stats.update(x as i32);
-            x != 0
-        }),
-    )?;
+    let iter = (0..num_rows).map(|i| {
+        let x = if i < column_top {
+            0
+        } else {
+            slice[i - column_top]
+        };
+        stats.update(x as i32);
+        x != 0
+    });
+    let len = iter.size_hint().1.unwrap();
+    bitpacked_encode(&mut buffer, iter, len)?;
 
     let statistics = if options.write_statistics {
         Some(build_statistics(stats))

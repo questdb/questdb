@@ -196,10 +196,11 @@ pub fn column_type_to_parquet_types(
                         elem_type.name()
                     ));
                 }
+                // TODO(puzpuzpuz): make it optional to support in-array nulls
                 let elem_type = ParquetType::try_from_primitive(
                     "element".to_string(),
                     PhysicalType::Double,
-                    Repetition::Optional,
+                    Repetition::Required,
                     None,
                     None,
                     None,
@@ -209,7 +210,7 @@ pub fn column_type_to_parquet_types(
                 for i in 0..dim {
                     let list = ParquetType::from_group(
                         "list".to_string(),
-                        Repetition::Optional,
+                        Repetition::Repeated,
                         Some(GroupConvertedType::List),
                         Some(GroupLogicalType::List),
                         vec![root_type],
@@ -218,13 +219,14 @@ pub fn column_type_to_parquet_types(
                     if i < dim - 1 {
                         root_type = ParquetType::from_group(
                             "list".to_string(),
-                            Repetition::Optional,
+                            Repetition::Required,
                             Some(GroupConvertedType::List),
                             Some(GroupLogicalType::List),
                             vec![list],
                             None,
                         );
                     } else {
+                        // top field has to be nullable, hence optional repetition
                         root_type = ParquetType::from_group(
                             name.clone(),
                             Repetition::Optional,

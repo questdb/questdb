@@ -40,6 +40,16 @@ import org.junit.Test;
 public class ParquetTest extends AbstractCairoTest {
 
     @Test
+    public void test1dArray() throws Exception {
+        test1dArray(false);
+    }
+
+    @Test
+    public void test1dArray_rawArrayEncoding() throws Exception {
+        test1dArray(true);
+    }
+
+    @Test
     public void test3dArray() throws Exception {
         test3dArray(false);
     }
@@ -834,6 +844,36 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testTimeFilterSingleRowGroupPerPartition() throws Exception {
         testTimeFilter(100);
+    }
+
+    private void test1dArray(boolean rawArrayEncoding) throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, String.valueOf(rawArrayEncoding));
+
+        final String arr1 = "ARRAY[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]\n";
+        final String arr1exp = arr1
+                .replaceAll(" ", "")
+                .replaceAll("\n", "")
+                .replace("ARRAY", "");
+        assertMemoryLeak(() -> {
+            execute("create table x (a1 double[], ts timestamp) timestamp(ts) partition by month;");
+            execute("insert into x values(" + arr1 + ", '2024-01-10T00:00:00.000000Z');");
+            execute("insert into x values(" + arr1 + ", '2024-01-11T00:00:00.000000Z');");
+            execute("insert into x values(" + arr1 + ", '2024-02-10T00:00:00.000000Z');");
+            execute("insert into x values(null, '2024-03-10T00:00:00.000000Z');");
+
+            final String expected = "a1\tts\n"
+                    + arr1exp + "\t2024-01-10T00:00:00.000000Z\n"
+                    + arr1exp + "\t2024-01-11T00:00:00.000000Z\n"
+                    + arr1exp + "\t2024-02-10T00:00:00.000000Z\n"
+                    + "null\t2024-03-10T00:00:00.000000Z\n";
+            assertSql(expected, "x");
+
+            execute("alter table x convert partition to parquet where ts >= 0");
+            assertSql(expected, "x");
+
+            execute("alter table x convert partition to native where ts >= 0");
+            assertSql(expected, "x");
+        });
     }
 
     private void test3dArray(boolean rawArrayEncoding) throws Exception {

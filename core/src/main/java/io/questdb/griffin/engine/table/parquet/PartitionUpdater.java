@@ -58,6 +58,7 @@ public class PartitionUpdater implements QuietCloseable {
             int timestampIndex,
             long compressionCodec,
             boolean statisticsEnabled,
+            boolean rawArrayEncoding,
             long rowGroupSize,
             long dataPageSize
     ) {
@@ -72,6 +73,7 @@ public class PartitionUpdater implements QuietCloseable {
                 timestampIndex,
                 compressionCodec,
                 statisticsEnabled,
+                rawArrayEncoding,
                 rowGroupSize,
                 dataPageSize
         );
@@ -115,6 +117,7 @@ public class PartitionUpdater implements QuietCloseable {
             int timestampIndex,
             long compressionCodec,
             boolean statisticsEnabled,
+            boolean rawArrayEncoding,
             long rowGroupSize,
             long dataPageSize
     ) throws CairoException;

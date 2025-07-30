@@ -1353,7 +1353,7 @@ mod tests {
     use crate::parquet::tests::ColumnTypeTagExt;
     use crate::parquet_read::decode::{INT_NULL, LONG_NULL, UUID_NULL};
     use crate::parquet_read::{ColumnChunkBuffers, ParquetDecoder};
-    use crate::parquet_write::array::{append_array, append_array_null};
+    use crate::parquet_write::array::{append_raw_array, append_raw_array_null};
     use crate::parquet_write::file::ParquetWriter;
     use crate::parquet_write::schema::{Column, Partition};
     use crate::parquet_write::varchar::{append_varchar, append_varchar_null};
@@ -2067,11 +2067,11 @@ mod tests {
         let mut i = 0;
         while i < row_count {
             let arr_value = &arr_values[i % distinct_values];
-            append_array(&mut aux_buff, &mut data_buff, arr_value).unwrap();
+            append_raw_array(&mut aux_buff, &mut data_buff, arr_value).unwrap();
             i += 1;
 
             if i < row_count {
-                append_array_null(&mut aux_buff, &data_buff).unwrap();
+                append_raw_array_null(&mut aux_buff, &data_buff).unwrap();
                 i += 1;
             }
         }

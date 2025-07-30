@@ -2,7 +2,9 @@ use crate::parquet::error::{ParquetErrorReason, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::DataPageSlicer;
 use crate::parquet_read::ColumnChunkBuffers;
-use crate::parquet_write::array::{append_array, append_array_null, append_array_nulls};
+use crate::parquet_write::array::{
+    append_raw_array, append_raw_array_null, append_raw_array_nulls,
+};
 use crate::parquet_write::varchar::{append_varchar, append_varchar_null, append_varchar_nulls};
 use std::mem::size_of;
 
@@ -270,7 +272,7 @@ impl<T: DataPageSlicer> Pushable for ArrayColumnSink<'_, T> {
 
     #[inline]
     fn push(&mut self) -> ParquetResult<()> {
-        append_array(
+        append_raw_array(
             &mut self.buffers.aux_vec,
             &mut self.buffers.data_vec,
             self.slicer.next(),
@@ -280,7 +282,7 @@ impl<T: DataPageSlicer> Pushable for ArrayColumnSink<'_, T> {
     #[inline]
     fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
         for _ in 0..count {
-            append_array(
+            append_raw_array(
                 &mut self.buffers.aux_vec,
                 &mut self.buffers.data_vec,
                 self.slicer.next(),
@@ -291,12 +293,12 @@ impl<T: DataPageSlicer> Pushable for ArrayColumnSink<'_, T> {
 
     #[inline]
     fn push_null(&mut self) -> ParquetResult<()> {
-        append_array_null(&mut self.buffers.aux_vec, &self.buffers.data_vec)
+        append_raw_array_null(&mut self.buffers.aux_vec, &self.buffers.data_vec)
     }
 
     #[inline]
     fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        append_array_nulls(&mut self.buffers.aux_vec, &self.buffers.data_vec, count)
+        append_raw_array_nulls(&mut self.buffers.aux_vec, &self.buffers.data_vec, count)
     }
 
     fn skip(&mut self, count: usize) {
