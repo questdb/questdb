@@ -41,47 +41,12 @@ public class ParquetTest extends AbstractCairoTest {
 
     @Test
     public void test3dArray() throws Exception {
-        final String arr1 = "ARRAY[\n" +
-                "  [\n" +
-                "    [1.0, 2.0, 3.0],\n" +
-                "    [4.0, 5.0, 6.0],\n" +
-                "    [7.0, 8.0, 9.0]\n" +
-                "  ],\n" +
-                "  [\n" +
-                "    [10.0, 11.0, 12.0],\n" +
-                "    [13.0, 14.0, 15.0],\n" +
-                "    [16.0, 17.0, 18.0]\n" +
-                "  ],\n" +
-                "  [\n" +
-                "    [19.0, 20.0, 21.0],\n" +
-                "    [22.0, 23.0, 24.0],\n" +
-                "    [25.0, 26.0, 27.0]\n" +
-                "  ]\n" +
-                "]\n";
-        final String arr1exp = arr1
-                .replaceAll(" ", "")
-                .replaceAll("\n", "")
-                .replace("ARRAY", "");
-        assertMemoryLeak(() -> {
-            execute("create table x (a1 double[][][], ts timestamp) timestamp(ts) partition by month;");
-            execute("insert into x values(" + arr1 + ", '2024-04-10T00:00:00.000000Z');");
-            execute("insert into x values(" + arr1 + ", '2024-05-10T00:00:00.000000Z');");
-            execute("insert into x values(" + arr1 + ", '2024-06-10T00:00:00.000000Z');");
-            execute("insert into x values(null, '2024-07-10T00:00:00.000000Z');");
+        test3dArray(false);
+    }
 
-            final String expected = "a1\tts\n"
-                    + arr1exp + "\t2024-04-10T00:00:00.000000Z\n"
-                    + arr1exp + "\t2024-05-10T00:00:00.000000Z\n"
-                    + arr1exp + "\t2024-06-10T00:00:00.000000Z\n"
-                    + "null\t2024-07-10T00:00:00.000000Z\n";
-            assertSql(expected, "x");
-
-            execute("alter table x convert partition to parquet where ts >= 0");
-            assertSql(expected, "x");
-
-            execute("alter table x convert partition to native where ts >= 0");
-            assertSql(expected, "x");
-        });
+    @Test
+    public void test3dArray_rawArrayEncoding() throws Exception {
+        test3dArray(true);
     }
 
     @Test
@@ -869,6 +834,52 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testTimeFilterSingleRowGroupPerPartition() throws Exception {
         testTimeFilter(100);
+    }
+
+    private void test3dArray(boolean rawArrayEncoding) throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, String.valueOf(rawArrayEncoding));
+
+        final String arr1 = "ARRAY[\n" +
+                "  [\n" +
+                "    [1.0, 2.0, 3.0],\n" +
+                "    [4.0, 5.0, 6.0],\n" +
+                "    [7.0, 8.0, 9.0]\n" +
+                "  ],\n" +
+                "  [\n" +
+                "    [10.0, 11.0, 12.0],\n" +
+                "    [13.0, 14.0, 15.0],\n" +
+                "    [16.0, 17.0, 18.0]\n" +
+                "  ],\n" +
+                "  [\n" +
+                "    [19.0, 20.0, 21.0],\n" +
+                "    [22.0, 23.0, 24.0],\n" +
+                "    [25.0, 26.0, 27.0]\n" +
+                "  ]\n" +
+                "]\n";
+        final String arr1exp = arr1
+                .replaceAll(" ", "")
+                .replaceAll("\n", "")
+                .replace("ARRAY", "");
+        assertMemoryLeak(() -> {
+            execute("create table x (a1 double[][][], ts timestamp) timestamp(ts) partition by month;");
+            execute("insert into x values(" + arr1 + ", '2024-04-10T00:00:00.000000Z');");
+            execute("insert into x values(" + arr1 + ", '2024-05-10T00:00:00.000000Z');");
+            execute("insert into x values(" + arr1 + ", '2024-06-10T00:00:00.000000Z');");
+            execute("insert into x values(null, '2024-07-10T00:00:00.000000Z');");
+
+            final String expected = "a1\tts\n"
+                    + arr1exp + "\t2024-04-10T00:00:00.000000Z\n"
+                    + arr1exp + "\t2024-05-10T00:00:00.000000Z\n"
+                    + arr1exp + "\t2024-06-10T00:00:00.000000Z\n"
+                    + "null\t2024-07-10T00:00:00.000000Z\n";
+            assertSql(expected, "x");
+
+            execute("alter table x convert partition to parquet where ts >= 0");
+            assertSql(expected, "x");
+
+            execute("alter table x convert partition to native where ts >= 0");
+            assertSql(expected, "x");
+        });
     }
 
     private void testTimeFilter(int rowGroupSize) throws Exception {

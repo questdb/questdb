@@ -89,18 +89,26 @@ public class ParquetTest extends AbstractTest {
 
     @Test
     public void testAllTypesColTopMiddlePartition() throws Exception {
-        final String tableName = "y";
-        final int partitionBy = PartitionBy.MONTH;
-        // column tops placed in the middle of the partition.
-        testPartitionDataConsistency(tableName, partitionBy);
+        // column tops placed in the middle of the partition
+        testPartitionDataConsistency("y", PartitionBy.MONTH, false);
+    }
+
+    @Test
+    public void testAllTypesColTopMiddlePartition_rawArrayEncoding() throws Exception {
+        // column tops placed in the middle of the partition
+        testPartitionDataConsistency("y", PartitionBy.MONTH, true);
     }
 
     @Test
     public void testAllTypesColTopNextPartition() throws Exception {
-        final String tableName = "x";
-        final int partitionBy = PartitionBy.DAY;
-        // column tops added to the next partition.
-        testPartitionDataConsistency(tableName, partitionBy);
+        // column tops added to the next partition
+        testPartitionDataConsistency("x", PartitionBy.DAY, false);
+    }
+
+    @Test
+    public void testAllTypesColTopNextPartition_rawArrayEncoding() throws Exception {
+        // column tops added to the next partition
+        testPartitionDataConsistency("x", PartitionBy.DAY, true);
     }
 
     private static void assertArray(ArrayView expected, Object actual) {
@@ -242,7 +250,7 @@ public class ParquetTest extends AbstractTest {
         }
     }
 
-    private void testPartitionDataConsistency(String tableName, int partitionBy) throws Exception {
+    private void testPartitionDataConsistency(String tableName, int partitionBy, boolean rawArrayEncoding) throws Exception {
         String ddl = "create table " + tableName + " as (select" +
                 " x id," +
                 " rnd_boolean() a_boolean," +
@@ -362,7 +370,7 @@ public class ParquetTest extends AbstractTest {
                         path,
                         (5L << 32) | ParquetCompression.COMPRESSION_ZSTD,
                         true,
-                        true,
+                        rawArrayEncoding,
                         ROW_GROUP_SIZE,
                         DATA_PAGE_SIZE,
                         ParquetVersion.PARQUET_VERSION_V1
@@ -479,7 +487,7 @@ public class ParquetTest extends AbstractTest {
         try (ParquetFileReader parquetFileReader = ParquetFileReader.open(inputFile)) {
             ParquetMetadata metadata = parquetFileReader.getFooter();
             FileMetaData fileMetaData = metadata.getFileMetaData();
-            Assert.assertEquals("QuestDB version 8.0", fileMetaData.getCreatedBy());
+            Assert.assertEquals("QuestDB version 9.0", fileMetaData.getCreatedBy());
 
             MessageType schema = fileMetaData.getSchema();
             List<ColumnDescriptor> columns = schema.getColumns();
