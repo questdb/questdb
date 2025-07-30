@@ -261,40 +261,6 @@ public class SecurityTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBackupTableDeniedOnNoWriteAccess() throws Exception {
-        assertMemoryLeak(() -> {
-            // create infrastructure where backup is enabled (dir configured)
-            execute("create table balances(cust_id int, ccy symbol, balance double)");
-
-            final File backupDir = temp.newFolder();
-            final DateFormat backupSubDirFormat = new TimestampFormatCompiler().compile("ddMMMyyyy");
-            try (
-                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(root) {
-                        @Override
-                        public DateFormat getBackupDirTimestampFormat() {
-                            return backupSubDirFormat;
-                        }
-
-                        @Override
-                        public CharSequence getBackupRoot() {
-                            return backupDir.getAbsolutePath();
-                        }
-                    });
-                    SqlCompiler compiler2 = engine.getSqlCompiler();
-                    SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-            ) {
-                sqlExecutionContext.with(ReadOnlySecurityContext.INSTANCE);
-                try {
-                    compiler2.compile("backup table balances", sqlExecutionContext);
-                    Assert.fail();
-                } catch (Exception ex) {
-                    Assert.assertTrue(ex.toString().contains("permission denied"));
-                }
-            }
-        });
-    }
-
-    @Test
     public void testCircuitBreakerTimeout() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();

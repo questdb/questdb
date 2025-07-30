@@ -151,10 +151,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected final byte httpHealthCheckAuthType;
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
     private final boolean allowTableRegistrySharedWrite;
-    private final DateFormat backupDirTimestampFormat;
-    private final int backupMkdirMode;
-    private final String backupRoot;
-    private final CharSequence backupTempDirName;
     private final int binaryEncodingMaxLength;
     private final BuildInformation buildInformation;
     private final boolean cairoAttachPartitionCopy;
@@ -1463,10 +1459,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoSqlCopyLogRetentionDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_LOG_RETENTION_DAYS, 3);
             this.o3MinLagUs = getMicros(properties, env, PropertyKey.CAIRO_O3_MIN_LAG, 1_000) * 1_000L;
 
-            this.backupRoot = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_ROOT, null);
-            this.backupDirTimestampFormat = getTimestampFormat(properties, env);
-            this.backupTempDirName = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_DIR_TMP_NAME, "tmp");
-            this.backupMkdirMode = getInt(properties, env, PropertyKey.CAIRO_SQL_BACKUP_MKDIR_MODE, 509);
             this.detachedMkdirMode = getInt(properties, env, PropertyKey.CAIRO_DETACHED_MKDIR_MODE, 509);
             this.columnIndexerQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY, 64);
             this.vectorAggregateQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY, 128);
@@ -1954,10 +1946,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         return SqlJitMode.JIT_MODE_ENABLED;
-    }
-
-    private DateFormat getTimestampFormat(Properties properties, @Nullable Map<String, String> env) {
-        return compiler.compile(getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT, "yyyy-MM-dd"));
     }
 
     // The enterprise version needs to add tcps and https
@@ -2674,26 +2662,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull String getAttachPartitionSuffix() {
             return cairoAttachPartitionSuffix;
-        }
-
-        @Override
-        public DateFormat getBackupDirTimestampFormat() {
-            return backupDirTimestampFormat;
-        }
-
-        @Override
-        public int getBackupMkDirMode() {
-            return backupMkdirMode;
-        }
-
-        @Override
-        public CharSequence getBackupRoot() {
-            return backupRoot;
-        }
-
-        @Override
-        public @NotNull CharSequence getBackupTempDirName() {
-            return backupTempDirName;
         }
 
         @Override

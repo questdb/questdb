@@ -240,7 +240,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     protected void initDataID() {
-        if (!this.dataID.isInitialized()) {
+        if (!getConfiguration().isReadOnlyInstance() && !this.dataID.isInitialized()) {
             final Rnd rnd = configuration.getRandom();
             this.dataID.set(rnd.nextLong(), rnd.nextLong());
         }
@@ -624,23 +624,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 // Retry on this exception, all interfaces like HTTP, Pg wire are supposed to retry too.
             }
         }
-    }
-
-    public TableWriter getBackupWriter(TableToken tableToken, CharSequence backupDirName) {
-        verifyTableToken(tableToken);
-        // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
-        return new TableWriter(
-                configuration,
-                tableToken,
-                messageBus,
-                null,
-                true,
-                DefaultLifecycleManager.INSTANCE,
-                backupDirName,
-                getDdlListener(tableToken),
-                checkpointAgent,
-                this
-        );
     }
 
     @TestOnly

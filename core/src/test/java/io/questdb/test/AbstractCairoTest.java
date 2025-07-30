@@ -2128,12 +2128,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected void configureForBackups() throws IOException {
-        String backupDir = temp.newFolder().getAbsolutePath();
-        node1.setProperty(PropertyKey.CAIRO_SQL_BACKUP_ROOT, backupDir);
-        node1.setProperty(PropertyKey.CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT, "ddMMMyyyy");
-    }
-
     protected void createPopulateTable(TableModel tableModel, int totalRows, String startDate, int partitionCount) throws NumericException, SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             TestUtils.createPopulateTable(compiler, sqlExecutionContext, tableModel, totalRows, startDate, partitionCount);

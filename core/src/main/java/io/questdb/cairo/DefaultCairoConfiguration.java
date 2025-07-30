@@ -121,26 +121,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public DateFormat getBackupDirTimestampFormat() {
-        return null;
-    }
-
-    @Override
-    public int getBackupMkDirMode() {
-        return 509;
-    }
-
-    @Override
-    public CharSequence getBackupRoot() {
-        return null;
-    }
-
-    @Override
-    public @NotNull CharSequence getBackupTempDirName() {
-        return "tmp";
-    }
-
-    @Override
     public int getBinaryEncodingMaxLength() {
         return 32768;
     }
