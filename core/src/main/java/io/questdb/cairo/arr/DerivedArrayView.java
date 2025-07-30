@@ -238,20 +238,13 @@ public class DerivedArrayView extends ArrayView {
      * (upper-exclusive), and the new index 0 corresponds to the previous index
      * {@code lo}.
      *
-     * @param dim    the dimension to slice
-     * @param lo     lower bound of the slice
-     * @param hi     upper bound of the slice (exclusive)
-     * @param argPos SQL syntax position where to report an error if needed
+     * @param dim the dimension to slice
+     * @param lo  lower bound of the slice
+     * @param hi  upper bound of the slice (exclusive)
      */
-    public void slice(int dim, int lo, int hi, int argPos) {
-        if (lo < 0 || hi < 0) {
-            throw new IllegalArgumentException("lo and hi must be non-negative");
-        }
-        if (dim < 0 || dim >= getDimCount()) {
-            throw CairoException.nonCritical().position(argPos)
-                    .put("array dimension doesn't exist [dim=").put(dim + 1)
-                    .put(", nDims=").put(getDimCount()).put(']');
-        }
+    public void slice(int dim, int lo, int hi) {
+        assert lo >= 0 && hi >= 0 : "lo and hi must be non-negative";
+
         int dimLen = getDimLen(dim);
         if (hi > dimLen) {
             hi = dimLen;
@@ -284,12 +277,11 @@ public class DerivedArrayView extends ArrayView {
      * array at dimension {@code dim} that contains just the provided {@code index},
      * and then removing the dimension {@code dim} from the array's shape.
      *
-     * @param dim    the dimension at which the sub-array is found
-     * @param index  the index of the sub-array within that dimension
-     * @param argPos the SQL syntax position to report an error if needed
+     * @param dim   the dimension at which the sub-array is found
+     * @param index the index of the sub-array within that dimension
      */
-    public void subArray(int dim, int index, int argPos) {
-        slice(dim, index, index + 1, argPos);
+    public void subArray(int dim, int index) {
+        slice(dim, index, index + 1);
         if (getDimLen(dim) != 0) {
             removeDim(dim);
         } else {
