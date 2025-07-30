@@ -1,21 +1,25 @@
 use std::slice;
 
+use crate::parquet::error::fmt_err;
 use crate::parquet::error::ParquetResult;
 use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_META_KEY};
 use parquet2::encoding::Encoding;
 use parquet2::metadata::KeyValue;
 use parquet2::metadata::SchemaDescriptor;
+use parquet2::schema::types::GroupConvertedType;
+use parquet2::schema::types::GroupLogicalType;
 use parquet2::schema::types::{
     IntegerType, ParquetType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
 use parquet2::schema::Repetition;
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
-pub fn column_type_to_parquet_type(
+pub fn column_type_to_parquet_types(
     parquet_types: &mut Vec<ParquetType>,
     column_id: i32,
     column_name: &str,
     column_type: ColumnType,
+    raw_array_encoding: bool,
 ) -> ParquetResult<()> {
     let name = column_name.to_string();
 
@@ -171,15 +175,68 @@ pub fn column_type_to_parquet_type(
             Ok(())
         }
         ColumnTypeTag::Array => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::ByteArray,
-                Repetition::Optional,
-                None,
-                None,
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
+            if raw_array_encoding {
+                // encode in native QDB array format
+                let t = ParquetType::try_from_primitive(
+                    name,
+                    PhysicalType::ByteArray,
+                    Repetition::Optional,
+                    None,
+                    None,
+                    Some(column_id),
+                )?;
+                parquet_types.push(t);
+            } else {
+                // encode as nested lists
+                let elem_type = column_type.array_element_type()?;
+                if elem_type != ColumnTypeTag::Double {
+                    return Err(fmt_err!(
+                        InvalidType,
+                        "unsupported array element type {}",
+                        elem_type.name()
+                    ));
+                }
+                let elem_type = ParquetType::try_from_primitive(
+                    "element".to_string(),
+                    PhysicalType::Double,
+                    Repetition::Optional,
+                    None,
+                    None,
+                    None,
+                )?;
+                let dim = column_type.array_dimensionality()?;
+                let mut root_type = elem_type;
+                for i in 0..dim {
+                    let list = ParquetType::from_group(
+                        "list".to_string(),
+                        Repetition::Optional,
+                        Some(GroupConvertedType::List),
+                        Some(GroupLogicalType::List),
+                        vec![root_type],
+                        None,
+                    );
+                    if i < dim - 1 {
+                        root_type = ParquetType::from_group(
+                            "list".to_string(),
+                            Repetition::Optional,
+                            Some(GroupConvertedType::List),
+                            Some(GroupLogicalType::List),
+                            vec![list],
+                            None,
+                        );
+                    } else {
+                        root_type = ParquetType::from_group(
+                            name.clone(),
+                            Repetition::Optional,
+                            Some(GroupConvertedType::List),
+                            Some(GroupLogicalType::List),
+                            vec![list],
+                            Some(column_id),
+                        );
+                    }
+                }
+                parquet_types.push(root_type);
+            }
             Ok(())
         }
         ColumnTypeTag::Long256 => {
@@ -360,10 +417,17 @@ pub struct Partition {
 
 pub fn to_parquet_schema(
     partition: &Partition,
+    raw_array_encoding: bool,
 ) -> ParquetResult<(SchemaDescriptor, Vec<KeyValue>)> {
     let mut parquet_types: Vec<ParquetType> = Vec::new();
     for c in partition.columns.iter() {
-        column_type_to_parquet_type(&mut parquet_types, c.id, c.name, c.data_type)?;
+        column_type_to_parquet_types(
+            &mut parquet_types,
+            c.id,
+            c.name,
+            c.data_type,
+            raw_array_encoding,
+        )?;
     }
 
     let mut qdb_meta = QdbMeta::new();

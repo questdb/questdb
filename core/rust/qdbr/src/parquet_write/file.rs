@@ -176,7 +176,7 @@ impl<W: Write> ParquetWriter<W> {
 
     /// Write the given `Partition` with the writer `W`. Returns the total size of the file.
     pub fn finish(self, partition: Partition) -> ParquetResult<u64> {
-        let (schema, additional_meta) = to_parquet_schema(&partition)?;
+        let (schema, additional_meta) = to_parquet_schema(&partition, self.raw_array_encoding)?;
         let encodings = to_encodings(&partition);
         let mut chunked = self.chunked(schema, encodings)?;
         chunked.write_chunk(partition)?;
@@ -353,7 +353,7 @@ fn column_chunk_to_pages(
         _ => unreachable!("GroupType is not supported"),
     };
 
-    if matches!(column.data_type.tag(), ColumnTypeTag::Symbol) {
+    if column.data_type.tag() == ColumnTypeTag::Symbol {
         let keys: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
 
         let offsets = column.symbol_offsets;
