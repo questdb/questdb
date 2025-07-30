@@ -51,7 +51,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "[](D[]IV)";
+        return "[](D[]LV)";
     }
 
     @Override
@@ -124,11 +124,11 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             if (indexArgsAreConstant) {
                 IntList indexArgs = new IntList(argsCopy.size() - 1);
                 for (int i = 1, n = argsCopy.size(); i < n; i++) {
-                    int index = argsCopy.getQuick(i).getInt(null);
-                    if (index == Numbers.INT_NULL) {
+                    long index = argsCopy.getQuick(i).getLong(null);
+                    if (index == Numbers.LONG_NULL) {
                         return DoubleConstant.NULL;
                     }
-                    indexArgs.add(index);
+                    indexArgs.add((int) index);
                     Misc.free(argsCopy.getQuick(i));
                 }
                 argPositionsCopy.removeIndex(0); // remove arrayArg's position
@@ -157,7 +157,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
     }
 
     private static boolean isIndexArg(int argType) {
-        return argType == ColumnType.INT || argType == ColumnType.SHORT || argType == ColumnType.BYTE;
+        return ColumnType.isAssignableFrom(argType, ColumnType.LONG);
     }
 
     private static void validateIndexArgs(ObjList<Function> args, IntList argPositions) throws SqlException {
@@ -187,11 +187,21 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                             .put(']');
                 }
             } else {
-                int index = arg.getInt(null);
-                if (index < 1 && index != Numbers.INT_NULL) {
+                long indexLong = arg.getLong(null);
+                if (indexLong == Numbers.LONG_NULL) {
+                    continue;
+                }
+                if (indexLong < 1) {
                     throw SqlException.position(argPositions.getQuick(i))
                             .put("array index must be positive [dim=").put(i)
-                            .put(", index=").put(index)
+                            .put(", index=").put(indexLong)
+                            .put(']');
+                }
+                int index = (int) indexLong;
+                if (index != indexLong) {
+                    throw SqlException.position(argPositions.getQuick(i))
+                            .put("int overflow on array index [dim=").put(i)
+                            .put(", index=").put(indexLong)
                             .put(']');
                 }
             }
@@ -269,9 +279,16 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             }
             int flatIndex = 0;
             for (int i = 1, n = allArgs.size(); i < n; i++) {
-                int pgIndexAtDim = allArgs.getQuick(i).getInt(rec);
-                if (pgIndexAtDim == Numbers.INT_NULL) {
+                long pgIndexAtDimLong = allArgs.getQuick(i).getLong(rec);
+                if (pgIndexAtDimLong == Numbers.LONG_NULL) {
                     return Double.NaN;
+                }
+                int pgIndexAtDim = (int) pgIndexAtDimLong;
+                if (pgIndexAtDim != pgIndexAtDimLong) {
+                    throw CairoException.nonCritical().position(allArgPositions.getQuick(i))
+                            .put("int overflow on array index [dim=").put(i)
+                            .put(", index=").put(pgIndexAtDimLong)
+                            .put(']');
                 }
                 // Decrement the index in the argument because Postgres uses 1-based array indexing
                 int indexAtDim = pgIndexAtDim - 1;

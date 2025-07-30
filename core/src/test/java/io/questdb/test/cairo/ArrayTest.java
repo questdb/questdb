@@ -96,7 +96,9 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES (ARRAY[1.0, 2, 3], null)");
             execute("INSERT INTO tango VALUES (null, null)");
             assertSql("x\n2.0\n2.0\nnull\n", "SELECT arr1[2] x FROM tango");
-            assertSql("x\n2.0\n2.0\nnull\n", "SELECT arr1[arr1[2]::int] x FROM tango");
+            assertSql("x\n2.0\n2.0\nnull\n", "SELECT arr1[2::long] x FROM tango");
+            assertSql("x\n2.0\n2.0\nnull\n", "SELECT arr1['2'] x FROM tango");
+            assertSql("x\n2.0\n2.0\nnull\n", "SELECT arr1[arr1[2]::long] x FROM tango");
             assertSql("x\n2.0\nnull\nnull\n", "SELECT arr1[arr2[2]::int] x FROM tango");
             assertPlanNoLeakCheck(
                     "SELECT arr1[arr2[2]::int] x FROM tango",
@@ -134,18 +136,17 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testAccessInvalid() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4]] arr1, ARRAY[-1, -2] arr2 FROM long_sequence(1))");
+            execute("CREATE TABLE tango AS (SELECT " +
+                    "ARRAY[[1.0, 2], [3.0, 4]] arr1, " +
+                    "ARRAY[-1.0, 999_999_999_999] arr2 " +
+                    "FROM long_sequence(1))");
 
             assertExceptionNoLeakCheck("SELECT arr1[] FROM tango",
                     12, "empty brackets");
-            assertExceptionNoLeakCheck("SELECT arr1['1', 1] FROM tango",
-                    12, "invalid type for array access [type=4]");
-            assertExceptionNoLeakCheck("SELECT arr1[1, 1::long] FROM tango",
-                    16, "invalid type for array access [type=6]");
+            assertExceptionNoLeakCheck("SELECT arr1[1, 999_999_999_999] FROM tango",
+                    15, "int overflow on array index [dim=2, index=999999999999]");
             assertExceptionNoLeakCheck("SELECT arr1[1, true] FROM tango",
                     15, "invalid type for array access [type=1]");
-            assertExceptionNoLeakCheck("SELECT arr1[1, '1'] FROM tango",
-                    15, "invalid type for array access [type=4]");
             assertExceptionNoLeakCheck("SELECT arr1[1, 1, 1] FROM tango",
                     18, "too many array access arguments [nArgs=3, nDims=2]");
             assertExceptionNoLeakCheck("SELECT arr1[0, 1] FROM tango",
@@ -158,6 +159,8 @@ public class ArrayTest extends AbstractCairoTest {
                     22, "array index must be positive [dim=2, index=-1, dimLen=2]");
             assertExceptionNoLeakCheck("SELECT arr1[1:2][arr2[1]::int] FROM tango",
                     24, "array index must be positive [dim=1, index=-1, dimLen=1]");
+            assertExceptionNoLeakCheck("SELECT arr1[1, arr2[2]::long] FROM tango",
+                    22, "int overflow on array index [dim=2, index=999999999999]");
         });
     }
 
