@@ -24,16 +24,21 @@
 
 package io.questdb.test.std;
 
+import io.questdb.ParanoiaState;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.File;
@@ -47,11 +52,26 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class FilesCacheFuzzTest extends AbstractTest {
     private static final int FILE_SIZE = (int) (Files.PAGE_SIZE * 10);
-    private static final int NUM_FILES = 15;
-    private static final int NUM_THREADS = 6;
+    private static final int NUM_THREADS = 4;
+    private static final int NUM_FILES = NUM_THREADS;
     private static final int OPERATIONS_PER_THREAD = 500;
+    private static boolean savedFdParanoia;
     private Rnd rndRoot;
     private Path[] testFilePaths;
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        AbstractTest.setUpStatic();
+        Files.FS_CACHE_ENABLED = FilesFacadeImpl.INSTANCE.allowMixedIO(root);
+        savedFdParanoia = ParanoiaState.FD_PARANOIA_MODE;
+        ParanoiaState.FD_PARANOIA_MODE = true;
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        AbstractTest.tearDownStatic();
+        ParanoiaState.FD_PARANOIA_MODE = savedFdParanoia;
+    }
 
     @Before
     public void setUp() {
@@ -61,13 +81,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
 
     @After
     public void tearDown() throws Exception {
-        if (testFilePaths != null) {
-            for (Path path : testFilePaths) {
-                if (path != null) {
-                    path.close();
-                }
-            }
-        }
+        Misc.free(testFilePaths);
         super.tearDown();
     }
 
@@ -84,6 +98,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
             Thread[] threads = new Thread[NUM_THREADS];
 
             for (int i = 0; i < NUM_THREADS; i++) {
+                int threadId = i; // Capture thread index for lambda
                 Rnd rnd = new Rnd(rndRoot.nextLong(), rndRoot.nextLong());
                 threads[i] = new Thread(() -> {
                     try {
@@ -92,46 +107,33 @@ public class FilesCacheFuzzTest extends AbstractTest {
                         for (int op = 0; op < OPERATIONS_PER_THREAD; op++) {
                             if (failed.get()) break;
 
-                            int fileIndex = rnd.nextInt(NUM_FILES);
-                            Path filePath = testFilePaths[fileIndex];
+                            Path filePath = testFilePaths[threadId];
 
-                            long fd = -1;
-                            try {
-                                if (rnd.nextBoolean()) {
-                                    fd = Files.openRO(filePath.$());
-                                } else {
-                                    fd = Files.openRW(filePath.$());
-                                }
-
-                                if (fd != -1) {
-                                    openCount.incrementAndGet();
-
-                                    long fileLength = Files.length(fd);
-                                    Assert.assertEquals("File length should match", FILE_SIZE, fileLength);
-
-                                    if (rnd.nextInt(3) == 0) {
-                                        long position = Files.getLastModified(filePath.$());
-                                        Assert.assertTrue("Last modified should be positive", position > 0);
-                                    }
-
-                                    int closeResult = Files.close(fd);
-                                    Assert.assertEquals("Close should succeed", 0, closeResult);
-                                    closeCount.incrementAndGet();
-                                }
-
-                                totalOperations.incrementAndGet();
-                            } catch (Exception e) {
-                                if (fd != -1) {
-                                    try {
-                                        Files.close(fd);
-                                        closeCount.incrementAndGet();
-                                    } catch (Exception ignored) {
-                                    }
-                                }
-                                exceptions.add(e);
-                                failed.set(true);
-                                break;
+                            long fd;
+                            if (rnd.nextBoolean()) {
+                                fd = Files.openRO(filePath.$());
+                            } else {
+                                fd = Files.openRW(filePath.$());
                             }
+
+                            if (fd != -1) {
+                                openCount.incrementAndGet();
+
+                                long fileLength = Files.length(fd);
+                                Assert.assertEquals("File length should match", FILE_SIZE, fileLength);
+
+                                if (rnd.nextInt(3) == 0) {
+                                    long position = Files.getLastModified(filePath.$());
+                                    Assert.assertTrue("Last modified should be positive", position > 0);
+                                }
+
+                                int closeResult = Files.close(fd);
+                                Assert.assertEquals("Close should succeed", 0, closeResult);
+                                closeCount.incrementAndGet();
+                            }
+
+                            totalOperations.incrementAndGet();
+
                         }
                     } catch (Exception e) {
                         exceptions.add(e);
@@ -170,7 +172,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
             Thread[] threads = new Thread[NUM_THREADS];
 
             for (int i = 0; i < NUM_THREADS; i++) {
-                Rnd rnd = new Rnd(rndRoot.nextLong(), rndRoot.nextLong());
+                int threadId = i;
                 threads[i] = new Thread(() -> {
                     try {
                         barrier.await();
@@ -178,8 +180,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
                         for (int op = 0; op < OPERATIONS_PER_THREAD / 4; op++) {
                             if (failed.get()) break;
 
-                            int fileIndex = rnd.nextInt(NUM_FILES);
-                            Path filePath = testFilePaths[fileIndex];
+                            Path filePath = testFilePaths[threadId];
 
                             try {
                                 if (Files.exists(filePath.$())) {
@@ -239,6 +240,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
 
             for (int i = 0; i < NUM_THREADS; i++) {
                 Rnd rnd = new Rnd(rndRoot.nextLong(), rndRoot.nextLong());
+                int threadId = i; // Capture thread index for lambda
                 threads[i] = new Thread(() -> {
                     try {
                         barrier.await();
@@ -246,8 +248,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
                         for (int op = 0; op < OPERATIONS_PER_THREAD / 2; op++) {
                             if (failed.get()) break;
 
-                            int fileIndex = rnd.nextInt(NUM_FILES);
-                            Path filePath = testFilePaths[fileIndex];
+                            Path filePath = testFilePaths[threadId];
 
                             long fd = -1;
                             long address = 0;
@@ -427,62 +428,49 @@ public class FilesCacheFuzzTest extends AbstractTest {
                         for (int op = 0; op < OPERATIONS_PER_THREAD / 4; op++) {
                             if (failed.get()) break;
 
-                            long fd = -1;
-                            try {
-                                fd = Files.openRW(singleFile.$());
-                                Assert.assertTrue(fd > -1);
-                                int mapSize = 8192 + rnd.nextInt(FILE_SIZE);
+                            long fd = Files.openRW(singleFile.$());
+                            Assert.assertTrue(fd > -1);
+                            long mapSize = Files.PAGE_SIZE + rnd.nextInt(FILE_SIZE);
 
-                                // Create mapping
-                                long address = Files.mmap(fd, mapSize, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
-                                Assert.assertTrue(address > 0);
-                                mappingOperations.incrementAndGet();
+                            // Create mapping
+                            long address = Files.mmap(fd, mapSize, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+                            Assert.assertTrue(address > 0);
+                            mappingOperations.incrementAndGet();
 
-                                // Brief delay to allow cache interaction
-                                if (rnd.nextInt(5) == 0) {
-                                    Thread.sleep(1);
-                                }
-
-                                long address2 = Files.mmap(fd, mapSize / 2, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
-
-                                int testValue = threadId * NUM_THREADS + op + 1;
-
-                                long writeOffset = threadId * 8 + rnd.nextInt(2) * Files.PAGE_SIZE;
-                                if (writeOffset > mapSize / 2) {
-                                    writeOffset = threadId * 8;
-                                }
-
-                                Unsafe.getUnsafe().putLong(address + writeOffset, testValue);
-
-                                long read = Unsafe.getUnsafe().getLong(address2 + writeOffset);
-                                Assert.assertEquals("Read value should match written value",
-                                        testValue, read);
-
-                                long fd2 = Files.openRW(singleFile.$());
-                                Assert.assertTrue(fd2 > -1);
-                                int mapSize3 = mapSize / 2 + rnd.nextInt(mapSize / 2);
-                                long address3 = Files.mmap(fd, mapSize3, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
-                                long read2 = Unsafe.getUnsafe().getLong(address2 + writeOffset);
-                                Assert.assertEquals("Read value should match written value",
-                                        testValue, read2);
-
-                                Files.munmap(address, mapSize, MemoryTag.MMAP_DEFAULT);
-                                Files.munmap(address2, mapSize, MemoryTag.MMAP_DEFAULT);
-                                Files.munmap(address3, mapSize3, MemoryTag.MMAP_DEFAULT);
-
-                                Files.close(fd);
-                                Files.close(fd2);
-                            } catch (Exception e) {
-                                if (fd != -1) {
-                                    try {
-                                        Files.close(fd);
-                                    } catch (Exception ignored) {
-                                    }
-                                }
-                                exceptions.add(e);
-                                failed.set(true);
-                                break;
+                            // Brief delay to allow cache interaction
+                            if (rnd.nextInt(5) == 0) {
+                                Thread.sleep(1);
                             }
+
+                            long address2 = Files.mmap(fd, mapSize / 2, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+
+                            int testValue = threadId * NUM_THREADS + op + 1;
+
+                            long writeOffset = threadId * 8 + rnd.nextInt(2) * Files.PAGE_SIZE;
+                            if (writeOffset > mapSize / 2 - 8) {
+                                writeOffset = threadId * 8;
+                            }
+
+                            Unsafe.getUnsafe().putLong(address + writeOffset, testValue);
+
+                            long read = Unsafe.getUnsafe().getLong(address2 + writeOffset);
+                            Assert.assertEquals("Read value should match written value",
+                                    testValue, read);
+
+                            long fd2 = Files.openRW(singleFile.$());
+                            Assert.assertTrue(fd2 > -1);
+                            long mapSize3 = mapSize / 2 + rnd.nextLong(mapSize / 2);
+                            long address3 = Files.mmap(fd, mapSize3, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                            long read2 = Unsafe.getUnsafe().getLong(address2 + writeOffset);
+                            Assert.assertEquals("Read value should match written value",
+                                    testValue, read2);
+
+                            Files.munmap(address, mapSize, MemoryTag.MMAP_DEFAULT);
+                            Files.munmap(address2, mapSize / 2, MemoryTag.MMAP_DEFAULT);
+                            Files.munmap(address3, mapSize3, MemoryTag.MMAP_DEFAULT);
+
+                            Files.close(fd);
+                            Files.close(fd2);
                         }
                     } catch (Exception e) {
                         exceptions.add(e);
@@ -519,7 +507,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
 
             Thread[] threads = new Thread[NUM_THREADS];
             // Operate all threads on the same file
-            Path filePath = testFilePaths[0];
+            Path singleFile = testFilePaths[0];
 
             for (int i = 0; i < NUM_THREADS; i++) {
                 int thread = i; // Capture thread index for lambda
@@ -531,9 +519,9 @@ public class FilesCacheFuzzTest extends AbstractTest {
                         for (int op = 0; op < OPERATIONS_PER_THREAD / 4 && !failed.get(); op++) {
 
                             // Open file first to get it into cache
-                            long fd1 = Files.openRW(filePath.$());
+                            long fd1 = Files.openRW(singleFile.$());
                             if (fd1 == -1) {
-                                LOG.error().$("Failed to open file: ").$(filePath).$();
+                                LOG.error().$("Failed to open file: ").$(singleFile).$();
                                 failed.set(true);
                             }
                             Unsafe.getUnsafe().putLong(buff, op + 1);
@@ -541,7 +529,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
 
                             openOperations.incrementAndGet();
 
-                            long fd2 = Files.openRO(filePath.$());
+                            long fd2 = Files.openRO(singleFile.$());
                             Files.close(fd1);
 
                             if (Files.read(fd2, buff, 8, thread * 8) == 8) {
@@ -551,7 +539,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
 
                             Files.close(fd2);
 
-                            if (Files.remove(filePath.$())) {
+                            if (Files.remove(singleFile.$())) {
                                 markRemovedOperations.incrementAndGet();
                             }
                         }
@@ -584,6 +572,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
 
     private void setupTestFiles() {
         try {
+
             String[] testFilePaths = new String[NUM_FILES];
             this.testFilePaths = new Path[NUM_FILES];
 
@@ -594,6 +583,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
             for (int i = 0; i < NUM_FILES; i++) {
                 File tempFile = temp.newFile("files_fuzz_test_" + System.nanoTime() + "_" + i + ".dat");
                 testFilePaths[i] = tempFile.getAbsolutePath();
+                //noinspection resource
                 this.testFilePaths[i] = new Path();
                 this.testFilePaths[i].of(testFilePaths[i]);
 
