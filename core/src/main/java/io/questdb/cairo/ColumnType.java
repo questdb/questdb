@@ -187,6 +187,7 @@ public final class ColumnType {
     public static boolean defaultStringImplementationIsUtf8() {
         return Chars.equals(nameOf(STRING), "VARCHAR");
     }
+
     public static int encodeArrayType(short elemType, int nDims) {
         return encodeArrayType(elemType, nDims, true);
     }
@@ -510,6 +511,18 @@ public final class ColumnType {
 
     public static int typeOf(CharSequence name) {
         return nameTypeMap.get(name);
+    }
+
+    private static void addArrayTypeName(StringSink sink, short type) {
+        sink.clear();
+        sink.put(nameOf(type));
+        for (int d = 1; d <= ARRAY_NDIMS_LIMIT; d++) {
+            sink.put("[]");
+            int arrayType = encodeArrayType(type, d, false);
+            String name = sink.toString();
+            typeNameMap.put(arrayType, name);
+            nameTypeMap.put(name, arrayType);
+        }
     }
 
     private static boolean isArrayCast(int fromType, int toType) {
@@ -863,18 +876,6 @@ public final class ColumnType {
         for (int i = 0, n = ARRAY_NDIMS_LIMIT + 1; i < n; i++) {
             ARRAY_DIM_SUFFIX[i] = sink.toString();
             sink.put("[]");
-        }
-    }
-
-    private static void addArrayTypeName(StringSink sink, short type) {
-        sink.clear();
-        sink.put(nameOf(type));
-        for (int d = 1; d <= ARRAY_NDIMS_LIMIT; d++) {
-            sink.put("[]");
-            int arrayType = encodeArrayType(type, d, false);
-            String name = sink.toString();
-            typeNameMap.put(arrayType, name);
-            nameTypeMap.put(name, arrayType);
         }
     }
 }
