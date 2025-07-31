@@ -1,0 +1,7 @@
+"str","ts"
+"foobar","1970-01-02T00:00:00.000000Z"
+"foobar foobar foobar foobar","1970-01-02T00:00:00.000000Z"
+"foobar foobar ""foobar"" foobar foobar","1970-01-02T00:00:00.000000Z"
+"""foobar"" foobar foobar foobar","1970-01-02T00:00:00.000000Z"
+foobar","1970-01-02T00:00:00.000000Z"
+"фубар ""фубар"" фубар","1970-01-02T00:00:00.000000Z"

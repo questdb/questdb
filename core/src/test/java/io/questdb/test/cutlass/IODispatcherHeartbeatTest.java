@@ -89,9 +89,9 @@ public class IODispatcherHeartbeatTest {
                             return heartbeatInterval;
                         }
                     },
-                    (fd, d) -> {
+                    fd -> {
                         connected.incrementAndGet();
-                        return new TestContext(fd, d, heartbeatInterval);
+                        return new TestContext(fd, heartbeatInterval);
                     }
             )) {
                 IORequestProcessor<TestContext> processor = new TestProcessor(clock);
@@ -168,9 +168,9 @@ public class IODispatcherHeartbeatTest {
                             return heartbeatToIdleRatio * heartbeatInterval;
                         }
                     },
-                    (fd, d) -> {
+                    fd -> {
                         connected.incrementAndGet();
-                        return new TestContext(fd, d, heartbeatInterval);
+                        return new TestContext(fd, heartbeatInterval);
                     }
             )) {
                 IORequestProcessor<TestContext> processor = new TestProcessor(clock);
@@ -242,9 +242,9 @@ public class IODispatcherHeartbeatTest {
             };
             try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
                     ioDispatcherConfig,
-                    (fd, d) -> {
+                    fd -> {
                         connected.incrementAndGet();
-                        return new TestContext(fd, d, heartbeatInterval);
+                        return new TestContext(fd, heartbeatInterval);
                     }
             )) {
                 SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
@@ -312,9 +312,9 @@ public class IODispatcherHeartbeatTest {
             };
             try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
                     ioDispatcherConfig,
-                    (fd, d) -> {
+                    fd -> {
                         connected.incrementAndGet();
-                        return new TestContext(fd, d, heartbeatInterval);
+                        return new TestContext(fd, heartbeatInterval);
                     }
             )) {
                 SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
@@ -393,9 +393,9 @@ public class IODispatcherHeartbeatTest {
             };
             try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
                     ioDispatcherConfig,
-                    (fd, d) -> {
+                    fd -> {
                         connected.incrementAndGet();
-                        return new TestContext(fd, d, heartbeatInterval);
+                        return new TestContext(fd, heartbeatInterval);
                     }
             )) {
                 SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
@@ -458,7 +458,7 @@ public class IODispatcherHeartbeatTest {
                 context.suspendEvent = suspendEvent;
                 alreadySuspended = true;
             }
-            context.getDispatcher().registerChannel(context, operation);
+            dispatcher.registerChannel(context, operation);
             return true;
         }
     }
@@ -478,17 +478,15 @@ public class IODispatcherHeartbeatTest {
 
     private static class TestContext extends IOContext<TestContext> {
         private final long buffer = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
-        private final IODispatcher<TestContext> dispatcher;
         private final long heartbeatInterval;
         boolean isPreviousEventHeartbeat = true;
         long previousHeartbeatTs;
         long previousReadTs;
         SuspendEvent suspendEvent;
 
-        public TestContext(long fd, IODispatcher<TestContext> dispatcher, long heartbeatInterval) {
+        public TestContext(long fd, long heartbeatInterval) {
             super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG);
             socket.of(fd);
-            this.dispatcher = dispatcher;
             this.heartbeatInterval = heartbeatInterval;
         }
 
@@ -526,10 +524,6 @@ public class IODispatcherHeartbeatTest {
             super.close();
         }
 
-        public IODispatcher<TestContext> getDispatcher() {
-            return dispatcher;
-        }
-
         @Override
         public SuspendEvent getSuspendEvent() {
             return suspendEvent;
@@ -551,7 +545,7 @@ public class IODispatcherHeartbeatTest {
         @Override
         public boolean onRequest(int operation, TestContext context, IODispatcher<TestContext> dispatcher) {
             context.checkInvariant(operation, clock.getTicks());
-            context.getDispatcher().registerChannel(context, operation);
+            dispatcher.registerChannel(context, operation);
             return true;
         }
     }
