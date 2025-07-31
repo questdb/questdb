@@ -67,23 +67,6 @@ public class DoubleScalarDivArrayFunctionFactory implements FunctionFactory {
             this.array = new DirectArray(configuration);
         }
 
-        protected void calculateRecursive(ArrayView view, int dim, int flatIndex) {
-            final int count = view.getDimLen(dim);
-            final int stride = view.getStride(dim);
-            final boolean atDeepestDim = dim == view.getDimCount() - 1;
-            if (atDeepestDim) {
-                for (int i = 0; i < count; i++) {
-                    memory.putDouble(scalarValue / view.getDouble(i));
-                    flatIndex += stride;
-                }
-            } else {
-                for (int i = 0; i < count; i++) {
-                    calculateRecursive(view, dim + 1, flatIndex);
-                    flatIndex += stride;
-                }
-            }
-        }
-
         @Override
         public void close() {
             BinaryFunction.super.close();
@@ -134,6 +117,23 @@ public class DoubleScalarDivArrayFunctionFactory implements FunctionFactory {
         @Override
         public boolean isThreadSafe() {
             return false;
+        }
+
+        private void calculateRecursive(ArrayView view, int dim, int flatIndex) {
+            final int count = view.getDimLen(dim);
+            final int stride = view.getStride(dim);
+            final boolean atDeepestDim = dim == view.getDimCount() - 1;
+            if (atDeepestDim) {
+                for (int i = 0; i < count; i++) {
+                    memory.putDouble(scalarValue / view.getDouble(flatIndex));
+                    flatIndex += stride;
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    calculateRecursive(view, dim + 1, flatIndex);
+                    flatIndex += stride;
+                }
+            }
         }
     }
 }
