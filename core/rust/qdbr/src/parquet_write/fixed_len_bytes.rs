@@ -5,7 +5,7 @@ use parquet2::encoding::Encoding;
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 
-use super::util::BinaryMaxMin;
+use super::util::BinaryMaxMinStats;
 
 fn encode_plain_be<const N: usize>(data: &[[u8; N]], buffer: &mut Vec<u8>, null_value: [u8; N]) {
     for x in data.iter().filter(|&&x| x != null_value) {
@@ -17,7 +17,7 @@ fn encode_plain<const N: usize>(
     data: &[[u8; N]],
     buffer: &mut Vec<u8>,
     null_value: [u8; N],
-    stats: &mut BinaryMaxMin,
+    stats: &mut BinaryMaxMinStats,
 ) {
     for x in data.iter().filter(|&&x| x != null_value) {
         buffer.extend_from_slice(x);
@@ -58,7 +58,7 @@ pub fn bytes_to_page<const N: usize>(
     let deflevels_len = deflevels_iter.size_hint().1.unwrap();
     encode_bool_iter(&mut buffer, deflevels_iter, deflevels_len, options.version)?;
     let definition_levels_byte_length = buffer.len();
-    let mut stats = BinaryMaxMin::new(&primitive_type);
+    let mut stats = BinaryMaxMinStats::new(&primitive_type);
     if reverse {
         encode_plain_be(data, &mut buffer, null_value);
     } else {

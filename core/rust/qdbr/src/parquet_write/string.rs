@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-use super::util::BinaryMaxMin;
+use super::util::BinaryMaxMinStats;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
@@ -67,7 +67,7 @@ pub fn string_to_page(
 
     let definition_levels_byte_length = buffer.len();
 
-    let mut stats = BinaryMaxMin::new(&primitive_type);
+    let mut stats = BinaryMaxMinStats::new(&primitive_type);
 
     match encoding {
         Encoding::Plain => {
@@ -102,7 +102,11 @@ pub fn string_to_page(
     .map(Page::Data)
 }
 
-fn encode_plain(utf16_slices: &[Option<&[u16]>], buffer: &mut Vec<u8>, stats: &mut BinaryMaxMin) {
+fn encode_plain(
+    utf16_slices: &[Option<&[u16]>],
+    buffer: &mut Vec<u8>,
+    stats: &mut BinaryMaxMinStats,
+) {
     for utf16 in utf16_slices.iter().filter_map(|&option| option) {
         let utf8 = String::from_utf16(utf16).expect("utf16 string");
         // BYTE_ARRAY: first 4 bytes denote length in little-endian.
@@ -118,7 +122,7 @@ fn encode_delta(
     utf16_slices: &[Option<&[u16]>],
     null_count: usize,
     buffer: &mut Vec<u8>,
-    stats: &mut BinaryMaxMin,
+    stats: &mut BinaryMaxMinStats,
 ) {
     let lengths = utf16_slices
         .iter()

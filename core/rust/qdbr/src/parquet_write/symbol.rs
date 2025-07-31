@@ -1,4 +1,4 @@
-use super::util::BinaryMaxMin;
+use super::util::BinaryMaxMinStats;
 use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetErrorReason, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util;
@@ -67,7 +67,7 @@ fn encode_symbols_dict<'a>(
     column_vals: &'a [i32], // The QuestDB symbol column indices (i.e. numeric values).
     offsets: &'a [u64],     // Memory-mapped offsets into the QuestDB global symbol table.
     chars: &'a [u8], // Memory-mapped global symbol table. Sequence of 4-code-unit-len-prefixed utf16 strings.
-    stats: &'a mut BinaryMaxMin,
+    stats: &'a mut BinaryMaxMinStats,
 ) -> ParquetResult<(Vec<u8>, impl Iterator<Item = u32> + 'a, u32)> {
     let local_keys = column_vals
         .iter()
@@ -192,7 +192,7 @@ pub fn symbol_to_pages(
     )?;
     let definition_levels_byte_length = data_buffer.len();
 
-    let mut stats = BinaryMaxMin::new(&primitive_type);
+    let mut stats = BinaryMaxMinStats::new(&primitive_type);
     let (dict_buffer, keys, max_key) =
         encode_symbols_dict(column_values, offsets, chars, &mut stats)
             .context("could not write symbols dict map page")?;

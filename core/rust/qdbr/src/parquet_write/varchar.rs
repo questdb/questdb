@@ -4,7 +4,7 @@ use super::util::ExactSizedIter;
 use crate::allocator::AcVec;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter, BinaryMaxMin};
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter, BinaryMaxMinStats};
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
@@ -95,7 +95,7 @@ pub fn varchar_to_page(
 
     let definition_levels_byte_length = buffer.len();
 
-    let mut stats = BinaryMaxMin::new(&primitive_type);
+    let mut stats = BinaryMaxMinStats::new(&primitive_type);
 
     match encoding {
         Encoding::Plain => {
@@ -130,7 +130,11 @@ pub fn varchar_to_page(
     .map(Page::Data)
 }
 
-fn encode_plain(utf8_slices: &[Option<&[u8]>], buffer: &mut Vec<u8>, stats: &mut BinaryMaxMin) {
+fn encode_plain(
+    utf8_slices: &[Option<&[u8]>],
+    buffer: &mut Vec<u8>,
+    stats: &mut BinaryMaxMinStats,
+) {
     for utf8 in utf8_slices.iter().filter_map(|&option| option) {
         let len = (utf8.len() as u32).to_le_bytes();
         buffer.extend_from_slice(&len);
@@ -143,7 +147,7 @@ fn encode_delta(
     utf8_slices: &[Option<&[u8]>],
     null_count: usize,
     buffer: &mut Vec<u8>,
-    stats: &mut BinaryMaxMin,
+    stats: &mut BinaryMaxMinStats,
 ) {
     let lengths = utf8_slices
         .iter()

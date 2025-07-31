@@ -36,7 +36,7 @@ impl<T: Copy + NativeType> MaxMin<T> {
     }
 }
 
-pub struct BinaryMaxMin {
+pub struct BinaryMaxMinStats {
     primitive_type: PrimitiveType,
     max_value: Option<Vec<u8>>,
     min_value: Option<Vec<u8>>,
@@ -44,7 +44,7 @@ pub struct BinaryMaxMin {
 
 const SIZEOF_I64: usize = mem::size_of::<i64>();
 
-impl BinaryMaxMin {
+impl BinaryMaxMinStats {
     pub fn new(primitive_type: &PrimitiveType) -> Self {
         Self {
             primitive_type: primitive_type.clone(),
@@ -120,6 +120,27 @@ fn binary_upper_bound(max_value: Vec<u8>) -> Vec<u8> {
     let val_slice_be: [u8; SIZEOF_I64] = max_value[..SIZEOF_I64].try_into().unwrap();
     let upper_bound = i64::from_be_bytes(val_slice_be).saturating_add(1);
     upper_bound.to_be_bytes().to_vec()
+}
+
+pub struct ArrayStats {
+    null_count: usize,
+}
+
+impl ArrayStats {
+    pub fn new(null_count: usize) -> Self {
+        Self { null_count }
+    }
+
+    pub fn into_parquet_stats(self) -> ParquetStatistics {
+        ParquetStatistics {
+            null_count: Some(self.null_count as i64),
+            distinct_count: None,
+            max_value: None,
+            min_value: None,
+            min: None,
+            max: None,
+        }
+    }
 }
 
 pub struct ExactSizedIter<T, I: Iterator<Item = T>> {

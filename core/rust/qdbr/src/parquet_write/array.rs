@@ -28,6 +28,7 @@ use parquet2::compression::CompressionOptions;
 use parquet2::metadata::Descriptor;
 use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2};
 use parquet2::write::Version;
+use parquet2::statistics::ParquetStatistics;
 use qdb_core::col_driver::ArrayAuxEntry;
 
 use crate::parquet_write::util;
@@ -35,7 +36,7 @@ use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 
-use super::util::BinaryMaxMin;
+use super::util::{ArrayStats, BinaryMaxMinStats};
 use crate::allocator::AcVec;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
@@ -133,6 +134,7 @@ pub fn array_to_page(
     };
 
     let null_count = column_top + null_count;
+    let stats = ArrayStats::new(null_count);
     build_page(
         dim,
         buffer,
@@ -140,6 +142,11 @@ pub fn array_to_page(
         null_count,
         repetition_levels_byte_length,
         definition_levels_byte_length,
+        if options.write_statistics {
+            Some(stats.into_parquet_stats())
+        } else {
+            None
+        },
         options,
         encoding,
     )
@@ -172,6 +179,7 @@ fn build_page(
     null_count: usize,
     repetition_levels_byte_length: usize,
     definition_levels_byte_length: usize,
+    statistics: Option<ParquetStatistics>,
     options: WriteOptions,
     encoding: Encoding,
 ) -> ParquetResult<DataPage> {
@@ -181,7 +189,7 @@ fn build_page(
             encoding: encoding.into(),
             definition_level_encoding: Encoding::Rle.into(),
             repetition_level_encoding: Encoding::Rle.into(),
-            statistics: None,
+            statistics,
         }),
         Version::V2 => DataPageHeader::V2(DataPageHeaderV2 {
             num_values: num_rows as i32,
@@ -191,7 +199,7 @@ fn build_page(
             definition_levels_byte_length: definition_levels_byte_length as i32,
             repetition_levels_byte_length: repetition_levels_byte_length as i32,
             is_compressed: Some(options.compression != CompressionOptions::Uncompressed),
-            statistics: None,
+            statistics,
         }),
     };
     // TODO(puzpuzpuz): how to avoid primitive type here????
@@ -253,7 +261,7 @@ pub fn array_to_raw_page(
 
     let definition_levels_byte_length = buffer.len();
 
-    let mut stats = BinaryMaxMin::new(&primitive_type);
+    let mut stats = BinaryMaxMinStats::new(&primitive_type);
 
     match encoding {
         Encoding::Plain => {
@@ -288,7 +296,11 @@ pub fn array_to_raw_page(
     .map(Page::Data)
 }
 
-fn encode_raw_plain(arr_slices: &[Option<&[u8]>], buffer: &mut Vec<u8>, stats: &mut BinaryMaxMin) {
+fn encode_raw_plain(
+    arr_slices: &[Option<&[u8]>],
+    buffer: &mut Vec<u8>,
+    stats: &mut BinaryMaxMinStats,
+) {
     for arr in arr_slices.iter().filter_map(|&option| option) {
         let len = (arr.len() as u32).to_le_bytes();
         buffer.extend_from_slice(&len);
@@ -301,7 +313,7 @@ fn encode_raw_delta(
     arr_slices: &[Option<&[u8]>],
     null_count: usize,
     buffer: &mut Vec<u8>,
-    stats: &mut BinaryMaxMin,
+    stats: &mut BinaryMaxMinStats,
 ) {
     let lengths = arr_slices
         .iter()
