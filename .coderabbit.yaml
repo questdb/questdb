@@ -4,12 +4,12 @@ early_access: false
 reviews:
   profile: "chill"
   request_changes_workflow: false
-  high_level_summary: true
-  poem: true
+  high_level_summary: false
+  poem: false
   review_status: true
   collapse_walkthrough: false
   auto_review:
     enabled: false
     drafts: false
 chat:
-  auto_reply: true
+  auto_reply: false
