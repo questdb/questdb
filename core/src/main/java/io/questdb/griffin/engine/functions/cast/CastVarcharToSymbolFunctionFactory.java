@@ -46,6 +46,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 
+
 public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
 
     @Override
