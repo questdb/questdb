@@ -46,7 +46,12 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.HashMap;
+import java.util.Map;
 
+/**
+ * Factory for casting VARCHAR to SYMBOL type
+ */
 public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
 
     @Override
@@ -62,76 +67,62 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        final Function arg = args.getQuick(0);
-        if (arg.isConstant()) {
-            final Utf8Sequence value = arg.getVarcharA(null);
-            if (value == null) {
-                return SymbolConstant.NULL;
-            }
-            StringSink utf16Sink = Misc.getThreadLocalSink();
-            utf16Sink.put(value);
-            return SymbolConstant.newInstance(utf16Sink);
+        Function inputFunction = args.getQuick(0);
+        if (inputFunction.isConstant()) {
+            return createConstantSymbol(inputFunction);
         }
-        return new Func(arg);
+        return new VarcharToSymbolFunction(inputFunction);
     }
 
-    private static class Func extends SymbolFunction implements UnaryFunction {
-        private final Function arg;
-        private final Utf8SequenceIntHashMap lookupMap = new Utf8SequenceIntHashMap();
-        private final ObjList<CharSequence> symbols = new ObjList<>();
-        private int next = 1;
+    private Function createConstantSymbol(Function inputFunction) {
+        Utf8Sequence value = inputFunction.getVarcharA(null);
+        if (value == null) {
+            return SymbolConstant.NULL;
+        }
+        StringSink sink = Misc.getThreadLocalSink();
+        sink.put(value);
+        return SymbolConstant.newInstance(sink);
+    }
 
-        public Func(Function arg) {
-            this.arg = arg;
-            symbols.add(null);
+    /**
+     * Function to convert VARCHAR to SYMBOL
+     */
+    private static class VarcharToSymbolFunction extends SymbolFunction implements UnaryFunction {
+        private final Function inputFunction;
+        private final SymbolTableManager symbolTableManager;
+
+        public VarcharToSymbolFunction(Function inputFunction) {
+            this.inputFunction = inputFunction;
+            this.symbolTableManager = new SymbolTableManager();
         }
 
         @Override
         public Function getArg() {
-            return arg;
+            return inputFunction;
         }
 
         @Override
         public int getInt(Record rec) {
-            final Utf8Sequence value = arg.getVarcharA(rec);
-            final int keyIndex;
-            if (value == null) {
-                return SymbolTable.VALUE_IS_NULL;
-            }
-            if ((keyIndex = lookupMap.keyIndex(value)) > -1) {
-                final String str = Utf8s.toString(value);
-                lookupMap.putAt(keyIndex, value, next);
-                symbols.add(str);
-                return next++ - 1;
-            }
-            return lookupMap.valueAt(keyIndex) - 1;
+            Utf8Sequence value = inputFunction.getVarcharA(rec);
+            return value == null ? SymbolTable.VALUE_IS_NULL : symbolTableManager.getSymbolIndex(value);
         }
 
         @Override
         public CharSequence getSymbol(Record rec) {
-            final Utf8Sequence value = arg.getVarcharA(rec);
-            if (value == null) {
-                return null;
-            }
-            return getSymbol(value);
+            Utf8Sequence value = inputFunction.getVarcharA(rec);
+            return value == null ? null : symbolTableManager.lookupSymbol(value);
         }
 
         @Override
         public CharSequence getSymbolB(Record rec) {
-            final Utf8Sequence value = arg.getVarcharB(rec);
-            if (value == null) {
-                return null;
-            }
-            return getSymbol(value);
+            Utf8Sequence value = inputFunction.getVarcharB(rec);
+            return value == null ? null : symbolTableManager.lookupSymbol(value);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            arg.init(symbolTableSource, executionContext);
-            lookupMap.clear();
-            symbols.clear();
-            symbols.add(null);
-            next = 1;
+            inputFunction.init(symbolTableSource, executionContext);
+            symbolTableManager.reset();
         }
 
         @Override
@@ -146,17 +137,14 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public @Nullable SymbolTable newSymbolTable() {
-            Func copy = new Func(arg);
-            copy.lookupMap.putAll(this.lookupMap);
-            copy.symbols.clear();
-            copy.symbols.addAll(this.symbols);
-            copy.next = this.next;
+            VarcharToSymbolFunction copy = new VarcharToSymbolFunction(inputFunction);
+            copy.symbolTableManager.copyFrom(this.symbolTableManager);
             return copy;
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(arg).val("::symbol");
+            sink.val(inputFunction).val("::symbol");
         }
 
         @Override
@@ -166,18 +154,61 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+            return symbolTableManager.getSymbolValue(TableUtils.toIndexKey(symbolKey));
+        }
+    }
+
+    /**
+     * Manages symbol table operations
+     */
+    private static class SymbolTableManager {
+        private final Map<Utf8Sequence, Integer> symbolIndexMap;
+        private final ObjList<CharSequence> symbolValues;
+        private int nextSymbolId;
+
+        public SymbolTableManager() {
+            symbolIndexMap = new HashMap<>();
+            symbolValues = new ObjList<>();
+            symbolValues.add(null); // Reserve index 0 for null
+            nextSymbolId = 1;
         }
 
-        private CharSequence getSymbol(Utf8Sequence value) {
-            final int keyIndex;
-            if ((keyIndex = lookupMap.keyIndex(value)) > -1) {
-                final String str = Utf8s.toString(value);
-                lookupMap.putAt(keyIndex, value, next++);
-                symbols.add(str);
-                return str;
+        public void reset() {
+            symbolIndexMap.clear();
+            symbolValues.clear();
+            symbolValues.add(null);
+            nextSymbolId = 1;
+        }
+
+        public int getSymbolIndex(Utf8Sequence value) {
+            return symbolIndexMap.computeIfAbsent(value, k -> {
+                String symbol = Utf8s.toString(value);
+                symbolValues.add(symbol);
+                return nextSymbolId++;
+            }) - 1;
+        }
+
+        public CharSequence lookupSymbol(Utf8Sequence value) {
+            Integer index = symbolIndexMap.get(value);
+            if (index == null) {
+                String symbol = Utf8s.toString(value);
+                index = nextSymbolId++;
+                symbolIndexMap.put(value, index);
+                symbolValues.add(symbol);
+                return symbol;
             }
-            return symbols.getQuick(lookupMap.valueAt(keyIndex));
+            return symbolValues.getQuick(index);
+        }
+
+        public CharSequence getSymbolValue(int index) {
+            return symbolValues.getQuick(index);
+        }
+
+        public void copyFrom(SymbolTableManager other) {
+            symbolIndexMap.putAll(other.symbolIndexMap);
+            symbolValues.clear();
+            symbolValues.addAll(other.symbolValues);
+            nextSymbolId = other.nextSymbolId;
         }
     }
 }
