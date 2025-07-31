@@ -39,14 +39,7 @@ import static io.questdb.ParanoiaState.FD_PARANOIA_MODE;
  */
 public class FdCache {
     private static final int NON_CACHED = (2 << 30);
-    private static final int OPEN_ALWAYS_WIN = 0x4;
-    private static final int OPEN_EXISTING_WIN = 0x3;
-    private static final int O_CREAT;
-    private static final int O_CREAT_LINUX = 0x40;
-    private static final int O_CREAT_OSX = 0x200;
-    private static final int O_RO;
     private static final int RO_MASK = 0;
-    private static final int RW_MASK = (1 << 30);
     private final AtomicInteger fdCounter = new AtomicInteger(1);
     private final LongObjHashMap<FdCacheRecord> openFdMapByFd = new LongObjHashMap<>();
     private final Utf8SequenceObjHashMap<FdCacheRecord> openFdMapByPath = new Utf8SequenceObjHashMap<>();
@@ -175,7 +168,7 @@ public class FdCache {
      * Opens file in read-only mode with caching support.
      */
     public synchronized long openROCached(LPSZ lpsz) {
-        final FdCacheRecord holder = getFdCacheRecord(lpsz, O_RO);
+        final FdCacheRecord holder = getFdCacheRecord(lpsz);
         if (holder == null) {
             // Failed to open
             return -1;
@@ -183,23 +176,6 @@ public class FdCache {
 
         holder.count++;
         long uniqROFd = createUniqueFdRO(holder.osFd);
-        openFdMapByFd.put(uniqROFd, holder);
-
-        return uniqROFd;
-    }
-
-    /**
-     * Opens file in read-write mode with caching support and creation options.
-     */
-    public synchronized long openRWCached(LPSZ lpsz, int opts) {
-        final FdCacheRecord holder = getFdCacheRecord(lpsz, opts | O_CREAT);
-        if (holder == null) {
-            // Failed to open
-            return -1;
-        }
-
-        holder.count++;
-        long uniqROFd = createUniqueFdRW(holder.osFd);
         openFdMapByFd.put(uniqROFd, holder);
 
         return uniqROFd;
@@ -244,17 +220,12 @@ public class FdCache {
         return Numbers.encodeLowHighInts(index | RO_MASK, fd);
     }
 
-    private long createUniqueFdRW(int fd) {
-        int index = fdCounter.getAndIncrement();
-        return Numbers.encodeLowHighInts(index | RW_MASK, fd);
-    }
-
     @Nullable
-    private FdCacheRecord getFdCacheRecord(LPSZ lpsz, int opts) {
+    private FdCacheRecord getFdCacheRecord(LPSZ lpsz) {
         int keyIndex = openFdMapByPath.keyIndex(lpsz);
         final FdCacheRecord holder;
         if (keyIndex > -1) {
-            int osFd = Files.openRWOptsNoCreate(lpsz.ptr(), opts);
+            int osFd = Files.openRO(lpsz.ptr());
             if (osFd < 0) {
                 // Failed to open
                 holder = null;
@@ -299,20 +270,6 @@ public class FdCache {
         public FdCacheRecord(Utf8String path, long mmapCacheFd) {
             this.path = path;
             this.mmapCacheFd = mmapCacheFd;
-        }
-    }
-
-    static {
-        if (Os.isOSX()) {
-            O_RO = 0;
-            O_CREAT = O_CREAT_OSX;
-        } else if (Os.isWindows()) {
-            O_RO = OPEN_EXISTING_WIN;
-            O_CREAT = OPEN_ALWAYS_WIN;
-        } else {
-            // Must be Linux of other Unix-like OS
-            O_RO = 0;
-            O_CREAT = O_CREAT_LINUX;
         }
     }
 }

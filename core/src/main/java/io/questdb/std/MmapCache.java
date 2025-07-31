@@ -37,7 +37,7 @@ public class MmapCache {
      * Maps file region into memory, reusing existing mapping if available.
      */
     public long cacheMmap(int fd, long fileCacheKey, long len, long offset, int flags, int memoryTag) {
-        if (offset != 0 || fileCacheKey == 0 || !Files.FS_CACHE_ENABLED) {
+        if (offset != 0 || fileCacheKey == 0 || !Files.FS_CACHE_ENABLED || flags == Files.MAP_RW) {
             return mmap0(fd, len, offset, flags, memoryTag);
         }
 
@@ -54,7 +54,7 @@ public class MmapCache {
             }
 
             // Always map as RW, even if the request is RO.
-            long address = mmap0(fd, len, 0, Files.MAP_RW, memoryTag);
+            long address = mmap0(fd, len, 0, Files.MAP_RO, memoryTag);
 
             if (address == -1) {
                 // mmap failed, return 0
@@ -141,7 +141,7 @@ public class MmapCache {
                 record.count--;
                 if (record.count == 0) {
                     // No one else uses the record, we can use mremap
-                    newAddress = mremap0(fd, record.address, record.length, newSize, offset, Files.MAP_RW, record.memoryTag, memoryTag);
+                    newAddress = mremap0(fd, record.address, record.length, newSize, offset, Files.MAP_RO, record.memoryTag, memoryTag);
                     if (newAddress != -1) {
                         record.address = newAddress;
                         record.length = newSize;
@@ -152,7 +152,7 @@ public class MmapCache {
                     record.count = 1;
                 } else {
                     // Someone else is using the record, we need to create a new one
-                    newAddress = mmap0(fd, newSize, 0, Files.MAP_RW, memoryTag);
+                    newAddress = mmap0(fd, newSize, 0, Files.MAP_RO, memoryTag);
                     if (newAddress != -1) {
                         // Cache the new mmap record
                         var newRecord = new MmapCacheRecord(fd, fileCacheKey, newSize, newAddress, 1, memoryTag);

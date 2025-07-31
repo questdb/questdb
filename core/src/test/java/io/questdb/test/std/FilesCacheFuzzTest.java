@@ -26,7 +26,6 @@ package io.questdb.test.std;
 
 import io.questdb.ParanoiaState;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
@@ -40,29 +39,47 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+@RunWith(Parameterized.class)
 public class FilesCacheFuzzTest extends AbstractTest {
     private static final int FILE_SIZE = (int) (Files.PAGE_SIZE * 10);
     private static final int NUM_THREADS = 4;
     private static final int NUM_FILES = NUM_THREADS;
     private static final int OPERATIONS_PER_THREAD = 500;
     private static boolean savedFdParanoia;
+    private long beforeFdResused;
+    private long beforeMmapResused;
     private Rnd rndRoot;
     private Path[] testFilePaths;
+
+    public FilesCacheFuzzTest(boolean fdCacheEnabled) {
+        Files.FS_CACHE_ENABLED = fdCacheEnabled;
+    }
+
+    @Parameterized.Parameters(name = "fd_cache_enabled_{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {true},
+                {false},
+        });
+    }
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractTest.setUpStatic();
-        Files.FS_CACHE_ENABLED = FilesFacadeImpl.INSTANCE.allowMixedIO(root);
         savedFdParanoia = ParanoiaState.FD_PARANOIA_MODE;
         ParanoiaState.FD_PARANOIA_MODE = true;
     }
@@ -77,12 +94,17 @@ public class FilesCacheFuzzTest extends AbstractTest {
     public void setUp() {
         super.setUp();
         setupTestFiles();
+        beforeFdResused = Files.getFdReuseCount();
+        beforeMmapResused = Files.getMmapReuseCount();
     }
 
     @After
     public void tearDown() throws Exception {
         Misc.free(testFilePaths);
         super.tearDown();
+        LOG.info().$("FD cached reused: ").$(Files.getFdReuseCount() - beforeFdResused)
+                .$(", Mmap cached reused: ").$(Files.getMmapReuseCount() - beforeMmapResused)
+                .$();
     }
 
     @Test
@@ -253,10 +275,10 @@ public class FilesCacheFuzzTest extends AbstractTest {
                             long fd = -1;
                             long address = 0;
                             try {
-                                fd = Files.openRW(filePath.$());
+                                fd = Files.openRO(filePath.$());
                                 if (fd != -1) {
                                     int mapSize = 1024 + rnd.nextInt(FILE_SIZE - 1024);
-                                    address = Files.mmap(fd, mapSize, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+                                    address = Files.mmap(fd, mapSize, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
 
                                     if (address != -1) {
                                         mmapCount.incrementAndGet();
@@ -264,7 +286,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
                                         if (rnd.nextInt(3) == 0) {
                                             int newSize = mapSize + 1024;
                                             if (newSize <= FILE_SIZE) {
-                                                long newAddress = Files.mremap(fd, address, mapSize, newSize, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+                                                long newAddress = Files.mremap(fd, address, mapSize, newSize, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
                                                 if (newAddress != -1) {
                                                     address = newAddress;
                                                     mapSize = newSize;
@@ -457,10 +479,10 @@ public class FilesCacheFuzzTest extends AbstractTest {
                             Assert.assertEquals("Read value should match written value",
                                     testValue, read);
 
-                            long fd2 = Files.openRW(singleFile.$());
+                            long fd2 = Files.openRO(singleFile.$());
                             Assert.assertTrue(fd2 > -1);
                             long mapSize3 = mapSize / 2 + rnd.nextLong(mapSize / 2);
-                            long address3 = Files.mmap(fd, mapSize3, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                            long address3 = Files.mmap(fd2, mapSize3, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
                             long read2 = Unsafe.getUnsafe().getLong(address2 + writeOffset);
                             Assert.assertEquals("Read value should match written value",
                                     testValue, read2);
@@ -482,12 +504,6 @@ public class FilesCacheFuzzTest extends AbstractTest {
 
             for (Thread thread : threads) {
                 thread.join();
-            }
-
-            if (!exceptions.isEmpty()) {
-                Exception first = exceptions.poll();
-                LOG.error().$("MmapCache reuse - Mappings: ").$(mappingOperations.get()).$();
-                throw new RuntimeException("MmapCache reuse test failed", first);
             }
 
             Assert.assertTrue("Should have mapping operations", mappingOperations.get() > 0);

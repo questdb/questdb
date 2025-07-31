@@ -415,18 +415,10 @@ public final class Files {
     }
 
     public static long openRW(LPSZ lpsz) {
-        if (FS_CACHE_ENABLED) {
-            return fdCache.openRWCached(lpsz, 0);
-        } else {
-            return fdCache.createUniqueFdNonCached(openRW(lpsz.ptr()));
-        }
+        return fdCache.createUniqueFdNonCached(openRW(lpsz.ptr()));
     }
 
     public static long openRW(LPSZ lpsz, int opts) {
-        return fdCache.openRWCached(lpsz, opts);
-    }
-
-    public static long openRWNoCache(LPSZ lpsz, int opts) {
         return fdCache.createUniqueFdNonCached(openRWOpts(lpsz.ptr(), opts));
     }
 
@@ -688,8 +680,6 @@ public final class Files {
 
     private native static int openAppend(long lpszName);
 
-    private native static int openRO(long lpszName);
-
     private native static int openRW(long lpszName);
 
     private native static int openRWOpts(long lpszName, int opts);
@@ -728,7 +718,7 @@ public final class Files {
 
     static native int munmap0(long address, long len);
 
-    native static int openRWOptsNoCreate(long lpszName, int opts);
+    native static int openRO(long lpszName);
 
     static {
         Os.init();
