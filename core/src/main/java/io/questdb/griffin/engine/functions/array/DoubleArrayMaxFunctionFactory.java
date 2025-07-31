@@ -56,7 +56,7 @@ public class DoubleArrayMaxFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    static class Func extends DoubleFunction implements UnaryFunction, DoubleUnaryArrayAccessor {
+    static class Func extends DoubleFunction implements UnaryFunction {
 
         private final Function arrayArg;
         private double max;
@@ -66,32 +66,20 @@ public class DoubleArrayMaxFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void applyToElement(ArrayView view, int index) {
-            double v = view.getDouble(index);
-            if (Numbers.isFinite(v) && v > max) {
-                max = v;
-            }
-        }
-
-        @Override
-        public void applyToEntireVanillaArray(ArrayView view) {
-            max = view.flatView().maxDouble(view.getFlatViewOffset(), view.getFlatViewLength());
-        }
-
-        @Override
-        public void applyToNullArray() {
-            max = Double.NaN;
-        }
-
-        @Override
         public Function getArg() {
             return arrayArg;
         }
 
         @Override
         public double getDouble(Record rec) {
+            ArrayView view = arrayArg.getArray(rec);
+            if (view.isNull()) {
+                return Double.NaN;
+            } else if (view.isVanilla()) {
+                return view.flatView().maxDouble(view.getFlatViewOffset(), view.getFlatViewLength());
+            }
             max = Double.NEGATIVE_INFINITY;
-            calculate(arrayArg.getArray(rec));
+            calculateRecursive(view, 0, 0);
             return Numbers.isFinite(max) ? max : Double.NaN;
         }
 
@@ -103,6 +91,26 @@ public class DoubleArrayMaxFunctionFactory implements FunctionFactory {
         @Override
         public boolean isThreadSafe() {
             return false;
+        }
+
+        private void calculateRecursive(ArrayView view, int dim, int flatIndex) {
+            final int count = view.getDimLen(dim);
+            final int stride = view.getStride(dim);
+            final boolean atDeepestDim = dim == view.getDimCount() - 1;
+            if (atDeepestDim) {
+                for (int i = 0; i < count; i++) {
+                    double v = view.getDouble(flatIndex);
+                    if (Numbers.isFinite(v) && v > max) {
+                        max = v;
+                    }
+                    flatIndex += stride;
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    calculateRecursive(view, dim + 1, flatIndex);
+                    flatIndex += stride;
+                }
+            }
         }
     }
 }

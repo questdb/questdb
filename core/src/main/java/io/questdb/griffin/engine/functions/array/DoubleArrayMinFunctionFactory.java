@@ -56,7 +56,7 @@ public class DoubleArrayMinFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    static class Func extends DoubleFunction implements UnaryFunction, DoubleUnaryArrayAccessor {
+    static class Func extends DoubleFunction implements UnaryFunction {
 
         private final Function arrayArg;
         private double min;
@@ -66,34 +66,43 @@ public class DoubleArrayMinFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void applyToElement(ArrayView view, int index) {
-            double v = view.getDouble(index);
-            if (Numbers.isFinite(v) && v < min) {
-                min = v;
-            }
-        }
-
-        @Override
-        public void applyToEntireVanillaArray(ArrayView view) {
-            min = view.flatView().minDouble(view.getFlatViewOffset(), view.getFlatViewLength());
-        }
-
-        @Override
-        public void applyToNullArray() {
-            min = Double.NaN;
-        }
-
-        @Override
         public Function getArg() {
             return arrayArg;
         }
 
         @Override
         public double getDouble(Record rec) {
+            ArrayView view = arrayArg.getArray(rec);
+            if (view.isNull()) {
+                return Double.NaN;
+            } else if (view.isVanilla()) {
+                return view.flatView().minDouble(view.getFlatViewOffset(), view.getFlatViewLength());
+            }
             min = Double.POSITIVE_INFINITY;
-            calculate(arrayArg.getArray(rec));
+            calculateRecursive(view, 0, 0);
             return Numbers.isFinite(min) ? min : Double.NaN;
         }
+
+        private void calculateRecursive(ArrayView view, int dim, int flatIndex) {
+            final int count = view.getDimLen(dim);
+            final int stride = view.getStride(dim);
+            final boolean atDeepestDim = dim == view.getDimCount() - 1;
+            if (atDeepestDim) {
+                for (int i = 0; i < count; i++) {
+                    double v = view.getDouble(flatIndex);
+                    if (Numbers.isFinite(v) && v < min) {
+                        min = v;
+                    }
+                    flatIndex += stride;
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    calculateRecursive(view, dim + 1, flatIndex);
+                    flatIndex += stride;
+                }
+            }
+        }
+
 
         @Override
         public String getName() {

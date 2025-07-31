@@ -63,7 +63,7 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
         return true;
     }
 
-    private static class Func extends DoubleFunction implements BinaryFunction, DoubleUnaryArrayAccessor {
+    private static class Func extends DoubleFunction implements BinaryFunction {
         private final Function leftArg;
         private final Function rightArg;
         private double scalar;
@@ -72,29 +72,6 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
         public Func(Function leftArg, Function rightArg) {
             this.leftArg = leftArg;
             this.rightArg = rightArg;
-        }
-
-        @Override
-        public void applyToElement(ArrayView view, int index) {
-            double v = view.getDouble(index);
-            if (Numbers.isFinite(v)) {
-                value += v * scalar;
-            }
-        }
-
-        @Override
-        public void applyToEntireVanillaArray(ArrayView view) {
-            FlatArrayView flatView = view.flatView();
-            for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
-                double v = flatView.getDoubleAtAbsIndex(i);
-                if (Numbers.isFinite(v)) {
-                    value += v * scalar;
-                }
-            }
-        }
-
-        @Override
-        public void applyToNullArray() {
         }
 
         @Override
@@ -108,7 +85,20 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
                 return Double.NaN;
             }
             value = 0d;
-            calculate(arr);
+
+            if (!arr.isNull()) {
+                if (arr.isVanilla()) {
+                    FlatArrayView flatView = arr.flatView();
+                    for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {
+                        double v = flatView.getDoubleAtAbsIndex(i);
+                        if (Numbers.isFinite(v)) {
+                            value += v * scalar;
+                        }
+                    }
+                } else {
+                    calculateRecursive(arr, 0, 0);
+                }
+            }
             return value;
         }
 
@@ -130,6 +120,26 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
         @Override
         public boolean isThreadSafe() {
             return false;
+        }
+
+        private void calculateRecursive(ArrayView view, int dim, int flatIndex) {
+            final int count = view.getDimLen(dim);
+            final int stride = view.getStride(dim);
+            final boolean atDeepestDim = dim == view.getDimCount() - 1;
+            if (atDeepestDim) {
+                for (int i = 0; i < count; i++) {
+                    double v = view.getDouble(flatIndex);
+                    if (Numbers.isFinite(v)) {
+                        value += v * scalar;
+                    }
+                    flatIndex += stride;
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    calculateRecursive(view, dim + 1, flatIndex);
+                    flatIndex += stride;
+                }
+            }
         }
     }
 }

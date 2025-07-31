@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -72,7 +73,7 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
         return new DoubleArrayRoundVarScaleFunction(arg, scale, configuration);
     }
 
-    private static class DoubleArrayRoundDegenerateScaleFunction extends ArrayFunction implements DoubleUnaryArrayAccessor, UnaryFunction {
+    private static class DoubleArrayRoundDegenerateScaleFunction extends ArrayFunction implements UnaryFunction {
         protected final Function arrayArg;
         private final DirectArray array;
         private final String name;
@@ -83,22 +84,6 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
             this.arrayArg = arrayArg;
             this.type = arrayArg.getType();
             this.array = new DirectArray(configuration);
-        }
-
-        @Override
-        public void applyToElement(ArrayView view, int index) {
-            memory.putDouble(Double.NaN);
-        }
-
-        @Override
-        public void applyToEntireVanillaArray(ArrayView view) {
-            for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
-                memory.putDouble(Double.NaN);
-            }
-        }
-
-        @Override
-        public void applyToNullArray() {
         }
 
         @Override
@@ -120,11 +105,10 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
                 return array;
             }
 
-            array.setType(getType());
-            array.copyShapeFrom(arr);
-            array.applyShape();
-            memory = array.startMemoryA();
-            calculate(arr);
+            memory = array.prepare(getType(), arr);
+            for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {
+                memory.putDouble(Double.NaN);
+            }
             return array;
         }
 
@@ -144,7 +128,7 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class DoubleArrayRoundPositiveScaleFunction extends ArrayFunction implements DoubleUnaryArrayAccessor, UnaryFunction {
+    private static class DoubleArrayRoundPositiveScaleFunction extends ArrayFunction implements UnaryFunction {
         protected final Function arrayArg;
         protected final int scale;
         private final DirectArray array;
@@ -160,23 +144,6 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void applyToElement(ArrayView view, int index) {
-            memory.putDouble(roundNc(view.getDouble(index)));
-        }
-
-        @Override
-        public void applyToEntireVanillaArray(ArrayView view) {
-            FlatArrayView flatView = view.flatView();
-            for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
-                memory.putDouble(roundNc(flatView.getDoubleAtAbsIndex(i)));
-            }
-        }
-
-        @Override
-        public void applyToNullArray() {
-        }
-
-        @Override
         public void close() {
             UnaryFunction.super.close();
             Misc.free(array);
@@ -195,11 +162,15 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
                 return array;
             }
 
-            array.setType(getType());
-            array.copyShapeFrom(arr);
-            array.applyShape();
-            memory = array.startMemoryA();
-            calculate(arr);
+            memory = array.prepare(getType(), arr);
+            if (arr.isVanilla()) {
+                FlatArrayView flatView = arr.flatView();
+                for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {
+                    memory.putDouble(roundNc(flatView.getDoubleAtAbsIndex(i)));
+                }
+            } else {
+                calculateRecursive(arr, 0, 0);
+            }
             return array;
         }
 
@@ -218,6 +189,23 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        private void calculateRecursive(ArrayView view, int dim, int flatIndex) {
+            final int count = view.getDimLen(dim);
+            final int stride = view.getStride(dim);
+            final boolean atDeepestDim = dim == view.getDimCount() - 1;
+            if (atDeepestDim) {
+                for (int i = 0; i < count; i++) {
+                    memory.putDouble(roundNc(view.getDouble(flatIndex)));
+                    flatIndex += stride;
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    calculateRecursive(view, dim + 1, flatIndex);
+                    flatIndex += stride;
+                }
+            }
+        }
+
         private double roundNc(double d) {
             if (Numbers.isFinite(d)) {
                 return Numbers.roundHalfUpPosScale(d, scale);
@@ -226,21 +214,88 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class DoubleArrayRoundVarScaleFunction extends DoubleArrayAndScalarIntArrayOperator {
+    private static class DoubleArrayRoundVarScaleFunction extends ArrayFunction implements BinaryFunction {
+        protected final Function arrayArg;
+        protected final Function scalarArg;
+        private final DirectArray array;
+        private final String name;
+        protected MemoryA memory;
+        protected int scalarValue;
+
         public DoubleArrayRoundVarScaleFunction(Function arrayArg, Function scalarArg, CairoConfiguration configuration) {
-            super("round", arrayArg, scalarArg, configuration);
+            this.name = "round";
+            this.arrayArg = arrayArg;
+            this.scalarArg = scalarArg;
+            this.type = arrayArg.getType();
+            this.array = new DirectArray(configuration);
         }
 
         @Override
-        public void applyToElement(ArrayView view, int index) {
-            memory.putDouble(roundNc(view.getDouble(index), scalarValue));
+        public void close() {
+            BinaryFunction.super.close();
+            Misc.free(array);
         }
 
         @Override
-        public void applyToEntireVanillaArray(ArrayView view) {
-            FlatArrayView flatView = view.flatView();
-            for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
-                memory.putDouble(roundNc(flatView.getDoubleAtAbsIndex(i), scalarValue));
+        public ArrayView getArray(Record rec) {
+            ArrayView arr = arrayArg.getArray(rec);
+            if (arr.isNull()) {
+                array.ofNull();
+                return array;
+            }
+
+            scalarValue = scalarArg.getInt(rec);
+            memory = array.prepare(getType(), arr);
+            if (arr.isVanilla()) {
+                FlatArrayView flatView = arr.flatView();
+                for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {
+                    memory.putDouble(roundNc(flatView.getDoubleAtAbsIndex(i), scalarValue));
+                }
+            } else {
+                calculateRecursive(arr, 0, 0);
+            }
+            return array;
+        }
+
+        @Override
+        public Function getLeft() {
+            return arrayArg;
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public Function getRight() {
+            return scalarArg;
+        }
+
+        @Override
+        public boolean isOperator() {
+            return true;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        private void calculateRecursive(ArrayView view, int dim, int flatIndex) {
+            final int count = view.getDimLen(dim);
+            final int stride = view.getStride(dim);
+            final boolean atDeepestDim = dim == view.getDimCount() - 1;
+            if (atDeepestDim) {
+                for (int i = 0; i < count; i++) {
+                    memory.putDouble(roundNc(view.getDouble(flatIndex), scalarValue));
+                    flatIndex += stride;
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    calculateRecursive(view, dim + 1, flatIndex);
+                    flatIndex += stride;
+                }
             }
         }
 

@@ -26,12 +26,18 @@ package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FlatArrayView;
+import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayDivScalarFunctionFactory implements FunctionFactory {
@@ -47,22 +53,87 @@ public class DoubleArrayDivScalarFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), args.getQuick(1), configuration);
     }
 
-    private static class Func extends DoubleArrayAndScalarDoubleArrayOperator {
+    private static class Func extends ArrayFunction implements BinaryFunction {
+
+        private final DirectArray array;
+        private final Function arrayArg;
+        private final Function scalarArg;
+        private MemoryA memory;
+        private double scalarValue;
 
         public Func(Function arrayArg, Function scalarArg, CairoConfiguration configuration) {
-            super(OPERATOR_NAME, arrayArg, scalarArg, configuration);
+            this.arrayArg = arrayArg;
+            this.scalarArg = scalarArg;
+            this.type = arrayArg.getType();
+            this.array = new DirectArray(configuration);
         }
 
         @Override
-        public void applyToElement(ArrayView view, int index) {
-            memory.putDouble(view.getDouble(index) / scalarValue);
+        public void close() {
+            BinaryFunction.super.close();
+            Misc.free(array);
         }
 
         @Override
-        public void applyToEntireVanillaArray(ArrayView view) {
-            FlatArrayView flatView = view.flatView();
-            for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
-                memory.putDouble(flatView.getDoubleAtAbsIndex(i) / scalarValue);
+        public ArrayView getArray(Record rec) {
+            ArrayView arr = arrayArg.getArray(rec);
+            if (arr.isNull()) {
+                array.ofNull();
+                return array;
+            }
+
+            scalarValue = scalarArg.getDouble(rec);
+            memory = array.prepare(getType(), arr);
+            if (arr.isVanilla()) {
+                FlatArrayView flatView = arr.flatView();
+                for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {
+                    memory.putDouble(flatView.getDoubleAtAbsIndex(i) / scalarValue);
+                }
+            } else {
+                calculateRecursive(arr, 0, 0);
+            }
+            return array;
+        }
+
+        @Override
+        public Function getLeft() {
+            return arrayArg;
+        }
+
+        @Override
+        public String getName() {
+            return OPERATOR_NAME;
+        }
+
+        @Override
+        public Function getRight() {
+            return scalarArg;
+        }
+
+        @Override
+        public boolean isOperator() {
+            return true;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        private void calculateRecursive(ArrayView view, int dim, int flatIndex) {
+            final int count = view.getDimLen(dim);
+            final int stride = view.getStride(dim);
+            final boolean atDeepestDim = dim == view.getDimCount() - 1;
+            if (atDeepestDim) {
+                for (int i = 0; i < count; i++) {
+                    memory.putDouble(view.getDouble(flatIndex) / scalarValue);
+                    flatIndex += stride;
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    calculateRecursive(view, dim + 1, flatIndex);
+                    flatIndex += stride;
+                }
             }
         }
     }

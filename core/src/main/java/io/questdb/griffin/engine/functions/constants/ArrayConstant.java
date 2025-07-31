@@ -49,13 +49,8 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
                 array.ofNull();
                 return;
             }
-            array.setType(type);
-            int nDims = arrayIn.getDimCount();
-            for (int dim = 0; dim < nDims; dim++) {
-                array.setDimLen(dim, arrayIn.getDimLen(dim));
-            }
-            array.applyShape();
-            arrayIn.appendToMemFlat(array.startMemoryA(), 0, arrayIn.getFlatViewLength());
+            MemoryA mem = array.prepare(type, arrayIn);
+            arrayIn.appendToMemFlat(mem, 0, arrayIn.getFlatViewLength());
         } catch (Throwable th) {
             close();
             throw th;

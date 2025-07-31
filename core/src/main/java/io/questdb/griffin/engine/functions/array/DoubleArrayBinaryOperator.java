@@ -77,14 +77,14 @@ public abstract class DoubleArrayBinaryOperator extends ArrayFunction implements
             return arrayOut;
         }
         arrayOut.setType(type);
-        if (!left.shapeEquals(right)) {
+        if (left.shapeDiffers(right)) {
             DerivedArrayView.computeBroadcastShape(left, right, arrayOut.getShape(), leftArgPos);
-            if (!left.shapeEquals(arrayOut)) {
+            if (left.shapeDiffers(arrayOut)) {
                 leftArgView.of(left);
                 leftArgView.broadcast(arrayOut.getShape());
                 left = leftArgView;
             }
-            if (!right.shapeEquals(arrayOut)) {
+            if (right.shapeDiffers(arrayOut)) {
                 rightArgView.of(right);
                 rightArgView.broadcast(arrayOut.getShape());
                 right = rightArgView;

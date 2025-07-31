@@ -82,10 +82,7 @@ public class DoubleArrayShiftDefaultNaNFunctionFactory implements FunctionFactor
             if (offset == 0) {
                 return arr;
             }
-            array.setType(getType());
-            array.copyShapeFrom(arr);
-            array.applyShape();
-            MemoryA memory = array.startMemoryA();
+            MemoryA memory = array.prepare(getType(), arr);
             if (arr.isVanilla()) {
                 DoubleArrayShiftFunctionFactory.applyToEntireVanillaArray(arr, memory, offset, Double.NaN);
             } else {

@@ -90,7 +90,7 @@ public class DoubleArrayDotProductFunctionFactory implements FunctionFactory {
                 return 0d;
             }
 
-            if (!left.shapeEquals(right)) {
+            if (left.shapeDiffers(right)) {
                 throw CairoException.nonCritical().position(leftArgPos)
                         .put("arrays have different shapes [leftShape=").put(left.shapeToString())
                         .put(", rightShape=").put(right.shapeToString())

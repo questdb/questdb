@@ -57,7 +57,6 @@ public final class DirectArray extends MutableArray implements Mutable {
         this.configuration = configuration;
     }
 
-
     public DirectArray() {
         this.flatView = new BorrowedFlatArrayView();
         this.configuration = null;
@@ -108,6 +107,21 @@ public final class DirectArray extends MutableArray implements Mutable {
         borrowedFlatView().reset();
         shape.clear();
         strides.clear();
+    }
+
+    /**
+     * Helper method to prepare the direct array to take shape of another array. Functions
+     * will take control of populating array memory.
+     *
+     * @param type the target element type
+     * @param arr the source of shape
+     * @return memory to be used by functions to materialize array
+     */
+    public MemoryA prepare(int type, ArrayView arr) {
+        setType(type);
+        copyShapeFrom(arr);
+        applyShape();
+        return startMemoryA();
     }
 
     public long ptr() {

@@ -52,7 +52,7 @@ public class DoubleNegArrayFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), configuration);
     }
 
-    private static class Func extends ArrayFunction implements DoubleUnaryArrayAccessor, UnaryFunction {
+    private static class Func extends ArrayFunction implements UnaryFunction {
         private final DirectArray array;
         protected Function arrayArg;
         protected MemoryA memory;
@@ -61,23 +61,6 @@ public class DoubleNegArrayFunctionFactory implements FunctionFactory {
             this.arrayArg = arrayArg;
             this.array = new DirectArray(configuration);
             this.type = arrayArg.getType();
-        }
-
-        @Override
-        public void applyToElement(ArrayView view, int index) {
-            memory.putDouble(-view.getDouble(index));
-        }
-
-        @Override
-        public void applyToEntireVanillaArray(ArrayView view) {
-            FlatArrayView flatView = view.flatView();
-            for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
-                memory.putDouble(-flatView.getDoubleAtAbsIndex(i));
-            }
-        }
-
-        @Override
-        public void applyToNullArray() {
         }
 
         @Override
@@ -99,11 +82,15 @@ public class DoubleNegArrayFunctionFactory implements FunctionFactory {
                 return array;
             }
 
-            array.setType(getType());
-            array.copyShapeFrom(arr);
-            array.applyShape();
-            memory = array.startMemoryA();
-            calculate(arr);
+            memory = array.prepare(getType(), arr);
+            if (arr.isVanilla()) {
+                FlatArrayView flatView = arr.flatView();
+                for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {
+                    memory.putDouble(-flatView.getDoubleAtAbsIndex(i));
+                }
+            } else {
+                calculateRecursive(arr, 0, 0);
+            }
             return array;
         }
 
@@ -119,6 +106,23 @@ public class DoubleNegArrayFunctionFactory implements FunctionFactory {
         @Override
         public boolean isThreadSafe() {
             return false;
+        }
+
+        private void calculateRecursive(ArrayView view, int dim, int flatIndex) {
+            final int count = view.getDimLen(dim);
+            final int stride = view.getStride(dim);
+            final boolean atDeepestDim = dim == view.getDimCount() - 1;
+            if (atDeepestDim) {
+                for (int i = 0; i < count; i++) {
+                    memory.putDouble(-view.getDouble(flatIndex));
+                    flatIndex += stride;
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    calculateRecursive(view, dim + 1, flatIndex);
+                    flatIndex += stride;
+                }
+            }
         }
     }
 }

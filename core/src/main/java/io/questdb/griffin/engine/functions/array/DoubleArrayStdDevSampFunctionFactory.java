@@ -61,7 +61,7 @@ public class DoubleArrayStdDevSampFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    protected static class Func extends DoubleFunction implements UnaryFunction, DoubleUnaryArrayAccessor {
+    protected static class Func extends DoubleFunction implements UnaryFunction {
 
         private final Function arrayArg;
         protected int count;
@@ -70,38 +70,6 @@ public class DoubleArrayStdDevSampFunctionFactory implements FunctionFactory {
 
         Func(Function arrayArg) {
             this.arrayArg = arrayArg;
-        }
-
-        @Override
-        public void applyToElement(ArrayView view, int index) {
-            double value = view.getDouble(index);
-            if (Numbers.isFinite(value)) {
-                count++;
-                double oldMean = mean;
-                mean += (value - mean) / count;
-                deltaSquaredSum += (value - mean) * (value - oldMean);
-            }
-        }
-
-        @Override
-        public void applyToEntireVanillaArray(ArrayView view) {
-            FlatArrayView flatView = view.flatView();
-            int offset = view.getFlatViewOffset();
-            int length = view.getFlatViewLength();
-            for (int i = offset, n = offset + length; i < n; i++) {
-                double value = flatView.getDoubleAtAbsIndex(i);
-                if (Numbers.isFinite(value)) {
-                    count++;
-                    double oldMean = mean;
-                    mean += (value - mean) / count;
-                    deltaSquaredSum += (value - mean) * (value - oldMean);
-                }
-            }
-        }
-
-        @Override
-        public void applyToNullArray() {
-            deltaSquaredSum = Double.NaN;
         }
 
         @Override
@@ -119,7 +87,22 @@ public class DoubleArrayStdDevSampFunctionFactory implements FunctionFactory {
             mean = 0.0;
             count = 0;
 
-            calculate(arr);
+            if (arr.isVanilla()) {
+                FlatArrayView flatView = arr.flatView();
+                int offset = arr.getFlatViewOffset();
+                int length = arr.getFlatViewLength();
+                for (int i = offset, n = offset + length; i < n; i++) {
+                    double value = flatView.getDoubleAtAbsIndex(i);
+                    if (Numbers.isFinite(value)) {
+                        count++;
+                        double oldMean = mean;
+                        mean += (value - mean) / count;
+                        deltaSquaredSum += (value - mean) * (value - oldMean);
+                    }
+                }
+            } else {
+                calculateRecursive(arr, 0, 0);
+            }
 
             long countForVariance = getCountForVariance();
             if (countForVariance <= 0) {
@@ -144,6 +127,29 @@ public class DoubleArrayStdDevSampFunctionFactory implements FunctionFactory {
         @Override
         public boolean isThreadSafe() {
             return false;
+        }
+
+        private void calculateRecursive(ArrayView view, int dim, int flatIndex) {
+            final int count = view.getDimLen(dim);
+            final int stride = view.getStride(dim);
+            final boolean atDeepestDim = dim == view.getDimCount() - 1;
+            if (atDeepestDim) {
+                for (int i = 0; i < count; i++) {
+                    double value = view.getDouble(flatIndex);
+                    if (Numbers.isFinite(value)) {
+                        this.count++;
+                        double oldMean = mean;
+                        mean += (value - mean) / this.count;
+                        deltaSquaredSum += (value - mean) * (value - oldMean);
+                    }
+                    flatIndex += stride;
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    calculateRecursive(view, dim + 1, flatIndex);
+                    flatIndex += stride;
+                }
+            }
         }
 
         protected int getCountForVariance() {

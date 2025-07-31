@@ -56,32 +56,13 @@ public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    static class Func extends DoubleFunction implements UnaryFunction, DoubleUnaryArrayAccessor {
+    static class Func extends DoubleFunction implements UnaryFunction {
         private final Function arrayArg;
         private int count;
         private double sum;
 
         Func(Function arrayArg) {
             this.arrayArg = arrayArg;
-        }
-
-        @Override
-        public void applyToElement(ArrayView view, int index) {
-            double v = view.getDouble(index);
-            if (Numbers.isFinite(v)) {
-                sum += v;
-                count++;
-            }
-        }
-
-        @Override
-        public void applyToEntireVanillaArray(ArrayView view) {
-            sum = view.flatView().avgDouble(view.getFlatViewOffset(), view.getFlatViewLength());
-        }
-
-        @Override
-        public void applyToNullArray() {
-            sum = Double.NaN;
         }
 
         @Override
@@ -92,11 +73,16 @@ public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             ArrayView arr = arrayArg.getArray(rec);
+            boolean vanilla = arr.isVanilla();
+            if (arr.isNull()) {
+                return Double.NaN;
+            } else if (vanilla) {
+                return arr.flatView().avgDouble(arr.getFlatViewOffset(), arr.getFlatViewLength());
+            }
             count = 0;
             sum = 0d;
-            boolean vanilla = arr.isVanilla();
-            calculate(arr);
-            return vanilla ? sum : sum / count;
+            calculateRecursive(arr, 0, 0);
+            return sum / count;
         }
 
         @Override
@@ -107,6 +93,27 @@ public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
         @Override
         public boolean isThreadSafe() {
             return false;
+        }
+
+        private void calculateRecursive(ArrayView view, int dim, int flatIndex) {
+            final int count = view.getDimLen(dim);
+            final int stride = view.getStride(dim);
+            final boolean atDeepestDim = dim == view.getDimCount() - 1;
+            if (atDeepestDim) {
+                for (int i = 0; i < count; i++) {
+                    double v = view.getDouble(flatIndex);
+                    if (Numbers.isFinite(v)) {
+                        sum += v;
+                        this.count++;
+                    }
+                    flatIndex += stride;
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    calculateRecursive(view, dim + 1, flatIndex);
+                    flatIndex += stride;
+                }
+            }
         }
     }
 }
