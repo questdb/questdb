@@ -81,7 +81,6 @@ public class SqlParser {
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
-    private static final RewriteDeclaredVariablesInExpressionVisitor rewriteDeclaredVariablesInExpressionVisitor = new RewriteDeclaredVariablesInExpressionVisitor();
     private static final LowerCaseAsciiCharSequenceHashSet setOperations = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final IntList tableNamePositions = new IntList();
@@ -106,6 +105,7 @@ public class SqlParser {
     private final ObjectPool<RenameTableModel> renameTableModelPool;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcatRef = this::rewriteConcat;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCountRef = this::rewriteCount;
+    private final RewriteDeclaredVariablesInExpressionVisitor rewriteDeclaredVariablesInExpressionVisitor = new RewriteDeclaredVariablesInExpressionVisitor();
     private final PostOrderTreeTraversalAlgo.Visitor rewriteJsonExtractCastRef = this::rewriteJsonExtractCast;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgCastRef = this::rewritePgCast;
     private final ObjList<ExpressionNode> tempExprNodes = new ObjList<>();
@@ -410,66 +410,6 @@ public class SqlParser {
         return sqlParserCallback.parseCreateTableExt(lexer, executionContext.getSecurityContext(), builder, nextToken);
     }
 
-    private static void validateMatViewQuery(QueryModel model, String baseTableName) throws SqlException {
-        for (QueryModel m = model; m != null; m = m.getNestedModel()) {
-            tableNames.clear();
-            tableNamePositions.clear();
-            collectAllTableNames(m, tableNames, null);
-            final boolean baseTableQueried = tableNames.contains(baseTableName);
-            final int queriedTableCount = tableNames.size();
-            if (baseTableQueried) {
-                if (m.getSampleBy() != null && m.getSampleByOffset() == null) {
-                    throw SqlException.position(m.getSampleBy().position + m.getSampleBy().token.length() + 1)
-                            .put("ALIGN TO FIRST OBSERVATION on base table is not supported for materialized views: ").put(baseTableName);
-                }
-
-                if ((m.getSampleByFrom() != null || m.getSampleByTo() != null)) {
-                    final int position = m.getSampleByFrom() != null ? m.getSampleByFrom().position : m.getSampleByTo().position;
-                    throw SqlException.position(position)
-                            .put("FROM-TO on base table is not supported for materialized views: ").put(baseTableName);
-                }
-
-                final ObjList<ExpressionNode> sampleByFill = m.getSampleByFill();
-                if (sampleByFill != null && sampleByFill.size() > 0) {
-                    throw SqlException.position(sampleByFill.get(0).position)
-                            .put("FILL on base table is not supported for materialized views: ").put(baseTableName);
-                }
-
-                ObjList<QueryColumn> columns = m.getColumns();
-                QueryColumn windowFuncColumn = null;
-                for (int i = 0, n = columns.size(); i < n; i++) {
-                    QueryColumn column = columns.getQuick(i);
-                    if (column.isWindowColumn()) {
-                        windowFuncColumn = column;
-                    }
-                }
-                if (windowFuncColumn != null) {
-                    throw SqlException.position(windowFuncColumn.getAst().position)
-                            .put("window function on base table is not supported for materialized views: ").put(baseTableName);
-                }
-            }
-
-            final ObjList<QueryModel> joinModels = m.getJoinModels();
-            for (int i = 0, n = joinModels.size(); i < n; i++) {
-                final QueryModel joinModel = joinModels.getQuick(i);
-                if (joinModel == m) {
-                    continue;
-                }
-                validateMatViewQuery(joinModel, baseTableName);
-            }
-
-            final QueryModel unionModel = m.getUnionModel();
-            if (unionModel != null) {
-                // allow self-UNION on base table, but disallow UNION on base table with any other tables
-                if (baseTableQueried && queriedTableCount > 1) {
-                    throw SqlException.position(m.getUnionModel().getModelPosition())
-                            .put("union on base table is not supported for materialized views: ").put(baseTableName);
-                }
-                validateMatViewQuery(unionModel, baseTableName);
-            }
-        }
-    }
-
     private static void validateShowTransactions(GenericLexer lexer) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && isIsolationKeyword(tok)) {
@@ -723,7 +663,7 @@ public class SqlParser {
                 alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
             }
         }
-        qc.setAlias(alias);
+        qc.setAlias(alias, QueryColumn.SYNTHESIZED_ALIAS_POSITION);
         aliasMap.put(alias, qc);
     }
 
@@ -2927,7 +2867,6 @@ public class SqlParser {
                     }
                 }
 
-                final CharSequence alias;
                 tok = optTok(lexer);
 
                 QueryColumn col;
@@ -3227,6 +3166,8 @@ public class SqlParser {
                     col = queryColumnPool.next().of(null, expr);
                 }
 
+                final CharSequence alias;
+                final int aliasPosition;
                 if (tok != null && columnAliasStop.excludes(tok)) {
                     assertNotDot(lexer, tok);
 
@@ -3239,11 +3180,13 @@ public class SqlParser {
                         validateIdentifier(lexer, aliasTok);
                         boolean unquoting = Chars.indexOf(aliasTok, '.') == -1;
                         alias = unquoting ? unquote(aliasTok) : aliasTok;
+                        aliasPosition = lexer.lastTokenPosition();
                     } else {
                         validateIdentifier(lexer, tok);
                         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                         boolean unquoting = Chars.indexOf(tok, '.') == -1;
                         alias = GenericLexer.immutableOf(unquoting ? unquote(tok) : tok);
+                        aliasPosition = lexer.lastTokenPosition();
                     }
 
                     if (col.getAst().isWildcard()) {
@@ -3254,6 +3197,7 @@ public class SqlParser {
                     aliasMap.put(alias, col);
                 } else {
                     alias = null;
+                    aliasPosition = QueryColumn.SYNTHESIZED_ALIAS_POSITION;
                 }
 
                 // correlated sub-queries do not have expr.token values (they are null)
@@ -3265,7 +3209,7 @@ public class SqlParser {
                     if (alias.length() == 0) {
                         throw err(lexer, null, "column alias cannot be a blank string");
                     }
-                    col.setAlias(alias);
+                    col.setAlias(alias, aliasPosition);
                 }
 
                 accumulatedColumns.add(col);
@@ -4037,6 +3981,80 @@ public class SqlParser {
         }
     }
 
+    private void validateMatViewQuery(QueryModel model, String baseTableName) throws SqlException {
+        for (QueryModel m = model; m != null; m = m.getNestedModel()) {
+            tableNames.clear();
+            tableNamePositions.clear();
+            collectAllTableNames(m, tableNames, null);
+            final boolean baseTableQueried = tableNames.contains(baseTableName);
+            final int queriedTableCount = tableNames.size();
+            if (baseTableQueried) {
+                if (m.getSampleBy() != null && m.getSampleByOffset() == null) {
+                    throw SqlException.position(m.getSampleBy().position + m.getSampleBy().token.length() + 1)
+                            .put("ALIGN TO FIRST OBSERVATION on base table is not supported for materialized views: ").put(baseTableName);
+                }
+
+                if ((m.getSampleByFrom() != null || m.getSampleByTo() != null)) {
+                    final int position = m.getSampleByFrom() != null ? m.getSampleByFrom().position : m.getSampleByTo().position;
+                    throw SqlException.position(position)
+                            .put("FROM-TO on base table is not supported for materialized views: ").put(baseTableName);
+                }
+
+                final ObjList<ExpressionNode> sampleByFill = m.getSampleByFill();
+                if (sampleByFill != null && sampleByFill.size() > 0) {
+                    throw SqlException.position(sampleByFill.get(0).position)
+                            .put("FILL on base table is not supported for materialized views: ").put(baseTableName);
+                }
+
+                ObjList<QueryColumn> columns = m.getColumns();
+                QueryColumn windowFuncColumn = null;
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    QueryColumn column = columns.getQuick(i);
+                    if (column.isWindowColumn()) {
+                        windowFuncColumn = column;
+                    }
+
+                    if (!Chars.equals(column.getName(), '*') && !TableUtils.isValidColumnName(column.getName(), configuration.getMaxFileNameLength())) {
+                        if (column.getAliasPosition() == QueryColumn.SYNTHESIZED_ALIAS_POSITION) {
+                            throw SqlException
+                                    .position(column.getAst().position)
+                                    .put("column '").put(column.getName()).put("' requires an explicit alias. Use: ")
+                                    .put(column.getName()).put(" AS your_column_name");
+                        } else {
+                            throw SqlException
+                                    .position(column.getAliasPosition())
+                                    .put("column alias '").put(column.getName()).put("' contains unsupported characters");
+                        }
+                    }
+                }
+
+                if (windowFuncColumn != null) {
+                    throw SqlException.position(windowFuncColumn.getAst().position)
+                            .put("window function on base table is not supported for materialized views: ").put(baseTableName);
+                }
+            }
+
+            final ObjList<QueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final QueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel == m) {
+                    continue;
+                }
+                validateMatViewQuery(joinModel, baseTableName);
+            }
+
+            final QueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                // allow self-UNION on base table, but disallow UNION on base table with any other tables
+                if (baseTableQueried && queriedTableCount > 1) {
+                    throw SqlException.position(m.getUnionModel().getModelPosition())
+                            .put("union on base table is not supported for materialized views: ").put(baseTableName);
+                }
+                validateMatViewQuery(unionModel, baseTableName);
+            }
+        }
+    }
+
     void clear() {
         queryModelPool.clear();
         queryColumnPool.clear();
@@ -4055,6 +4073,7 @@ public class SqlParser {
         topLevelWithModel.clear();
         explainModelPool.clear();
         digit = 1;
+        traversalAlgo.clear();
     }
 
     ExpressionNode expr(
