@@ -410,6 +410,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             if (indexLong == Long.MAX_VALUE) {
                 return Integer.MAX_VALUE;
             }
+            // the "a:b" operator only accepts INT, guaranteeing narrowing cast success
             int index = (int) indexLong;
             assert index == indexLong : "int overflow on interval " + boundName + " bound: " + indexLong;
             if (index < 0) {

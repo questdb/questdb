@@ -153,6 +153,12 @@ public class ArrayTest extends AbstractCairoTest {
                     12, "array index must be non-zero [dim=1, index=0]");
             assertExceptionNoLeakCheck("SELECT arr1[0, 1] FROM tango",
                     12, "array index must be non-zero [dim=1, index=0]");
+            assertExceptionNoLeakCheck("SELECT arr1[1:999_999_999_999] FROM tango",
+                    13, "there is no matching operator `:` with the argument types: INT : LONG");
+            assertExceptionNoLeakCheck("SELECT arr1[999_999_999_999:1] FROM tango",
+                    27, "there is no matching operator `:` with the argument types: LONG : INT");
+            assertExceptionNoLeakCheck("SELECT arr1[999_999_999_999:999_999_999_999] FROM tango",
+                    27, "there is no matching operator `:` with the argument types: LONG : LONG");
             assertExceptionNoLeakCheck("SELECT arr1[1:2, 0] FROM tango",
                     17, "array index must be non-zero [dim=2, index=0]");
             assertExceptionNoLeakCheck("SELECT arr1[1, 0] FROM tango",
