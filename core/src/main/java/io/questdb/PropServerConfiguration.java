@@ -300,7 +300,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewInsertAsSelectBatchSize;
     private final int matViewMaxRefreshIntervals;
     private final int matViewMaxRefreshRetries;
-    private final long matViewMinRefreshInterval;
     private final boolean matViewParallelExecutionEnabled;
     private final long matViewRefreshIntervalsUpdatePeriod;
     private final long matViewRefreshOomRetryTimeout;
@@ -1307,7 +1306,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
             this.matViewRefreshOomRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 200);
-            this.matViewMinRefreshInterval = getMicros(properties, env, PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL, Timestamps.MINUTE_MICROS);
             this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
             this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
             this.matViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
@@ -2426,12 +2424,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CAIRO_SQL_MAP_KEY_CAPACITY,
                     PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY
             );
-            registerDeprecated(PropertyKey.PG_INSERT_POOL_CAPACITY);
-            registerDeprecated(PropertyKey.LINE_UDP_TIMESTAMP);
-            registerDeprecated(PropertyKey.LINE_TCP_TIMESTAMP);
-            registerDeprecated(PropertyKey.CAIRO_SQL_JIT_ROWS_THRESHOLD);
-            registerDeprecated(PropertyKey.CAIRO_COMPACT_MAP_LOAD_FACTOR);
-            registerDeprecated(PropertyKey.CAIRO_DEFAULT_MAP_TYPE);
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY,
                     PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY
@@ -2464,18 +2456,17 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY,
                     PropertyKey.CAIRO_SQL_CREATE_TABLE_COLUMN_MODEL_POOL_CAPACITY
             );
-            registerDeprecated(
-                    PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE
-            );
-            registerDeprecated(
-                    PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE
-            );
-            registerDeprecated(
-                    PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE
-            );
-            registerDeprecated(
-                    PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE
-            );
+            registerDeprecated(PropertyKey.PG_INSERT_POOL_CAPACITY);
+            registerDeprecated(PropertyKey.LINE_UDP_TIMESTAMP);
+            registerDeprecated(PropertyKey.LINE_TCP_TIMESTAMP);
+            registerDeprecated(PropertyKey.CAIRO_SQL_JIT_ROWS_THRESHOLD);
+            registerDeprecated(PropertyKey.CAIRO_COMPACT_MAP_LOAD_FACTOR);
+            registerDeprecated(PropertyKey.CAIRO_DEFAULT_MAP_TYPE);
+            registerDeprecated(PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE);
+            registerDeprecated(PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE);
+            registerDeprecated(PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE);
+            registerDeprecated(PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE);
+            registerDeprecated(PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL);
         }
 
         public ValidationResult validate(Properties properties) {
@@ -3042,11 +3033,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMatViewMaxRefreshRetries() {
             return matViewMaxRefreshRetries;
-        }
-
-        @Override
-        public long getMatViewMinRefreshInterval() {
-            return matViewMinRefreshInterval;
         }
 
         @Override
