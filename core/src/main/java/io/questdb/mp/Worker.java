@@ -54,6 +54,8 @@ public class Worker extends Thread {
     private final Job.RunStatus runStatus = () -> lifecycle.get() == Lifecycle.HALTED;
     private final long sleepMs;
     private final long sleepThreshold;
+    private final WorkerStats stats;
+    private final WorkerPoolMetrics poolMetrics;
     private final int workerId;
     private final long yieldThreshold;
 
@@ -70,7 +72,8 @@ public class Worker extends Thread {
             long sleepThreshold,
             long sleepMs,
             Metrics metrics,
-            @Nullable Log log
+            @Nullable Log log,
+            WorkerPoolMetrics poolMetrics
     ) {
         assert yieldThreshold > 0L;
         this.setName(poolName + '_' + workerId);
@@ -88,10 +91,27 @@ public class Worker extends Thread {
         this.sleepMs = sleepMs;
         this.metrics = metrics;
         this.log = log;
+        this.poolMetrics = poolMetrics;
+        this.stats = new WorkerStats();
     }
 
     public String getPoolName() {
         return poolName;
+    }
+
+    /**
+     * Returns the worker's utilization percentage based on a sliding window of recent iterations.
+     * Utilization is calculated as the percentage of iterations where at least one job returned
+     * true (indicating useful work was performed).
+     * <p>
+     * The calculation prioritizes recent activity using a sliding window of the last 1000 iterations.
+     * If fewer than 1000 iterations have occurred, uses all available iterations for the calculation.
+     *
+     * @return utilization percentage (0.0 to 100.0), where 100.0 indicates the worker is always
+     * finding useful work and 0.0 indicates all jobs are returning false (idle)
+     */
+    public double getUtilizationPercentage() {
+        return stats.getUtilizationPercentage();
     }
 
     public int getWorkerId() {
@@ -144,12 +164,19 @@ public class Worker extends Thread {
                 long ticker = 0L;
                 while (lifecycle.get() == Lifecycle.RUNNING) {
                     boolean runAsap = false;
+                    int usefulJobs = 0;
+                    long iterationStart = CLOCK_MICROS.getTicks();
+
                     // measure latency of all jobs tick
-                    jobStartMicros.lazySet(CLOCK_MICROS.getTicks());
+                    jobStartMicros.lazySet(iterationStart);
                     for (int i = 0, n = jobs.size(); i < n; i++) {
                         Unsafe.getUnsafe().loadFence();
                         try {
-                            runAsap |= jobs.get(i).run(workerId, runStatus);
+                            boolean jobWasUseful = jobs.get(i).run(workerId, runStatus);
+                            runAsap |= jobWasUseful;
+                            if (jobWasUseful) {
+                                usefulJobs++;
+                            }
                         } catch (Throwable e) {
                             if (metrics.isEnabled()) {
                                 try {
@@ -171,10 +198,24 @@ public class Worker extends Thread {
                         }
                     }
 
+                    // Record iteration stats
+                    stats.recordIteration(usefulJobs > 0);
+                    
+                    // Update pool metrics periodically (every 100 iterations)
+                    poolMetrics.recordUtilization(workerId, stats.getUtilizationPercentage());
+
                     if (runAsap) {
                         ticker = 0;
                         continue;
                     }
+                    
+                    // Check if this worker should park
+                    if (poolMetrics.shouldPark(workerId)) {
+                        parkWorker();
+                        ticker = 0; // Reset ticker after parking
+                        continue;
+                    }
+                    
                     if (++ticker < 0) {
                         ticker = sleepThreshold + 1; // overflow
                     }
@@ -216,6 +257,39 @@ public class Worker extends Thread {
     long getJobStartMicros() {
         return jobStartMicros.get();
     }
+    
+    /**
+     * Parks this worker thread by waiting on its individual monitor until unparked.
+     * The worker will repeatedly check the parking flag and wait if it should remain parked.
+     * This method is called from within the worker's main loop when poolMetrics indicates
+     * this worker should be parked.
+     */
+    private void parkWorker() {
+        Object monitor = poolMetrics.getParkingMonitor(workerId);
+        
+        if (log != null) {
+            log.info().$("Worker parking [pool=").$(poolName).$(", workerId=").$(workerId).I$();
+        }
+        
+        while (poolMetrics.shouldPark(workerId) && lifecycle.get() == Lifecycle.RUNNING) {
+            synchronized (monitor) {
+                // Double-check the condition while holding the monitor lock
+                if (poolMetrics.shouldPark(workerId) && lifecycle.get() == Lifecycle.RUNNING) {
+                    try {
+                        monitor.wait(sleepMs); // Wait with timeout to periodically check conditions
+                    } catch (InterruptedException e) {
+                        // Restore interrupt status and exit parking
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
+        }
+        
+        if (log != null) {
+            log.info().$("Worker unparked [pool=").$(poolName).$(", workerId=").$(workerId).I$();
+        }
+    }
 
     private enum Lifecycle {
         BORN, RUNNING, HALTED
@@ -224,5 +298,54 @@ public class Worker extends Thread {
     @FunctionalInterface
     public interface OnHaltAction {
         void run(Throwable ex);
+    }
+
+    private static class WorkerStats {
+        private static final int SLIDING_WINDOW_SIZE = 1000; // Number of worker iterations (not time-based)
+        private final boolean[] slidingWindow = new boolean[SLIDING_WINDOW_SIZE]; // Circular buffer tracking last N iterations
+        private long totalIterations;
+        private long usefulIterations;
+        private boolean windowFull = false;
+        private int windowIndex = 0;
+
+        long getTotalIterations() {
+            return totalIterations;
+        }
+
+        private double getUtilizationPercentage() {
+            long total = totalIterations;
+            if (total == 0) {
+                return 0.0;
+            }
+
+            if (!windowFull && windowIndex > 0) {
+                int useful = 0;
+                for (int i = 0; i < windowIndex; i++) {
+                    if (slidingWindow[i]) useful++;
+                }
+                return (double) useful / windowIndex * 100.0;
+            } else if (windowFull) {
+                int useful = 0;
+                for (boolean wasUseful : slidingWindow) {
+                    if (wasUseful) useful++;
+                }
+                return (double) useful / SLIDING_WINDOW_SIZE * 100.0;
+            }
+
+            return (double) usefulIterations / total * 100.0;
+        }
+
+        private void recordIteration(boolean wasUseful) {
+            totalIterations++;
+            if (wasUseful) {
+                usefulIterations++;
+            }
+
+            slidingWindow[windowIndex] = wasUseful;
+            windowIndex = (windowIndex + 1) % SLIDING_WINDOW_SIZE;
+            if (!windowFull && windowIndex == 0) {
+                windowFull = true;
+            }
+        }
     }
 }

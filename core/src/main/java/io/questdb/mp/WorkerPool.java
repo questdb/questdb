@@ -56,6 +56,7 @@ public class WorkerPool implements Closeable {
     private final int workerCount;
     private final ObjList<ObjHashSet<Job>> workerJobs;
     private final ObjList<Worker> workers = new ObjList<>();
+    private final WorkerPoolMetrics poolMetrics;
     private final long yieldThreshold;
 
     public WorkerPool(WorkerPoolConfiguration configuration) {
@@ -78,13 +79,17 @@ public class WorkerPool implements Closeable {
         this.priority = configuration.workerPoolPriority();
 
         assert this.workerAffinity.length == workerCount;
-
         this.workerJobs = new ObjList<>(workerCount);
         this.threadLocalCleaners = new ObjList<>(workerCount);
+        this.poolMetrics = new WorkerPoolMetrics(workerCount);
+        this.freeOnExit.add(this.poolMetrics);
         for (int i = 0; i < workerCount; i++) {
             workerJobs.add(new ObjHashSet<>());
             threadLocalCleaners.add(new ObjList<>());
         }
+
+        WorkerPoolManagerJob managerJob = new WorkerPoolManagerJob(this.getPoolMetrics(), poolName);
+        assign(managerJob);
     }
 
     /**
@@ -131,6 +136,10 @@ public class WorkerPool implements Closeable {
         return workerCount;
     }
 
+    public WorkerPoolMetrics getPoolMetrics() {
+        return poolMetrics;
+    }
+
     public void halt() {
         if (closed.compareAndSet(false, true)) {
             if (running.compareAndSet(true, false)) {
@@ -141,6 +150,7 @@ public class WorkerPool implements Closeable {
                 halted.await();
             }
             workers.clear(); // Worker is not closable
+            poolMetrics.close();
             Misc.freeObjListAndClear(freeOnExit);
         }
     }
@@ -184,7 +194,8 @@ public class WorkerPool implements Closeable {
                         sleepThreshold,
                         sleepMs,
                         metrics,
-                        log
+                        log,
+                        poolMetrics
                 );
                 worker.setPriority(priority);
                 worker.setDaemon(daemons);
