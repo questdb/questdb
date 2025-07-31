@@ -266,10 +266,6 @@ jobs:
           path: |
             core/src/main/resources/io/questdb/bin/windows-x86-64/libquestdb.dll
           key: nativelibs-windows-${{ github.sha }}
-      - name: Remove executable bit from libraries
-        run: |
-          echo "Removing executable bit from .so and .dylib files..."
-          find ./core -name "*.so" -o -name "*.dylib" -exec chmod 644 {} +
       - name: Check git status before
         run: |
           git status
@@ -286,6 +282,16 @@ jobs:
           git add core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
           git add core/src/main/bin/linux-aarch64/libjemalloc.so
           git add core/src/main/resources/io/questdb/bin/windows-x86-64/libquestdb.dll
+          
+          echo "Removing exec permissions in Git index..."
+          git update-index --chmod=-x core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdb.dylib
+          git update-index --chmod=-x core/src/main/bin/darwin-aarch64/libjemalloc.dylib
+          git update-index --chmod=-x core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdb.dylib
+          git update-index --chmod=-x core/src/main/bin/darwin-x86-64/libjemalloc.dylib
+          git update-index --chmod=-x core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
+          git update-index --chmod=-x core/src/main/bin/linux-x86-64/libjemalloc.so
+          git update-index --chmod=-x core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
+          git update-index --chmod=-x core/src/main/bin/linux-aarch64/libjemalloc.so
           
           git commit -m "Rebuild CXX libraries"
       - name: Check git status after
