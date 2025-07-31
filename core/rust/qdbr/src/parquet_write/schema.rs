@@ -196,11 +196,10 @@ pub fn column_type_to_parquet_types(
                         elem_type.name()
                     ));
                 }
-                // TODO(puzpuzpuz): make it optional to support in-array nulls
                 let elem_type = ParquetType::try_from_primitive(
                     "element".to_string(),
                     PhysicalType::Double,
-                    Repetition::Required,
+                    Repetition::Optional,
                     None,
                     None,
                     None,
@@ -211,8 +210,8 @@ pub fn column_type_to_parquet_types(
                     let list = ParquetType::from_group(
                         "list".to_string(),
                         Repetition::Repeated,
-                        Some(GroupConvertedType::List),
-                        Some(GroupLogicalType::List),
+                        None,
+                        None,
                         vec![root_type],
                         None,
                     );

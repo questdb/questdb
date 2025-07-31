@@ -176,7 +176,7 @@ impl<T, I: Iterator<Item = T>> Iterator for ExactSizedIter<T, I> {
     }
 }
 
-fn encode_bool_iter_v1<I: Iterator<Item = bool>>(
+fn encode_primitive_deflevels_v1<I: Iterator<Item = bool>>(
     buffer: &mut Vec<u8>,
     iter: I,
     length: usize,
@@ -185,15 +185,15 @@ fn encode_bool_iter_v1<I: Iterator<Item = bool>>(
     let start = buffer.len();
     encode_bool(buffer, iter, length)?;
     let end = buffer.len();
-    let length = end - start;
+    let length_bytes = end - start;
 
     // write the first 4 bytes as length
-    let length = (length as i32).to_le_bytes();
-    (0..4).for_each(|i| buffer[start - 4 + i] = length[i]);
+    let length_bytes = (length_bytes as i32).to_le_bytes();
+    (0..4).for_each(|i| buffer[start - 4 + i] = length_bytes[i]);
     Ok(())
 }
 
-fn encode_bool_iter_v2<I: Iterator<Item = bool>>(
+fn encode_primitive_deflevels_v2<I: Iterator<Item = bool>>(
     buffer: &mut Vec<u8>,
     iter: I,
     length: usize,
@@ -201,19 +201,19 @@ fn encode_bool_iter_v2<I: Iterator<Item = bool>>(
     encode_bool(buffer, iter, length)
 }
 
-pub fn encode_bool_iter<I: Iterator<Item = bool>>(
+pub fn encode_primitive_deflevels<I: Iterator<Item = bool>>(
     buffer: &mut Vec<u8>,
     iter: I,
     length: usize,
     version: Version,
 ) -> io::Result<()> {
     match version {
-        Version::V1 => encode_bool_iter_v1(buffer, iter, length),
-        Version::V2 => encode_bool_iter_v2(buffer, iter, length),
+        Version::V1 => encode_primitive_deflevels_v1(buffer, iter, length),
+        Version::V2 => encode_primitive_deflevels_v2(buffer, iter, length),
     }
 }
 
-fn encode_levels_iter_v1<I: Iterator<Item = u32>>(
+fn encode_group_levels_v1<I: Iterator<Item = u32>>(
     buffer: &mut Vec<u8>,
     iter: I,
     length: usize,
@@ -223,15 +223,15 @@ fn encode_levels_iter_v1<I: Iterator<Item = u32>>(
     let start = buffer.len();
     encode_u32(buffer, iter, length, num_bits)?;
     let end = buffer.len();
-    let length = end - start;
+    let length_bytes = end - start;
 
     // write the first 4 bytes as length
-    let length = (length as i32).to_le_bytes();
-    (0..4).for_each(|i| buffer[start - 4 + i] = length[i]);
+    let length_bytes = (length_bytes as i32).to_le_bytes();
+    (0..4).for_each(|i| buffer[start - 4 + i] = length_bytes[i]);
     Ok(())
 }
 
-fn encode_levels_iter_v2<I: Iterator<Item = u32>>(
+fn encode_group_levels_v2<I: Iterator<Item = u32>>(
     buffer: &mut Vec<u8>,
     iter: I,
     length: usize,
@@ -240,7 +240,7 @@ fn encode_levels_iter_v2<I: Iterator<Item = u32>>(
     encode_u32(buffer, iter, length, num_bits)
 }
 
-pub fn encode_levels_iter<I: Iterator<Item = u32>>(
+pub fn encode_group_levels<I: Iterator<Item = u32>>(
     buffer: &mut Vec<u8>,
     iter: I,
     length: usize,
@@ -249,8 +249,8 @@ pub fn encode_levels_iter<I: Iterator<Item = u32>>(
 ) -> io::Result<()> {
     let num_bits = bit_width(max_level as u64);
     match version {
-        Version::V1 => encode_levels_iter_v1(buffer, iter, length, num_bits.into()),
-        Version::V2 => encode_levels_iter_v2(buffer, iter, length, num_bits.into()),
+        Version::V1 => encode_group_levels_v1(buffer, iter, length, num_bits.into()),
+        Version::V2 => encode_group_levels_v2(buffer, iter, length, num_bits.into()),
     }
 }
 
@@ -312,7 +312,7 @@ mod tests {
     use parquet2::encoding::bitpacked;
     use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
 
-    use crate::parquet_write::util::encode_bool_iter;
+    use crate::parquet_write::util::encode_primitive_deflevels;
 
     #[test]
     fn decode_bitmap_v2() {
@@ -326,9 +326,10 @@ mod tests {
             .map(|x| if *x { 1u8 } else { 0u8 })
             .collect::<Vec<_>>();
         let mut buff = vec![];
-        encode_bool_iter(
+        encode_primitive_deflevels(
             &mut buff,
             expected.iter().cloned(),
+            expected.len(),
             parquet2::write::Version::V2,
         )
         .unwrap();
@@ -358,9 +359,10 @@ mod tests {
             .map(|x| if *x { 1u8 } else { 0u8 })
             .collect::<Vec<_>>();
         let mut buff = vec![];
-        encode_bool_iter(
+        encode_primitive_deflevels(
             &mut buff,
             expected.iter().cloned(),
+            expected.len(),
             parquet2::write::Version::V1,
         )
         .unwrap();

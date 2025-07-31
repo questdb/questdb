@@ -2,7 +2,7 @@ use super::util::BinaryMaxMinStats;
 use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetErrorReason, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
+use crate::parquet_write::util::{build_plain_page, encode_primitive_deflevels, ExactSizedIter};
 use parquet2::encoding::hybrid_rle::encode_u32;
 use parquet2::encoding::Encoding;
 use parquet2::page::{DictPage, Page};
@@ -184,7 +184,7 @@ pub fn symbol_to_pages(
     });
     let mut data_buffer = vec![];
     let deflevels_len = deflevels_iter.size_hint().1.unwrap();
-    encode_bool_iter(
+    encode_primitive_deflevels(
         &mut data_buffer,
         deflevels_iter,
         deflevels_len,

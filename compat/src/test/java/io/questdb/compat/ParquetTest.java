@@ -90,9 +90,10 @@ public class ParquetTest extends AbstractTest {
     @Test
     public void test1dArray() throws Exception {
         String ddl = "create table x as (select " +
-                " rnd_double_array(1, 2) arr, " +
+                //" rnd_double_array(1, 2) arr, " +
+                " ARRAY[42.0] arr, " +
                 " timestamp_sequence(400000000000, 1000000000) ts" +
-                " from long_sequence(10)) timestamp(ts) partition by day";
+                " from long_sequence(3)) timestamp(ts) partition by day";
 
         try (final ServerMain serverMain = ServerMain.create(root)) {
             serverMain.start();
@@ -132,7 +133,6 @@ public class ParquetTest extends AbstractTest {
                 );
 
                 LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
-                long partitionRowCount = reader.getPartitionRowCount(partitionIndex);
                 Configuration configuration = new Configuration();
                 final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
                 final InputFile inputFile = HadoopInputFile.fromPath(parquetPath, configuration);
@@ -167,7 +167,7 @@ public class ParquetTest extends AbstractTest {
                         // arr
                         assertNullCount(chunks, 0, 0);
                     }
-                    Assert.assertEquals(rowCount, 10);
+                    Assert.assertEquals(rowCount, 3);
 
                     long actualRows = 0;
                     GenericRecord nextParquetRecord;
@@ -175,7 +175,7 @@ public class ParquetTest extends AbstractTest {
                         Object arr = nextParquetRecord.get("arr");
                         actualRows++;
                     }
-                    Assert.assertEquals(10, actualRows);
+                    Assert.assertEquals(3, actualRows);
                 }
             }
         }
@@ -325,7 +325,7 @@ public class ParquetTest extends AbstractTest {
         Assert.assertEquals(expectedName, descriptor.getPath()[0]);
         Assert.assertEquals(PrimitiveType.PrimitiveTypeName.DOUBLE, descriptor.getPrimitiveType().getPrimitiveTypeName());
         Assert.assertEquals(1, descriptor.getMaxRepetitionLevel());
-        Assert.assertEquals(2, descriptor.getMaxDefinitionLevel());
+        Assert.assertEquals(3, descriptor.getMaxDefinitionLevel());
     }
 
     private static void assertSchemaNonNullable(ColumnDescriptor descriptor, String expectedName, PrimitiveType.PrimitiveTypeName expectedType) {

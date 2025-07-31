@@ -4,7 +4,7 @@ use super::util::ExactSizedIter;
 use crate::allocator::AcVec;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter, BinaryMaxMinStats};
+use crate::parquet_write::util::{build_plain_page, encode_primitive_deflevels, BinaryMaxMinStats};
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
@@ -91,7 +91,7 @@ pub fn varchar_to_page(
     let deflevels_iter =
         (0..num_rows).map(|i| i >= column_top && utf8_slices[i - column_top].is_some());
     let deflevels_len = deflevels_iter.size_hint().1.unwrap();
-    encode_bool_iter(&mut buffer, deflevels_iter, deflevels_len, options.version)?;
+    encode_primitive_deflevels(&mut buffer, deflevels_iter, deflevels_len, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
 

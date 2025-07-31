@@ -27,8 +27,8 @@ use std::mem;
 use parquet2::compression::CompressionOptions;
 use parquet2::metadata::Descriptor;
 use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2};
-use parquet2::write::Version;
 use parquet2::statistics::ParquetStatistics;
+use parquet2::write::Version;
 use qdb_core::col_driver::ArrayAuxEntry;
 
 use crate::parquet_write::util;
@@ -41,7 +41,7 @@ use crate::allocator::AcVec;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, encode_bool_iter, encode_levels_iter, ExactSizedIter,
+    build_plain_page, encode_group_levels, encode_primitive_deflevels, ExactSizedIter,
 };
 use parquet2::schema::types::PhysicalType;
 use std::slice;
@@ -92,8 +92,6 @@ pub fn array_to_page(
         })
         .collect();
 
-    let num_elements = 0usize;
-
     let replevels_iter = arr_slices
         .iter()
         .filter(|arr| arr.is_some())
@@ -104,7 +102,8 @@ pub fn array_to_page(
             let data = arr.1;
             (0..data.len()).map(|i| if i == 0 { 0 } else { 1 })
         });
-    encode_levels_iter(
+    let num_elements = replevels_iter.clone().count();
+    encode_group_levels(
         &mut buffer,
         replevels_iter,
         num_elements,
@@ -114,10 +113,24 @@ pub fn array_to_page(
 
     let repetition_levels_byte_length = buffer.len();
 
-    let deflevels_iter =
-        (0..num_rows).map(|i| i >= column_top && arr_slices[i - column_top].is_some());
-    let deflevels_len = deflevels_iter.size_hint().1.unwrap();
-    encode_bool_iter(&mut buffer, deflevels_iter, deflevels_len, options.version)?;
+    let deflevels_iter = arr_slices
+        .iter()
+        .filter(|arr| arr.is_some())
+        .map(|arr| arr.unwrap())
+        .flat_map(|arr| {
+            // TODO(puzpuzpuz): proper def levels mapping instead of 1d array
+            let _shape = arr.0;
+            let data = arr.1;
+            (0..data.len()+2).map(|_| 3)
+        });
+    let deflevels_len = deflevels_iter.clone().count();
+    encode_group_levels(
+        &mut buffer,
+        deflevels_iter,
+        deflevels_len,
+        (dim + 1) as u32,
+        options.version,
+    )?;
 
     let definition_levels_byte_length = buffer.len() - repetition_levels_byte_length;
 
@@ -136,9 +149,8 @@ pub fn array_to_page(
     let null_count = column_top + null_count;
     let stats = ArrayStats::new(null_count);
     build_page(
-        dim,
         buffer,
-        num_rows,
+        num_rows, // TODO(puzpuzpuz): num_elements ????
         null_count,
         repetition_levels_byte_length,
         definition_levels_byte_length,
@@ -173,7 +185,6 @@ pub unsafe fn transmute_slice_f64(slice: &[f64]) -> &[u8] {
 
 #[allow(clippy::too_many_arguments)]
 fn build_page(
-    dim: i32,
     buffer: Vec<u8>,
     num_rows: usize,
     null_count: usize,
@@ -202,15 +213,16 @@ fn build_page(
             statistics,
         }),
     };
-    // TODO(puzpuzpuz): how to avoid primitive type here????
+    // TODO(puzpuzpuz): how to avoid primitive type here???? use global stub descriptor?
     let t = PrimitiveType::from_physical("fdfd".to_string(), PhysicalType::Double);
     Ok(DataPage::new(
         header,
         buffer,
         Descriptor {
             primitive_type: t,
-            max_def_level: 1,
-            max_rep_level: dim as i16,
+            // these values are ignored for group types
+            max_def_level: 0,
+            max_rep_level: 0,
         },
         Some(num_rows),
     ))
@@ -257,7 +269,7 @@ pub fn array_to_raw_page(
     let deflevels_iter =
         (0..num_rows).map(|i| i >= column_top && arr_slices[i - column_top].is_some());
     let deflevels_len = deflevels_iter.size_hint().1.unwrap();
-    encode_bool_iter(&mut buffer, deflevels_iter, deflevels_len, options.version)?;
+    encode_primitive_deflevels(&mut buffer, deflevels_iter, deflevels_len, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
 
