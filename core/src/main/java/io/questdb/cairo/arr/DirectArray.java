@@ -114,7 +114,7 @@ public final class DirectArray extends MutableArray implements Mutable {
      * will take control of populating array memory.
      *
      * @param type the target element type
-     * @param arr the source of shape
+     * @param arr  the source of shape
      * @return memory to be used by functions to materialize array
      */
     public MemoryA prepare(int type, ArrayView arr) {
