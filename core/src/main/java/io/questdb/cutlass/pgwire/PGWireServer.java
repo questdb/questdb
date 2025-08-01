@@ -67,7 +67,7 @@ public class PGWireServer implements IPGWireServer {
     public PGWireServer(
             PGWireConfiguration configuration,
             CairoEngine engine,
-            WorkerPool workerPool,
+            WorkerPool networkSharedPool,
             CircuitBreakerRegistry registry,
             ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
     ) {
@@ -85,13 +85,13 @@ public class PGWireServer implements IPGWireServer {
                 typesAndSelectCache
         );
         this.dispatcher = IODispatchers.create(configuration, contextFactory);
-        this.workerPool = workerPool;
+        this.workerPool = networkSharedPool;
         this.registry = registry;
 
-        workerPool.assign(dispatcher);
+        networkSharedPool.assign(dispatcher);
 
-        for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
-            workerPool.assign(i, new Job() {
+        for (int i = 0, n = networkSharedPool.getWorkerCount(); i < n; i++) {
+            networkSharedPool.assign(i, new Job() {
                 private final IORequestProcessor<PGConnectionContext> processor = (operation, context, dispatcher) -> {
                     try {
                         if (operation == IOOperation.HEARTBEAT) {
@@ -134,7 +134,7 @@ public class PGWireServer implements IPGWireServer {
 
             // context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
-            workerPool.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
+            networkSharedPool.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
         }
     }
 

@@ -94,7 +94,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     public LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
-            WorkerPool ioWorkerPool,
+            WorkerPool networkSharedPool,
             IODispatcher<LineTcpConnectionContext> dispatcher,
             WorkerPool writerWorkerPool
     ) {
@@ -106,15 +106,15 @@ public class LineTcpMeasurementScheduler implements Closeable {
             this.clock = cairoConfiguration.getMillisecondClock();
             this.spinLockTimeoutMs = cairoConfiguration.getSpinLockTimeout();
             this.defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);
-            final int ioWorkerPoolSize = ioWorkerPool.getWorkerCount();
-            this.netIoJobs = new NetworkIOJob[ioWorkerPoolSize];
-            this.tableNameSinks = new StringSink[ioWorkerPoolSize];
-            for (int i = 0; i < ioWorkerPoolSize; i++) {
+            final int networkSharedPoolSize = networkSharedPool.getWorkerCount();
+            this.netIoJobs = new NetworkIOJob[networkSharedPoolSize];
+            this.tableNameSinks = new StringSink[networkSharedPoolSize];
+            for (int i = 0; i < networkSharedPoolSize; i++) {
                 tableNameSinks[i] = new StringSink();
                 NetworkIOJob netIoJob = createNetworkIOJob(dispatcher, i);
                 netIoJobs[i] = netIoJob;
-                ioWorkerPool.assign(i, netIoJob);
-                ioWorkerPool.freeOnExit(netIoJob);
+                networkSharedPool.assign(i, netIoJob);
+                networkSharedPool.freeOnExit(netIoJob);
             }
 
             // Worker count is set to 1 because we do not use this execution context
@@ -159,15 +159,15 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
                 assignedTables[i] = new ObjList<>();
 
-                final LineTcpWriterJob lineTcpWriterJob = new LineTcpWriterJob(
+                final LineTcpLegactWriterJob lineTcpLegactWriterJob = new LineTcpLegactWriterJob(
                         i,
                         q,
                         subSeq,
                         clock,
                         commitInterval, this, engine.getMetrics(), assignedTables[i]
                 );
-                writerWorkerPool.assign(i, lineTcpWriterJob);
-                writerWorkerPool.freeOnExit(lineTcpWriterJob);
+                writerWorkerPool.assign(i, lineTcpLegactWriterJob);
+                writerWorkerPool.freeOnExit(lineTcpLegactWriterJob);
             }
             this.tableStructureAdapter = new TableStructureAdapter(
                     cairoConfiguration,
