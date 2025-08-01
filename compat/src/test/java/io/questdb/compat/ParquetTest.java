@@ -90,10 +90,9 @@ public class ParquetTest extends AbstractTest {
     @Test
     public void test1dArray() throws Exception {
         String ddl = "create table x as (select " +
-                //" rnd_double_array(1, 2) arr, " +
-                " ARRAY[42.0] arr, " +
+                " rnd_double_array(1, 2) arr, " +
                 " timestamp_sequence(400000000000, 1000000000) ts" +
-                " from long_sequence(3)) timestamp(ts) partition by day";
+                " from long_sequence(10)) timestamp(ts) partition by day";
 
         try (final ServerMain serverMain = ServerMain.create(root)) {
             serverMain.start();
@@ -167,7 +166,7 @@ public class ParquetTest extends AbstractTest {
                         // arr
                         assertNullCount(chunks, 0, 0);
                     }
-                    Assert.assertEquals(rowCount, 3);
+                    Assert.assertEquals(rowCount, 10);
 
                     long actualRows = 0;
                     GenericRecord nextParquetRecord;
@@ -175,7 +174,7 @@ public class ParquetTest extends AbstractTest {
                         Object arr = nextParquetRecord.get("arr");
                         actualRows++;
                     }
-                    Assert.assertEquals(3, actualRows);
+                    Assert.assertEquals(10, actualRows);
                 }
             }
         }

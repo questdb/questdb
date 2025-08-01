@@ -68,6 +68,16 @@ impl<'a> RepLevelsIterator<'a> {
         }
     }
 
+    // returns single zero item
+    pub fn new_single() -> Self {
+        RepLevelsIterator {
+            shape: &[],
+            data_len: 1,
+            flat_index: 0,
+            nd_indexes: [0_i32; ARRAY_NDIMS_LIMIT],
+        }
+    }
+
     /// Calculates repetition level of the next element.
     /// To do that, increments nd_indexes and returns the index of the lowest dimension
     /// where nd_indexes values had an overflow.
@@ -105,6 +115,45 @@ impl Iterator for RepLevelsIterator<'_> {
         self.flat_index += 1;
 
         Some(replevel)
+    }
+}
+
+const DEF_LEVELS_STUB_DATA: [f64; 1] = [42.0];
+
+#[derive(Clone, Copy)]
+struct DefLevelsIterator<'a> {
+    max: u32,
+    data: &'a [f64],
+    flat_index: usize,
+}
+
+impl<'a> DefLevelsIterator<'a> {
+    pub fn new(data: &'a [f64], max: u32) -> Self {
+        DefLevelsIterator { max, data, flat_index: 0 }
+    }
+
+    // returns single zero item
+    pub fn new_single(max: u32) -> Self {
+        DefLevelsIterator { max, data: &DEF_LEVELS_STUB_DATA, flat_index: 0 }
+    }
+}
+
+impl Iterator for DefLevelsIterator<'_> {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.flat_index >= self.data.len() {
+            return None;
+        }
+
+        let deflevel = if self.data[self.flat_index].is_nan() {
+            self.max - 1
+        } else {
+            self.max
+        };
+        self.flat_index += 1;
+
+        Some(deflevel)
     }
 }
 
@@ -159,39 +208,56 @@ pub fn array_to_page(
         })
         .collect();
 
-    let replevels_iter = arr_slices
+    // calculate lengths of rep and def levels ahead of time
+    let levels_len = arr_slices
         .iter()
-        .filter(|arr| arr.is_some())
-        .map(|arr| arr.unwrap())
-        .flat_map(|arr| RepLevelsIterator::new(arr.0, arr.1.len()));
-    // TODO(puzpuzpuz): it's too expensive to clone the iterator,
-    //                  so we could calculate the total number of elements instead
-    let num_elements = replevels_iter.clone().count();
+        .map(|arr| match arr {
+            Some(arr) => {
+                let data = arr.1;
+                std::cmp::max(data.len(), 1)
+            }
+            None => 1,
+        })
+        .sum();
+
+    let replevels_iter = arr_slices.iter().flat_map(|arr| match arr {
+        Some(arr) => {
+            let shape = arr.0;
+            let data = arr.1;
+            if data.len() == 0 {
+                RepLevelsIterator::new_single()
+            } else {
+                RepLevelsIterator::new(shape, data.len())
+            }
+        }
+        None => RepLevelsIterator::new_single(),
+    });
     encode_group_levels(
         &mut buffer,
         replevels_iter,
-        num_elements,
+        levels_len,
         dim as u32,
         options.version,
     )?;
 
     let repetition_levels_byte_length = buffer.len();
 
-    let deflevels_iter = arr_slices
-        .iter()
-        .filter(|arr| arr.is_some())
-        .map(|arr| arr.unwrap())
-        .flat_map(|arr| {
-            // TODO(puzpuzpuz): proper def levels mapping instead of 1d array
-            let _shape = arr.0;
+    let deflevels_iter = arr_slices.iter().flat_map(|arr| match arr {
+        Some(arr) => {
             let data = arr.1;
-            (0..data.len() + 2).map(|_| 3)
-        });
-    let deflevels_len = deflevels_iter.clone().count();
+            if data.len() == 0 {
+                DefLevelsIterator::new_single(1)
+            } else {
+                // max def level is the number of dimensions plus two optional fields
+                DefLevelsIterator::new(data, (dim + 2) as u32)
+            }
+        }
+        None => DefLevelsIterator::new_single(0),
+    });
     encode_group_levels(
         &mut buffer,
         deflevels_iter,
-        deflevels_len,
+        levels_len,
         (dim + 1) as u32,
         options.version,
     )?;
@@ -438,34 +504,81 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_null_or_empty() {
+        let rep_levels: Vec<u32> = RepLevelsIterator::new_single().collect();
+        assert_eq!(rep_levels, vec![0]);
+        let def_levels: Vec<u32> = DefLevelsIterator::new_single(0).collect();
+        assert_eq!(def_levels, vec![0]);
+        let def_levels: Vec<u32> = DefLevelsIterator::new_single(1).collect();
+        assert_eq!(def_levels, vec![1]);
+    }
+
+    #[test]
     fn test_single_element_1d_array() {
         // 1d array, e.g. [42]
         let shape = vec![1];
+        let data = vec![42.0];
         let rep_levels: Vec<u32> = RepLevelsIterator::new(shape.as_slice(), 1).collect();
         assert_eq!(rep_levels, vec![0]);
+        let def_levels: Vec<u32> = DefLevelsIterator::new(data.as_slice(), 3).collect();
+        assert_eq!(def_levels, vec![3]);
     }
 
     #[test]
     fn test_1d_array() {
-        // 1d array, e.g. [1, 2, 3, 4]
+        // 1d array
         let shape = vec![4];
+        let data = vec![1.0, 2.0, 3.0, 4.0];
         let rep_levels: Vec<u32> = RepLevelsIterator::new(shape.as_slice(), 4).collect();
         assert_eq!(rep_levels, vec![0, 1, 1, 1]);
+        let def_levels: Vec<u32> = DefLevelsIterator::new(data.as_slice(), 3).collect();
+        assert_eq!(def_levels, vec![3, 3, 3, 3]);
+    }
+
+    #[test]
+    fn test_1d_array_with_nulls() {
+        // 1d array
+        let shape = vec![4];
+        let data = vec![std::f64::NAN, 2.0, std::f64::NAN, 4.0];
+        let rep_levels: Vec<u32> = RepLevelsIterator::new(shape.as_slice(), 4).collect();
+        assert_eq!(rep_levels, vec![0, 1, 1, 1]);
+        let def_levels: Vec<u32> = DefLevelsIterator::new(data.as_slice(), 3).collect();
+        assert_eq!(def_levels, vec![2, 3, 2, 3]);
     }
 
     #[test]
     fn test_2d_array() {
-        // 2x3 array, e.g. [[1, 2, 3], [4, 5, 6]]
+        // 2x3 array
         let shape = vec![2, 3];
+        // [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
         let rep_levels: Vec<u32> = RepLevelsIterator::new(shape.as_slice(), 6).collect();
         assert_eq!(rep_levels, vec![0, 2, 2, 1, 2, 2]);
+        let def_levels: Vec<u32> = DefLevelsIterator::new(data.as_slice(), 4).collect();
+        assert_eq!(def_levels, vec![4, 4, 4, 4, 4, 4]);
     }
 
     #[test]
     fn test_3d_array() {
-        // 2x2x2 array, e.g. [[[1,2],[3,4]], [[5,6],[7,8]]]
+        // 2x2x2 array
         let shape = vec![2, 2, 2];
+        // [[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
         let rep_levels: Vec<u32> = RepLevelsIterator::new(shape.as_slice(), 8).collect();
         assert_eq!(rep_levels, vec![0, 3, 2, 3, 1, 3, 2, 3]);
+        let def_levels: Vec<u32> = DefLevelsIterator::new(data.as_slice(), 5).collect();
+        assert_eq!(def_levels, vec![5, 5, 5, 5, 5, 5, 5, 5]);
+    }
+
+    #[test]
+    fn test_3d_array_with_nulls() {
+        // 2x2x2 array
+        let shape = vec![2, 2, 2];
+        // [[[1.0, null], [null, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]
+        let data = vec![1.0, std::f64::NAN, std::f64::NAN, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let rep_levels: Vec<u32> = RepLevelsIterator::new(shape.as_slice(), 8).collect();
+        assert_eq!(rep_levels, vec![0, 3, 2, 3, 1, 3, 2, 3]);
+        let def_levels: Vec<u32> = DefLevelsIterator::new(data.as_slice(), 5).collect();
+        assert_eq!(def_levels, vec![5, 4, 4, 5, 5, 5, 5, 5]);
     }
 }
