@@ -59,6 +59,7 @@ import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -114,7 +115,6 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Transient;
-import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
@@ -213,6 +213,13 @@ public class CairoEngine implements Closeable, WriterSource {
             this.matViewGraph = new MatViewGraph();
             this.frameFactory = new FrameFactory(configuration);
             this.dataID = DataID.open(configuration);
+
+            // IMPORTANT: Do not reorder statements!
+            // The backup recovery process needs the `dataID` (since it will set it),
+            // but it's important that's not initialized yet.
+            // The `recoverBackup()` logic also needs to run before any table registry loading.
+            recoverBackup();
+
             initDataID();
 
             settingsStore = new SettingsStore(configuration);
@@ -236,13 +243,6 @@ public class CairoEngine implements Closeable, WriterSource {
         } catch (Throwable th) {
             close();
             throw th;
-        }
-    }
-
-    protected void initDataID() {
-        if (!getConfiguration().isReadOnlyInstance() && !this.dataID.isInitialized()) {
-            final Rnd rnd = configuration.getRandom();
-            this.dataID.set(rnd.nextLong(), rnd.nextLong());
         }
     }
 
@@ -444,8 +444,8 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public void checkpointCreate(SqlExecutionContext executionContext) throws SqlException {
-        checkpointAgent.checkpointCreate(executionContext, false);
+    public void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+        checkpointAgent.checkpointCreate(circuitBreaker, false);
     }
 
     /**
@@ -1452,8 +1452,8 @@ public class CairoEngine implements Closeable, WriterSource {
         this.checkpointAgent.setWalPurgeJobRunLock(walPurgeJobRunLock);
     }
 
-    public void snapshotCreate(SqlExecutionContext executionContext) throws SqlException {
-        checkpointAgent.checkpointCreate(executionContext, true);
+    public void snapshotCreate(SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+        checkpointAgent.checkpointCreate(circuitBreaker, true);
     }
 
     public void unlock(
@@ -1834,8 +1834,19 @@ public class CairoEngine implements Closeable, WriterSource {
         return new FunctionFactoryCacheBuilder().scan(LOG).build();
     }
 
+    protected void initDataID() {
+        if (!getConfiguration().isReadOnlyInstance() && !this.dataID.isInitialized()) {
+            final Rnd rnd = configuration.getRandom();
+            this.dataID.set(rnd.nextLong(), rnd.nextLong());
+        }
+    }
+
     protected TableFlagResolver newTableFlagResolver(CairoConfiguration configuration) {
         return new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString());
+    }
+
+    protected void recoverBackup() {
+        // Hook for backup functionality. See enterprise subclass.
     }
 
     private class EngineMaintenanceJob extends SynchronizedJob {

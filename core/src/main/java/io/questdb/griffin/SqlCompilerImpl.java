@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.MessageBus;
-import io.questdb.PropServerConfiguration;
 import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.CairoConfiguration;
@@ -41,30 +40,21 @@ import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.ListColumnFilter;
-import io.questdb.cairo.MapWriter;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableNameRegistry;
-import io.questdb.cairo.TableNameRegistryStore;
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.VacuumColumnVersions;
-import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.cairo.mv.MatViewGraph;
-import io.questdb.cairo.mv.MatViewState;
-import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.mv.MatViewStateStore;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.InsertOperation;
@@ -79,8 +69,6 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.WalUtils;
-import io.questdb.cairo.wal.WalWriterMetadata;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
@@ -128,23 +116,18 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
-import io.questdb.std.Utf8SequenceObjHashMap;
-import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.std.GenericLexer.unquote;
 
@@ -2195,7 +2178,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok = expectToken(lexer, "'create' or 'release'");
 
         if (isCreateKeyword(tok)) {
-            engine.checkpointCreate(executionContext);
+            engine.checkpointCreate(executionContext.getCircuitBreaker());
             compiledQuery.ofCheckpointCreate();
         } else if (Chars.equalsLowerCaseAscii(tok, "release")) {
             engine.checkpointRelease();
@@ -2725,7 +2708,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
 
         if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
-            engine.snapshotCreate(executionContext);
+            engine.snapshotCreate(executionContext.getCircuitBreaker());
             compiledQuery.ofCheckpointCreate();
         } else if (Chars.equalsLowerCaseAscii(tok, "complete")) {
             engine.checkpointRelease();
