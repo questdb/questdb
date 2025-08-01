@@ -214,10 +214,10 @@ jobs:
           git add core/src/main/resources/io/questdb/bin/windows-x86-64/questdbr.dll
           
           echo "Removing exec permissions in Git index..."
-          git update-index --chmod=-x add core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdbr.so
-          git update-index --chmod=-x add core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdbr.so
-          git update-index --chmod=-x add core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdbr.dylib
-          git update-index --chmod=-x add core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdbr.dylib
+          git update-index --chmod=-x core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdbr.so
+          git update-index --chmod=-x core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdbr.so
+          git update-index --chmod=-x core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdbr.dylib
+          git update-index --chmod=-x core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdbr.dylib
           
           git commit -m "Rebuild Rust libraries"
       - name: Check git status after
