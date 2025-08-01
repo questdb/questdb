@@ -109,6 +109,50 @@ public class Rnd {
         }
     }
 
+    /**
+     * Generate a random Decimal160 into the provided sink.
+     * This method generates a mix of small, medium, and large values with random scales.
+     *
+     * @param sink The Decimal160 instance to populate with random values
+     */
+    public void nextDecimal160(Decimal160 sink) {
+        // Generate random scale between 0 and MAX_SCALE
+        int scale = nextInt(Decimal160.MAX_SCALE + 1);
+
+        // Generate random value - mix of small, medium and large values
+        long value;
+        int valueType = nextInt(4);
+
+        switch (valueType) {
+            case 0: // Small values (-1000 to 1000)
+                value = nextLong() % 2000 - 1000;
+                break;
+            case 1: // Medium values (up to int range)
+                value = nextInt();
+                break;
+            case 2: // Large positive values
+                value = Math.abs(nextLong() % (Long.MAX_VALUE / 1000000));
+                break;
+            default: // Large negative values
+                value = -(Math.abs(nextLong() % (Long.MAX_VALUE / 1000000)));
+                break;
+        }
+
+        sink.copyFrom(Decimal160.fromLong(value, scale));
+    }
+
+    /**
+     * Generate a random Decimal160 and return a new instance.
+     * This method generates a mix of small, medium, and large values with random scales.
+     *
+     * @return A new Decimal160 instance with random values
+     */
+    public Decimal160 nextDecimal160() {
+        Decimal160 result = new Decimal160();
+        nextDecimal160(result);
+        return result;
+    }
+
     public double nextDouble() {
         return (((long) (nextIntForDouble(26)) << 27) + nextIntForDouble(27)) * DOUBLE_UNIT;
     }
