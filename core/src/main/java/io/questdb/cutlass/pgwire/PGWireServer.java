@@ -61,13 +61,13 @@ public class PGWireServer implements IPGWireServer {
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final Metrics metrics;
     private final CircuitBreakerRegistry registry;
-    private final WorkerPool workerPool;
+    private final WorkerPool sharedPoolNetwork;
     private AssociativeCache<TypesAndSelect> typesAndSelectCache;
 
     public PGWireServer(
             PGWireConfiguration configuration,
             CairoEngine engine,
-            WorkerPool networkSharedPool,
+            WorkerPool sharedPoolNetwork,
             CircuitBreakerRegistry registry,
             ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
     ) {
@@ -85,13 +85,13 @@ public class PGWireServer implements IPGWireServer {
                 typesAndSelectCache
         );
         this.dispatcher = IODispatchers.create(configuration, contextFactory);
-        this.workerPool = networkSharedPool;
+        this.sharedPoolNetwork = sharedPoolNetwork;
         this.registry = registry;
 
-        networkSharedPool.assign(dispatcher);
+        sharedPoolNetwork.assign(dispatcher);
 
-        for (int i = 0, n = networkSharedPool.getWorkerCount(); i < n; i++) {
-            networkSharedPool.assign(i, new Job() {
+        for (int i = 0, n = sharedPoolNetwork.getWorkerCount(); i < n; i++) {
+            sharedPoolNetwork.assign(i, new Job() {
                 private final IORequestProcessor<PGConnectionContext> processor = (operation, context, dispatcher) -> {
                     try {
                         if (operation == IOOperation.HEARTBEAT) {
@@ -134,7 +134,7 @@ public class PGWireServer implements IPGWireServer {
 
             // context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
-            networkSharedPool.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
+            sharedPoolNetwork.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
         }
     }
 
@@ -159,7 +159,7 @@ public class PGWireServer implements IPGWireServer {
     @TestOnly
     @Override
     public WorkerPool getWorkerPool() {
-        return workerPool;
+        return sharedPoolNetwork;
     }
 
     @Override

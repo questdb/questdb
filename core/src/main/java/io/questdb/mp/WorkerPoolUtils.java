@@ -68,26 +68,26 @@ public class WorkerPoolUtils {
         }
     }
 
-    public static void setupWriterJobs(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
+    public static void setupWriterJobs(WorkerPool sharedPoolWrite, CairoEngine cairoEngine) throws SqlException {
         final MessageBus messageBus = cairoEngine.getMessageBus();
         final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(
                 cairoEngine,
-                workerPool.getWorkerCount()
+                sharedPoolWrite.getWorkerCount()
         );
-        workerPool.freeOnExit(purgeDiscoveryJob);
-        workerPool.assign(purgeDiscoveryJob);
+        sharedPoolWrite.freeOnExit(purgeDiscoveryJob);
+        sharedPoolWrite.assign(purgeDiscoveryJob);
 
         // ColumnPurgeJob has expensive init (it creates a table), disable it in some tests.
         if (!cairoEngine.getConfiguration().disableColumnPurgeJob()) {
             final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine);
-            workerPool.freeOnExit(columnPurgeJob);
-            workerPool.assign(columnPurgeJob);
+            sharedPoolWrite.freeOnExit(columnPurgeJob);
+            sharedPoolWrite.assign(columnPurgeJob);
         }
 
-        workerPool.assign(new ColumnIndexerJob(messageBus));
-        workerPool.assign(new O3PartitionJob(messageBus));
-        workerPool.assign(new O3OpenColumnJob(messageBus));
-        workerPool.assign(new O3CopyJob(messageBus));
-        workerPool.assign(new ColumnTaskJob(messageBus));
+        sharedPoolWrite.assign(new ColumnIndexerJob(messageBus));
+        sharedPoolWrite.assign(new O3PartitionJob(messageBus));
+        sharedPoolWrite.assign(new O3OpenColumnJob(messageBus));
+        sharedPoolWrite.assign(new O3CopyJob(messageBus));
+        sharedPoolWrite.assign(new ColumnTaskJob(messageBus));
     }
 }
