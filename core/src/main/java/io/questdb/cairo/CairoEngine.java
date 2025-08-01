@@ -218,7 +218,7 @@ public class CairoEngine implements Closeable, WriterSource {
             // The backup recovery process needs the `dataID` (since it will set it),
             // but it's important that's not initialized yet.
             // The `recoverBackup()` logic also needs to run before any table registry loading.
-            recoverBackup();
+            restoreBackup();
 
             initDataID();
 
@@ -1845,7 +1845,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString());
     }
 
-    protected void recoverBackup() {
+    protected void restoreBackup() {
         // Hook for backup functionality. See enterprise subclass.
     }
 
