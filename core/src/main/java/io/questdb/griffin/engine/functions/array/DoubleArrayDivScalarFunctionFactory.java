@@ -83,7 +83,7 @@ public class DoubleArrayDivScalarFunctionFactory implements FunctionFactory {
             }
 
             scalarValue = scalarArg.getDouble(rec);
-            memory = array.prepare(getType(), arr);
+            memory = array.copyShapeAndStartMemoryA(arr);
             if (arr.isVanilla()) {
                 FlatArrayView flatView = arr.flatView();
                 for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {

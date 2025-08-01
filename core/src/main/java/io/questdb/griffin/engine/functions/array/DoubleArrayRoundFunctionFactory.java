@@ -105,7 +105,7 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
                 return array;
             }
 
-            memory = array.prepare(getType(), arr);
+            memory = array.copyShapeAndStartMemoryA(arr);
             for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {
                 memory.putDouble(Double.NaN);
             }
@@ -162,7 +162,7 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
                 return array;
             }
 
-            memory = array.prepare(getType(), arr);
+            memory = array.copyShapeAndStartMemoryA(arr);
             if (arr.isVanilla()) {
                 FlatArrayView flatView = arr.flatView();
                 for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {
@@ -245,7 +245,7 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
             }
 
             scalarValue = scalarArg.getInt(rec);
-            memory = array.prepare(getType(), arr);
+            memory = array.copyShapeAndStartMemoryA(arr);
             if (arr.isVanilla()) {
                 FlatArrayView flatView = arr.flatView();
                 for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {
