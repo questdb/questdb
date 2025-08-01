@@ -2279,36 +2279,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private RecordCursorFactory compileCopyTo(SecurityContext securityContext, CopyModel model) throws SqlException {
         assert !model.isCancel();
 
-        final CharSequence tableName = authorizeSelectForCopy(securityContext, model);
-
-
-        switch (model.getFormat()) {
-            case COPY_FORMAT_PARQUET:
-
-                break;
-            default:
-                throw CairoException.nonCritical().put("unsupported copy format");
+        if (model.getTableName() != null) {
+            authorizeSelectForCopy(securityContext, model);
         }
 
-
-        if (model.getTimestampColumnName() == null
-                && ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
-            throw SqlException.$(-1, "invalid option used for import without a designated timestamp (format or partition by)");
-        }
-        if (model.getDelimiter() < 0) {
-            model.setDelimiter((byte) ',');
-        }
-
-        final ExpressionNode fileNameNode = model.getFileName();
-        final CharSequence fileName = fileNameNode != null ? GenericLexer.assertNoDots(unquote(fileNameNode.token), fileNameNode.position) : null;
-        assert fileName != null;
+        assert model.getFormat() == COPY_FORMAT_PARQUET;
 
         return new CopyExportFactory(
                 messageBus,
                 engine.getCopyContext(),
-                Chars.toString(tableName),
-                Chars.toString(fileName),
-                model
+                model,
+                securityContext
         );
     }
 
@@ -3134,7 +3115,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     break;
                 case ExecutionModel.COPY:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
-                    checkMatViewModification(executionModel);
+                    if (executionModel.getTableName() != null) {
+                        checkMatViewModification(executionModel);
+                    }
                     copy(executionContext, (CopyModel) executionModel);
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;

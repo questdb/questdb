@@ -757,8 +757,23 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "COPY is disabled ['cairo.sql.copy.root' is not set?]");
         }
 
-        ExpressionNode target = expectExpr(lexer, sqlParserCallback);
-        CharSequence tok = tok(lexer, "'from' or 'to' or 'cancel'");
+        @Nullable ExpressionNode target = null;
+        @Nullable String selectText = null;
+        CharSequence tok = tok(lexer, "copy source");
+        int startOfSelect = 0;
+
+        if (tok.length() == 1 && tok.charAt(0) == '(') {
+            startOfSelect = lexer.getPosition();
+            parseDml(lexer, null, startOfSelect, true, sqlParserCallback, null);
+            final int endOfSelect = lexer.getPosition() - 1;
+            selectText = Chars.toString(lexer.getContent(), startOfSelect, endOfSelect);
+            expectTok(lexer, ')');
+        } else {
+            lexer.unparseLast();
+            target = expectExpr(lexer, sqlParserCallback);
+        }
+
+        tok = tok(lexer, "'from' or 'to' or 'cancel'");
 
         CopyModel model = copyModelPool.next();
         try {
@@ -776,17 +791,25 @@ public class SqlParser {
             }
 
             if (isFromKeyword(tok) || isToKeyword(tok)) {
+                tok = GenericLexer.immutableOf(tok);
                 final ExpressionNode fileName = expectExpr(lexer, sqlParserCallback);
                 if (fileName.token.length() < 3 && Chars.startsWith(fileName.token, '\'')) {
                     throw SqlException.$(fileName.position, "file name expected");
                 }
 
                 model.setTarget(target);
+                model.setSelectText(selectText);
                 model.setFileName(fileName);
-//                model.setType(isFromKeyword() ? CopyModel.COPY_TYPE_FROM : CopyModel.COPY_TYPE_TO);
             }
 
             if (isFromKeyword(tok)) {
+                if (selectText != null) {
+                    throw SqlException.$(startOfSelect, "subqueries are not supported for `COPY-FROM`");
+                }
+                assert target != null;
+
+                model.setType(CopyModel.COPY_TYPE_FROM);
+
                 tok = optTok(lexer);
                 if (tok != null && isWithKeyword(tok)) {
                     tok = tok(lexer, "copy option");
@@ -857,19 +880,61 @@ public class SqlParser {
                     tok = tok(lexer, "copy option");
                     while (tok != null && !isSemicolon(tok)) {
                         while (tok != null && !isSemicolon(tok)) {
-                            if (isFormatKeyword(tok)) {
-                                tok = tok(lexer, "'csv' or 'parquet'");
-                                if (isParquetKeyword(tok)) {
-                                    model.setFormat(CopyModel.COPY_FORMAT_PARQUET);
-                                } else if (isCsvKeyword(tok)) {
-                                    model.setFormat(CopyModel.COPY_FORMAT_CSV);
-                                } else {
-                                    throw errUnexpected(lexer, tok);
-                                }
-                                tok = optTok(lexer);
+                            // todo: refactor into a hashmap lookup plus switch?
+                            final int optionCode = CopyModel.getExportOption(tok);
+                            switch (optionCode) {
+                                case CopyModel.COPY_OPTION_FORMAT:
+                                    tok = tok(lexer, "'csv' or 'parquet'");
+                                    if (isParquetKeyword(tok)) {
+                                        model.setFormat(CopyModel.COPY_FORMAT_PARQUET);
+                                        model.setParquetDefaults(configuration);
+                                    } else if (isCsvKeyword(tok)) {
+                                        model.setFormat(CopyModel.COPY_FORMAT_CSV);
+                                    } else {
+                                        throw errUnexpected(lexer, tok);
+                                    }
+                                    tok = optTok(lexer);
+                                    break;
+                                case CopyModel.COPY_OPTION_PARTITION_BY:
+                                    final ExpressionNode partitionByExpr = expectLiteral(lexer);
+                                    final int partitionBy = PartitionBy.fromString(partitionByExpr.token);
+                                    model.setPartitionBy(partitionBy);
+                                    break;
+                                case CopyModel.COPY_OPTION_SIZE_LIMIT:
+                                    // todo: parse human readable size
+                                    throw new UnsupportedOperationException();
+                                case CopyModel.COPY_OPTION_COMPRESSION_CODEC:
+                                    model.setCompressionCodec(expectInt(lexer));
+                                    break;
+                                case CopyModel.COPY_OPTION_COMPRESSION_LEVEL:
+                                    model.setCompressionLevel(expectInt(lexer));
+                                    break;
+                                case CopyModel.COPY_OPTION_ROW_GROUP_SIZE:
+                                    model.setRowGroupSize(expectInt(lexer));
+                                    break;
+                                case CopyModel.COPY_OPTION_DATA_PAGE_SIZE:
+                                    model.setDataPageSize(expectInt(lexer));
+                                    break;
+                                case CopyModel.COPY_OPTION_STATISTICS_ENABLED:
+                                    tok = tok(lexer, "'true' or 'false'");
+                                    if (isTrueKeyword(tok)) {
+                                        model.setStatisticsEnabled(true);
+                                    } else if (isFalseKeyword(tok)) {
+                                        model.setStatisticsEnabled(false);
+                                    } else {
+                                        throw errUnexpected(lexer, tok);
+                                    }
+                                    break;
+                                case CopyModel.COPY_OPTION_PARQUET_VERSION:
+                                    model.setParquetVersion(expectInt(lexer));
+                                    break;
+                                case CopyModel.COPY_OPTION_UNKNOWN:
+                                    throw SqlException.$(lexer.lastTokenPosition(), "unrecognised option [option=")
+                                            .put(tok).put(']');
                             }
                         }
                     }
+                    model.setType(CopyModel.COPY_TYPE_TO);
                     return model;
                 }
             }

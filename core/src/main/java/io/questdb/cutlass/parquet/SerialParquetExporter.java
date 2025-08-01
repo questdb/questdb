@@ -26,6 +26,7 @@ package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
@@ -42,7 +43,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -58,13 +58,10 @@ public class SerialParquetExporter implements Closeable {
     private final CharSequence copyRoot;
     private final FilesFacade ff;
     ExecutionCircuitBreaker circuitBreaker;
-    long copyId;
-    CharSequence fileName;
-    Path fromNative, toParquet;
     PhaseStatusReporter statusReporter;
-    CharSequence tableName;
-    TableReader tableReader;
     TableToken tableToken;
+    CopyExportRequestTask task;
+    Path toParquet;
 
     public SerialParquetExporter(CairoEngine engine, Path path) {
         this.cairoEngine = engine;
@@ -79,27 +76,35 @@ public class SerialParquetExporter implements Closeable {
 
     }
 
-    public void of(@NotNull CharSequence tableName,
-                   @NotNull CharSequence fileName,
-                   long copyId,
+    public void of(CopyExportRequestTask task,
                    ExecutionCircuitBreaker circuitBreaker,
                    PhaseStatusReporter statusReporter) {
-        this.tableName = tableName;
-        this.fileName = fileName;
-        this.copyId = copyId;
+        this.task = task;
         this.circuitBreaker = circuitBreaker;
         this.statusReporter = statusReporter;
     }
 
     public void process(SecurityContext securityContext) {
+        statusReporter.report(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, CopyExportRequestTask.STATUS_STARTED, null, Long.MIN_VALUE);
+
+        final String tableName = task.getTableName();
+        final String fileName = task.getFileName();
+
         tableToken = cairoEngine.getTableTokenIfExists(tableName);
+
+        if (tableToken == null) {
+            throw CairoException.tableDoesNotExist(tableName);
+        }
+        
+        securityContext.authorizeSelectOnAnyColumn(tableToken);
+
         final CharSequence inputRoot = configuration.getSqlCopyInputRoot();
-        final int compressionCodec = configuration.getPartitionEncoderParquetCompressionCodec();
-        final int compressionLevel = configuration.getPartitionEncoderParquetCompressionLevel();
-        final int rowGroupSize = configuration.getPartitionEncoderParquetRowGroupSize();
-        final int dataPageSize = configuration.getPartitionEncoderParquetDataPageSize();
-        final boolean statisticsEnabled = configuration.isPartitionEncoderParquetStatisticsEnabled();
-        final int parquetVersion = configuration.getPartitionEncoderParquetVersion();
+        final int compressionCodec = task.getCompressionCodec();
+        final int compressionLevel = task.getCompressionLevel();
+        final int rowGroupSize = task.getRowGroupSize();
+        final int dataPageSize = task.getDataPageSize();
+        final boolean statisticsEnabled = task.isStatisticsEnabled();
+        final int parquetVersion = task.getParquetVersion();
 
         try (TableReader reader = cairoEngine.getReader(tableToken)) {
             final int partitionCount = reader.getPartitionCount();
@@ -118,7 +123,6 @@ public class SerialParquetExporter implements Closeable {
 
                     final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
 
-
                     PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
 
                     toParquet.trimTo(0).concat(inputRoot).concat(fileName);
@@ -128,24 +132,33 @@ public class SerialParquetExporter implements Closeable {
 
                     toParquet.put(".parquet");
 
-                    createDirsOrFail(ff, toParquet, configuration.getMkDirMode());
+                    statusReporter.report(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, CopyExportRequestTask.STATUS_PENDING, toParquet.toString(), Long.MIN_VALUE);
 
-                    PartitionEncoder.encodeWithOptions(
-                            partitionDescriptor,
-                            toParquet,
-                            ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
-                            statisticsEnabled,
-                            rowGroupSize,
-                            dataPageSize,
-                            parquetVersion
-                    );
+                    try {
+                        createDirsOrFail(ff, toParquet, configuration.getMkDirMode());
 
-                    long parquetFileLength = ff.length(toParquet.$());
+                        PartitionEncoder.encodeWithOptions(
+                                partitionDescriptor,
+                                toParquet,
+                                ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                                statisticsEnabled,
+                                rowGroupSize,
+                                dataPageSize,
+                                parquetVersion
+                        );
 
+                        long parquetFileLength = ff.length(toParquet.$());
+                    } catch (CairoException e) {
+                        statusReporter.report(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, CopyExportRequestTask.STATUS_FAILED, toParquet.toString(), e.getErrno());
+                        throw CopyExportException.instance(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, e.getFlyweightMessage(), e.getErrno());
+                    }
                 }
             }
 
         }
+
+        statusReporter.report(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, CopyExportRequestTask.STATUS_FINISHED, null, Long.MIN_VALUE);
+
     }
 
     @FunctionalInterface

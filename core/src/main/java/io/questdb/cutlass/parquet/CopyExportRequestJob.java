@@ -38,6 +38,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -116,6 +117,8 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
         this.path = Misc.free(path);
     }
 
+    // todo: improve outputs so that they make more sense for parquet export
+    // i.e presenting the query text instead of a useless copy.id table name
     private void updateStatus(
             byte phase,
             byte status,
@@ -125,11 +128,12 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
         if (writer != null) {
             try {
                 TableWriter.Row row = writer.newRow(clock.getTicks());
+                utf8StringSink.clear();
                 Numbers.appendHex(utf8StringSink, task.getCopyID(), true);
                 row.putVarchar(1, utf8StringSink);
                 row.putSym(2, task.getTableName());
                 row.putSym(3, task.getFileName());
-                row.putSym(4, null);
+                row.putSym(4, CopyExportRequestTask.getPhaseName(phase));
                 row.putSym(5, CopyExportRequestTask.getStatusName(status));
                 utf8StringSink.clear();
                 utf8StringSink.put(msg);
@@ -174,16 +178,24 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
             task = requestQueue.get(cursor);
             try {
                 serialExporter.of(
-                        task.getTableName(),
-                        task.getFileName(),
-                        task.getCopyID(),
+                        task,
                         copyContext.getCircuitBreaker(),
                         this::updateStatus
                 );
                 serialExporter.process(task.getSecurityContext());
+                if (Chars.startsWith(task.getTableName(), "copy.")) {
+                    updateStatus(CopyExportRequestTask.PHASE_DROPPING_TEMP_TABLE, CopyExportRequestTask.STATUS_STARTED, task.getTableName(), Long.MIN_VALUE);
+                    try {
+                        engine.execute("DROP TABLE IF EXISTS '" + task.getTableName() + "';");
+                    } catch (SqlException e) {
+                        updateStatus(CopyExportRequestTask.PHASE_DROPPING_TEMP_TABLE, CopyExportRequestTask.STATUS_FAILED, e.getMessage(), Long.MIN_VALUE);
+                    }
+                    updateStatus(CopyExportRequestTask.PHASE_DROPPING_TEMP_TABLE, CopyExportRequestTask.STATUS_FINISHED, task.getTableName(), Long.MIN_VALUE);
+                }
+                updateStatus(CopyExportRequestTask.PHASE_NONE, CopyExportRequestTask.STATUS_FINISHED, null, Long.MIN_VALUE);
             } catch (CopyExportException e) {
                 updateStatus(
-                        CopyExportRequestTask.NO_PHASE,
+                        CopyExportRequestTask.PHASE_NONE,
                         e.isCancelled() ? CopyExportRequestTask.STATUS_CANCELLED : CopyExportRequestTask.STATUS_FAILED,
                         e.getMessage(),
                         0

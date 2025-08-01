@@ -28,6 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Record;
@@ -39,10 +41,15 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.SingleValueRecordCursor;
 import io.questdb.griffin.model.CopyModel;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
+import io.questdb.std.GenericLexer;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.std.GenericLexer.unquote;
 
 /**
  * Executes COPY statement lazily, i.e. on record cursor initialization, to play
@@ -51,27 +58,64 @@ import io.questdb.std.str.StringSink;
 public class CopyExportFactory extends AbstractRecordCursorFactory {
 
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
+    private final int compressionCodec;
+    private final int compressionLevel;
     private final CopyContext copyContext;
+    private final int dataPageSize;
     private final StringSink exportIdSink = new StringSink();
     private final String fileName;
     private final MessageBus messageBus;
+    private final int parquetVersion;
+    private final int partitionBy;
     private final CopyRecord record = new CopyRecord();
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
-    private final String tableName;
+    private final int rowGroupSize;
+    private final @Nullable SecurityContext securityContext;
+    private final int sizeLimit;
+    private final boolean statisticsEnabled;
+    private @Nullable String selectText = null;
+    private @Nullable String tableName = null;
 
     public CopyExportFactory(
             MessageBus messageBus,
             CopyContext copyContext,
-            String tableName,
-            String fileName,
-            CopyModel model
-    ) {
+            CopyModel model,
+            SecurityContext securityContext
+    ) throws SqlException {
         super(METADATA);
         this.messageBus = messageBus;
         this.copyContext = copyContext;
-        this.tableName = tableName;
-        this.fileName = fileName;
 
+        if (model.getTableName() != null) {
+            this.tableName = model.getTableName().toString();
+        } else {
+            assert model.getSelectText() != null;
+        }
+
+        final ExpressionNode fileNameExpr = model.getFileName();
+        this.fileName = fileNameExpr != null ? GenericLexer.assertNoDots(unquote(fileNameExpr.token), fileNameExpr.position).toString() : null;
+        this.securityContext = securityContext;
+        this.selectText = model.getSelectText();
+        this.partitionBy = model.getPartitionBy();
+        this.sizeLimit = model.getSizeLimit();
+        this.compressionCodec = model.getCompressionCodec();
+        this.compressionLevel = model.getCompressionLevel();
+        this.rowGroupSize = model.getRowGroupSize();
+        this.dataPageSize = model.getDataPageSize();
+        this.statisticsEnabled = model.isStatisticsEnabled();
+        this.parquetVersion = model.getParquetVersion();
+    }
+
+    public void createTempTable(long copyID, SqlExecutionContext executionContext) throws SqlException {
+        exportIdSink.put("CREATE TABLE 'copy.");
+        Numbers.appendHex(exportIdSink, copyID, true);
+        exportIdSink.put("' AS (").put(selectText).put(')');
+
+        if (partitionBy > -1) {
+            exportIdSink.put(" PARTITION BY ").put(PartitionBy.toString(partitionBy));
+        }
+        exportIdSink.put(';');
+        executionContext.getCairoEngine().execute(exportIdSink);
     }
 
     @Override
@@ -87,19 +131,40 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
 
                 long copyID = copyContext.assignActiveExportId(executionContext.getSecurityContext());
+
+                if (this.selectText != null) {
+                    // need to create a temp table which we will use for the export
+                    createTempTable(copyID, executionContext); //
+                }
+
+                exportIdSink.clear();
+                exportIdSink.put("copy.");
+                Numbers.appendHex(exportIdSink, copyID, true);
+                tableName = exportIdSink.toString();
+
+                exportIdSink.clear();
+                Numbers.appendHex(exportIdSink, copyID, true);
+                record.setValue(exportIdSink);
+
+
                 task.of(
                         executionContext.getSecurityContext(),
                         copyID,
                         tableName,
-                        fileName
+                        fileName,
+                        sizeLimit,
+                        compressionCodec,
+                        compressionLevel,
+                        rowGroupSize,
+                        dataPageSize,
+                        statisticsEnabled,
+                        parquetVersion
                 );
 
                 circuitBreaker.reset();
                 copyRequestPubSeq.done(processingCursor);
 
-                exportIdSink.clear();
-                Numbers.appendHex(exportIdSink, copyID, true);
-                record.setValue(exportIdSink);
+
                 cursor.toTop();
                 return cursor;
             } else {
