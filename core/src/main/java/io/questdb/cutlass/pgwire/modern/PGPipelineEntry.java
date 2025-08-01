@@ -1289,6 +1289,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case X_PG_TIMESTAMP_TZ:
                 bindVariableService.define(j, ColumnType.TIMESTAMP, 0);
                 break;
+            case X_PG_ARR_TIMESTAMP:
+            case X_PG_ARR_TIMESTAMP_TZ:
+                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.TIMESTAMP, 1, false), 0);
+                break;
             case X_PG_INT2:
                 bindVariableService.define(j, ColumnType.SHORT, 0);
                 break;
@@ -1307,20 +1311,67 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case X_PG_BOOL:
                 bindVariableService.define(j, ColumnType.BOOLEAN, 0);
                 break;
+            case X_PG_ARR_BOOL:
+                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.BOOLEAN, 1, false), 0);
+                break;
             case X_PG_BYTEA:
                 bindVariableService.define(j, ColumnType.BINARY, 0);
                 break;
             case X_PG_UUID:
                 bindVariableService.define(j, ColumnType.UUID, 0);
                 break;
+            case X_PG_ARR_UUID:
+                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.UUID, 1, false), 0);
+                break;
+            case X_PG_ARR_BYTEA:
+                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.BYTE, 1, false), 0);
+                break;
+            case X_PG_ARR_VARCHAR:
+            case X_PG_ARR_TEXT:
+                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.VARCHAR, 1, false), 0);
+                break;
+            case X_PG_ARR_INT2:
+                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.SHORT, 1, false), 0);
+                break;
+            case X_PG_ARR_INT4:
+                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.INT, 1, false), 0);
+                break;
             case X_PG_ARR_INT8:
+                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.LONG, 1, false), 0);
+                break;
+            case X_PG_ARR_FLOAT4:
+                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.FLOAT, 1, false), 0);
+                break;
             case X_PG_ARR_FLOAT8:
-                bindVariableService.define(j, ColumnType.ARRAY, 0);
+                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1, false), 0);
+                break;
+            case X_PG_ARR_DATE:
+                bindVariableService.define(j, ColumnType.encodeArrayType(ColumnType.DATE, 1, false), 0);
                 break;
             case PG_UNSPECIFIED:
                 // unknown types, we are not defining them for now - this gives
                 // the compiler a chance to infer the best possible type
                 break;
+            case X_PG_NUMERIC:
+                throw CairoException.nonCritical().put("unsupported bind variable type NUMERIC (OID ").put(PG_NUMERIC).put(')');
+            case X_PG_ARR_NUMERIC:
+                throw CairoException.nonCritical().put("unsupported bind variable type NUMERIC[] (OID ").put(PG_ARR_NUMERIC).put(')');
+            case X_PG_ARR_TIME:
+                throw CairoException.nonCritical().put("unsupported bind variable type TIME[] (OID ").put(PG_ARR_TIME).put(')');
+            case X_PG_INET:
+                throw CairoException.nonCritical().put("unsupported bind variable type INET (OID ").put(PG_INET).put(')');
+            case X_PG_ARR_INET:
+                throw CairoException.nonCritical().put("unsupported bind variable type INET[] (OID ").put(PG_ARR_INET).put(')');
+            case X_PG_TIME:
+                throw CairoException.nonCritical().put("unsupported bind variable type TIME (OID ").put(PG_TIME).put(')');
+            case X_PG_ARR_INTERVAL:
+                throw CairoException.nonCritical().put("unsupported bind variable type INTERVAL[] (OID ").put(PG_ARR_INTERVAL).put(')');
+            case X_PG_INTERVAL:
+                throw CairoException.nonCritical().put("unsupported bind variable type INTERVAL (OID ").put(PG_INTERVAL).put(')');
+            case X_PG_JSONB:
+                throw CairoException.nonCritical().put("unsupported bind variable type JSONB (OID ").put(PG_JSONB).put(')');
+            case X_PG_ARR_JSONB:
+                throw CairoException.nonCritical().put("unsupported bind variable type JSONB[] (OID ").put(PG_ARR_JSONB).put(')');
             default:
                 bindVariableService.define(j, ColumnType.STRING, 0);
                 break;
