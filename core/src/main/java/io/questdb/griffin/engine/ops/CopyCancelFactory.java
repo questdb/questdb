@@ -70,10 +70,10 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final AtomicBooleanCircuitBreaker circuitBreaker = copyContext.getCircuitBreaker();
-        final long activeCopyID = copyContext.getActiveCopyID();
+        final long activeCopyID = copyContext.getActiveImportID();
 
         if (activeCopyID == cancelCopyID && cancelCopyID != CopyContext.INACTIVE_COPY_ID) {
-            copyContext.getOriginatorSecurityContext().authorizeCopyCancel(executionContext.getSecurityContext());
+            copyContext.getImportOriginatorSecurityContext().authorizeCopyCancel(executionContext.getSecurityContext());
             circuitBreaker.cancel();
             // Cancelled active import, probably :)
             // This action is async and there is no guarantee that target table does not exist

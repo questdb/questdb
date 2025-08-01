@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cutlass.text.CopyContext;
-import io.questdb.cutlass.text.CopyRequestTask;
+import io.questdb.cutlass.text.CopyImportRequestTask;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -49,7 +49,7 @@ import io.questdb.std.str.StringSink;
  * Executes COPY statement lazily, i.e. on record cursor initialization, to play
  * nicely with server-side statements in PG Wire and query caching in general.
  */
-public class CopyFactory extends AbstractRecordCursorFactory {
+public class CopyImportFactory extends AbstractRecordCursorFactory {
 
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private final int atomicity;
@@ -66,7 +66,7 @@ public class CopyFactory extends AbstractRecordCursorFactory {
     private final String timestampColumn;
     private final String timestampFormat;
 
-    public CopyFactory(
+    public CopyImportFactory(
             MessageBus messageBus,
             CopyContext copyContext,
             String tableName,
@@ -88,15 +88,15 @@ public class CopyFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final RingQueue<CopyRequestTask> textImportRequestQueue = messageBus.getTextImportRequestQueue();
-        final MPSequence copyRequestPubSeq = messageBus.getCopyRequestPubSeq();
+        final RingQueue<CopyImportRequestTask> copyImportRequestQueue = messageBus.getCopyImportRequestQueue();
+        final MPSequence copyRequestPubSeq = messageBus.getCopyImportRequestPubSeq();
         final AtomicBooleanCircuitBreaker circuitBreaker = copyContext.getCircuitBreaker();
 
-        long activeCopyID = copyContext.getActiveCopyID();
+        long activeCopyID = copyContext.getActiveImportID();
         if (activeCopyID == CopyContext.INACTIVE_COPY_ID) {
             long processingCursor = copyRequestPubSeq.next();
             if (processingCursor > -1) {
-                final CopyRequestTask task = textImportRequestQueue.get(processingCursor);
+                final CopyImportRequestTask task = copyImportRequestQueue.get(processingCursor);
 
                 long copyID = copyContext.assignActiveImportId(executionContext.getSecurityContext());
                 task.of(

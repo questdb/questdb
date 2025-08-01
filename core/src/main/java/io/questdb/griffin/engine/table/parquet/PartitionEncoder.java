@@ -24,7 +24,11 @@
 
 package io.questdb.griffin.engine.table.parquet;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;

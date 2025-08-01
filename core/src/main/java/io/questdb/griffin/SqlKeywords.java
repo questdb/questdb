@@ -316,6 +316,13 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 'e';
     }
 
+    public static boolean isCsvKeyword(CharSequence tok) {
+        return tok.length() == 3
+                && (tok.charAt(0) | 32) == 'c'
+                && (tok.charAt(1) | 32) == 's'
+                && (tok.charAt(2) | 32) == 'v';
+    }
+
     public static boolean isCurrentKeyword(CharSequence tok) {
         return tok.length() == 7
                 && (tok.charAt(0) | 32) == 'c'
