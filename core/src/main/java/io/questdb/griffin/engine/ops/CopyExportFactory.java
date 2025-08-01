@@ -135,12 +135,12 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 if (this.selectText != null) {
                     // need to create a temp table which we will use for the export
                     createTempTable(copyID, executionContext); //
+                    exportIdSink.clear();
+                    exportIdSink.put("copy.");
+                    Numbers.appendHex(exportIdSink, copyID, true);
+                    tableName = exportIdSink.toString();
                 }
 
-                exportIdSink.clear();
-                exportIdSink.put("copy.");
-                Numbers.appendHex(exportIdSink, copyID, true);
-                tableName = exportIdSink.toString();
 
                 exportIdSink.clear();
                 Numbers.appendHex(exportIdSink, copyID, true);
