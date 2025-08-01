@@ -48,6 +48,78 @@ use std::slice;
 
 const HEADER_SIZE_NULL: [u8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
 
+#[derive(Clone, Copy)]
+struct RepLevelsIterator<'a> {
+    dim: usize,
+    data: &'a [f64],
+    strides: [usize; 32],
+    cur_flat_index: usize,
+    cur_indices: [usize; 32],
+    prev_indices: [usize; 32],
+}
+
+impl<'a> RepLevelsIterator<'a> {
+    pub fn new(shape: &[i32], data: &'a [f64]) -> Self {
+        let mut strides = [0; 32];
+        let mut stride = 1;
+        for i in (0..shape.len()).rev() {
+            let dim_len = shape[i] as usize;
+            strides[i] = stride;
+            stride = stride * dim_len;
+        }
+
+        RepLevelsIterator {
+            dim: shape.len(),
+            data,
+            strides,
+            cur_flat_index: 0,
+            cur_indices: [0usize; 32],
+            prev_indices: [0usize; 32],
+        }
+    }
+
+    /// Calculate repetition level based on current and previous indices
+    fn calculate_replevel(&self) -> u32 {
+        // Find the deepest level where indices differ
+        for i in 0..self.dim {
+            if self.cur_indices[i] != self.prev_indices[i] {
+                return (i + 1) as u32;
+            }
+        }
+        return 0;
+    }
+}
+
+impl Iterator for RepLevelsIterator<'_> {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.cur_flat_index >= self.data.len() {
+            return None;
+        }
+
+        let mut rem = self.cur_flat_index;
+        for i in 0..self.dim {
+            self.cur_indices[i] = rem / self.strides[i];
+            rem %= self.strides[i];
+        }
+
+        let repetition_level = if self.cur_flat_index == 0 {
+            0 // First element always has repetition level 0
+        } else {
+            self.calculate_replevel()
+        };
+
+        for i in 0..self.prev_indices.len() {
+            self.prev_indices[i] = self.cur_indices[i];
+        }
+
+        self.cur_flat_index += 1;
+
+        Some(repetition_level)
+    }
+}
+
 // encodes array as nested lists
 pub fn array_to_page(
     dim: i32,
@@ -96,12 +168,9 @@ pub fn array_to_page(
         .iter()
         .filter(|arr| arr.is_some())
         .map(|arr| arr.unwrap())
-        .flat_map(|arr| {
-            // TODO(puzpuzpuz): proper rep levels mapping instead of 1d array
-            let _shape = arr.0;
-            let data = arr.1;
-            (0..data.len()).map(|i| if i == 0 { 0 } else { 1 })
-        });
+        .flat_map(|arr| RepLevelsIterator::new(arr.0, arr.1));
+    // TODO(puzpuzpuz): it's too expensive to clone the iterator,
+    //                  so we could calculate the total number of elements instead
     let num_elements = replevels_iter.clone().count();
     encode_group_levels(
         &mut buffer,
@@ -121,7 +190,7 @@ pub fn array_to_page(
             // TODO(puzpuzpuz): proper def levels mapping instead of 1d array
             let _shape = arr.0;
             let data = arr.1;
-            (0..data.len()+2).map(|_| 3)
+            (0..data.len() + 2).map(|_| 3)
         });
     let deflevels_len = deflevels_iter.clone().count();
     encode_group_levels(
@@ -166,6 +235,7 @@ pub fn array_to_page(
 }
 
 fn encode_data_plain(arr_slices: &[Option<(&[i32], &[f64])>], buffer: &mut Vec<u8>) {
+    // TODO(puzpuzpuz): omit nulls
     for (_shape, data) in arr_slices.iter().filter_map(|&option| option) {
         let data: &[u8] = unsafe { transmute_slice_f64(data) };
         buffer.extend_from_slice(data);
@@ -366,4 +436,39 @@ pub fn append_raw_array_nulls(
         append_raw_array_null(aux_mem, data_mem)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_1d_array() {
+        let shape = vec![4];
+        let data = vec![1.0, 2.0, 3.0, 4.0];
+        let rep_levels: Vec<u32> =
+            RepLevelsIterator::new(shape.as_slice(), data.as_slice()).collect();
+        assert_eq!(rep_levels, vec![0, 1, 1, 1]);
+    }
+
+    #[test]
+    fn test_2d_array() {
+        // 2x3 array: [[1, 2, 3], [4, 5, 6]]
+        let shape = vec![2, 3];
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let rep_levels: Vec<u32> =
+            RepLevelsIterator::new(shape.as_slice(), data.as_slice()).collect();
+        assert_eq!(rep_levels, vec![0, 2, 2, 1, 2, 2]);
+    }
+
+    #[test]
+    fn test_3d_array() {
+        // 2x2x2 array
+        let shape = vec![2, 2, 2];
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let rep_levels: Vec<u32> =
+            RepLevelsIterator::new(shape.as_slice(), data.as_slice()).collect();
+        // Structure: [[[1,2],[3,4]], [[5,6],[7,8]]]
+        assert_eq!(rep_levels, vec![0, 3, 2, 3, 1, 3, 2, 3]);
+    }
 }
