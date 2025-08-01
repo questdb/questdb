@@ -140,7 +140,7 @@ public class DoubleArrayShiftFunctionFactory implements FunctionFactory {
             if (offset == 0) {
                 return arr;
             }
-            MemoryA memory = array.prepare(getType(), arr);
+            MemoryA memory = array.copyShapeAndStartMemoryA(arr);
             double defaultValue = defaultValueFunction.getDouble(rec);
             if (arr.isVanilla()) {
                 applyToEntireVanillaArray(arr, memory, offset, defaultValue);

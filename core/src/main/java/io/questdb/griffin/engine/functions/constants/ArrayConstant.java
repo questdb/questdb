@@ -49,7 +49,7 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
                 array.ofNull();
                 return;
             }
-            MemoryA mem = array.prepare(type, arrayIn);
+            MemoryA mem = array.copyShapeAndStartMemoryA(arrayIn);
             arrayIn.appendToMemFlat(mem, 0, arrayIn.getFlatViewLength());
         } catch (Throwable th) {
             close();

@@ -85,7 +85,7 @@ public class DoubleArrayMultiplyScalarFunctionFactory implements FunctionFactory
             }
 
             final double scalarValue = scalarArg.getDouble(rec);
-            final MemoryA memory = array.prepare(getType(), arr);
+            final MemoryA memory = array.copyShapeAndStartMemoryA(arr);
             if (arr.isVanilla()) {
                 FlatArrayView flatView = arr.flatView();
                 for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {

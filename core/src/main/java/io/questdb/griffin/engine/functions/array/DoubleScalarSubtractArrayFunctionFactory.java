@@ -83,7 +83,7 @@ public class DoubleScalarSubtractArrayFunctionFactory implements FunctionFactory
             }
 
             final var scalarValue = scalarArg.getDouble(rec);
-            final var memory = array.prepare(getType(), arr);
+            final var memory = array.copyShapeAndStartMemoryA(arr);
             if (arr.isVanilla()) {
                 FlatArrayView flatView = arr.flatView();
                 for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {

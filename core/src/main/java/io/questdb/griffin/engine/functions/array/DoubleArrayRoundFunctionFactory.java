@@ -104,7 +104,7 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
                 return array;
             }
 
-            final var memory = array.prepare(getType(), arr);
+            final var memory = array.copyShapeAndStartMemoryA(arr);
             for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {
                 memory.putDouble(Double.NaN);
             }
@@ -160,7 +160,7 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
                 return array;
             }
 
-            final var memory = array.prepare(getType(), arr);
+            final var memory = array.copyShapeAndStartMemoryA(arr);
             if (arr.isVanilla()) {
                 FlatArrayView flatView = arr.flatView();
                 for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {
@@ -241,7 +241,7 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
             }
 
             final var scalarValue = scalarArg.getInt(rec);
-            final var memory = array.prepare(getType(), arr);
+            final var memory = array.copyShapeAndStartMemoryA(arr);
             if (arr.isVanilla()) {
                 FlatArrayView flatView = arr.flatView();
                 for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {

@@ -97,6 +97,21 @@ public final class DirectArray extends MutableArray implements Mutable {
         assert ptr == 0;
     }
 
+    /**
+     * Copies the type and shape from the source array, and then calls
+     * {@link #startMemoryA()}. The returned {@code MemoryA} is ready to be populated
+     * by as many elements as there are in the source array, of the same type.
+     *
+     * @param sourceArray the source array
+     * @return memory ready to get populated
+     */
+    public MemoryA copyShapeAndStartMemoryA(ArrayView sourceArray) {
+        setType(sourceArray.getType());
+        copyShapeFrom(sourceArray);
+        applyShape();
+        return startMemoryA();
+    }
+
     public IntList getShape() {
         return shape;
     }
@@ -107,21 +122,6 @@ public final class DirectArray extends MutableArray implements Mutable {
         borrowedFlatView().reset();
         shape.clear();
         strides.clear();
-    }
-
-    /**
-     * Helper method to prepare the direct array to take shape of another array. Functions
-     * will take control of populating array memory.
-     *
-     * @param type the target element type
-     * @param arr  the source of shape
-     * @return memory to be used by functions to materialize array
-     */
-    public MemoryA prepare(int type, ArrayView arr) {
-        setType(type);
-        copyShapeFrom(arr);
-        applyShape();
-        return startMemoryA();
     }
 
     public long ptr() {
