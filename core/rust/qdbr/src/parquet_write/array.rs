@@ -44,7 +44,6 @@ use crate::parquet_write::util::{
     build_plain_page, encode_group_levels, encode_primitive_deflevels, ExactSizedIter,
 };
 use parquet2::schema::types::PhysicalType;
-use std::slice;
 
 const HEADER_SIZE_NULL: [u8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
 // must be kept in sync with Java's ColumnType#ARRAY_NDIMS_LIMIT
@@ -209,7 +208,7 @@ pub fn array_to_page(
         .collect();
 
     // calculate lengths of rep and def levels ahead of time
-    let levels_len = arr_slices
+    let num_values = arr_slices
         .iter()
         .map(|arr| match arr {
             Some(arr) => {
@@ -218,46 +217,59 @@ pub fn array_to_page(
             }
             None => 1,
         })
-        .sum();
+        .sum::<usize>()
+        + column_top;
 
-    let replevels_iter = arr_slices.iter().flat_map(|arr| match arr {
-        Some(arr) => {
-            let shape = arr.0;
-            let data = arr.1;
-            if data.len() == 0 {
-                RepLevelsIterator::new_single()
-            } else {
-                RepLevelsIterator::new(shape, data.len())
+    let replevels_iter = (0..num_rows).flat_map(|i| {
+        if i < column_top {
+            RepLevelsIterator::new_single()
+        } else {
+            match arr_slices[i - column_top] {
+                Some(arr) => {
+                    let shape = arr.0;
+                    let data = arr.1;
+                    if data.len() == 0 {
+                        RepLevelsIterator::new_single()
+                    } else {
+                        RepLevelsIterator::new(shape, data.len())
+                    }
+                }
+                None => RepLevelsIterator::new_single(),
             }
         }
-        None => RepLevelsIterator::new_single(),
     });
     encode_group_levels(
         &mut buffer,
         replevels_iter,
-        levels_len,
+        num_values,
         dim as u32,
         options.version,
     )?;
 
     let repetition_levels_byte_length = buffer.len();
 
-    let deflevels_iter = arr_slices.iter().flat_map(|arr| match arr {
-        Some(arr) => {
-            let data = arr.1;
-            if data.len() == 0 {
-                DefLevelsIterator::new_single(1)
-            } else {
-                // max def level is the number of dimensions plus two optional fields
-                DefLevelsIterator::new(data, (dim + 2) as u32)
+    let deflevels_iter = (0..num_rows).flat_map(|i| {
+        if i < column_top {
+            DefLevelsIterator::new_single(0)
+        } else {
+            match arr_slices[i - column_top] {
+                Some(arr) => {
+                    let data = arr.1;
+                    if data.len() == 0 {
+                        DefLevelsIterator::new_single(1)
+                    } else {
+                        // max def level is the number of dimensions plus two optional fields
+                        DefLevelsIterator::new(data, (dim + 2) as u32)
+                    }
+                }
+                None => DefLevelsIterator::new_single(0),
             }
         }
-        None => DefLevelsIterator::new_single(0),
     });
     encode_group_levels(
         &mut buffer,
         deflevels_iter,
-        levels_len,
+        num_values,
         (dim + 1) as u32,
         options.version,
     )?;
@@ -280,7 +292,8 @@ pub fn array_to_page(
     let stats = ArrayStats::new(null_count);
     build_page(
         buffer,
-        num_rows, // TODO(puzpuzpuz): num_elements ????
+        num_values,
+        num_rows,
         null_count,
         repetition_levels_byte_length,
         definition_levels_byte_length,
@@ -296,27 +309,19 @@ pub fn array_to_page(
 }
 
 fn encode_data_plain(arr_slices: &[Option<(&[i32], &[f64])>], buffer: &mut Vec<u8>) {
-    // TODO(puzpuzpuz): omit nulls
     for (_shape, data) in arr_slices.iter().filter_map(|&option| option) {
-        let data: &[u8] = unsafe { transmute_slice_f64(data) };
-        buffer.extend_from_slice(data);
-    }
-}
-
-pub unsafe fn transmute_slice_f64(slice: &[f64]) -> &[u8] {
-    if slice.is_empty() {
-        &[]
-    } else {
-        slice::from_raw_parts(
-            slice.as_ptr() as *const u8,
-            slice.len() * mem::size_of::<f64>(),
-        )
+        data.iter().for_each(|v| {
+            if !v.is_nan() {
+                buffer.extend_from_slice(&v.to_le_bytes());
+            }
+        });
     }
 }
 
 #[allow(clippy::too_many_arguments)]
 fn build_page(
     buffer: Vec<u8>,
+    num_values: usize,
     num_rows: usize,
     null_count: usize,
     repetition_levels_byte_length: usize,
@@ -327,14 +332,14 @@ fn build_page(
 ) -> ParquetResult<DataPage> {
     let header = match options.version {
         Version::V1 => DataPageHeader::V1(DataPageHeaderV1 {
-            num_values: num_rows as i32,
+            num_values: num_values as i32,
             encoding: encoding.into(),
             definition_level_encoding: Encoding::Rle.into(),
             repetition_level_encoding: Encoding::Rle.into(),
             statistics,
         }),
         Version::V2 => DataPageHeader::V2(DataPageHeaderV2 {
-            num_values: num_rows as i32,
+            num_values: num_values as i32,
             encoding: encoding.into(),
             num_nulls: null_count as i32,
             num_rows: num_rows as i32,
@@ -344,7 +349,7 @@ fn build_page(
             statistics,
         }),
     };
-    // TODO(puzpuzpuz): how to avoid primitive type here???? use global stub descriptor?
+    // TODO(puzpuzpuz): how to avoid primitive type here???? use a global stub descriptor?
     let t = PrimitiveType::from_physical("fdfd".to_string(), PhysicalType::Double);
     Ok(DataPage::new(
         header,

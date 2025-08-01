@@ -88,96 +88,13 @@ public class ParquetTest extends AbstractTest {
     private final static long UPDATE_ROWS = ROW_GROUP_SIZE * 4;
 
     @Test
-    public void test1dArray() throws Exception {
-        String ddl = "create table x as (select " +
-                " rnd_double_array(1, 2) arr, " +
-                " timestamp_sequence(400000000000, 1000000000) ts" +
-                " from long_sequence(10)) timestamp(ts) partition by day";
+    public void test1dArrayV1() throws Exception {
+        test1dArray(ParquetVersion.PARQUET_VERSION_V1);
+    }
 
-        try (final ServerMain serverMain = ServerMain.create(root)) {
-            serverMain.start();
-            serverMain.getEngine().execute(ddl);
-
-            // create new active partition
-            final String insert = "insert into x values (null, '1970-02-02T02:02:02.020202Z')";
-            serverMain.getEngine().execute(insert); // txn 2
-
-            serverMain.awaitTxn("x", 2);
-
-            final String parquetPathStr;
-            try (
-                    Path path = new Path();
-                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
-                    TableReader reader = serverMain.getEngine().getReader("x")
-            ) {
-                path.of(root).concat("x.parquet").$();
-                parquetPathStr = path.toString();
-                long start = System.nanoTime();
-
-                int partitionIndex = 0;
-                StringSink partitionName = new StringSink();
-                long timestamp = reader.getPartitionTimestampByIndex(partitionIndex);
-                PartitionBy.setSinkForPartition(partitionName, PartitionBy.DAY, timestamp);
-
-                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
-                PartitionEncoder.encodeWithOptions(
-                        partitionDescriptor,
-                        path,
-                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
-                        true,
-                        false,
-                        10,
-                        DATA_PAGE_SIZE,
-                        ParquetVersion.PARQUET_VERSION_V1
-                );
-
-                LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
-                Configuration configuration = new Configuration();
-                final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
-                final InputFile inputFile = HadoopInputFile.fromPath(parquetPath, configuration);
-
-                try (
-                        ParquetFileReader parquetFileReader = ParquetFileReader.open(inputFile);
-                        ParquetReader<GenericRecord> parquetReader = AvroParquetReader.<GenericRecord>builder(inputFile).build()
-                ) {
-                    ParquetMetadata metadata = parquetFileReader.getFooter();
-                    FileMetaData fileMetaData = metadata.getFileMetaData();
-                    Assert.assertEquals("QuestDB version 9.0", fileMetaData.getCreatedBy());
-
-                    MessageType schema = fileMetaData.getSchema();
-                    List<ColumnDescriptor> columns = schema.getColumns();
-                    Assert.assertEquals(2, schema.getColumns().size());
-
-                    assertSchemaArray(columns.get(0), "arr");
-                    assertSchemaNullable(columns.get(1), "ts", PrimitiveType.PrimitiveTypeName.INT64);
-
-                    long rowCount = 0;
-                    List<BlockMetaData> rowGroups = metadata.getBlocks();
-                    for (int i = 0; i < rowGroups.size(); i++) {
-                        BlockMetaData blockMetaData = rowGroups.get(i);
-                        long blockRowCount = blockMetaData.getRowCount();
-                        if (i == rowGroups.size() - 1) {
-                            Assert.assertTrue(blockRowCount <= ROW_GROUP_SIZE);
-                        } else {
-                            Assert.assertEquals(ROW_GROUP_SIZE, blockRowCount);
-                        }
-                        rowCount += blockRowCount;
-                        List<ColumnChunkMetaData> chunks = blockMetaData.getColumns();
-                        // arr
-                        assertNullCount(chunks, 0, 0);
-                    }
-                    Assert.assertEquals(rowCount, 10);
-
-                    long actualRows = 0;
-                    GenericRecord nextParquetRecord;
-                    while ((nextParquetRecord = parquetReader.read()) != null) {
-                        Object arr = nextParquetRecord.get("arr");
-                        actualRows++;
-                    }
-                    Assert.assertEquals(10, actualRows);
-                }
-            }
-        }
+    @Test
+    public void test1dArrayV2() throws Exception {
+        test1dArray(ParquetVersion.PARQUET_VERSION_V2);
     }
 
     @Test
@@ -352,6 +269,103 @@ public class ParquetTest extends AbstractTest {
             Assert.assertNull(actual);
         } else {
             Assert.assertEquals(Utf8s.toString(expected), actual.toString());
+        }
+    }
+
+    private void test1dArray(int parquetVersion) throws Exception {
+        final String ddl = "create table x as (select " +
+                " array[1, 2, 3] arr, " +
+                " timestamp_sequence(400000000000, 1000000000) ts" +
+                " from long_sequence(3)) timestamp(ts) partition by day";
+
+        try (final ServerMain serverMain = ServerMain.create(root)) {
+            serverMain.start();
+            serverMain.getEngine().execute(ddl);
+
+            // create new active partition
+            final String insert = "insert into x values (null, '1970-02-02T02:02:02.020202Z')";
+            serverMain.getEngine().execute(insert); // txn 2
+
+            serverMain.awaitTxn("x", 2);
+
+            final String parquetPathStr;
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = serverMain.getEngine().getReader("x")
+            ) {
+                path.of(root).concat("x.parquet").$();
+                parquetPathStr = path.toString();
+                long start = System.nanoTime();
+
+                int partitionIndex = 0;
+                StringSink partitionName = new StringSink();
+                long timestamp = reader.getPartitionTimestampByIndex(partitionIndex);
+                PartitionBy.setSinkForPartition(partitionName, PartitionBy.DAY, timestamp);
+
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        10,
+                        DATA_PAGE_SIZE,
+                        parquetVersion
+                );
+
+                LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
+                Configuration configuration = new Configuration();
+                final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
+                final InputFile inputFile = HadoopInputFile.fromPath(parquetPath, configuration);
+
+                try (
+                        ParquetFileReader parquetFileReader = ParquetFileReader.open(inputFile);
+                        ParquetReader<GenericRecord> parquetReader = AvroParquetReader.<GenericRecord>builder(inputFile).build()
+                ) {
+                    ParquetMetadata metadata = parquetFileReader.getFooter();
+                    FileMetaData fileMetaData = metadata.getFileMetaData();
+                    Assert.assertEquals("QuestDB version 9.0", fileMetaData.getCreatedBy());
+
+                    MessageType schema = fileMetaData.getSchema();
+                    List<ColumnDescriptor> columns = schema.getColumns();
+                    Assert.assertEquals(2, schema.getColumns().size());
+
+                    assertSchemaArray(columns.get(0), "arr");
+                    assertSchemaNullable(columns.get(1), "ts", PrimitiveType.PrimitiveTypeName.INT64);
+
+                    long rowCount = 0;
+                    List<BlockMetaData> rowGroups = metadata.getBlocks();
+                    for (int i = 0; i < rowGroups.size(); i++) {
+                        BlockMetaData blockMetaData = rowGroups.get(i);
+                        long blockRowCount = blockMetaData.getRowCount();
+                        if (i == rowGroups.size() - 1) {
+                            Assert.assertTrue(blockRowCount <= ROW_GROUP_SIZE);
+                        } else {
+                            Assert.assertEquals(ROW_GROUP_SIZE, blockRowCount);
+                        }
+                        rowCount += blockRowCount;
+                        List<ColumnChunkMetaData> chunks = blockMetaData.getColumns();
+                        // arr
+                        assertNullCount(chunks, 0, 0);
+                    }
+                    Assert.assertEquals(rowCount, 3);
+
+                    long actualRows = 0;
+                    GenericRecord nextParquetRecord;
+                    while ((nextParquetRecord = parquetReader.read()) != null) {
+                        final Object arr = nextParquetRecord.get("arr");
+                        Assert.assertNotNull(arr);
+                        Assert.assertEquals(
+                                "[{\"element\": 1.0}, {\"element\": 2.0}, {\"element\": 3.0}]",
+                                arr.toString()
+                        );
+                        actualRows++;
+                    }
+                    Assert.assertEquals(3, actualRows);
+                }
+            }
         }
     }
 
