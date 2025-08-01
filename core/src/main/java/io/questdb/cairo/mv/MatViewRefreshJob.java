@@ -619,27 +619,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long refreshStartTimestamp = microsecondClock.getTicks();
         viewState.setLastRefreshStartTimestamp(refreshStartTimestamp);
         final TableToken viewTableToken = viewDefinition.getMatViewToken();
-
         final SampleByIntervalIterator intervalIterator = refreshContext.intervalIterator;
-        if (intervalIterator == null) {
-            // We don't have intervals to query, but we may need to bump base table txn or last period hi.
-            if (refreshContext.toBaseTxn != -1 || refreshContext.periodHi != Numbers.LONG_NULL) {
-                final long commitBaseTxn = refreshContext.toBaseTxn != -1 ? refreshContext.toBaseTxn : viewState.getLastRefreshBaseTxn();
-                final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
-                refreshSuccessNoRows(
-                        viewState,
-                        walWriter,
-                        microsecondClock.getTicks(),
-                        refreshTriggerTimestamp,
-                        commitBaseTxn,
-                        commitPeriodHi
-                );
-                return true;
-            }
-            return false;
+        int intervalStep = 0;
+        if (intervalIterator != null) {
+            intervalStep = intervalIterator.getStep();
         }
 
-        int intervalStep = intervalIterator.getStep();
         try {
             factory = viewState.acquireRecordFactory();
             copier = viewState.getRecordToRowCopier();
@@ -675,6 +660,31 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     final CharSequence timestampName = walWriter.getMetadata().getColumnName(walWriter.getMetadata().getTimestampIndex());
                     final int cursorTimestampIndex = factory.getMetadata().getColumnIndex(timestampName);
                     assert cursorTimestampIndex > -1;
+                    if (factory.getMetadata().getTimestampType() != walWriter.getMetadata().getTimestampType()) {
+                        throw CairoException.nonCritical().put("timestamp type mismatch between materialized view and query [view=")
+                                .put(ColumnType.nameOf(walWriter.getMetadata().getTimestampType()))
+                                .put(", query=")
+                                .put(ColumnType.nameOf(factory.getMetadata().getTimestampType()))
+                                .put(']');
+                    }
+
+                    if (intervalIterator == null) {
+                        // We don't have intervals to query, but we may need to bump base table txn or last period hi.
+                        if (refreshContext.toBaseTxn != -1 || refreshContext.periodHi != Numbers.LONG_NULL) {
+                            final long commitBaseTxn = refreshContext.toBaseTxn != -1 ? refreshContext.toBaseTxn : viewState.getLastRefreshBaseTxn();
+                            final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
+                            refreshSuccessNoRows(
+                                    viewState,
+                                    walWriter,
+                                    microsecondClock.getTicks(),
+                                    refreshTriggerTimestamp,
+                                    commitBaseTxn,
+                                    commitPeriodHi
+                            );
+                            return true;
+                        }
+                        return false;
+                    }
 
                     long commitTarget = batchSize;
                     long rowCount = 0;

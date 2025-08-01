@@ -1714,7 +1714,7 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBaseTableTimestampTypeChange() throws Exception {
+    public void testBaseTableTimestampTypeChangeThrowError() throws Exception {
         Assume.assumeTrue(timestampDriver.getColumnType() == ColumnType.TIMESTAMP_MICRO);
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -1770,37 +1770,11 @@ public class MatViewTest extends AbstractCairoTest {
             execute("refresh materialized view price_1h full;)");
             drainQueues();
             assertQueryNoLeakCheck(
-                    "view_name\tbase_table_name\tview_status\n" +
-                            "price_1h\tbase_price\tvalid\n",
-                    "select view_name, base_table_name, view_status from materialized_views",
+                    "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
+                            "price_1h\tbase_price\tinvalid\t[-1]: timestamp type mismatch between materialized view and query [view=TIMESTAMP_NS, query=TIMESTAMP]\n",
+                    "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
                     null,
                     false
-            );
-            execute(
-                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                            ",('gbpusd', 1.323, '2024-09-10T14:02')" +
-                            ",('jpyusd', 103.21, '2024-09-10T14:02')" +
-                            ",('gbpusd', 1.321, '2024-09-10T15:02')"
-            );
-            drainQueues();
-
-            // todo. This is clearly not the expected result.
-            //  The reason is that the matView's timestampType didn't change.
-            //  Evidently, when the SQL timestamp column type used in the matView query changes, the timestamp column
-            //  type in the materialized view should be updated synchronously.
-            //  We need to recompile the SQL during matView revalidation to determine if the timestamp type of the materialized view has changed.
-            assertQueryNoLeakCheck(
-                    "sym\tprice\tts\n" +
-                            "gbpusd\t1.323\t1970-01-20T23:26:09.600000000Z\n" +
-                            "jpyusd\t103.21\t1970-01-20T23:26:09.600000000Z\n" +
-                            "gbpusd\t1.321\t1970-01-20T23:26:13.200000000Z\n" +
-                            "gbpusd\t1.323\t1970-01-20T23:26:16.800000000Z\n" +
-                            "jpyusd\t103.21\t1970-01-20T23:26:16.800000000Z\n" +
-                            "gbpusd\t1.321\t1970-01-20T23:26:20.400000000Z\n",
-                    "select * from price_1h",
-                    "ts",
-                    true,
-                    true
             );
         });
     }
