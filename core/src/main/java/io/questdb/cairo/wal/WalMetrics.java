@@ -32,14 +32,14 @@ import io.questdb.std.Mutable;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class WalMetrics implements Mutable {
-    public final LongGauge seqTxnGauge;
-    public final LongGauge writerTxnGauge;
     private final Counter applyPhysicallyWrittenRowsCounter;
     private final LongGauge applyRowsWriteRateGauge;
     private final Counter applyRowsWrittenCounter;
     private final Counter rowsWrittenCounter;
+    private final LongGauge seqTxnGauge;
     private final AtomicLong totalRowsWritten = new AtomicLong();
     private final AtomicLong totalRowsWrittenTotalTime = new AtomicLong();
+    private final LongGauge writerTxnGauge;
 
     public WalMetrics(MetricsRegistry metricsRegistry) {
         this.applyPhysicallyWrittenRowsCounter = metricsRegistry.newCounter("wal_apply_physically_written_rows");
