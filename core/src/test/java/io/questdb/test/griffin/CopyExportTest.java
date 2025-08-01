@@ -62,6 +62,21 @@ public class CopyExportTest extends AbstractCairoTest {
         this.walEnabled = walEnabled;
     }
 
+    public static Thread createJobThread(SynchronizedJob job, CountDownLatch latch) {
+        return new Thread(() -> {
+            try {
+                while (latch.getCount() > 0) {
+                    if (job.run(0)) {
+                        latch.countDown();
+                    }
+                    Os.sleep(1);
+                }
+            } finally {
+                Path.clearThreadLocals();
+            }
+        });
+    }
+
     @Parameters
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
@@ -1123,21 +1138,6 @@ public class CopyExportTest extends AbstractCairoTest {
                 }
             }
         }
-    }
-
-    private static Thread createJobThread(SynchronizedJob job, CountDownLatch latch) {
-        return new Thread(() -> {
-            try {
-                while (latch.getCount() > 0) {
-                    if (job.run(0)) {
-                        latch.countDown();
-                    }
-                    Os.sleep(1);
-                }
-            } finally {
-                Path.clearThreadLocals();
-            }
-        });
     }
 
     private void assertQuotesTableContent() throws SqlException {
