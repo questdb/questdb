@@ -24,25 +24,47 @@
 
 package io.questdb.test.griffin;
 
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.TimeUnit;
-
-import org.junit.Assert;
-import org.junit.Test;
-
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import static io.questdb.griffin.CompiledQuery.TRUNCATE;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Test;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+
+import static io.questdb.griffin.CompiledQuery.TRUNCATE;
 
 public class TruncateTest extends AbstractCairoTest {
+
+    @Test
+    public void testAddColumnTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table y as (" +
+                            "select timestamp_sequence(0, 1000000000) timestamp," +
+                            " x " +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)"
+            );
+
+
+            execute("alter table y add column new_x int", sqlExecutionContext);
+            execute("truncate table y");
+
+            execute("insert into y values('2022-02-24', 1, 2)");
+
+            assertSql("timestamp\tx\tnew_x\n" +
+                    "2022-02-24T00:00:00.000000Z\t1\t2\n", "select * from y");
+        });
+    }
 
     @Test
     public void testCachedFilterAfterTruncate() throws Exception {
@@ -77,28 +99,6 @@ public class TruncateTest extends AbstractCairoTest {
                     }
                 }
             }
-        });
-    }
-
-    @Test
-    public void testAddColumnTruncate() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    "create table y as (" +
-                            "select timestamp_sequence(0, 1000000000) timestamp," +
-                            " x " +
-                            " from long_sequence(10)" +
-                            ") timestamp (timestamp)"
-            );
-
-
-            execute("alter table y add column new_x int", sqlExecutionContext);
-            execute("truncate table y");
-
-            execute("insert into y values('2022-02-24', 1, 2)");
-
-            assertSql("timestamp\tx\tnew_x\n" +
-                    "2022-02-24T00:00:00.000000Z\t1\t2\n", "select * from y");
         });
     }
 
@@ -638,6 +638,105 @@ public class TruncateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncateIfExistsExistingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            assertQuery(
+                    "count\n" +
+                            "10\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(TRUNCATE, compiler.compile("truncate table if exists x", sqlExecutionContext).getType());
+            }
+
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testTruncateIfExistsMultipleTables() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            createY();
+
+            assertQuery("count\n10\n", "select count() from x", null, false, true);
+            assertQuery("count\n20\n", "select count() from y", null, false, true);
+
+            // Truncate existing and non-existing tables
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(TRUNCATE, compiler.compile("truncate table if exists x, nonexistent, y", sqlExecutionContext).getType());
+            }
+
+            assertQuery("count\n0\n", "select count() from x", null, false, true);
+            assertQuery("count\n0\n", "select count() from y", null, false, true);
+        });
+    }
+
+    @Test
+    public void testTruncateIfExistsNonExistentTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // Should not throw an error for non-existent table when IF EXISTS is used
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(TRUNCATE, compiler.compile("truncate table if exists nonexistent", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateIfExistsSyntaxError() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compile("truncate table if", sqlExecutionContext);
+                Assert.fail("Expected SqlException for incomplete IF EXISTS syntax");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "expected EXISTS table-name");
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateIfExistsWithKeepSymbolMaps() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            assertQuery(
+                    "count\n" +
+                            "10\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(TRUNCATE, compiler.compile("truncate table if exists x keep symbol maps", sqlExecutionContext).getType());
+            }
+
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "select count() from x",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testTruncateOpenReader() throws Exception {
         assertMemoryLeak(() -> {
             createX(1_000_000);
@@ -744,6 +843,18 @@ public class TruncateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncateWithoutIfExistsFailsForNonExistentTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compile("truncate table nonexistent", sqlExecutionContext);
+                Assert.fail("Expected SqlException for non-existent table");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
+            }
+        });
+    }
+
+    @Test
     public void testTwoTables() throws Exception {
         assertMemoryLeak(() -> {
             createX();
@@ -809,117 +920,6 @@ public class TruncateTest extends AbstractCairoTest {
 
             assertSql("timestamp\tx\n" +
                     "2022-02-24T00:00:00.000000Z\t1\n", "select * from y");
-        });
-    }
-
-    @Test
-    public void testTruncateIfExistsExistingTable() throws Exception {
-        assertMemoryLeak(() -> {
-            createX();
-
-            assertQuery(
-                    "count\n" +
-                            "10\n",
-                    "select count() from x",
-                    null,
-                    false,
-                    true
-            );
-
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                Assert.assertEquals(TRUNCATE, compiler.compile("truncate table if exists x", sqlExecutionContext).getType());
-            }
-
-            assertQuery(
-                    "count\n" +
-                            "0\n",
-                    "select count() from x",
-                    null,
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testTruncateIfExistsNonExistentTable() throws Exception {
-        assertMemoryLeak(() -> {
-            // Should not throw an error for non-existent table when IF EXISTS is used
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                Assert.assertEquals(TRUNCATE, compiler.compile("truncate table if exists nonexistent", sqlExecutionContext).getType());
-            }
-        });
-    }
-
-    @Test
-    public void testTruncateIfExistsMultipleTables() throws Exception {
-        assertMemoryLeak(() -> {
-            createX();
-            createY();
-
-            assertQuery("count\n10\n", "select count() from x", null, false, true);
-            assertQuery("count\n20\n", "select count() from y", null, false, true);
-
-            // Truncate existing and non-existing tables
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                Assert.assertEquals(TRUNCATE, compiler.compile("truncate table if exists x, nonexistent, y", sqlExecutionContext).getType());
-            }
-
-            assertQuery("count\n0\n", "select count() from x", null, false, true);
-            assertQuery("count\n0\n", "select count() from y", null, false, true);
-        });
-    }
-
-    @Test
-    public void testTruncateIfExistsWithKeepSymbolMaps() throws Exception {
-        assertMemoryLeak(() -> {
-            createX();
-
-            assertQuery(
-                    "count\n" +
-                            "10\n",
-                    "select count() from x",
-                    null,
-                    false,
-                    true
-            );
-
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                Assert.assertEquals(TRUNCATE, compiler.compile("truncate table if exists x keep symbol maps", sqlExecutionContext).getType());
-            }
-
-            assertQuery(
-                    "count\n" +
-                            "0\n",
-                    "select count() from x",
-                    null,
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testTruncateWithoutIfExistsFailsForNonExistentTable() throws Exception {
-        assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile("truncate table nonexistent", sqlExecutionContext);
-                Assert.fail("Expected SqlException for non-existent table");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
-            }
-        });
-    }
-
-    @Test
-    public void testTruncateIfExistsSyntaxError() throws Exception {
-        assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile("truncate table if", sqlExecutionContext);
-                Assert.fail("Expected SqlException for incomplete IF EXISTS syntax");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "expected EXISTS table-name");
-            }
         });
     }
 
