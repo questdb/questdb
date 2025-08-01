@@ -38,6 +38,7 @@ import static io.questdb.ParanoiaState.FD_PARANOIA_MODE;
  * Prevents duplicate file opens and manages both read-only and read-write access modes.
  */
 public class FdCache {
+    static final AtomicInteger OPEN_OS_FILE_COUNT = new AtomicInteger();
     private static final int NON_CACHED = (2 << 30);
     private static final int RO_MASK = 0;
     private final AtomicInteger fdCounter = new AtomicInteger(1);
@@ -71,19 +72,21 @@ public class FdCache {
             if (res != 0) {
                 return res;
             }
-            Files.OPEN_FILE_COUNT.decrementAndGet();
+            OPEN_OS_FILE_COUNT.decrementAndGet();
             openFdMapByFd.removeAt(keyIndex);
             return 0;
         }
 
         FdCacheRecord fdCacheRecord = openFdMapByFd.valueAt(keyIndex);
+        // Remove unique FD tracking.
+        openFdMapByFd.removeAt(keyIndex);
+
         if (fdCacheRecord.count == 1) {
             int res = Files.close0(fdCacheRecord.osFd);
             if (res != 0) {
                 return res;
             }
-            Files.OPEN_FILE_COUNT.decrementAndGet();
-            openFdMapByFd.removeAt(keyIndex);
+            OPEN_OS_FILE_COUNT.decrementAndGet();
         }
 
         fdCacheRecord.count--;
@@ -100,7 +103,7 @@ public class FdCache {
             int index = fdCounter.getAndIncrement();
             long markedFd = Numbers.encodeLowHighInts(index | NON_CACHED, fd);
             openFdMapByFd.put(markedFd, FdCacheRecord.EMPTY);
-            Files.OPEN_FILE_COUNT.incrementAndGet();
+            OPEN_OS_FILE_COUNT.incrementAndGet();
             return markedFd;
         }
         return fd;
@@ -133,7 +136,11 @@ public class FdCache {
                 }
             }
         }
-        Files.OPEN_FILE_COUNT.decrementAndGet();
+        OPEN_OS_FILE_COUNT.decrementAndGet();
+    }
+
+    public synchronized long getOpenCachedFileCount() {
+        return openFdMapByFd.size();
     }
 
     /**
@@ -148,6 +155,10 @@ public class FdCache {
             sink.put(key);
         });
         return sink.toString();
+    }
+
+    public long getOpenOsFileCount() {
+        return OPEN_OS_FILE_COUNT.get();
     }
 
     /**
@@ -230,7 +241,7 @@ public class FdCache {
                 // Failed to open
                 holder = null;
             } else {
-                Files.OPEN_FILE_COUNT.incrementAndGet();
+                OPEN_OS_FILE_COUNT.incrementAndGet();
                 Utf8String path = Utf8String.newInstance(lpsz);
                 holder = new FdCacheRecord(path, Numbers.encodeLowHighInts(fdCounter.incrementAndGet(), osFd));
                 holder.osFd = osFd;

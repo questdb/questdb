@@ -37,7 +37,6 @@ import java.io.File;
 import java.net.URL;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public final class Files {
     // The default varies across kernel versions and distros, so we use the same value as for vm.max_map_count.
@@ -64,7 +63,6 @@ public final class Files {
     public static final char SEPARATOR;
     public static final Charset UTF_8;
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
-    static final AtomicInteger OPEN_FILE_COUNT = new AtomicInteger();
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
     private final static FdCache fdCache = new FdCache();
     private static final MmapCache mmapCache = new MmapCache();
@@ -244,8 +242,12 @@ public final class Files {
         return fdCache.getOpenFdDebugInfo();
     }
 
+    public static long getOpenCachedFileCount() {
+        return fdCache.getOpenCachedFileCount();
+    }
+
     public static long getOpenFileCount() {
-        return OPEN_FILE_COUNT.get();
+        return fdCache.getOpenOsFileCount();
     }
 
     public @NotNull
