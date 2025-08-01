@@ -127,7 +127,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
         int bufferCount = (int) (((hiRow - lo) * 4 - 1) / bufferSize + 1);
         for (int i = 0; i < bufferCount; i++) {
             long fileOffset = (lo - columnTop) * 4;
-            long bytesToRead = Math.min(bufferSize, (hiRow - loRow) * 4);
+            long bytesToRead = Math.min(bufferSize, (hiRow - lo) * 4);
             long read = ff.read(dataColumnFd, buffer, bytesToRead, fileOffset);
             if (read == -1) {
                 throw CairoException.critical(ff.errno()).put("could not read symbol column during indexing [fd=").put(dataColumnFd)

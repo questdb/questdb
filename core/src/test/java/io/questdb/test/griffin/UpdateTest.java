@@ -437,7 +437,7 @@ public class UpdateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     if (Utf8s.endsWithAscii(name, "s1.d.1") && Utf8s.containsAscii(name, "1970-01-03")) {
                         return -1;
                     }
@@ -3058,7 +3058,7 @@ public class UpdateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     if (Utf8s.endsWithAscii(name, "x.d.1") && Utf8s.containsAscii(name, "1970-01-03")) {
                         return -1;
                     }

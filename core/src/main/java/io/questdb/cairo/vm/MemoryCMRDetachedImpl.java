@@ -55,11 +55,11 @@ public class MemoryCMRDetachedImpl extends MemoryCMRImpl {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts, int madviseOpts) {
         of(ff, name, extendSegmentSize, size, memoryTag, opts, madviseOpts, false);
     }
 
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts, boolean keepFdOpen) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts, int madviseOpts, boolean keepFdOpen) {
         super.of(ff, name, extendSegmentSize, size, memoryTag, opts, madviseOpts);
         if (!keepFdOpen && ff != null && ff.close(fd)) {
             LOG.debug().$("closing [fd=").$(fd).I$();

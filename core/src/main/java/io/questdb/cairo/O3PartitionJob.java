@@ -128,7 +128,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final boolean statisticsEnabled = cairoConfiguration.isPartitionEncoderParquetStatisticsEnabled();
 
                 // partitionUpdater is the owner of the partitionDecoder descriptor
-                final long opts = cairoConfiguration.getWriterFileOpenOpts();
+                final int opts = cairoConfiguration.getWriterFileOpenOpts();
                 partitionUpdater.of(
                         path.$(),
                         opts,

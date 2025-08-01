@@ -56,7 +56,7 @@ public class KqueueFileWatcher extends FileWatcher {
                 throw CairoException.critical(Os.errno()).put("could not open file [path=").put(p).put(']');
             }
 
-            this.dirFd = Files.openRO(p.parent().$());
+            this.dirFd = Files.openRODir(p.parent().$());
             if (this.dirFd < 0) {
                 int errno = Os.errno();
                 Files.close(this.fileFd);

@@ -174,7 +174,7 @@ final class Mig607 {
         path.concat(columnName).put(".o").$();
     }
 
-    private static void trimFile(FilesFacade ff, LPSZ path, long size, long opts) {
+    private static void trimFile(FilesFacade ff, LPSZ path, long size, int opts) {
         final long fd = TableUtils.openFileRWOrFail(ff, path, opts);
         if (!ff.truncate(fd, size)) {
             // This should never happen on migration but better to be on safe side anyway
