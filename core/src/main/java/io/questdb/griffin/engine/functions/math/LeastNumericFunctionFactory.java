@@ -107,6 +107,49 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
     }
 
     private static @Nullable Function getLeastFunction(ObjList<Function> args, int[] counters) {
+        final int argCount = args.size();
+        
+        // Use loop-unrolled variants for small argument counts
+        if (argCount >= 2 && argCount <= 5) {
+            boolean allDouble = true;
+            boolean allLong = true;
+            
+            for (int i = 0; i < argCount; i++) {
+                Function func = args.getQuick(i);
+                if (func.getType() != ColumnType.DOUBLE) {
+                    allDouble = false;
+                }
+                if (func.getType() != ColumnType.LONG) {
+                    allLong = false;
+                }
+            }
+            
+            if (allDouble) {
+                switch (argCount) {
+                    case 2:
+                        return new LeastDoubleFunction2(args);
+                    case 3:
+                        return new LeastDoubleFunction3(args);
+                    case 4:
+                        return new LeastDoubleFunction4(args);
+                    case 5:
+                        return new LeastDoubleFunction5(args);
+                }
+            } else if (allLong) {
+                switch (argCount) {
+                    case 2:
+                        return new LeastLongFunction2(args);
+                    case 3:
+                        return new LeastLongFunction3(args);
+                    case 4:
+                        return new LeastLongFunction4(args);
+                    case 5:
+                        return new LeastLongFunction5(args);
+                }
+            }
+        }
+        
+        // Fall back to original loop-based implementation
         if (counters[ColumnType.DOUBLE] > 0) {
             return new LeastDoubleRecordFunction(args);
         }
@@ -205,6 +248,252 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         @Override
         public String getName() {
             return "least[LONG]";
+        }
+    }
+
+    // Loop-unrolled double functions
+    private static class LeastDoubleFunction2 extends DoubleFunction implements MultiArgFunction {
+        private final ObjList<Function> args;
+
+        public LeastDoubleFunction2(ObjList<Function> args) {
+            this.args = args;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            double val1 = args.getQuick(0).getDouble(rec);
+            double val2 = args.getQuick(1).getDouble(rec);
+            
+            double value = Double.POSITIVE_INFINITY;
+            if (!Numbers.isNull(val1)) {
+                value = Math.min(value, val1);
+            }
+            if (!Numbers.isNull(val2)) {
+                value = Math.min(value, val2);
+            }
+            return value;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+    }
+    
+    private static class LeastDoubleFunction3 extends DoubleFunction implements MultiArgFunction {
+        private final ObjList<Function> args;
+
+        public LeastDoubleFunction3(ObjList<Function> args) {
+            this.args = args;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            double val1 = args.getQuick(0).getDouble(rec);
+            double val2 = args.getQuick(1).getDouble(rec);
+            double val3 = args.getQuick(2).getDouble(rec);
+            
+            double value = Double.POSITIVE_INFINITY;
+            if (!Numbers.isNull(val1)) {
+                value = Math.min(value, val1);
+            }
+            if (!Numbers.isNull(val2)) {
+                value = Math.min(value, val2);
+            }
+            if (!Numbers.isNull(val3)) {
+                value = Math.min(value, val3);
+            }
+            return value;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+    }
+    
+    private static class LeastDoubleFunction4 extends DoubleFunction implements MultiArgFunction {
+        private final ObjList<Function> args;
+
+        public LeastDoubleFunction4(ObjList<Function> args) {
+            this.args = args;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            double val1 = args.getQuick(0).getDouble(rec);
+            double val2 = args.getQuick(1).getDouble(rec);
+            double val3 = args.getQuick(2).getDouble(rec);
+            double val4 = args.getQuick(3).getDouble(rec);
+            
+            double value = Double.POSITIVE_INFINITY;
+            if (!Numbers.isNull(val1)) {
+                value = Math.min(value, val1);
+            }
+            if (!Numbers.isNull(val2)) {
+                value = Math.min(value, val2);
+            }
+            if (!Numbers.isNull(val3)) {
+                value = Math.min(value, val3);
+            }
+            if (!Numbers.isNull(val4)) {
+                value = Math.min(value, val4);
+            }
+            return value;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+    }
+    
+    private static class LeastDoubleFunction5 extends DoubleFunction implements MultiArgFunction {
+        private final ObjList<Function> args;
+
+        public LeastDoubleFunction5(ObjList<Function> args) {
+            this.args = args;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            double val1 = args.getQuick(0).getDouble(rec);
+            double val2 = args.getQuick(1).getDouble(rec);
+            double val3 = args.getQuick(2).getDouble(rec);
+            double val4 = args.getQuick(3).getDouble(rec);
+            double val5 = args.getQuick(4).getDouble(rec);
+            
+            double value = Double.POSITIVE_INFINITY;
+            if (!Numbers.isNull(val1)) {
+                value = Math.min(value, val1);
+            }
+            if (!Numbers.isNull(val2)) {
+                value = Math.min(value, val2);
+            }
+            if (!Numbers.isNull(val3)) {
+                value = Math.min(value, val3);
+            }
+            if (!Numbers.isNull(val4)) {
+                value = Math.min(value, val4);
+            }
+            if (!Numbers.isNull(val5)) {
+                value = Math.min(value, val5);
+            }
+            return value;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+    }
+    
+    // Loop-unrolled long functions
+    private static class LeastLongFunction2 extends LongFunction implements MultiArgFunction {
+        private final ObjList<Function> args;
+
+        public LeastLongFunction2(ObjList<Function> args) {
+            this.args = args;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            long val1 = args.getQuick(0).getLong(rec);
+            long val2 = args.getQuick(1).getLong(rec);
+            
+            if (val1 == Numbers.LONG_NULL) return val1;
+            if (val2 == Numbers.LONG_NULL) return val2;
+            
+            return Math.min(val1, val2);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+    }
+    
+    private static class LeastLongFunction3 extends LongFunction implements MultiArgFunction {
+        private final ObjList<Function> args;
+
+        public LeastLongFunction3(ObjList<Function> args) {
+            this.args = args;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            long val1 = args.getQuick(0).getLong(rec);
+            long val2 = args.getQuick(1).getLong(rec);
+            long val3 = args.getQuick(2).getLong(rec);
+            
+            if (val1 == Numbers.LONG_NULL) return val1;
+            if (val2 == Numbers.LONG_NULL) return val2;
+            if (val3 == Numbers.LONG_NULL) return val3;
+            
+            return Math.min(Math.min(val1, val2), val3);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+    }
+    
+    private static class LeastLongFunction4 extends LongFunction implements MultiArgFunction {
+        private final ObjList<Function> args;
+
+        public LeastLongFunction4(ObjList<Function> args) {
+            this.args = args;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            long val1 = args.getQuick(0).getLong(rec);
+            long val2 = args.getQuick(1).getLong(rec);
+            long val3 = args.getQuick(2).getLong(rec);
+            long val4 = args.getQuick(3).getLong(rec);
+            
+            if (val1 == Numbers.LONG_NULL) return val1;
+            if (val2 == Numbers.LONG_NULL) return val2;
+            if (val3 == Numbers.LONG_NULL) return val3;
+            if (val4 == Numbers.LONG_NULL) return val4;
+            
+            return Math.min(Math.min(val1, val2), Math.min(val3, val4));
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+    }
+    
+    private static class LeastLongFunction5 extends LongFunction implements MultiArgFunction {
+        private final ObjList<Function> args;
+
+        public LeastLongFunction5(ObjList<Function> args) {
+            this.args = args;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            long val1 = args.getQuick(0).getLong(rec);
+            long val2 = args.getQuick(1).getLong(rec);
+            long val3 = args.getQuick(2).getLong(rec);
+            long val4 = args.getQuick(3).getLong(rec);
+            long val5 = args.getQuick(4).getLong(rec);
+            
+            if (val1 == Numbers.LONG_NULL) return val1;
+            if (val2 == Numbers.LONG_NULL) return val2;
+            if (val3 == Numbers.LONG_NULL) return val3;
+            if (val4 == Numbers.LONG_NULL) return val4;
+            if (val5 == Numbers.LONG_NULL) return val5;
+            
+            return Math.min(Math.min(Math.min(val1, val2), Math.min(val3, val4)), val5);
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
         }
     }
 }
