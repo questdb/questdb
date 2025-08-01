@@ -238,12 +238,12 @@ public final class Files {
         return mmapCache.getReuseCount();
     }
 
-    public static String getOpenFdDebugInfo() {
-        return fdCache.getOpenFdDebugInfo();
-    }
-
     public static long getOpenCachedFileCount() {
         return fdCache.getOpenCachedFileCount();
+    }
+
+    public static String getOpenFdDebugInfo() {
+        return fdCache.getOpenFdDebugInfo();
     }
 
     public static long getOpenFileCount() {
@@ -474,19 +474,11 @@ public final class Files {
     }
 
     public static boolean remove(LPSZ lpsz) {
-        if (remove(lpsz.ptr())) {
-            fdCache.markPathRemoved(lpsz);
-            return true;
-        }
-        return false;
+        return fdCache.remove(lpsz);
     }
 
     public static int rename(LPSZ oldName, LPSZ newName) {
-        int retCode = rename(oldName.ptr(), newName.ptr());
-        if (retCode == 0) {
-            fdCache.markPathRemoved(oldName);
-        }
-        return retCode;
+        return fdCache.rename(oldName, newName);
     }
 
     /**
@@ -700,10 +692,6 @@ public final class Files {
 
     private native static short readNonNegativeShort(int fd, long offset);
 
-    private native static boolean remove(long lpsz);
-
-    private static native int rename(long lpszOld, long lpszNew);
-
     private native static boolean rmdir(long lpsz);
 
     private native static boolean setLastModified(long lpszName, long millis);
@@ -721,6 +709,10 @@ public final class Files {
     static native int munmap0(long address, long len);
 
     native static int openRO(long lpszName);
+
+    native static boolean remove(long lpsz);
+
+    static native int rename(long lpszOld, long lpszNew);
 
     static {
         Os.init();

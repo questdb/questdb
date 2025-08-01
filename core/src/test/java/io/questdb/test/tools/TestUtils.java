@@ -2429,10 +2429,14 @@ public final class TestUtils {
             }
 
             Path.clearThreadLocals();
-            if (fileCount != Files.getOpenFileCount() || cachedFileCount != Files.getOpenCachedFileCount()) {
-                Assert.assertEquals(
-                        "file descriptors, expected: " + fileDebugInfo + ", actual: "
-                                + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount()
+            if (cachedFileCount != Files.getOpenCachedFileCount() || fileCount != Files.getOpenFileCount()) {
+                Assert.fail(
+                        "expected: cached file descriptors: " + cachedFileCount +
+                                ", expected OS file descriptors: " + fileCount +
+                                ", list: " + fileDebugInfo +
+                                " actual: cached file descriptors: " + Files.getOpenCachedFileCount() +
+                                ", OS file descriptors: " + Files.getOpenFileCount() +
+                                ", list: " + Files.getOpenFdDebugInfo()
                 );
             }
 

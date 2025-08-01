@@ -506,6 +506,12 @@ public class FilesCacheFuzzTest extends AbstractTest {
                 thread.join();
             }
 
+            if (!exceptions.isEmpty()) {
+                Exception first = exceptions.poll();
+                LOG.error().$("MmapCache reuse - Mapping operations: ").$(mappingOperations.get()).$();
+                throw new RuntimeException("MmapCache reuse test failed", first);
+            }
+
             Assert.assertTrue("Should have mapping operations", mappingOperations.get() > 0);
             LOG.info().$("MmapCache reuse - Mappings: ").$(mappingOperations.get()).$();
         });
@@ -516,7 +522,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
         TestUtils.assertMemoryLeak(() -> {
             CyclicBarrier barrier = new CyclicBarrier(NUM_THREADS);
             AtomicBoolean failed = new AtomicBoolean(false);
-            ConcurrentLinkedQueue<Exception> exceptions = new ConcurrentLinkedQueue<>();
+            ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
             AtomicInteger openOperations = new AtomicInteger(0);
             AtomicInteger markRemovedOperations = new AtomicInteger(0);
             AtomicInteger reopenAfterRemoved = new AtomicInteger(0);
@@ -532,13 +538,14 @@ public class FilesCacheFuzzTest extends AbstractTest {
                     try {
                         barrier.await();
 
-                        for (int op = 0; op < OPERATIONS_PER_THREAD / 4 && !failed.get(); op++) {
+                        for (int op = 0; op < OPERATIONS_PER_THREAD && !failed.get(); op++) {
 
                             // Open file first to get it into cache
                             long fd1 = Files.openRW(singleFile.$());
                             if (fd1 == -1) {
                                 LOG.error().$("Failed to open file: ").$(singleFile).$();
                                 failed.set(true);
+                                continue;
                             }
                             Unsafe.getUnsafe().putLong(buff, op + 1);
                             Files.write(fd1, buff, 8, thread * 8);
@@ -548,18 +555,22 @@ public class FilesCacheFuzzTest extends AbstractTest {
                             long fd2 = Files.openRO(singleFile.$());
                             Files.close(fd1);
 
-                            if (Files.read(fd2, buff, 8, thread * 8) == 8) {
-                                long value = Unsafe.getUnsafe().getLong(buff);
-                                Assert.assertTrue(op + 1 == value || value == 0);
-                            }
+                            if (fd2 > -1) {
+                                if (Files.read(fd2, buff, 8, thread * 8) == 8) {
+                                    long value = Unsafe.getUnsafe().getLong(buff);
+                                    if (value != 0) {
+                                        Assert.assertEquals(op + 1, value);
+                                    }
+                                }
 
-                            Files.close(fd2);
+                                Files.close(fd2);
+                            }
 
                             if (Files.remove(singleFile.$())) {
                                 markRemovedOperations.incrementAndGet();
                             }
                         }
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         exceptions.add(e);
                         failed.set(true);
                     } finally {
@@ -574,7 +585,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
             }
 
             if (!exceptions.isEmpty()) {
-                Exception first = exceptions.poll();
+                Throwable first = exceptions.poll();
                 LOG.error().$("MarkPathRemoved test - Opens: ").$(openOperations.get())
                         .$(", Removed: ").$(markRemovedOperations.get()).$(", Reopen attempts: ").$(reopenAfterRemoved.get()).$();
                 throw new RuntimeException("MarkPathRemoved test failed", first);

@@ -169,13 +169,6 @@ public class FdCache {
     }
 
     /**
-     * Removes file path from cache when file is deleted.
-     */
-    public synchronized void markPathRemoved(LPSZ lpsz) {
-        openFdMapByPath.remove(lpsz);
-    }
-
-    /**
      * Opens file in read-only mode with caching support.
      */
     public synchronized long openROCached(LPSZ lpsz) {
@@ -190,6 +183,27 @@ public class FdCache {
         openFdMapByFd.put(uniqROFd, holder);
 
         return uniqROFd;
+    }
+
+    /**
+     * Removes file path from cache when file is deleted.
+     */
+    public synchronized boolean remove(LPSZ lpsz) {
+        // Even if we cannot remove, remove the fd from cache anyway
+        openFdMapByPath.remove(lpsz);
+        return Files.remove(lpsz.ptr());
+    }
+
+    /**
+     * Renames file in the filesystem and updates cache.
+     *
+     * @param oldName Old file name
+     * @param newName New file name
+     * @return 0 on success, -1 on failure
+     */
+    public synchronized int rename(LPSZ oldName, LPSZ newName) {
+        openFdMapByPath.remove(oldName);
+        return Files.rename(oldName.ptr(), newName.ptr());
     }
 
     /**
@@ -245,7 +259,6 @@ public class FdCache {
                 Utf8String path = Utf8String.newInstance(lpsz);
                 holder = new FdCacheRecord(path, Numbers.encodeLowHighInts(fdCounter.incrementAndGet(), osFd));
                 holder.osFd = osFd;
-                openFdMapByFd.put(holder.osFd, holder);
                 openFdMapByPath.putAt(keyIndex, lpsz, holder);
             }
         } else {
