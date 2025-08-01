@@ -737,7 +737,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
         closeWriter();
         if (targetTableStatus == TableUtils.TABLE_DOES_NOT_EXIST && targetTableCreated) {
-            cairoEngine.dropTableOrMatView(tmpPath, tableToken);
+            cairoEngine.dropTableOrViewOrMatView(tmpPath, tableToken);
         }
         if (tableToken != null) {
             cairoEngine.unlockTableName(tableToken);
