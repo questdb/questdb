@@ -177,16 +177,14 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
             buildMapOfSlaveRecords();
             final Record masterRecord = masterCursor.getRecord();
-            long size = 0;
             while (masterCursor.hasNext()) {
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterSink);
                 MapValue value = key.findValue();
                 if (value != null) {
-                    size += value.getInt(1);
+                    counter.add(value.getInt(1));
                 }
             }
-            counter.set(size);
         }
 
         @Override
