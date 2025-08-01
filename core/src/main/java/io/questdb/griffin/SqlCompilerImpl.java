@@ -2953,6 +2953,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         tok = SqlUtil.fetchNext(lexer);
+        boolean hasIfExists = false;
+        if (tok != null && isIfKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || !isExistsKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("EXISTS table-name");
+            }
+            hasIfExists = true;
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
         if (tok != null && isOnlyKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
         }
@@ -2971,7 +2981,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (Chars.isQuoted(tok)) {
                     tok = unquote(tok);
                 }
-                final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+
+                final TableToken tableToken;
+                if (hasIfExists) {
+                    tableToken = executionContext.getTableTokenIfExists(tok);
+                    if (tableToken == null) {
+                        // Table doesn't exist, skip it when IF EXISTS is specified
+                        tok = SqlUtil.fetchNext(lexer);
+                        if (tok == null || Chars.equals(tok, ';') || isKeepKeyword(tok)) {
+                            break;
+                        }
+                        if (!Chars.equalsNc(tok, ',')) {
+                            throw SqlException.$(lexer.getPosition(), "',' or 'keep' expected");
+                        }
+                        tok = SqlUtil.fetchNext(lexer);
+                        if (tok != null && isKeepKeyword(tok)) {
+                            throw SqlException.$(lexer.getPosition(), "table name expected");
+                        }
+                        continue;
+                    }
+                } else {
+                    tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+                }
+
                 checkMatViewModification(tableToken);
                 executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
                 try {
