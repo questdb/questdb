@@ -4078,6 +4078,7 @@ public class SqlParser {
         topLevelWithModel.clear();
         explainModelPool.clear();
         digit = 1;
+        traversalAlgo.clear();
     }
 
     ExpressionNode expr(

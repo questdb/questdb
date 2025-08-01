@@ -37,6 +37,7 @@ import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshSqlExecutionContext;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewTimerJob;
+import io.questdb.cairo.mv.WalTxnRangeLoader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalUtils;
@@ -121,6 +122,109 @@ public class MatViewTest extends AbstractCairoTest {
         if (rowsPerQuery > 0) {
             setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
         }
+    }
+
+    @Test
+    public void testAlterAddIndexInvalidStatement() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = 0;
+            execute("create materialized view price_1h as select sym, last(price) as price, ts from base_price sample by 1h");
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter",
+                    38,
+                    "'column' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter;",
+                    38,
+                    "'column' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter blah",
+                    39,
+                    "'column' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column",
+                    45,
+                    "column name expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column;",
+                    45,
+                    "column name expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column xyz",
+                    46,
+                    "column 'xyz' does not exist in materialized view 'price_1h'"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column price",
+                    51,
+                    "'symbol capacity', 'add index' or 'drop index' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column price;",
+                    51,
+                    "'symbol capacity', 'add index' or 'drop index' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column price x",
+                    52,
+                    "'symbol capacity', 'add index' or 'drop index' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column price ADD",
+                    55,
+                    "'index' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column price ADD something",
+                    56,
+                    "'index' expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column price ADD index",
+                    46,
+                    "column 'price' is of type 'DOUBLE'. Index supports column type 'SYMBOL' only."
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym ADD index xxx",
+                    60,
+                    "'capacity' keyword expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym ADD index Capacity",
+                    68,
+                    "index capacity value expected"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h alter column sym ADD index Capacity S",
+                    69,
+                    "index capacity value must be numeric"
+            );
+        });
     }
 
     @Test
@@ -3841,6 +3945,73 @@ public class MatViewTest extends AbstractCairoTest {
                     true,
                     true
 
+            );
+        });
+    }
+
+    @Test
+    public void testMinRefreshInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2023-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2023-09-10T12:01')" +
+                            ",('jpyusd', 103.21, '2023-09-10T12:01')" +
+                            ",('jpyusd', 103.22, '2023-09-10T12:01')"
+            );
+            drainWalQueue();
+
+            execute(
+                    "create materialized view price_1h as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1s;"
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.000000Z");
+            drainQueues();
+
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2023-09-10T12:00')" +
+                            ",('jpyusd', 103.21, '2023-09-10T12:00')"
+            );
+            drainQueues();
+
+            // We've only inserted '2023-09-10T12:00' timestamps, so only this second should be refreshed
+            // and inserted in the last transaction.
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            try (
+                    Path path = new Path();
+                    TableReader viewReader = engine.getReader(viewToken);
+                    WalTxnRangeLoader txnRangeLoader = new WalTxnRangeLoader(configuration.getFilesFacade())
+            ) {
+                final LongList intervals = new LongList();
+                final long seqTxn = viewReader.getSeqTxn();
+                txnRangeLoader.load(engine, path, viewToken, intervals, seqTxn - 1, seqTxn);
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(parseFloorPartialTimestamp("2023-09-10T12:00:00.000000Z"), intervals.getQuick(0));
+                Assert.assertEquals(parseFloorPartialTimestamp("2023-09-10T12:00:00.999999Z"), intervals.getQuick(1));
+            }
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\trefresh_period_hi\trefresh_base_table_txn\tbase_table_txn\tperiod_length\tperiod_length_unit\trefresh_limit\trefresh_limit_unit\n" +
+                            "price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.000000Z\t2024-01-01T01:01:01.000000Z\tvalid\t\t2\t2\t0\t\t0\t\n",
+                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "view_status, refresh_period_hi, refresh_base_table_txn, base_table_txn, " +
+                            "period_length, period_length_unit, refresh_limit, refresh_limit_unit " +
+                            "from materialized_views",
+                    null
+            );
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.32\t2023-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.323\t2023-09-10T12:01:00.000000Z\n" +
+                            "jpyusd\t103.21\t2023-09-10T12:00:00.000000Z\n" +
+                            "jpyusd\t103.22\t2023-09-10T12:01:00.000000Z\n",
+                    "price_1h order by sym, ts"
             );
         });
     }

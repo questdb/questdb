@@ -414,28 +414,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
 
         if (minTs <= maxTs) {
-            TimestampSampler timestampSampler = viewDefinition.getTimestampSampler();
-            // For small sampling intervals such as '10T' or '2s' the actual sampler is
-            // chosen as a 10x multiple of the original interval. That's to speed up
-            // iteration done by the interval iterator.
-            final long minInterval = driver.from(configuration.getMatViewMinRefreshInterval(), ColumnType.TIMESTAMP_MICRO);
-            long approxBucketSize = timestampSampler.getApproxBucketSize();
-            long actualInterval = viewDefinition.getSamplingInterval();
-            if (approxBucketSize < minInterval) {
-                while (approxBucketSize < minInterval) {
-                    approxBucketSize *= 10;
-                    actualInterval *= 10;
-                }
-                timestampSampler = TimestampSamplerFactory.getInstance(
-                        driver,
-                        actualInterval,
-                        viewDefinition.getSamplingIntervalUnit(),
-                        0
-                );
-            }
-
-            assert driver.getColumnType() == timestampSampler.getTimestampType();
-            final long rowsPerBucket = estimateRowsPerBucket(driver, baseTableReader, timestampSampler.getApproxBucketSize());
+            final TimestampSampler timestampSampler = viewDefinition.getTimestampSampler();
+            final long rowsPerBucket = estimateRowsPerBucket(baseTableReader, timestampSampler.getApproxBucketSize());
             final int rowsPerQuery = configuration.getMatViewRowsPerQueryEstimate();
             final int step = Math.max(1, (int) (rowsPerQuery / rowsPerBucket));
 
