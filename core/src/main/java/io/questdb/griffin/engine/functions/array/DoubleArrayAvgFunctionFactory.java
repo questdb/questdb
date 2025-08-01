@@ -96,20 +96,20 @@ public class DoubleArrayAvgFunctionFactory implements FunctionFactory {
         }
 
         private void calculateRecursive(ArrayView view, int dim, int flatIndex) {
-            final int count = view.getDimLen(dim);
+            final int dimLen = view.getDimLen(dim);
             final int stride = view.getStride(dim);
             final boolean atDeepestDim = dim == view.getDimCount() - 1;
             if (atDeepestDim) {
-                for (int i = 0; i < count; i++) {
+                for (int i = 0; i < dimLen; i++) {
                     double v = view.getDouble(flatIndex);
                     if (Numbers.isFinite(v)) {
                         sum += v;
-                        this.count++;
+                        count++;
                     }
                     flatIndex += stride;
                 }
             } else {
-                for (int i = 0; i < count; i++) {
+                for (int i = 0; i < dimLen; i++) {
                     calculateRecursive(view, dim + 1, flatIndex);
                     flatIndex += stride;
                 }
