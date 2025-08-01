@@ -53,7 +53,6 @@ public class DoubleArrayCountFunctionFactory implements FunctionFactory {
     static class Func extends IntFunction implements UnaryFunction {
 
         private final Function arrayArg;
-        private int count;
 
         Func(Function arrayArg) {
             this.arrayArg = arrayArg;
@@ -72,9 +71,7 @@ public class DoubleArrayCountFunctionFactory implements FunctionFactory {
             } else if (arr.isVanilla()) {
                 return arr.flatView().countDouble(arr.getFlatViewOffset(), arr.getFlatViewLength());
             }
-            count = 0;
-            calculateRecursive(arr, 0, 0);
-            return count;
+            return calculateRecursive(arr, 0, 0, 0);
         }
 
         @Override
@@ -87,24 +84,25 @@ public class DoubleArrayCountFunctionFactory implements FunctionFactory {
             return false;
         }
 
-        private void calculateRecursive(ArrayView view, int dim, int flatIndex) {
-            final int count = view.getDimLen(dim);
+        private static int calculateRecursive(ArrayView view, int dim, int flatIndex, int count) {
+            final int len = view.getDimLen(dim);
             final int stride = view.getStride(dim);
             final boolean atDeepestDim = dim == view.getDimCount() - 1;
             if (atDeepestDim) {
-                for (int i = 0; i < count; i++) {
+                for (int i = 0; i < len; i++) {
                     double v = view.getDouble(flatIndex);
                     if (Numbers.isFinite(v)) {
-                        this.count++;
+                        count++;
                     }
                     flatIndex += stride;
                 }
             } else {
-                for (int i = 0; i < count; i++) {
-                    calculateRecursive(view, dim + 1, flatIndex);
+                for (int i = 0; i < len; i++) {
+                    count = calculateRecursive(view, dim + 1, flatIndex, count);
                     flatIndex += stride;
                 }
             }
+            return count;
         }
     }
 }

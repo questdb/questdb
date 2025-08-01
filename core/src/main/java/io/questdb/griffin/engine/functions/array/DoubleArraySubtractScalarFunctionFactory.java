@@ -58,8 +58,6 @@ public class DoubleArraySubtractScalarFunctionFactory implements FunctionFactory
         private final DirectArray array;
         private final Function arrayArg;
         private final Function scalarArg;
-        private MemoryA memory;
-        private double scalarValue;
 
         public Func(Function arrayArg, Function scalarArg, CairoConfiguration configuration) {
             this.arrayArg = arrayArg;
@@ -82,15 +80,15 @@ public class DoubleArraySubtractScalarFunctionFactory implements FunctionFactory
                 return array;
             }
 
-            scalarValue = scalarArg.getDouble(rec);
-            memory = array.prepare(getType(), arr);
+            final var scalarValue = scalarArg.getDouble(rec);
+            final var memory = array.prepare(getType(), arr);
             if (arr.isVanilla()) {
                 FlatArrayView flatView = arr.flatView();
                 for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {
                     memory.putDouble(flatView.getDoubleAtAbsIndex(i) - scalarValue);
                 }
             } else {
-                calculateRecursive(arr, 0, 0);
+                calculateRecursive(arr, 0, 0, scalarValue, memory);
             }
             return array;
         }
@@ -120,18 +118,18 @@ public class DoubleArraySubtractScalarFunctionFactory implements FunctionFactory
             return false;
         }
 
-        private void calculateRecursive(ArrayView view, int dim, int flatIndex) {
+        private static void calculateRecursive(ArrayView view, int dim, int flatIndex, double scalarValue, MemoryA memOut) {
             final int count = view.getDimLen(dim);
             final int stride = view.getStride(dim);
             final boolean atDeepestDim = dim == view.getDimCount() - 1;
             if (atDeepestDim) {
                 for (int i = 0; i < count; i++) {
-                    memory.putDouble(view.getDouble(flatIndex) - scalarValue);
+                    memOut.putDouble(view.getDouble(flatIndex) - scalarValue);
                     flatIndex += stride;
                 }
             } else {
                 for (int i = 0; i < count; i++) {
-                    calculateRecursive(view, dim + 1, flatIndex);
+                    calculateRecursive(view, dim + 1, flatIndex, scalarValue, memOut);
                     flatIndex += stride;
                 }
             }

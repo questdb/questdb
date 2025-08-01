@@ -58,7 +58,7 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
     private static class Func extends ArrayFunction implements UnaryFunction {
         private final DirectArray array;
         private final Function arrayArg;
-        protected double compensation = 0d;
+        private double compensation = 0d;
         private double currentSum;
         private MemoryA memory;
 

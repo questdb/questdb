@@ -59,7 +59,6 @@ public class DoubleArrayMinFunctionFactory implements FunctionFactory {
     static class Func extends DoubleFunction implements UnaryFunction {
 
         private final Function arrayArg;
-        private double min;
 
         Func(Function arrayArg) {
             this.arrayArg = arrayArg;
@@ -78,12 +77,20 @@ public class DoubleArrayMinFunctionFactory implements FunctionFactory {
             } else if (view.isVanilla()) {
                 return view.flatView().minDouble(view.getFlatViewOffset(), view.getFlatViewLength());
             }
-            min = Double.POSITIVE_INFINITY;
-            calculateRecursive(view, 0, 0);
-            return Numbers.isFinite(min) ? min : Double.NaN;
+            return calculateRecursive(view, 0, 0, Double.POSITIVE_INFINITY);
         }
 
-        private void calculateRecursive(ArrayView view, int dim, int flatIndex) {
+        @Override
+        public String getName() {
+            return FUNCTION_NAME;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        private static double calculateRecursive(ArrayView view, int dim, int flatIndex, double min) {
             final int count = view.getDimLen(dim);
             final int stride = view.getStride(dim);
             final boolean atDeepestDim = dim == view.getDimCount() - 1;
@@ -97,21 +104,11 @@ public class DoubleArrayMinFunctionFactory implements FunctionFactory {
                 }
             } else {
                 for (int i = 0; i < count; i++) {
-                    calculateRecursive(view, dim + 1, flatIndex);
+                    min = calculateRecursive(view, dim + 1, flatIndex, min);
                     flatIndex += stride;
                 }
             }
-        }
-
-
-        @Override
-        public String getName() {
-            return FUNCTION_NAME;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
+            return min;
         }
     }
 }

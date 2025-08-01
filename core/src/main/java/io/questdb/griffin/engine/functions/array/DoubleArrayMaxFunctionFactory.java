@@ -59,7 +59,6 @@ public class DoubleArrayMaxFunctionFactory implements FunctionFactory {
     static class Func extends DoubleFunction implements UnaryFunction {
 
         private final Function arrayArg;
-        private double max;
 
         Func(Function arrayArg) {
             this.arrayArg = arrayArg;
@@ -78,9 +77,7 @@ public class DoubleArrayMaxFunctionFactory implements FunctionFactory {
             } else if (view.isVanilla()) {
                 return view.flatView().maxDouble(view.getFlatViewOffset(), view.getFlatViewLength());
             }
-            max = Double.NEGATIVE_INFINITY;
-            calculateRecursive(view, 0, 0);
-            return Numbers.isFinite(max) ? max : Double.NaN;
+            return calculateRecursive(view, 0, 0, Double.NEGATIVE_INFINITY);
         }
 
         @Override
@@ -93,7 +90,7 @@ public class DoubleArrayMaxFunctionFactory implements FunctionFactory {
             return false;
         }
 
-        private void calculateRecursive(ArrayView view, int dim, int flatIndex) {
+        private static double calculateRecursive(ArrayView view, int dim, int flatIndex, double max) {
             final int count = view.getDimLen(dim);
             final int stride = view.getStride(dim);
             final boolean atDeepestDim = dim == view.getDimCount() - 1;
@@ -107,10 +104,11 @@ public class DoubleArrayMaxFunctionFactory implements FunctionFactory {
                 }
             } else {
                 for (int i = 0; i < count; i++) {
-                    calculateRecursive(view, dim + 1, flatIndex);
+                    max = calculateRecursive(view, dim + 1, flatIndex, max);
                     flatIndex += stride;
                 }
             }
+            return max;
         }
     }
 }
