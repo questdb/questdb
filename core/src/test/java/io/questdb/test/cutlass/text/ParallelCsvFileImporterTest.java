@@ -1775,7 +1775,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                     "  ts timestamp" +
                                     ") timestamp(ts) partition by DAY;", sqlExecutionContext
                     );
-                    try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                    try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 2)) {
                         importer.of("x", "test-varchar-double-quotes.csv", 1, PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
                     }
@@ -1952,8 +1952,6 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportWithZeroWorkersFails() throws Exception {
         executeWithPool(
                 0, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-                    SqlExecutionContextStub context = new SqlExecutionContextStub(engine);
-
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 0)) {
                         importer.setMinChunkSize(1);
                         importer.of("tab15", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
