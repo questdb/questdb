@@ -29,8 +29,7 @@ pub fn slice_to_page(
         stats.update(x as i32);
         x != 0
     });
-    let len = iter.size_hint().1.unwrap();
-    bitpacked_encode(&mut buffer, iter, len)?;
+    bitpacked_encode(&mut buffer, iter, num_rows)?;
 
     let statistics = if options.write_statistics {
         Some(build_statistics(stats))

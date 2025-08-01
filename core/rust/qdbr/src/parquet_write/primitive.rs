@@ -183,10 +183,8 @@ where
             }
         }
     });
-
     let mut buffer = vec![];
-    let deflevels_len = deflevels_iter.size_hint().1.unwrap();
-    encode_primitive_deflevels(&mut buffer, deflevels_iter, deflevels_len, options.version)?;
+    encode_primitive_deflevels(&mut buffer, deflevels_iter, num_rows, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
     let buffer = encode_fn(slice, null_count, buffer);

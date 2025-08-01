@@ -59,9 +59,7 @@ pub fn binary_to_page(
         };
         len >= 0
     });
-
-    let deflevels_len = deflevels_iter.size_hint().1.unwrap();
-    encode_primitive_deflevels(&mut buffer, deflevels_iter, deflevels_len, options.version)?;
+    encode_primitive_deflevels(&mut buffer, deflevels_iter, num_rows, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
 

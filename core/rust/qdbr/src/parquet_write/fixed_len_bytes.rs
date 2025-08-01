@@ -54,10 +54,10 @@ pub fn bytes_to_page<const N: usize>(
             true
         }
     });
+    encode_primitive_deflevels(&mut buffer, deflevels_iter, num_rows, options.version)?;
 
-    let deflevels_len = deflevels_iter.size_hint().1.unwrap();
-    encode_primitive_deflevels(&mut buffer, deflevels_iter, deflevels_len, options.version)?;
     let definition_levels_byte_length = buffer.len();
+
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
     if reverse {
         encode_plain_be(data, &mut buffer, null_value);

@@ -404,8 +404,7 @@ pub fn array_to_raw_page(
 
     let deflevels_iter =
         (0..num_rows).map(|i| i >= column_top && arr_slices[i - column_top].is_some());
-    let deflevels_len = deflevels_iter.size_hint().1.unwrap();
-    encode_primitive_deflevels(&mut buffer, deflevels_iter, deflevels_len, options.version)?;
+    encode_primitive_deflevels(&mut buffer, deflevels_iter, num_rows, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
 
