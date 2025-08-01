@@ -89,7 +89,7 @@ public class Services {
     public HttpServer createHttpServer(
             ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
-            WorkerPool workerPool,
+            WorkerPool networkSharedPool,
             int sharedQueryWorkerCount
     ) {
         final HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
@@ -101,7 +101,7 @@ public class Services {
         final HttpHeaderParserFactory headerParserFactory = serverConfiguration.getFactoryProvider().getHttpHeaderParserFactory();
         final HttpServer server = new HttpServer(
                 httpServerConfiguration,
-                workerPool,
+                networkSharedPool,
                 serverConfiguration.getFactoryProvider().getHttpSocketFactory(),
                 cookieHandler,
                 headerParserFactory
