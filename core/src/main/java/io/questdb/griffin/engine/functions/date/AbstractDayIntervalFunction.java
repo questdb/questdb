@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.functions.date;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -31,11 +33,15 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.std.Interval;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractDayIntervalFunction extends IntervalFunction implements FunctionExtension {
     protected final Interval interval = new Interval();
+    protected TimestampDriver timestampDriver;
+
+    protected AbstractDayIntervalFunction(int intervalType) {
+        super(intervalType);
+    }
 
     @Override
     public FunctionExtension extendedOps() {
@@ -74,9 +80,18 @@ public abstract class AbstractDayIntervalFunction extends IntervalFunction imple
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        final long now = executionContext.getNow();
-        final long start = intervalStart(now);
-        final long end = intervalEnd(start);
+        // The `executionContext.getIntervalFunctionType()` is primarily designed to serve
+        // `InTimestampIntervalFunctionFactory.Func`. Regular filter functions are created
+        // through post-order traversal, and the type of filtered columns is unknown
+        // when creating interval functions. Functions like 'today()' depend on interval type
+        // to convert to actual interval ranges (relying solely on `TimestampDriver.FixInterval`
+        // would lose precision for `end`). For `init` calls that are not from InTimestampIntervalFunctionFactory.Func,
+        // the intervalType here must remain consistent with the intervalType used during function creation.
+        intervalType = executionContext.getIntervalFunctionType();
+        timestampDriver = ColumnType.getTimestampDriverByIntervalType(intervalType);
+        final long now = timestampDriver.from(executionContext.getNow(), executionContext.getNowTimestampType());
+        final long start = timestampDriver.dayStart(now, shiftFromToday());
+        final long end = timestampDriver.dayEnd(start);
         interval.of(start, end);
     }
 
@@ -93,14 +108,6 @@ public abstract class AbstractDayIntervalFunction extends IntervalFunction imple
     @Override
     public boolean isThreadSafe() {
         return true;
-    }
-
-    protected long intervalEnd(long start) {
-        return start + Timestamps.DAY_MICROS - 1;
-    }
-
-    protected long intervalStart(long now) {
-        return Timestamps.floorDD(Timestamps.addDays(now, shiftFromToday()));
     }
 
     protected abstract int shiftFromToday();

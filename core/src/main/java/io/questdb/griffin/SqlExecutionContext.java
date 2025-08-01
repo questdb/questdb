@@ -103,6 +103,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean getCloneSymbolTables();
 
+    int getIntervalFunctionType();
+
     int getJitMode();
 
     default @NotNull MessageBus getMessageBus() {
@@ -119,7 +121,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     long getMicrosecondTimestamp();
 
+    long getNanosecondTimestamp();
+
     long getNow();
+
+    int getNowTimestampType();
 
     QueryFutureUpdateListener getQueryFutureUpdateListener();
 
@@ -203,7 +209,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // This method is used to override intrinsic values in the query execution context
     // Its initial usage is in the materialized view refresh
     // where the queried timestamp of the base table is limited to the range affected since last refresh
-    default void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel) {
+    default void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel, int timestampType) {
     }
 
     void popTimestampRequiredFlag();
@@ -225,9 +231,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // Used to disable column pre-touch without affecting the explain plan
     void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride);
 
+    void setIntervalFunctionType(int intervalType);
+
     void setJitMode(int jitMode);
 
-    void setNowAndFixClock(long now);
+    void setNowAndFixClock(long now, int nowTimestampType);
 
     void setParallelFilterEnabled(boolean parallelFilterEnabled);
 

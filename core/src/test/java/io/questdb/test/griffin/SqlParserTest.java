@@ -9285,7 +9285,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM '2020-09-10T20:00:00.000000Z';",
                     75,
                     "'to' expected"
@@ -9298,7 +9298,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to",
                     78,
                     "TO timestamp expected"
@@ -9311,7 +9311,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to 'foobar'",
                     79,
                     "invalid TO timestamp value"
@@ -9324,7 +9324,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to '2020-09-10T19:00:00.000000Z'",
                     79,
                     "TO timestamp must not be earlier than FROM timestamp"
@@ -9377,7 +9377,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' foobar",
                     35,
                     "'full' or 'incremental' or 'range' expected"
@@ -9390,7 +9390,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' INCREMENTAL foobar",
                     47,
                     "unexpected token"
@@ -9403,7 +9403,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' RANGE;",
                     40,
                     "'from' expected"
@@ -9416,7 +9416,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM",
                     45,
                     "FROM timestamp expected"
@@ -9429,7 +9429,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM foobar;",
                     46,
                     "invalid FROM timestamp value"

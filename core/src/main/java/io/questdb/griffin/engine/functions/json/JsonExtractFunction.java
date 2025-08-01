@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.json;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -33,7 +34,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -52,6 +52,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class JsonExtractFunction implements Function {
     private static final boolean defaultBool = false;
+    private final TimestampDriver driver;
     private final Function json;
     private final int maxSize;
     private final Function path;
@@ -65,13 +66,14 @@ public class JsonExtractFunction implements Function {
             int targetType,
             Function json,
             Function path,
+            int defaultTimestampType,
             int maxSize
     ) {
         this.targetType = targetType;
         this.json = json;
         this.path = path;
         this.maxSize = maxSize;
-        switch (targetType) {
+        switch (ColumnType.tagOf(targetType)) {
             case ColumnType.IPv4:
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
@@ -88,11 +90,10 @@ public class JsonExtractFunction implements Function {
                 stateB = null;
                 break;
         }
-    }
-
-    @Override
-    public boolean shouldMemoize() {
-        return true;
+        if (ColumnType.isTimestamp(targetType)) {
+            defaultTimestampType = targetType;
+        }
+        driver = ColumnType.getTimestampDriver(defaultTimestampType);
     }
 
     @Override
@@ -368,7 +369,7 @@ public class JsonExtractFunction implements Function {
             case SimdJsonType.STRING:
                 assert stateA.destUtf8Sink != null;
                 try {
-                    return IntervalUtils.parseFloorPartialTimestamp(stateA.destUtf8Sink.asAsciiCharSequence());
+                    return driver.parseFloorLiteral(stateA.destUtf8Sink);
                 } catch (NumericException e) {
                     return Numbers.LONG_NULL;
                 }
@@ -420,6 +421,11 @@ public class JsonExtractFunction implements Function {
     @Override
     public boolean isRuntimeConstant() {
         return pointer == null;
+    }
+
+    @Override
+    public boolean shouldMemoize() {
+        return true;
     }
 
     private long extractLongFromJsonNumber(long res) {

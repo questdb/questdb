@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.date;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
@@ -32,16 +33,17 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.Dates;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDayIntervalFunction implements UnaryFunction {
     protected final Function tzFunc;
 
-    public AbstractDayIntervalWithTimezoneFunction(Function tzFunc) {
+    public AbstractDayIntervalWithTimezoneFunction(int intervalType, Function tzFunc) {
+        super(intervalType);
         this.tzFunc = tzFunc;
     }
 
@@ -53,6 +55,8 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         UnaryFunction.super.init(symbolTableSource, executionContext);
+        intervalType = executionContext.getIntervalFunctionType();
+        this.timestampDriver = ColumnType.getTimestampDriverByIntervalType(intervalType);
     }
 
     @Override
@@ -61,45 +65,45 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
     }
 
     @Override
-    public boolean isThreadSafe() {
-        return UnaryFunction.super.isThreadSafe();
+    public boolean isRuntimeConstant() {
+        return UnaryFunction.super.isRuntimeConstant();
     }
 
     @Override
-    public boolean isRuntimeConstant() {
-        return UnaryFunction.super.isRuntimeConstant();
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
     }
 
     protected Interval calculateInterval(long now, CharSequence tz) {
         if (tz == null) {
             // no timezone, default to UTC
-            final long start = intervalStart(now);
-            final long end = intervalEnd(start);
+            final long start = timestampDriver.dayStart(now, shiftFromToday());
+            final long end = timestampDriver.dayEnd(start);
             return interval.of(start, end);
         }
 
         try {
-            final long l = Timestamps.parseOffset(tz);
+            final long l = Dates.parseOffset(tz);
             if (l != Long.MIN_VALUE) {
                 // the timezone is in numeric offset format
-                final long offset = Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS;
+                final long offset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
                 final long nowWithTz = now + offset;
-                final long startWithTz = intervalStart(nowWithTz);
-                final long endWithTz = intervalEnd(startWithTz);
+                final long startWithTz = timestampDriver.dayStart(nowWithTz, shiftFromToday());
+                final long endWithTz = timestampDriver.dayEnd(startWithTz);
                 return interval.of(startWithTz - offset, endWithTz - offset);
             }
 
             // the timezone is a timezone name string
-            final TimeZoneRules tzRules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                    Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
+            final TimeZoneRules tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
+                    Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, tz.length())),
                     RESOLUTION_MICROS
             );
             final long offset = tzRules.getOffset(now);
             final long nowWithTz = now + offset;
             // calculate date start and end with tz
-            long startWithTz = intervalStart(nowWithTz);
-            long endWithTz = intervalEnd(startWithTz);
-            return interval.of(Timestamps.toUTC(startWithTz, tzRules), Timestamps.toUTC(endWithTz, tzRules));
+            long startWithTz = timestampDriver.dayStart(nowWithTz, shiftFromToday());
+            long endWithTz = timestampDriver.dayEnd(startWithTz);
+            return interval.of(timestampDriver.toUTC(startWithTz, tzRules), timestampDriver.toUTC(endWithTz, tzRules));
         } catch (NumericException e) {
             return interval.of(Interval.NULL.getLo(), Interval.NULL.getHi());
         }

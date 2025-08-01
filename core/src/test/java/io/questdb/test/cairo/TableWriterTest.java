@@ -35,6 +35,7 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
@@ -54,7 +55,6 @@ import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -2024,17 +2024,17 @@ public class TableWriterTest extends AbstractCairoTest {
 
             try (TableWriter writer = newOffPoolWriter(configuration, "weather")) {
                 TableWriter.Row r;
-                r = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2021-01-31"));
+                r = writer.newRow(MicrosTimestampDriver.floor("2021-01-31"));
                 r.putDouble(0, 1.0);
                 r.append();
 
                 // Out of order
-                r = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2021-01-30"));
+                r = writer.newRow(MicrosTimestampDriver.floor("2021-01-30"));
                 r.putDouble(0, 1.0);
                 r.cancel();
 
                 // Back in order
-                r = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2021-02-01"));
+                r = writer.newRow(MicrosTimestampDriver.floor("2021-02-01"));
                 r.putDouble(0, 1.0);
                 r.append();
 
@@ -2043,8 +2043,8 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             long[] expectedTs = new long[]{
-                    IntervalUtils.parseFloorPartialTimestamp("2021-01-31"),
-                    IntervalUtils.parseFloorPartialTimestamp("2021-02-01")
+                    MicrosTimestampDriver.floor("2021-01-31"),
+                    MicrosTimestampDriver.floor("2021-02-01")
             };
             try (
                     TableReader reader = newOffPoolReader(configuration, "weather");
@@ -2073,7 +2073,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
         try (TableWriter writer = newOffPoolWriter(configuration, model.getName())) {
             // Add 46 rows in partition 2020-07-13T00
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2020-07-13");
+            long ts = MicrosTimestampDriver.floor("2020-07-13");
             long increment = Timestamps.SECOND_MICROS;
             int rows = 46;
             for (int i = 0; i < rows; i++) {

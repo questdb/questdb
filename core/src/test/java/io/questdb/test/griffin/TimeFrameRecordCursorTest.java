@@ -25,7 +25,9 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TimeFrame;
@@ -381,8 +383,8 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                             timeFrameCursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), frame.getRowLo()));
                             long tsLo = record.getTimestamp(0);
 
-                            PartitionBy.PartitionFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
-                            PartitionBy.PartitionCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
+                            TimestampDriver.TimestampFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, partitionBy);
+                            TimestampDriver.TimestampCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(ColumnType.TIMESTAMP, partitionBy);
 
                             long expectedEstimateTsLo = floorMethod != null ? floorMethod.floor(tsLo) : 0;
                             long expectedEstimateTsHi = ceilMethod != null ? ceilMethod.ceil(tsLo) : Long.MAX_VALUE;
@@ -448,8 +450,8 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                         timeFrameCursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), frame.getRowLo()));
                         long tsLo = record.getTimestamp(0);
 
-                        PartitionBy.PartitionFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(PartitionBy.DAY);
-                        PartitionBy.PartitionCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(PartitionBy.DAY);
+                        TimestampDriver.TimestampFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, PartitionBy.DAY);
+                        TimestampDriver.TimestampCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(ColumnType.TIMESTAMP, PartitionBy.DAY);
 
                         long expectedEstimateTsLo = floorMethod != null ? floorMethod.floor(tsLo) : 0;
                         long expectedEstimateTsHi = ceilMethod != null ? ceilMethod.ceil(tsLo) : Long.MAX_VALUE;

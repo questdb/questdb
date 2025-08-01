@@ -24,6 +24,7 @@
 
 package io.questdb.log;
 
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
@@ -161,6 +162,11 @@ final class NullLogRecord implements LogRecord {
 
     @Override
     public LogRecord $ts(long x) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $ts(TimestampDriver driver, long x) {
         return this;
     }
 

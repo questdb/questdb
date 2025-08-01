@@ -71,6 +71,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     public static void processParquetPartition(
             Path pathToTable,
+            int timestampType,
             int partitionBy,
             ReadOnlyObjList<? extends MemoryCR> oooColumns,
             long srcOooLo,
@@ -90,7 +91,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
         final TableRecordMetadata tableWriterMetadata = tableWriter.getMetadata();
         Path path = Path.getThreadLocal(pathToTable);
-        setPathForParquetPartition(path, partitionBy, partitionTimestamp, srcNameTxn);
+        setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
 
         final int partitionIndex = tableWriter.getPartitionIndexByTimestamp(partitionTimestamp);
         final long parquetSize = tableWriter.getPartitionParquetFileSize(partitionIndex);
@@ -289,7 +290,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     .I$();
             // the file is re-opened here because PartitionUpdater owns the file descriptor
             path.of(pathToTable);
-            setPathForParquetPartition(path, partitionBy, partitionTimestamp, srcNameTxn);
+            setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
             final long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
             // truncate partition file to the previous uncorrupted size
             if (!ff.truncate(fd, parquetSize)) {
@@ -299,7 +300,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
         } finally {
             path.of(pathToTable);
-            setPathForParquetPartition(path, partitionBy, partitionTimestamp, srcNameTxn);
+            setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
             final long fileSize = Files.length(path.$());
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
@@ -345,10 +346,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // if so we do not need to re-open files and write to existing file descriptors
         final RecordMetadata metadata = tableWriter.getMetadata();
         final int timestampIndex = metadata.getTimestampIndex();
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(metadata.getTimestampType());
 
         if (isParquet) {
             processParquetPartition(
                     pathToTable,
+                    tableWriter.getMetadata().getTimestampType(),
                     partitionBy,
                     oooColumns,
                     srcOooLo,
@@ -392,7 +395,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             if (!last) {
                 try {
                     LOG.debug().$("would create [path=").$(path.slash$()).I$();
-                    TableUtils.setPathForNativePartition(path.trimTo(pathToTable.size()), partitionBy, partitionTimestamp, txn - 1);
+                    TableUtils.setPathForNativePartition(
+                            path.trimTo(pathToTable.size()),
+                            tableWriter.getMetadata().getTimestampType(),
+                            partitionBy,
+                            partitionTimestamp,
+                            txn - 1
+                    );
                     createDirsOrFail(ff, path.slash(), tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
                     LOG.error().$("process new partition error [table=").$safe(tableWriter.getTableToken().getTableName())
@@ -445,6 +454,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     0,
                     0,
                     timestampIndex,
+                    timestampDriver,
                     sortedTimestampsAddr,
                     newPartitionSize,
                     oldPartitionSize,
@@ -485,10 +495,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 } else {
                     srcTimestampSize = srcDataMax * 8L;
                     // out of order data is going into archive partition
-                    // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
+                    // we need to read "low" and "high" boundaries of the partition. "low" being the oldest timestamp
                     // and "high" being newest
 
-                    TableUtils.setPathForNativePartition(path.trimTo(pathToTable.size()), partitionBy, partitionTimestamp, srcNameTxn);
+                    TableUtils.setPathForNativePartition(
+                            path.trimTo(pathToTable.size()),
+                            tableWriter.getMetadata().getTimestampType(),
+                            partitionBy,
+                            partitionTimestamp,
+                            srcNameTxn
+                    );
 
                     // also track the fd that we need to eventually close
                     // Open src timestamp column as RW in case append happens
@@ -874,7 +890,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             o3RangeHi
                                     )) {
                                         LOG.info().$("replace commit resulted in identical data [table=").$safe(tableWriter.getTableToken().getTableName())
-                                                .$(", partitionTimestamp=").$ts(partitionTimestamp)
+                                                .$(", partitionTimestamp=").$ts(timestampDriver, partitionTimestamp)
                                                 .$(", srcNameTxn=").$(srcNameTxn)
                                                 .I$();
                                         // No need to update partition, it is identical to the existing one
@@ -955,12 +971,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         .$(", prefixType=").$(prefixType)
                         .$(", prefixLo=").$(prefixLo)
                         .$(", prefixHi=").$(prefixHi)
-                        .$(", o3TimestampLo=").$ts(o3TimestampLo)
-                        .$(", o3TimestampHi=").$ts(o3TimestampHi)
-                        .$(", o3TimestampMin=").$ts(o3TimestampMin)
-                        .$(", dataTimestampLo=").$ts(dataTimestampLo)
-                        .$(", dataTimestampHi=").$ts(dataTimestampHi)
-                        .$(", partitionTimestamp=").$ts(partitionTimestamp)
+                        .$(", o3TimestampLo=").$ts(timestampDriver, o3TimestampLo)
+                        .$(", o3TimestampHi=").$ts(timestampDriver, o3TimestampHi)
+                        .$(", o3TimestampMin=").$ts(timestampDriver, o3TimestampMin)
+                        .$(", dataTimestampLo=").$ts(timestampDriver, dataTimestampLo)
+                        .$(", dataTimestampHi=").$ts(timestampDriver, dataTimestampHi)
+                        .$(", partitionTimestamp=").$ts(timestampDriver, partitionTimestamp)
                         .$(", srcDataMax=").$(srcDataMax)
                         .$(", mergeType=").$(mergeType)
                         .$(", mergeDataLo=").$(mergeDataLo)
@@ -1038,11 +1054,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         // large prefix copy, better to split the partition
                         LOG.info().$("o3 split partition [table=").$(tableWriter.getTableToken())
-                                .$(", timestamp=").$ts(oldPartitionTimestamp)
+                                .$(", timestamp=").$ts(timestampDriver, oldPartitionTimestamp)
                                 .$(", nameTxn=").$(srcNameTxn)
                                 .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
                                 .$(", o3SplitPartitionSize=").$(o3SplitPartitionSize)
-                                .$(", newPartitionTimestamp=").$ts(partitionTimestamp)
+                                .$(", newPartitionTimestamp=").$ts(timestampDriver, partitionTimestamp)
                                 .$(", nameTxn=").$(txn)
                                 .I$();
                     }
@@ -1059,7 +1075,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // to the existing one.
                     openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
                 } else {
-                    TableUtils.setPathForNativePartition(path.trimTo(pathToTable.size()), partitionBy, partitionTimestamp, txn);
+                    TableUtils.setPathForNativePartition(
+                            path.trimTo(pathToTable.size()),
+                            tableWriter.getMetadata().getTimestampType(),
+                            partitionBy,
+                            partitionTimestamp,
+                            txn
+                    );
                     createDirsOrFail(ff, path.slash(), tableWriter.getConfiguration().getMkDirMode());
                     if (last) {
                         openColumnMode = OPEN_LAST_PARTITION_FOR_MERGE;
@@ -1113,6 +1135,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     srcTimestampAddr,
                     srcTimestampSize,
                     timestampIndex,
+                    timestampDriver,
                     sortedTimestampsAddr,
                     srcDataNewPartitionSize,
                     oldPartitionSize,
@@ -1363,7 +1386,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     } else { // if (columnTop > mergeDataHi)
                         if (columnSize > 0) {
                             // Fixed length column
-                            TableUtils.setSinkForNativePartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, srcNameTxn);
+                            TableUtils.setSinkForNativePartition(
+                                    tableRootPath.trimTo(tableRootPathLen).slash(),
+                                    tableWriter.getMetadata().getTimestampType(),
+                                    tableWriter.getPartitionBy(),
+                                    partitionTimestamp,
+                                    srcNameTxn
+                            );
                             long fd = TableUtils.openRO(ff, TableUtils.dFile(tableRootPath, columnName, columnNameTxn), LOG);
 
                             long fixMapSize = (mergeDataHi + 1 - columnTop) * columnSize;
@@ -1392,7 +1421,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             ColumnTypeDriver driver = ColumnType.getDriver(columnType);
                             long auxMapSize = driver.getAuxVectorSize(rows);
 
-                            TableUtils.setSinkForNativePartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, srcNameTxn);
+                            TableUtils.setSinkForNativePartition(
+                                    tableRootPath.trimTo(tableRootPathLen).slash(),
+                                    tableWriter.getMetadata().getTimestampType(),
+                                    tableWriter.getPartitionBy(),
+                                    partitionTimestamp,
+                                    srcNameTxn
+                            );
                             long auxFd = TableUtils.openRO(ff, TableUtils.iFile(tableRootPath, columnName, columnNameTxn), LOG);
                             long auxMappedAddress = TableUtils.mapAppendColumnBuffer(
                                     ff,
@@ -1405,7 +1440,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             long varMapSize = driver.getDataVectorSizeAt(auxMappedAddress, rows - 1);
                             if (varMapSize > 0) {
-                                TableUtils.setSinkForNativePartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, srcNameTxn);
+                                TableUtils.setSinkForNativePartition(
+                                        tableRootPath.trimTo(tableRootPathLen).slash(),
+                                        tableWriter.getMetadata().getTimestampType(),
+                                        tableWriter.getPartitionBy(),
+                                        partitionTimestamp,
+                                        srcNameTxn
+                                );
                             }
                             long varFd = varMapSize > 0 ? TableUtils.openRO(ff, TableUtils.dFile(tableRootPath, columnName, columnNameTxn), LOG) : -1;
                             long varMappedAddress = varMapSize > 0 ? TableUtils.mapAppendColumnBuffer(
@@ -2032,6 +2073,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcTimestampAddr,
             long srcTimestampSize,
             int timestampIndex,
+            TimestampDriver timestampDriver,
             long sortedTimestampsAddr,
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
@@ -2110,7 +2152,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                                 if (suffixType != O3_BLOCK_O3) {
                                     LOG.info().$("deduplication resulted in noop [table=").$(tableWriter.getTableToken())
-                                            .$(", partition=").$ts(partitionTimestamp)
+                                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                                             .I$();
 
                                     // nothing to do, skip the partition
@@ -2131,7 +2173,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                                     // Remove empty partition dir
                                     Path path = Path.getThreadLocal(pathToTable);
-                                    setPathForNativePartition(path, tableWriter.getPartitionBy(), partitionTimestamp, txn);
+                                    setPathForNativePartition(path, tableWriter.getTimestampType(), tableWriter.getPartitionBy(), partitionTimestamp, txn);
                                     tableWriter.getConfiguration().getFilesFacade().rmdir(path, false);
 
                                     return;
@@ -2172,8 +2214,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         if (o3SplitPartitionSize > 0) {
                             LOG.info().$("dedup resulted in no merge, undo partition split [table=")
                                     .$safe(tableWriter.getTableToken().getTableName())
-                                    .$(", partition=").$ts(oldPartitionTimestamp)
-                                    .$(", split=").$ts(partitionTimestamp)
+                                    .$(", partition=").$ts(timestampDriver, oldPartitionTimestamp)
+                                    .$(", split=").$ts(timestampDriver, partitionTimestamp)
                                     .I$();
                             partitionTimestamp = oldPartitionTimestamp;
                             srcDataNewPartitionSize += o3SplitPartitionSize;
@@ -2205,7 +2247,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                     LOG.info()
                             .$("dedup row reduction [table=").$safe(tableWriter.getTableToken().getTableName())
-                            .$(", partition=").$ts(partitionTimestamp)
+                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                             .$(", duplicateCount=").$(duplicateCount)
                             .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
                             .$(", srcDataOldPartitionSize=").$(srcDataOldPartitionSize)
@@ -2453,7 +2495,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     MemoryTag.NATIVE_PARQUET_PARTITION_DECODER
             );
             path.of(pathToTable);
-            setPathForNativePartition(path, partitionBy, partitionTimestamp, srcNameTxn);
+            setPathForNativePartition(
+                    path,
+                    tableWriterMetadata.getTimestampType(),
+                    partitionBy,
+                    partitionTimestamp,
+                    srcNameTxn
+            );
             final int pLen = path.size();
 
             BitmapIndexWriter indexWriter = null;

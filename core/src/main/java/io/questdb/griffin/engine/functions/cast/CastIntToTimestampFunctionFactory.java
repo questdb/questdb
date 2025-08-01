@@ -41,12 +41,12 @@ public class CastIntToTimestampFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CastIntToTimestampFunction(args.getQuick(0));
+        return new CastIntToTimestampFunction(args.getQuick(0), args.getQuick(1).getType());
     }
 
     public static class CastIntToTimestampFunction extends AbstractCastToTimestampFunction {
-        public CastIntToTimestampFunction(Function arg) {
-            super(arg);
+        public CastIntToTimestampFunction(Function arg, int timestampType) {
+            super(arg, timestampType);
         }
 
         @Override

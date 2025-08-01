@@ -24,7 +24,11 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
@@ -56,6 +60,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             int timestampIndex,
+            int timestampType,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
@@ -80,6 +85,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
                     groupByFunctionsUpdater,
                     this.recordFunctions,
                     timestampIndex,
+                    timestampType,
                     timestampSampler,
                     timezoneNameFunc,
                     timezoneNameFuncPos,
