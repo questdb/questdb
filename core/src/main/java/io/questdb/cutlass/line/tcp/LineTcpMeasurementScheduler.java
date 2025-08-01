@@ -159,15 +159,15 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
                 assignedTables[i] = new ObjList<>();
 
-                final LineTcpLegactWriterJob lineTcpLegactWriterJob = new LineTcpLegactWriterJob(
+                final LineTcpLegacyWriterJob lineTcpLegacyWriterJob = new LineTcpLegacyWriterJob(
                         i,
                         q,
                         subSeq,
                         clock,
                         commitInterval, this, engine.getMetrics(), assignedTables[i]
                 );
-                writerWorkerPool.assign(i, lineTcpLegactWriterJob);
-                writerWorkerPool.freeOnExit(lineTcpLegactWriterJob);
+                writerWorkerPool.assign(i, lineTcpLegacyWriterJob);
+                writerWorkerPool.freeOnExit(lineTcpLegacyWriterJob);
             }
             this.tableStructureAdapter = new TableStructureAdapter(
                     cairoConfiguration,

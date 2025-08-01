@@ -38,18 +38,18 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 public class WorkerPoolUtils {
 
     public static void setupQueryJobs(
-            WorkerPool workerPool,
+            WorkerPool sharedPoolQuery,
             CairoEngine cairoEngine
     ) {
         final CairoConfiguration configuration = cairoEngine.getConfiguration();
         final MessageBus messageBus = cairoEngine.getMessageBus();
-        final int workerCount = workerPool.getWorkerCount();
+        final int workerCount = sharedPoolQuery.getWorkerCount();
 
-        workerPool.assign(new LatestByAllIndexedJob(messageBus));
+        sharedPoolQuery.assign(new LatestByAllIndexedJob(messageBus));
 
         if (configuration.isSqlParallelGroupByEnabled()) {
-            workerPool.assign(new GroupByVectorAggregateJob(messageBus));
-            workerPool.assign(new GroupByMergeShardJob(messageBus));
+            sharedPoolQuery.assign(new GroupByVectorAggregateJob(messageBus));
+            sharedPoolQuery.assign(new GroupByMergeShardJob(messageBus));
         }
 
         if (configuration.isSqlParallelFilterEnabled() || configuration.isSqlParallelGroupByEnabled()) {
@@ -62,8 +62,8 @@ public class WorkerPoolUtils {
                         new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks()),
                         configuration.getCircuitBreakerConfiguration()
                 );
-                workerPool.assign(i, pageFrameReduceJob);
-                workerPool.freeOnExit(pageFrameReduceJob);
+                sharedPoolQuery.assign(i, pageFrameReduceJob);
+                sharedPoolQuery.freeOnExit(pageFrameReduceJob);
             }
         }
     }
