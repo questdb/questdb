@@ -324,7 +324,7 @@ public class CopyTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyCancelChecksImportId() throws Exception {
         assertMemoryLeak(() -> {
-            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
+            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
                 String importId = runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
 
@@ -354,7 +354,7 @@ public class CopyTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyCancelRejectsSecondReq() throws Exception {
         assertMemoryLeak(() -> {
-            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
+            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
                 String copyID = runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
 
@@ -758,7 +758,7 @@ public class CopyTest extends AbstractCairoTest {
     @Test
     public void testSerialCopyCancelChecksImportId() throws Exception {
         assertMemoryLeak(() -> {
-            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
+            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
                 // decrease smaller buffer otherwise the whole file imported in one go without ever checking the circuit breaker
                 setProperty(PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 1024);
                 String copyID = runAndFetchCopyID("copy x from 'test-import.csv' with header true delimiter ',' " +
