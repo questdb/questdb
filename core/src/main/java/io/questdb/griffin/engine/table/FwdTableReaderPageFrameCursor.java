@@ -52,7 +52,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final int pageFrameMaxRows;
     private final int pageFrameMinRows;
     private final LongList pageSizes = new LongList();
-    private final int workerCount;
+    private final int sharedQueryWorkerCount;
     private PartitionFrameCursor partitionFrameCursor;
     private TableReader reader;
     // only native partition frames are reentered
@@ -66,14 +66,14 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     public FwdTableReaderPageFrameCursor(
             IntList columnIndexes,
             IntList columnSizeShifts,
-            int workerCount,
+            int sharedQueryWorkerCount,
             int pageFrameMinRows,
             int pageFrameMaxRows
     ) {
         this.columnIndexes = columnIndexes;
         this.columnSizeShifts = columnSizeShifts;
         columnCount = columnIndexes.size();
-        this.workerCount = workerCount;
+        this.sharedQueryWorkerCount = sharedQueryWorkerCount;
         this.pageFrameMinRows = pageFrameMinRows;
         this.pageFrameMaxRows = pageFrameMaxRows;
     }
@@ -135,7 +135,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             reenterParquetDecoder = null;
             reenterPageFrameRowLimit = Math.min(
                     pageFrameMaxRows,
-                    Math.max(pageFrameMinRows, (hi - lo) / workerCount)
+                    Math.max(pageFrameMinRows, (hi - lo) / sharedQueryWorkerCount)
             );
             return computeNativeFrame(lo, hi);
         }
