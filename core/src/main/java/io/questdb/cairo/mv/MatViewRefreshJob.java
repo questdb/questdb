@@ -415,7 +415,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         if (minTs <= maxTs) {
             final TimestampSampler timestampSampler = viewDefinition.getTimestampSampler();
-            final long rowsPerBucket = estimateRowsPerBucket(baseTableReader, timestampSampler.getApproxBucketSize());
+            final long rowsPerBucket = estimateRowsPerBucket(viewDefinition.getBaseTableTimestampDriver(), baseTableReader, timestampSampler.getApproxBucketSize());
             final int rowsPerQuery = configuration.getMatViewRowsPerQueryEstimate();
             final int step = Math.max(1, (int) (rowsPerQuery / rowsPerBucket));
 
