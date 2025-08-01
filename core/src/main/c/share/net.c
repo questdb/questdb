@@ -239,19 +239,62 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureLinger
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_connect
         (JNIEnv *e, jclass cl, jint fd, jlong sockAddr) {
-    jboolean retry = 0;
     int result;
-    do {
-        result = connect((int) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
-        retry |= result == -1 && errno == EINTR;
-    } while (result == -1 && errno == EINTR);
 
-    if (retry && errno == EISCONN) {
-        return 0;
+    result = connect((int) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
+
+    if (result == -1 && errno == EINTR) {
+        // Connection was interrupted but continues in background
+        // Wait for it to complete using select()
+        fd_set writefds, exceptfds;
+        struct timeval timeout;
+
+        FD_ZERO(&writefds);
+        FD_ZERO(&exceptfds);
+        FD_SET(fd, &writefds);
+        FD_SET(fd, &exceptfds);
+
+        // Set a reasonable timeout (e.g., 30 seconds)
+        timeout.tv_sec = 30;
+        timeout.tv_usec = 0;
+
+        int select_result = select(fd + 1, NULL, &writefds, &exceptfds, &timeout);
+
+        if (select_result > 0) {
+            if (FD_ISSET(fd, &exceptfds)) {
+                // Exception occurred
+                int error = 0;
+                socklen_t len = sizeof(error);
+                if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error != 0) {
+                    errno = error;
+                }
+                return -1;
+            } else if (FD_ISSET(fd, &writefds)) {
+                // Socket is writable, check for connection error
+                int error = 0;
+                socklen_t len = sizeof(error);
+                if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &len) == 0) {
+                    if (error == 0) {
+                        return 0; // Success
+                    } else {
+                        errno = error;
+                        return -1;
+                    }
+                }
+                return -1;
+            }
+        } else if (select_result == 0) {
+            // Timeout
+            errno = ETIMEDOUT;
+            return -1;
+        } else {
+            // select() failed
+            return -1;
+        }
     }
+
     return result;
 }
-
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setSndBuf
         (JNIEnv *e, jclass cl, jint fd, jint size) {
     return set_int_sockopt((int) fd, SOL_SOCKET, SO_SNDBUF, size);
@@ -363,17 +406,60 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getPeerPort
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_connectAddrInfo
         (JNIEnv *e, jclass cl, jint fd, jlong lpAddrInfo) {
     struct addrinfo *addr = (struct addrinfo *) lpAddrInfo;
-    jint result;
-    int retry = 0;
+    int result;
 
-    do {
-        result = connect((int) fd, addr->ai_addr, (int) addr->ai_addrlen);
-        retry++;
-    } while (result == -1 && errno == EINTR);
+    result = connect((int) fd, addr->ai_addr, (int) addr->ai_addrlen);
 
-    if (retry > 1 && errno == EISCONN) {
-        return 0;
+    if (result == -1 && errno == EINTR) {
+        // Connection was interrupted but continues in background
+        // Wait for it to complete using select()
+        fd_set writefds, exceptfds;
+        struct timeval timeout;
+
+        FD_ZERO(&writefds);
+        FD_ZERO(&exceptfds);
+        FD_SET(fd, &writefds);
+        FD_SET(fd, &exceptfds);
+
+        // Set a reasonable timeout (e.g., 30 seconds)
+        timeout.tv_sec = 30;
+        timeout.tv_usec = 0;
+
+        int select_result = select(fd + 1, NULL, &writefds, &exceptfds, &timeout);
+
+        if (select_result > 0) {
+            if (FD_ISSET(fd, &exceptfds)) {
+                // Exception occurred
+                int error = 0;
+                socklen_t len = sizeof(error);
+                if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error != 0) {
+                    errno = error;
+                }
+                return -1;
+            } else if (FD_ISSET(fd, &writefds)) {
+                // Socket is writable, check for connection error
+                int error = 0;
+                socklen_t len = sizeof(error);
+                if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &len) == 0) {
+                    if (error == 0) {
+                        return 0; // Success
+                    } else {
+                        errno = error;
+                        return -1;
+                    }
+                }
+                return -1;
+            }
+        } else if (select_result == 0) {
+            // Timeout
+            errno = ETIMEDOUT;
+            return -1;
+        } else {
+            // select() failed
+            return -1;
+        }
     }
+
     return result;
 }
 

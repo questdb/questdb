@@ -24,6 +24,7 @@
 
 package io.questdb.test;
 
+import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.client.Sender;
 import io.questdb.std.Files;
@@ -81,7 +82,9 @@ public class ConcurrentTcpSenderBootstrapTest extends AbstractBootstrapTest {
     }
 
     private static void testConcurrentSenders(int nThreads, int startingOffset) throws InterruptedException {
-        try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+        try (final TestServerMain serverMain = startWithEnvVariables(
+                PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT.getEnvVarName(), String.valueOf(nThreads + 1)
+        )) {
             serverMain.start();
             AtomicReference<Throwable> error = new AtomicReference<>();
             ObjList<Thread> threads = new ObjList<>();
