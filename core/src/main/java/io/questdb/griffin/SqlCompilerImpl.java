@@ -2981,7 +2981,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (Chars.isQuoted(tok)) {
                     tok = unquote(tok);
                 }
-                
+
                 final TableToken tableToken;
                 if (hasIfExists) {
                     tableToken = executionContext.getTableTokenIfExists(tok);
@@ -3003,7 +3003,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
                 }
-                
+
                 checkMatViewModification(tableToken);
                 executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
                 try {
