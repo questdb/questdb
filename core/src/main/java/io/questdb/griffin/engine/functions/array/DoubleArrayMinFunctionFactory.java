@@ -37,8 +37,8 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class DoubleArraySumFunctionFactory implements FunctionFactory {
-    private static final String FUNCTION_NAME = "array_sum";
+public class DoubleArrayMinFunctionFactory implements FunctionFactory {
+    private static final String FUNCTION_NAME = "array_min";
 
     @Override
     public String getSignature() {
@@ -59,8 +59,6 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
     static class Func extends DoubleFunction implements UnaryFunction {
 
         private final Function arrayArg;
-        private double compensation;
-        private double sum;
 
         Func(Function arrayArg) {
             this.arrayArg = arrayArg;
@@ -73,18 +71,13 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            ArrayView arr = arrayArg.getArray(rec);
-            if (arr.isNull()) {
+            ArrayView view = arrayArg.getArray(rec);
+            if (view.isNull()) {
                 return Double.NaN;
+            } else if (view.isVanilla()) {
+                return view.flatView().minDouble(view.getFlatViewOffset(), view.getFlatViewLength());
             }
-
-            if (arr.isVanilla()) {
-                return arr.flatView().sumDouble(arr.getFlatViewOffset(), arr.getFlatViewLength());
-            }
-            sum = Double.NaN;
-            compensation = 0d;
-            calculateRecursive(arr, 0, 0);
-            return sum;
+            return calculateRecursive(view, 0, 0, Double.POSITIVE_INFINITY);
         }
 
         @Override
@@ -97,30 +90,25 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
             return false;
         }
 
-        private void calculateRecursive(ArrayView view, int dim, int flatIndex) {
+        private static double calculateRecursive(ArrayView view, int dim, int flatIndex, double min) {
             final int count = view.getDimLen(dim);
             final int stride = view.getStride(dim);
             final boolean atDeepestDim = dim == view.getDimCount() - 1;
             if (atDeepestDim) {
                 for (int i = 0; i < count; i++) {
                     double v = view.getDouble(flatIndex);
-                    if (Numbers.isFinite(v)) {
-                        if (compensation == 0d && Numbers.isNull(sum)) {
-                            sum = 0d;
-                        }
-                        final double y = v - compensation;
-                        final double t = sum + y;
-                        compensation = t - sum - y;
-                        sum = t;
+                    if (Numbers.isFinite(v) && v < min) {
+                        min = v;
                     }
                     flatIndex += stride;
                 }
             } else {
                 for (int i = 0; i < count; i++) {
-                    calculateRecursive(view, dim + 1, flatIndex);
+                    min = calculateRecursive(view, dim + 1, flatIndex, min);
                     flatIndex += stride;
                 }
             }
+            return min;
         }
     }
 }

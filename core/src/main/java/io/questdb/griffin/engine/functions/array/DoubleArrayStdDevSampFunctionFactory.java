@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -37,8 +38,12 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class DoubleArraySumFunctionFactory implements FunctionFactory {
-    private static final String FUNCTION_NAME = "array_sum";
+/**
+ * Array std dev implementation follows the previous work in
+ * {@linkplain io.questdb.griffin.engine.functions.groupby.AbstractStdDevGroupByFunction GROUP BY aggregation}.
+ */
+public class DoubleArrayStdDevSampFunctionFactory implements FunctionFactory {
+    private static final String FUNCTION_NAME = "array_stddev_samp";
 
     @Override
     public String getSignature() {
@@ -56,11 +61,12 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    static class Func extends DoubleFunction implements UnaryFunction {
+    protected static class Func extends DoubleFunction implements UnaryFunction {
 
         private final Function arrayArg;
-        private double compensation;
-        private double sum;
+        protected int count;
+        private double deltaSquaredSum;
+        private double mean;
 
         Func(Function arrayArg) {
             this.arrayArg = arrayArg;
@@ -77,14 +83,40 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
             if (arr.isNull()) {
                 return Double.NaN;
             }
+            deltaSquaredSum = 0.0;
+            mean = 0.0;
+            count = 0;
 
             if (arr.isVanilla()) {
-                return arr.flatView().sumDouble(arr.getFlatViewOffset(), arr.getFlatViewLength());
+                FlatArrayView flatView = arr.flatView();
+                int offset = arr.getFlatViewOffset();
+                int length = arr.getFlatViewLength();
+                for (int i = offset, n = offset + length; i < n; i++) {
+                    double value = flatView.getDoubleAtAbsIndex(i);
+                    if (Numbers.isFinite(value)) {
+                        count++;
+                        double oldMean = mean;
+                        mean += (value - mean) / count;
+                        deltaSquaredSum += (value - mean) * (value - oldMean);
+                    }
+                }
+            } else {
+                calculateRecursive(arr, 0, 0);
             }
-            sum = Double.NaN;
-            compensation = 0d;
-            calculateRecursive(arr, 0, 0);
-            return sum;
+
+            long countForVariance = getCountForVariance();
+            if (countForVariance <= 0) {
+                return Double.NaN;
+            }
+
+            // Calculate sample standard deviation: sqrt((sum(x^2) - sum(x)^2/n) / (n - 1))
+            double variance = deltaSquaredSum / countForVariance;
+
+            // Handle potential floating point precision issues
+            if (variance < 0d) {
+                variance = 0d;
+            }
+            return Math.sqrt(variance);
         }
 
         @Override
@@ -103,15 +135,12 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
             final boolean atDeepestDim = dim == view.getDimCount() - 1;
             if (atDeepestDim) {
                 for (int i = 0; i < count; i++) {
-                    double v = view.getDouble(flatIndex);
-                    if (Numbers.isFinite(v)) {
-                        if (compensation == 0d && Numbers.isNull(sum)) {
-                            sum = 0d;
-                        }
-                        final double y = v - compensation;
-                        final double t = sum + y;
-                        compensation = t - sum - y;
-                        sum = t;
+                    double value = view.getDouble(flatIndex);
+                    if (Numbers.isFinite(value)) {
+                        this.count++;
+                        double oldMean = mean;
+                        mean += (value - mean) / this.count;
+                        deltaSquaredSum += (value - mean) * (value - oldMean);
                     }
                     flatIndex += stride;
                 }
@@ -121,6 +150,10 @@ public class DoubleArraySumFunctionFactory implements FunctionFactory {
                     flatIndex += stride;
                 }
             }
+        }
+
+        protected int getCountForVariance() {
+            return count - 1;
         }
     }
 }
