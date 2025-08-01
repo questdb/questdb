@@ -213,7 +213,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\tnull\t\n" +
                     "4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\tnull\t\n" +
                     "5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\tnull\t\n";
-            printSqlResult(expected, query, "ts", false, true);
+            printSqlResult(expected, query, "ts", false, false);
         });
     }
 

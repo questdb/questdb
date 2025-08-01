@@ -4991,7 +4991,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "), index(s) timestamp(ts) partition by month",
                 null,
                 false,
-                true
+                false
         );
     }
 

@@ -345,8 +345,8 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public @Nullable PageFrame next() {
-            PageFrame baseFrame = baseCursor.next();
+        public @Nullable PageFrame next(long skipTarget) {
+            PageFrame baseFrame = baseCursor.next(skipTarget);
             return baseFrame != null ? pageFrame.of(baseFrame) : null;
         }
 

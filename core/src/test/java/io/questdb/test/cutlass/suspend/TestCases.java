@@ -366,10 +366,6 @@ public class TestCases {
         return testCases.size();
     }
 
-    private void addTestCase(String query, boolean allowEmptyResultSet) {
-        testCases.add(new TestCase(query, allowEmptyResultSet));
-    }
-
     @SuppressWarnings("SameParameterValue")
     private void addTestCase(String query, boolean allowEmptyResultSet, String... bindVariableValues) {
         testCases.add(new TestCase(query, allowEmptyResultSet, bindVariableValues));
@@ -377,6 +373,10 @@ public class TestCases {
 
     private void addTestCase(String query) {
         addTestCase(query, false);
+    }
+
+    private void addTestCase(String query, boolean allowEmptyResultSet) {
+        testCases.add(new TestCase(query, allowEmptyResultSet));
     }
 
     /**
