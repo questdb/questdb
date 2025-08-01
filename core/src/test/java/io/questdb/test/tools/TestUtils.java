@@ -1503,11 +1503,7 @@ public final class TestUtils {
         return Integer.parseInt(version);
     }
 
-    public static String getPgConnectionUri(int pgPort) {
-        return "jdbc:postgresql://127.0.0.1:" + pgPort + "/qdb";
-    }
-
-    public static long getPrometheusMetric(CairoEngine engine, String tag) {
+    public static long getMetricValue(CairoEngine engine, String tag) {
         try (DirectUtf8Sink metricsSink = new DirectUtf8Sink(1024)) {
             engine.getMetrics().scrapeIntoPrometheus(metricsSink);
             String[] lines = metricsSink.toString().split("\n");
@@ -1516,6 +1512,10 @@ public final class TestUtils {
             Assert.assertTrue(tag + " missing", metricsLine.isPresent());
             return Long.parseLong(metricsLine.get().substring(tag.length() + 1));
         }
+    }
+
+    public static String getPgConnectionUri(int pgPort) {
+        return "jdbc:postgresql://127.0.0.1:" + pgPort + "/qdb";
     }
 
     public static String getResourcePath(String resourceName) {

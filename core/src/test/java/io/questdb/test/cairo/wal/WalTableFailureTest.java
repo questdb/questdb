@@ -1732,9 +1732,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
         String tagSuspendedTables = "questdb_suspended_tables";
         String tagSeqTxn = "questdb_wal_apply_seq_txn";
         String tagWriterTxn = "questdb_wal_apply_writer_txn";
-        Assert.assertEquals(tagSuspendedTables, suspendedTables, TestUtils.getPrometheusMetric(engine, tagSuspendedTables));
-        Assert.assertEquals(tagSeqTxn, seqTxn, TestUtils.getPrometheusMetric(engine, tagSeqTxn));
-        Assert.assertEquals(tagWriterTxn, writerTxn, TestUtils.getPrometheusMetric(engine, tagWriterTxn));
+        Assert.assertEquals(tagSuspendedTables, suspendedTables, TestUtils.getMetricValue(engine, tagSuspendedTables));
+        Assert.assertEquals(tagSeqTxn, seqTxn, TestUtils.getMetricValue(engine, tagSeqTxn));
+        Assert.assertEquals(tagWriterTxn, writerTxn, TestUtils.getMetricValue(engine, tagWriterTxn));
     }
 
     private void createStandardNonWalTable(String tableName) throws SqlException {
