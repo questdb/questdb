@@ -1763,6 +1763,43 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportVarcharDoubleQuotes() throws Exception {
+        executeWithPool(
+                2,
+                8,
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                    execute(
+                            compiler,
+                            "create table x (\n" +
+                                    "  str varchar,\n" +
+                                    "  ts timestamp" +
+                                    ") timestamp(ts) partition by DAY;", sqlExecutionContext
+                    );
+                    try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                        importer.of("x", "test-varchar-double-quotes.csv", 1, PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
+                        importer.process(AllowAllSecurityContext.INSTANCE);
+                    }
+
+                    refreshTablesInBaseEngine();
+                    assertQueryNoLeakCheck(
+                            "str\tts\n" +
+                                    "foobar\t1970-01-02T00:00:00.000000Z\n" +
+                                    "foobar foobar foobar foobar\t1970-01-02T00:00:00.000000Z\n" +
+                                    "foobar foobar \"foobar\" foobar foobar\t1970-01-02T00:00:00.000000Z\n" +
+                                    "\"foobar\" foobar foobar foobar\t1970-01-02T00:00:00.000000Z\n" +
+                                    "foobar\"\"\t1970-01-02T00:00:00.000000Z\n" +
+                                    "фубар \"фубар\" фубар\t1970-01-02T00:00:00.000000Z\n",
+                            "x",
+                            "ts",
+                            true,
+                            false,
+                            true
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testImportWithSkipAllAtomicityFailsWhenNonTimestampColumnCantBeParsedAtDataImportPhase() throws Exception {
         executeWithPool(
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {

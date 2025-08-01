@@ -6959,6 +6959,7 @@ nodejs code:
                     Assert.assertEquals(2489.1431526879937, sum, 0.00000001);
                 },
                 () -> {
+                    staticOverrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_ENABLED, "false");
                     sendBufferSize = Math.max(sendBufferSize, 2048);
                     recvBufferSize = Math.max(recvBufferSize, 5000);
                 }
@@ -7010,7 +7011,7 @@ nodejs code:
                             "where isym = ? and type = 'X' latest on ts partition by isym" +
                             ") where stat='Y'"
             );
-        });
+        }, () -> staticOverrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_ENABLED, "false"));
     }
 
     @Test
@@ -7223,7 +7224,7 @@ nodejs code:
                     );
                 }
             }
-        });
+        }, () -> staticOverrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_ENABLED, "false"));
     }
 
     @Test
@@ -7990,7 +7991,6 @@ nodejs code:
     @Test
     public void testPreparedStatementInsertSelectNullDesignatedColumn() throws Exception {
         skipOnWalRun();
-        final AtomicInteger count = new AtomicInteger();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             {
                 try (
@@ -8033,7 +8033,7 @@ nodejs code:
                     mayDrainWalQueue();
                 }
             }
-        });
+        }, () -> staticOverrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_ENABLED, "false"));
     }
 
     @Test
@@ -8426,7 +8426,7 @@ nodejs code:
                     }
                 }
             }
-        });
+        }, () -> staticOverrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_ENABLED, "false"));
     }
 
     @Test
@@ -8460,7 +8460,7 @@ nodejs code:
                 }
             }
             Assert.assertTrue("Exception is not thrown", caught);
-        });
+        }, () -> staticOverrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_ENABLED, "false"));
     }
 
     @Test
@@ -8499,7 +8499,7 @@ nodejs code:
                 }
             }
             Assert.assertTrue("Exception is not thrown", caught);
-        });
+        }, () -> staticOverrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_ENABLED, "false"));
     }
 
     @Test
@@ -8515,7 +8515,7 @@ nodejs code:
                     statement.execute();
                 }
             }
-        });
+        }, () -> staticOverrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_ENABLED, "false"));
     }
 
     @Test
@@ -8540,7 +8540,7 @@ nodejs code:
             try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                 statement.execute();
             }
-        });
+        }, () -> staticOverrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_ENABLED, "false"));
     }
 
     @Test
