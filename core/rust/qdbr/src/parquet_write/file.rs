@@ -423,7 +423,7 @@ fn chunk_to_group_page(
 
     match column.data_type.tag() {
         ColumnTypeTag::Array => {
-            let dim = column.data_type.array_dimensionality()?;
+            let dim = column.data_type.array_dimensionality()? as usize;
             let aux: &[[u8; 16]] = unsafe { util::transmute_slice(column.secondary_data) };
             let data = column.primary_data;
             array::array_to_page(

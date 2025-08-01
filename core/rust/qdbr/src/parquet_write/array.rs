@@ -47,20 +47,22 @@ use parquet2::schema::types::PhysicalType;
 use std::slice;
 
 const HEADER_SIZE_NULL: [u8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+// must be kept in sync with Java's ColumnType#ARRAY_NDIMS_LIMIT
+const ARRAY_NDIMS_LIMIT: usize = 32;
 
 #[derive(Clone, Copy)]
 struct RepLevelsIterator<'a> {
     dim: usize,
     data: &'a [f64],
-    strides: [usize; 32],
+    strides: [usize; ARRAY_NDIMS_LIMIT],
     cur_flat_index: usize,
-    cur_indices: [usize; 32],
-    prev_indices: [usize; 32],
+    cur_indices: [usize; ARRAY_NDIMS_LIMIT],
+    prev_indices: [usize; ARRAY_NDIMS_LIMIT],
 }
 
 impl<'a> RepLevelsIterator<'a> {
     pub fn new(shape: &[i32], data: &'a [f64]) -> Self {
-        let mut strides = [0; 32];
+        let mut strides = [0; ARRAY_NDIMS_LIMIT];
         let mut stride = 1;
         for i in (0..shape.len()).rev() {
             let dim_len = shape[i] as usize;
@@ -73,8 +75,8 @@ impl<'a> RepLevelsIterator<'a> {
             data,
             strides,
             cur_flat_index: 0,
-            cur_indices: [0usize; 32],
-            prev_indices: [0usize; 32],
+            cur_indices: [0usize; ARRAY_NDIMS_LIMIT],
+            prev_indices: [0usize; ARRAY_NDIMS_LIMIT],
         }
     }
 
@@ -122,7 +124,7 @@ impl Iterator for RepLevelsIterator<'_> {
 
 // encodes array as nested lists
 pub fn array_to_page(
-    dim: i32,
+    dim: usize,
     aux: &[[u8; 16]],
     data: &[u8],
     column_top: usize,
@@ -134,13 +136,20 @@ pub fn array_to_page(
         "size_of(ArrayAuxEntry) is not 16"
     );
 
+    if dim > ARRAY_NDIMS_LIMIT {
+        return Err(fmt_err!(
+            Unsupported,
+            "too large number of array dimensions {dim}"
+        ));
+    }
+
     let num_rows = column_top + aux.len();
     let mut buffer = vec![];
     let mut null_count = 0usize;
 
     let aux: &[ArrayAuxEntry] = unsafe { mem::transmute(aux) };
 
-    let shape_size = 4 * dim as usize;
+    let shape_size = 4 * dim;
     // data offset is aligned to 8 bytes
     let data_offset = (shape_size + 7) & !0x7;
     let arr_slices: Vec<Option<(&[i32], &[f64])>> = aux
