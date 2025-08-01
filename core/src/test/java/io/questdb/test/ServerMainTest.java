@@ -177,7 +177,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                             compiler,
                             executionContext,
                             "(show parameters) where property_path not in (" +
-                                    "'cairo.root', 'cairo.sql.backup.root', 'cairo.sql.copy.root', 'cairo.sql.copy.work.root', " +
+                                    "'cairo.root', 'cairo.sql.copy.root', 'cairo.sql.copy.work.root', " +
                                     "'cairo.writer.misc.append.page.size', 'line.tcp.io.worker.count', " +
                                     "'wal.apply.worker.count', 'mat.view.refresh.worker.count'" +
                                     ") order by 1",
@@ -258,9 +258,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.analytic.store.page.size\tQDB_CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.analytic.tree.max.pages\tQDB_CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.analytic.tree.page.size\tQDB_CAIRO_SQL_ANALYTIC_TREE_PAGE_SIZE\t524288\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.backup.dir.datetime.format\tQDB_CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT\tyyyy-MM-dd\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.backup.dir.tmp.name\tQDB_CAIRO_SQL_BACKUP_DIR_TMP_NAME\ttmp\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.backup.mkdir.mode\tQDB_CAIRO_SQL_BACKUP_MKDIR_MODE\t509\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.bind.variable.pool.size\tQDB_CAIRO_SQL_BIND_VARIABLE_POOL_SIZE\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.query.registry.pool.size\tQDB_CAIRO_SQL_QUERY_REGISTRY_POOL_SIZE\t32\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.column.purge.queue.capacity\tQDB_CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY\t128\tdefault\tfalse\tfalse\n" +

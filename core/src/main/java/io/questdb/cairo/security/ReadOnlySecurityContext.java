@@ -182,11 +182,6 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeTableBackup(ObjHashSet<TableToken> tableTokens) {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
-    }
-
-    @Override
     public void authorizeTableCreate() {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
