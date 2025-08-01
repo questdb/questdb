@@ -354,21 +354,6 @@ public class MatViewDefinition implements Mutable {
         this.periodSampler = periodSampler;
     }
 
-
-    public void updateBaseTableTimestampType(int baseTableTimestampType) throws SqlException {
-        if (this.baseTableTimestampType == baseTableTimestampType) {
-            return; // no change
-        }
-        this.baseTableTimestampType = baseTableTimestampType;
-        this.baseTableTimestampDriver = ColumnType.getTimestampDriver(baseTableTimestampType);
-        this.timestampSampler = TimestampSamplerFactory.getInstance(
-                baseTableTimestampDriver,
-                samplingInterval,
-                samplingIntervalUnit,
-                0
-        );
-    }
-
     public MatViewDefinition updateRefreshLimit(int refreshLimitHoursOrMonths) {
         final MatViewDefinition newDefinition = new MatViewDefinition();
         newDefinition.init(

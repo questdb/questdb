@@ -501,7 +501,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // Update the base table timestamp type to handle cases where the base table timestamp type
                 // has changed since the materialized view was created. This ensures that the view's
                 // timestamp sampler and drivers use the correct type.
-                viewDefinition.updateBaseTableTimestampType(baseTableReader.getMetadata().getTimestampType());
                 try {
                     walWriter.truncateSoft();
                     resetInvalidState(viewState, walWriter);
