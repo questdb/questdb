@@ -53,37 +53,32 @@ public class SeqTxnMetricsTest extends AbstractCairoTest {
     @Test
     public void testMetricsConsistencyAfterRestartWithDroppedTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final String table1 = "persistent_table";
-            final String table2 = "table_to_drop";
+            final String survivor = "survivor_table";
+            final String dropped = "table_to_drop";
 
-            long expectedMetricsAfterDrop;
+            long expectedSeqTxn = 2;
 
             // First server instance - create tables, drop one
             try (final ServerMain serverMain = ServerMain.create(root, SERVER_ENV)) {
                 serverMain.start();
                 final CairoEngine engine = serverMain.getEngine();
 
-
                 // Create two tables
-                execute(engine, "create table " + table1 + " (ts timestamp, x int) timestamp(ts) partition by DAY WAL");
-                execute(engine, "insert into " + table1 + " values ('2024-01-01T00:00:00.000Z', 1)");
-                execute(engine, "insert into " + table1 + " values ('2024-01-01T01:00:00.000Z', 2)");
+                execute(engine, "create table " + survivor + " (ts timestamp, x int) timestamp(ts) partition by DAY WAL");
+                execute(engine, "insert into " + survivor + " values ('2024-01-01T00:00:00.000Z', 1)");
+                execute(engine, "insert into " + survivor + " values ('2024-01-01T01:00:00.000Z', 2)");
 
-                execute(engine, "create table " + table2 + " (ts timestamp, y int) timestamp(ts) partition by DAY WAL");
-                execute(engine, "insert into " + table2 + " values ('2024-01-01T00:00:00.000Z', 10)");
-
+                execute(engine, "create table " + dropped + " (ts timestamp, y int) timestamp(ts) partition by DAY WAL");
+                execute(engine, "insert into " + dropped + " values ('2024-01-01T00:00:00.000Z', 10)");
                 drainWalQueue(engine);
 
-                // Drop the second table
-                execute(engine, "drop table " + table2);
+                // Drop one table
+                execute(engine, "drop table " + dropped);
                 drainWalQueue(engine);
                 engine.releaseInactive();
 
-                // Record expected metrics (should only include the remaining table)
-                WalMetrics walMetrics = engine.getMetrics().walMetrics();
-                expectedMetricsAfterDrop = walMetrics.seqTxnGauge.getValue();
-
-                assertTrue("Should have positive metrics from remaining table", expectedMetricsAfterDrop > 0);
+                assertEquals(expectedSeqTxn, TestUtils.getPrometheusMetric(engine, TAG_SEQ_TXN));
+                assertEquals(expectedSeqTxn, TestUtils.getPrometheusMetric(engine, TAG_WRITER_TXN));
             }
 
             // Restart and verify metrics match the state before restart (excluding dropped table)
@@ -91,20 +86,16 @@ public class SeqTxnMetricsTest extends AbstractCairoTest {
                 serverMain.start();
                 final CairoEngine engine = serverMain.getEngine();
 
-                drainWalQueue(engine);
-
-                // Verify metrics after restart match the expected value (dropped table not included)
-                WalMetrics walMetrics = engine.getMetrics().walMetrics();
-                long actualMetricsAfterRestart = walMetrics.seqTxnGauge.getValue();
-
-                assertEquals("Metrics after restart should match state before restart (excluding dropped table)",
-                        expectedMetricsAfterDrop, actualMetricsAfterRestart);
-
                 // Verify the persistent table's tracker is properly initialized
-                TableToken token1 = engine.verifyTableName(table1);
+                TableToken token1 = engine.verifyTableName(survivor);
                 SeqTxnTracker tracker1 = engine.getTableSequencerAPI().getTxnTracker(token1);
-                assertTrue("Persistent table tracker should be initialized", tracker1.isInitialised());
-                assertTrue("Persistent table should contribute to metrics", tracker1.getSeqTxn() > 0);
+                assertTrue("Survivor table's seq txn tracker should be initialized", tracker1.isInitialised());
+                assertEquals(expectedSeqTxn, tracker1.getSeqTxn());
+                assertEquals(expectedSeqTxn, tracker1.getWriterTxn());
+
+                // Total seq txn must be equal to the single survivor table's seq txn
+                assertEquals(expectedSeqTxn, TestUtils.getPrometheusMetric(engine, TAG_SEQ_TXN));
+                assertEquals(expectedSeqTxn, TestUtils.getPrometheusMetric(engine, TAG_WRITER_TXN));
             }
         });
     }
