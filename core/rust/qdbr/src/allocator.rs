@@ -79,7 +79,7 @@ impl Display for AllocFailure {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             AllocFailure::OutOfMemory { requested_size } => {
-                write!(f, "out of memory when allocating {}", requested_size)
+                write!(f, "out of memory when allocating {requested_size}")
             }
             AllocFailure::MemoryLimitExceeded {
                 requested_size,
@@ -88,8 +88,7 @@ impl Display for AllocFailure {
                 rss_mem_used,
             } => write!(
                 f,
-                "memory limit exceeded when allocating {} with tag {} (rss used: {}, rss limit: {})",
-                requested_size, memory_tag, rss_mem_used, rss_mem_limit
+                "memory limit exceeded when allocating {requested_size} with tag {memory_tag} (rss used: {rss_mem_used}, rss limit: {rss_mem_limit})",
             ),
         }
     }
