@@ -69,7 +69,7 @@ public class BitmapIndexBwdNullReaderTest {
         Assert.assertEquals(0, reader.getKeyMemorySize());
         Assert.assertEquals(0, reader.getValueBaseAddress());
         Assert.assertEquals(0, reader.getValueMemorySize());
-        Assert.assertEquals(0, reader.getUnIndexedNullCount());
+        Assert.assertEquals(0, reader.getColumnTop());
         Assert.assertEquals(0, reader.getValueBlockCapacity());
     }
 }

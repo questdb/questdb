@@ -462,11 +462,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getMatViewMinRefreshInterval() {
-        return getDelegate().getMatViewMinRefreshInterval();
-    }
-
-    @Override
     public long getMatViewRefreshIntervalsUpdatePeriod() {
         return getDelegate().getMatViewRefreshIntervalsUpdatePeriod();
     }
