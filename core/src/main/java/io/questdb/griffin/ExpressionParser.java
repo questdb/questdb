@@ -1608,7 +1608,7 @@ public class ExpressionParser {
                         }
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input
-                        if (scopeStack.notEmpty()) {
+                        if (scopeStack.notEmpty() && scopeStack.peek() != Scope.PAREN && scopeStack.peek() != Scope.BRACKET) {
                             throw SqlException.$(lastPos, "dangling literal");
                         }
                         lexer.unparseLast();
