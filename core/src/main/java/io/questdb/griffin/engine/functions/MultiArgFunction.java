@@ -47,8 +47,8 @@ public interface MultiArgFunction extends Function {
         Function.init(getArgs(), symbolTableSource, executionContext, null);
     }
 
-    @Override
-    default boolean isConstant() {
+    // todo delete after code review one of the isConstant() implementations
+    default boolean isConstant012() {
         final ObjList<Function> args = getArgs();
         final int n = args.size();
         switch (n) {
@@ -70,6 +70,37 @@ public interface MultiArgFunction extends Function {
                         && args.getQuick(3).isConstant()));
         }
         for (int i = 0; i < n; i++) {
+            if (!args.getQuick(i).isConstant()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    default boolean isConstant() {
+        final ObjList<Function> args = getArgs();
+        final int n = args.size();
+        int i = 0;
+        switch (n) {
+            case 0:
+                return true;
+            case 1:
+                return args.getQuick(i).isConstant();
+            case 2:
+                return args.getQuick(i++).isConstant()
+                        && args.getQuick(i).isConstant();
+            case 3:
+                return args.getQuick(i++).isConstant()
+                        && (args.getQuick(i++).isConstant()
+                        && args.getQuick(i).isConstant());
+            case 4:
+                return args.getQuick(i++).isConstant()
+                        && (args.getQuick(i++).isConstant()
+                        && (args.getQuick(i++).isConstant()
+                        && args.getQuick(i).isConstant()));
+        }
+        for (; i < n; i++) {
             if (!args.getQuick(i).isConstant()) {
                 return false;
             }
@@ -107,8 +138,8 @@ public interface MultiArgFunction extends Function {
         return false;
     }
 
-    //todo delete after code review
-    default boolean isRandom1() {
+    // todo delete after code review one of the isRandom() implementations
+    default boolean isRandom012() {
         final ObjList<Function> args = getArgs();
         final int n = args.size();
         switch (n) {
