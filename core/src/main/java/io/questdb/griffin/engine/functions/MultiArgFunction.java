@@ -139,7 +139,7 @@ public interface MultiArgFunction extends Function {
     }
 
     // todo delete after code review one of the isRandom() implementations
-    default boolean isRandom012() {
+    default boolean isRandom0123() {
         final ObjList<Function> args = getArgs();
         final int n = args.size();
         switch (n) {
