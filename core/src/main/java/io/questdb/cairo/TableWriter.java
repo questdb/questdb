@@ -24,8 +24,62 @@
 
 package io.questdb.cairo;
 
+import java.io.Closeable;
+import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongConsumer;
+
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
+import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
+import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
+import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
+import static io.questdb.cairo.TableUtils.COLUMN_VERSION_FILE_NAME;
+import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
+import static io.questdb.cairo.TableUtils.LONGS_PER_TX_ATTACHED_PARTITION;
+import static io.questdb.cairo.TableUtils.META_FILE_NAME;
+import static io.questdb.cairo.TableUtils.META_FLAG_BIT_DEDUP_KEY;
+import static io.questdb.cairo.TableUtils.META_FLAG_BIT_INDEXED;
+import static io.questdb.cairo.TableUtils.META_FLAG_BIT_SYMBOL_CACHE;
+import static io.questdb.cairo.TableUtils.META_OFFSET_COLUMN_TYPES;
+import static io.questdb.cairo.TableUtils.META_PREV_FILE_NAME;
+import static io.questdb.cairo.TableUtils.META_SWAP_FILE_NAME;
+import static io.questdb.cairo.TableUtils.PARQUET_PARTITION_NAME;
+import static io.questdb.cairo.TableUtils.TODO_FILE_NAME;
+import static io.questdb.cairo.TableUtils.TODO_RESTORE_META;
+import static io.questdb.cairo.TableUtils.TODO_TRUNCATE;
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+import static io.questdb.cairo.TableUtils.charFileName;
+import static io.questdb.cairo.TableUtils.compressColumnCount;
+import static io.questdb.cairo.TableUtils.createDirsOrFail;
+import static io.questdb.cairo.TableUtils.dFile;
+import static io.questdb.cairo.TableUtils.estimateAvgRecordSize;
+import static io.questdb.cairo.TableUtils.getColumnNameOffset;
+import static io.questdb.cairo.TableUtils.iFile;
+import static io.questdb.cairo.TableUtils.isValidColumnName;
+import static io.questdb.cairo.TableUtils.lockName;
+import static io.questdb.cairo.TableUtils.mapRO;
+import static io.questdb.cairo.TableUtils.offsetFileName;
+import static io.questdb.cairo.TableUtils.oldPartitionName;
+import static io.questdb.cairo.TableUtils.openAppend;
+import static io.questdb.cairo.TableUtils.openMetaSwapFile;
+import static io.questdb.cairo.TableUtils.openRO;
+import static io.questdb.cairo.TableUtils.overwriteTableNameFile;
+import static io.questdb.cairo.TableUtils.readLongAtOffset;
+import static io.questdb.cairo.TableUtils.readLongOrFail;
+import static io.questdb.cairo.TableUtils.renameOrFail;
+import static io.questdb.cairo.TableUtils.resetTodoLog;
+import static io.questdb.cairo.TableUtils.schedulePurgeO3Partitions;
+import static io.questdb.cairo.TableUtils.setPathForNativePartition;
+import static io.questdb.cairo.TableUtils.setPathForParquetPartition;
+import static io.questdb.cairo.TableUtils.setSinkForNativePartition;
+import static io.questdb.cairo.TableUtils.validateMeta;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.file.BlockFileWriter;
@@ -34,6 +88,10 @@ import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.AsyncWriterCommand;
+import static io.questdb.cairo.sql.AsyncWriterCommand.Error.CAIRO_ERROR;
+import static io.questdb.cairo.sql.AsyncWriterCommand.Error.READER_OUT_OF_DATE;
+import static io.questdb.cairo.sql.AsyncWriterCommand.Error.STRUCTURE_CHANGE_NOT_ALLOWED;
+import static io.questdb.cairo.sql.AsyncWriterCommand.Error.UNEXPECTED_ERROR;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
@@ -92,6 +150,9 @@ import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
+import static io.questdb.std.Files.FILES_RENAME_OK;
+import static io.questdb.std.Files.PAGE_SIZE;
+import static io.questdb.std.Files.POSIX_MADV_RANDOM;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
 import io.questdb.std.IntList;
@@ -128,25 +189,10 @@ import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionTask;
 import io.questdb.tasks.TableWriterTask;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
-
-import java.io.Closeable;
-import java.util.Arrays;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.LongConsumer;
-
-import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
-import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
-import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
-import static io.questdb.cairo.TableUtils.openAppend;
-import static io.questdb.cairo.TableUtils.openRO;
-import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
-import static io.questdb.std.Files.*;
-import static io.questdb.tasks.TableWriterTask.*;
+import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
+import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
+import static io.questdb.tasks.TableWriterTask.TSK_BEGIN;
+import static io.questdb.tasks.TableWriterTask.TSK_COMPLETE;
 
 public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int O3_BLOCK_DATA = 2;
@@ -7537,6 +7583,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 walLagRowCount = 0;
                 processWalCommitFinishApply(walLagRowCount, timestampAddr, o3Lo, o3Hi, pressureControl, copiedToMemory, initialPartitionTimestampHi);
             } finally {
+                // Unconditionally flush lag to ensure all rows are visible after WAL append
+                applyFromWalLagToLastPartition(commitToTimestamp, false);
                 finishO3Append(walLagRowCount);
                 o3Columns = o3MemColumns1;
             }
