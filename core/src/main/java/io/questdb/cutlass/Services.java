@@ -80,8 +80,8 @@ public class Services {
         return createHttpServer(
                 serverConfiguration,
                 cairoEngine,
-                workerPoolManager.getInstance(httpServerConfiguration, Requester.HTTP_SERVER),
-                workerPoolManager.getSharedWorkerCount()
+                workerPoolManager.getSharedNetworkPool(httpServerConfiguration, Requester.HTTP_SERVER),
+                workerPoolManager.getSharedQueryWorkerCount()
         );
     }
 
@@ -89,8 +89,8 @@ public class Services {
     public HttpServer createHttpServer(
             ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            int sharedWorkerCount
+            WorkerPool networkSharedPool,
+            int sharedQueryWorkerCount
     ) {
         final HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         if (!httpServerConfiguration.isEnabled()) {
@@ -101,7 +101,7 @@ public class Services {
         final HttpHeaderParserFactory headerParserFactory = serverConfiguration.getFactoryProvider().getHttpHeaderParserFactory();
         final HttpServer server = new HttpServer(
                 httpServerConfiguration,
-                workerPool,
+                networkSharedPool,
                 serverConfiguration.getFactoryProvider().getHttpSocketFactory(),
                 cookieHandler,
                 headerParserFactory
@@ -109,8 +109,7 @@ public class Services {
         HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
-                workerPool.getWorkerCount(),
-                sharedWorkerCount
+                sharedQueryWorkerCount
         );
 
         HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
@@ -124,8 +123,7 @@ public class Services {
                 server,
                 serverConfiguration,
                 cairoEngine,
-                workerPool,
-                sharedWorkerCount,
+                sharedQueryWorkerCount,
                 jsonQueryProcessorBuilder,
                 ilpV2WriteProcessorBuilder
         );
@@ -153,15 +151,15 @@ public class Services {
         // - DEDICATED (1 worker) when ^ ^ is not set
         // - SHARED otherwise
 
-        final WorkerPool ioPool = workerPoolManager.getInstance(
-                config.getIOWorkerPoolConfiguration(),
+        final WorkerPool networkSharedPool = workerPoolManager.getSharedNetworkPool(
+                config.getNetworkWorkerPoolConfiguration(),
                 Requester.LINE_TCP_IO
         );
-        final WorkerPool writerPool = workerPoolManager.getInstance(
+        final WorkerPool writerPool = workerPoolManager.getInstanceWrite(
                 config.getWriterWorkerPoolConfiguration(),
                 Requester.LINE_TCP_WRITER
         );
-        return new LineTcpReceiver(config, cairoEngine, ioPool, writerPool);
+        return new LineTcpReceiver(config, cairoEngine, networkSharedPool, writerPool);
     }
 
     @Nullable
@@ -176,9 +174,9 @@ public class Services {
 
         // The pool is always the SHARED pool
         if (Os.isLinux()) {
-            return new LinuxMMLineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPool());
+            return new LinuxMMLineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolNetwork());
         }
-        return new LineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPool());
+        return new LineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolNetwork());
     }
 
     @Nullable
@@ -193,11 +191,11 @@ public class Services {
         // The pool is:
         // - SHARED if PropertyKey.HTTP_MIN_WORKER_COUNT (http.min.worker.count) <= 0
         // - DEDICATED (1 worker) otherwise
-        final WorkerPool workerPool = workerPoolManager.getInstance(
+        final WorkerPool networkSharedPool = workerPoolManager.getSharedNetworkPool(
                 configuration,
                 Requester.HTTP_MIN_SERVER
         );
-        return createMinHttpServer(configuration, workerPool);
+        return createMinHttpServer(configuration, networkSharedPool);
     }
 
     @Nullable
@@ -258,7 +256,7 @@ public class Services {
         // The pool is:
         // - DEDICATED when PropertyKey.PG_WORKER_COUNT is > 0
         // - SHARED otherwise
-        final WorkerPool workerPool = workerPoolManager.getInstance(
+        final WorkerPool networkSharedPool = workerPoolManager.getSharedNetworkPool(
                 configuration,
                 Requester.PG_WIRE_SERVER
         );
@@ -268,12 +266,11 @@ public class Services {
         return IPGWireServer.newInstance(
                 configuration,
                 cairoEngine,
-                workerPool,
+                networkSharedPool,
                 registry,
                 () -> new SqlExecutionContextImpl(
                         cairoEngine,
-                        workerPool.getWorkerCount(),
-                        workerPoolManager.getSharedWorkerCount()
+                        workerPoolManager.getSharedQueryWorkerCount()
                 )
         );
     }
