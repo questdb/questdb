@@ -44,8 +44,11 @@ public interface PartitionFrameCursor extends QuietCloseable, SymbolTableSource 
      * @return the next element in the partition frame
      * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
-    @Nullable
-    PartitionFrame next();
+    default @Nullable PartitionFrame next() {
+        return next(0);
+    }
+
+    @Nullable PartitionFrame next(long skipTarget);
 
     /**
      * Reload the partition frame and return the cursor to the beginning of

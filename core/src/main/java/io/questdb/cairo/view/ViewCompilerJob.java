@@ -50,11 +50,11 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     private final ViewGraph viewGraph;
     private final int workerId;
 
-    public ViewCompilerJob(int workerId, CairoEngine engine, int workerCount, int sharedWorkerCount) {
+    public ViewCompilerJob(int workerId, CairoEngine engine, int sharedQueryWorkerCount) {
         try {
             this.workerId = workerId;
             this.engine = engine;
-            this.compilerExecutionContext = new ViewCompilerExecutionContext(engine, workerCount, sharedWorkerCount);
+            this.compilerExecutionContext = new ViewCompilerExecutionContext(engine, sharedQueryWorkerCount);
             this.viewGraph = engine.getViewGraph();
             this.stateStore = engine.getViewStateStore();
         } catch (Throwable th) {
@@ -65,7 +65,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
 
     @TestOnly
     public ViewCompilerJob(int workerId, CairoEngine engine) {
-        this(workerId, engine, 1, 1);
+        this(workerId, engine, 1);
     }
 
     @Override

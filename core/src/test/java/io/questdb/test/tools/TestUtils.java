@@ -93,6 +93,7 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Path;
@@ -128,6 +129,7 @@ import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -1381,7 +1383,7 @@ public final class TestUtils {
     }
 
     public static void drainWalQueue(CairoEngine engine) {
-        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0)) {
             walApplyJob.drain(0);
             new CheckWalTransactionsJob(engine).run(0);
             // run once again as there might be notifications to handle now
@@ -1499,6 +1501,17 @@ public final class TestUtils {
             }
         }
         return Integer.parseInt(version);
+    }
+
+    public static long getMetricValue(CairoEngine engine, String tag) {
+        try (DirectUtf8Sink metricsSink = new DirectUtf8Sink(1024)) {
+            engine.getMetrics().scrapeIntoPrometheus(metricsSink);
+            String[] lines = metricsSink.toString().split("\n");
+            Optional<String> metricsLine = Arrays.stream(lines)
+                    .filter(line -> line.startsWith(tag + ' ')).findFirst();
+            Assert.assertTrue(tag + " missing", metricsLine.isPresent());
+            return Long.parseLong(metricsLine.get().substring(tag.length() + 1));
+        }
     }
 
     public static String getPgConnectionUri(int pgPort) {

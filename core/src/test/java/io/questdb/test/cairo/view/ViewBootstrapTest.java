@@ -234,8 +234,8 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
         }
         drainWalQueue();
 
-        final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 4";
-        final String query2 = "select ts, k2, max(v) as v_max from " + TABLE2 + " where v > 6";
+        final String query1 = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 4 order by ts";
+        final String query2 = "select ts, k2, max(v) as v_max from " + TABLE2 + " where v > 6 order by ts";
         runSqlViaPG(
                 "create view " + VIEW1 + " as (" + query1 + ")",
                 "create view " + VIEW2 + " as (" + query2 + ")"

@@ -332,7 +332,7 @@ public class ViewQueryTest extends AbstractViewTest {
                     "select v1.ts, v_max from " + VIEW1 + " v1 join " + TABLE2 + " t2 on t2.v = v1.v_max",
                     null,
                     false,
-                    true,
+                    false,
                     "QUERY PLAN\n" +
                             "SelectedRecord\n" +
                             "    Hash Join Light\n" +
@@ -357,7 +357,7 @@ public class ViewQueryTest extends AbstractViewTest {
                     "select t1.ts, v_max from " + TABLE1 + " t1 join (" + VIEW1 + " where v_max > 6) t2 on t1.v = t2.v_max",
                     "ts",
                     false,
-                    true,
+                    false,
                     "QUERY PLAN\n" +
                             "SelectedRecord\n" +
                             "    Hash Join Light\n" +
@@ -383,7 +383,7 @@ public class ViewQueryTest extends AbstractViewTest {
                             "1970-01-01T00:01:20.000000Z\t8\n",
                     "with t2 as (" + VIEW1 + " where v_max > 6) select t1.ts, v_max from " + TABLE1 + " t1 join t2 on t1.v = t2.v_max", "ts",
                     false,
-                    true,
+                    false,
                     "QUERY PLAN\n" +
                             "SelectedRecord\n" +
                             "    Hash Join Light\n" +
@@ -410,7 +410,7 @@ public class ViewQueryTest extends AbstractViewTest {
                     VIEW1 + " v11 join " + VIEW1 + " v12 on v_max where v12.v_max < 7",
                     null,
                     false,
-                    true,
+                    false,
                     "QUERY PLAN\n" +
                             "SelectedRecord\n" +
                             "    Hash Join Light\n" +

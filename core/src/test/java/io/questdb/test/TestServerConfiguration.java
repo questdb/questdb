@@ -186,7 +186,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             }
 
             @Override
-            public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
+            public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
                 return confLineTcpIOPool;
             }
 
@@ -260,7 +260,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getWorkerPoolConfiguration() {
+    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
         return confSharedPool;
     }
 }

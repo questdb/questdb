@@ -101,7 +101,7 @@ public class AbstractTest {
     }
 
     protected static MatViewRefreshJob createMatViewRefreshJob(CairoEngine engine) {
-        return new MatViewRefreshJob(0, engine);
+        return new MatViewRefreshJob(0, engine, 1);
     }
 
     protected static ViewCompilerJob createViewCompilerJob(CairoEngine engine) {
@@ -109,7 +109,7 @@ public class AbstractTest {
     }
 
     protected static ApplyWal2TableJob createWalApplyJob(CairoEngine engine) {
-        return new ApplyWal2TableJob(engine, 1, 1);
+        return new ApplyWal2TableJob(engine, 0);
     }
 
     @SuppressWarnings("StatementWithEmptyBody")
