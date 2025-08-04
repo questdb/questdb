@@ -144,6 +144,9 @@ public abstract class AbstractArray implements QuietCloseable {
      * @param shape the new dimensions for the array
      * @throws IllegalStateException    if the array is already closed
      * @throws IllegalArgumentException if shape has invalid dimensions
+     * @see #reshape(int)
+     * @see #reshape(int, int)
+     * @see #reshape(int, int, int)
      */
     public void reshape(int... shape) {
         if (closed) {
