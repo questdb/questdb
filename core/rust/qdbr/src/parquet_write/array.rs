@@ -24,9 +24,12 @@
 
 use std::mem;
 
+use crate::parquet::util::{align8b, ARRAY_NDIMS_LIMIT};
 use parquet2::compression::CompressionOptions;
+use parquet2::encoding::hybrid_rle::HybridRleDecoder;
 use parquet2::metadata::Descriptor;
 use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2};
+use parquet2::read::levels::get_bit_width;
 use parquet2::statistics::ParquetStatistics;
 use parquet2::write::Version;
 use qdb_core::col_driver::ArrayAuxEntry;
@@ -41,13 +44,12 @@ use crate::allocator::AcVec;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, encode_group_levels, encode_primitive_deflevels, ExactSizedIter,
+    build_plain_page, encode_group_levels, encode_primitive_def_levels, ExactSizedIter,
 };
 
 const HEADER_SIZE_NULL: [u8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
-// must be kept in sync with Java's ColumnType#ARRAY_NDIMS_LIMIT
-const ARRAY_NDIMS_LIMIT: usize = 32;
 
+// generates rep levels values for the given array shape and number of elements
 #[derive(Clone, Copy)]
 struct RepLevelsIterator<'a> {
     shape: &'a [i32],
@@ -82,7 +84,7 @@ impl<'a> RepLevelsIterator<'a> {
     ///
     /// E.g. for the shapes of [2, 3] and initial nd_indexes of [0, 2],
     /// the incremented nd_indexes value will be [1, 0] and the returned value will be 0.
-    fn next_replevel(&mut self) -> u32 {
+    fn next_rep_level(&mut self) -> u32 {
         for i in (0..self.shape.len()).rev() {
             self.nd_indexes[i] += 1;
             if self.nd_indexes[i] < self.shape[i] {
@@ -105,34 +107,39 @@ impl Iterator for RepLevelsIterator<'_> {
             return None;
         }
 
-        let replevel = if self.flat_index == 0 {
+        let rep_level = if self.flat_index == 0 {
             0 // First element always has repetition level 0
         } else {
-            self.next_replevel()
+            self.next_rep_level()
         };
         self.flat_index += 1;
 
-        Some(replevel)
+        Some(rep_level)
     }
 }
 
 const DEF_LEVELS_STUB_DATA: [f64; 1] = [42.0];
 
+// generates def levels values for the given array elements
 #[derive(Clone, Copy)]
 struct DefLevelsIterator<'a> {
-    max: u32,
+    max_def_level: u32,
     data: &'a [f64],
     flat_index: usize,
 }
 
 impl<'a> DefLevelsIterator<'a> {
-    pub fn new(data: &'a [f64], max: u32) -> Self {
-        DefLevelsIterator { max, data, flat_index: 0 }
+    pub fn new(data: &'a [f64], max_def_level: u32) -> Self {
+        DefLevelsIterator { max_def_level, data, flat_index: 0 }
     }
 
     // returns single zero item
-    pub fn new_single(max: u32) -> Self {
-        DefLevelsIterator { max, data: &DEF_LEVELS_STUB_DATA, flat_index: 0 }
+    pub fn new_single(max_def_level: u32) -> Self {
+        DefLevelsIterator {
+            max_def_level,
+            data: &DEF_LEVELS_STUB_DATA,
+            flat_index: 0,
+        }
     }
 }
 
@@ -144,14 +151,14 @@ impl Iterator for DefLevelsIterator<'_> {
             return None;
         }
 
-        let deflevel = if self.data[self.flat_index].is_nan() {
-            self.max - 1
+        let def_level = if self.data[self.flat_index].is_nan() {
+            self.max_def_level - 1
         } else {
-            self.max
+            self.max_def_level
         };
         self.flat_index += 1;
 
-        Some(deflevel)
+        Some(def_level)
     }
 }
 
@@ -186,7 +193,7 @@ pub fn array_to_page(
 
     let shape_size = 4 * dim;
     // data offset is aligned to 8 bytes
-    let data_offset = (shape_size + 7) & !0x7;
+    let data_offset = align8b(shape_size);
     let arr_slices: Vec<Option<(&[i32], &[f64])>> = aux
         .iter()
         .map(|entry| {
@@ -221,7 +228,7 @@ pub fn array_to_page(
         .sum::<usize>()
         + column_top;
 
-    let replevels_iter = (0..num_rows).flat_map(|i| {
+    let rep_levels_iter = (0..num_rows).flat_map(|i| {
         if i < column_top {
             RepLevelsIterator::new_single()
         } else {
@@ -241,7 +248,7 @@ pub fn array_to_page(
     });
     encode_group_levels(
         &mut buffer,
-        replevels_iter,
+        rep_levels_iter,
         num_values,
         dim as u32,
         options.version,
@@ -249,7 +256,7 @@ pub fn array_to_page(
 
     let repetition_levels_byte_length = buffer.len();
 
-    let deflevels_iter = (0..num_rows).flat_map(|i| {
+    let def_levels_iter = (0..num_rows).flat_map(|i| {
         if i < column_top {
             DefLevelsIterator::new_single(0)
         } else {
@@ -269,7 +276,7 @@ pub fn array_to_page(
     });
     encode_group_levels(
         &mut buffer,
-        deflevels_iter,
+        def_levels_iter,
         num_values,
         (dim + 1) as u32,
         options.version,
@@ -404,9 +411,9 @@ pub fn array_to_raw_page(
         })
         .collect();
 
-    let deflevels_iter =
+    let def_levels_iter =
         (0..num_rows).map(|i| i >= column_top && arr_slices[i - column_top].is_some());
-    encode_primitive_deflevels(&mut buffer, deflevels_iter, num_rows, options.version)?;
+    encode_primitive_def_levels(&mut buffer, def_levels_iter, num_rows, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
 
@@ -476,6 +483,113 @@ fn encode_raw_delta(
     }
 }
 
+// iterates through the given encoded rep and def levels;
+// does not implement Iterator since levels iterator returns an owned struct
+pub struct LevelsIterator<'a> {
+    rep_levels_iter: HybridRleDecoder<'a>,
+    def_levels_iter: HybridRleDecoder<'a>,
+    levels: Levels,
+    last_rep_level: i64,
+    last_def_level: i64,
+    clear_pending: bool,
+}
+
+impl<'a> LevelsIterator<'a> {
+    pub fn try_new(
+        num_values: usize,
+        max_rep_level: i16,
+        max_def_level: i16,
+        rep_levels: &'a [u8],
+        def_levels: &'a [u8],
+    ) -> ParquetResult<Self> {
+        let rep_levels_iter: HybridRleDecoder<'_> =
+            HybridRleDecoder::try_new(rep_levels, get_bit_width(max_rep_level), num_values)?;
+        let def_levels_iter =
+            HybridRleDecoder::try_new(def_levels, get_bit_width(max_def_level), num_values)?;
+
+        let rep_levels_len = rep_levels_iter.size_hint().0;
+        let def_levels_len = def_levels_iter.size_hint().0;
+        if rep_levels_len != def_levels_len {
+            return Err(fmt_err!(
+                Unsupported,
+                "repetition and definition levels sizes don't match for array column: {rep_levels_len}, {def_levels_len}"
+            ));
+        }
+
+        Ok(LevelsIterator {
+            rep_levels_iter,
+            def_levels_iter,
+            levels: Levels { rep_levels: vec![], def_levels: vec![] },
+            last_rep_level: -1,
+            last_def_level: -1,
+            clear_pending: false,
+        })
+    }
+
+    pub fn next_levels(&mut self) -> Option<ParquetResult<&Levels>> {
+        if self.clear_pending {
+            self.levels.clear();
+            self.clear_pending = false;
+        }
+
+        loop {
+            if self.last_rep_level > -1 {
+                self.levels.rep_levels.push(self.last_rep_level as u32);
+                self.last_rep_level = -1;
+                self.levels.def_levels.push(self.last_def_level as u32);
+                self.last_def_level = -1;
+            }
+
+            let rep_level = self.rep_levels_iter.next();
+            let def_level = self.def_levels_iter.next();
+            if rep_level.is_none() || def_level.is_none() {
+                if !self.levels.is_empty() {
+                    self.clear_pending = true;
+                    return Some(Ok(&self.levels));
+                }
+                return None;
+            }
+
+            let rep_level = rep_level.unwrap();
+            if let Err(e) = rep_level {
+                return Some(Err(e.into()));
+            }
+            let rep_level = rep_level.unwrap();
+            let def_level = def_level.unwrap();
+            if let Err(e) = def_level {
+                return Some(Err(e.into()));
+            }
+            let def_level = def_level.unwrap();
+
+            self.last_rep_level = rep_level as i64;
+            self.last_def_level = def_level as i64;
+
+            if rep_level == 0 {
+                if !self.levels.is_empty() {
+                    self.clear_pending = true;
+                    return Some(Ok(&self.levels));
+                }
+            }
+        }
+    }
+}
+
+pub struct Levels {
+    pub rep_levels: Vec<u32>,
+    pub def_levels: Vec<u32>,
+}
+
+impl Levels {
+    fn is_empty(&mut self) -> bool {
+        return self.rep_levels.is_empty();
+    }
+
+    fn clear(&mut self) {
+        self.rep_levels.clear();
+        self.def_levels.clear();
+    }
+}
+
 pub fn append_raw_array(
     aux_mem: &mut AcVec<u8>,
     data_mem: &mut AcVec<u8>,
@@ -488,19 +602,19 @@ pub fn append_raw_array(
     Ok(())
 }
 
-pub fn append_raw_array_null(aux_mem: &mut AcVec<u8>, data_mem: &[u8]) -> ParquetResult<()> {
+pub fn append_array_null(aux_mem: &mut AcVec<u8>, data_mem: &[u8]) -> ParquetResult<()> {
     aux_mem.extend_from_slice(&data_mem.len().to_le_bytes())?;
     aux_mem.extend_from_slice(&HEADER_SIZE_NULL)?;
     Ok(())
 }
 
-pub fn append_raw_array_nulls(
+pub fn append_array_nulls(
     aux_mem: &mut AcVec<u8>,
     data_mem: &[u8],
     count: usize,
 ) -> ParquetResult<()> {
     for _ in 0..count {
-        append_raw_array_null(aux_mem, data_mem)?;
+        append_array_null(aux_mem, data_mem)?;
     }
     Ok(())
 }
@@ -586,5 +700,89 @@ mod tests {
         assert_eq!(rep_levels, vec![0, 3, 2, 3, 1, 3, 2, 3]);
         let def_levels: Vec<u32> = DefLevelsIterator::new(data.as_slice(), 5).collect();
         assert_eq!(def_levels, vec![5, 4, 4, 5, 5, 5, 5, 5]);
+    }
+
+    #[test]
+    fn test_levels_iter_empty() -> ParquetResult<()> {
+        let mut iter = LevelsIterator::try_new(0, 1, 1, &[], &[])?;
+        assert_eq!(collect_levels(&mut iter)?, vec![]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_levels_iter_1d_array() -> ParquetResult<()> {
+        let rep_levels = vec![0_u32, 1, 1];
+        let def_levels = vec![2_u32, 2, 2];
+        let expected: Vec<(Vec<u32>, Vec<u32>)> = vec![(vec![0, 1, 1], vec![2, 2, 2])];
+        assert_levels_iter(&rep_levels, &def_levels, &expected)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_levels_iter_1d_array2() -> ParquetResult<()> {
+        let rep_levels = vec![0_u32, 1, 1, 0, 0];
+        let def_levels = vec![2_u32, 2, 2, 2, 2];
+        let expected: Vec<(Vec<u32>, Vec<u32>)> = vec![
+            (vec![0, 1, 1], vec![2, 2, 2]),
+            (vec![0], vec![2]),
+            (vec![0], vec![2]),
+        ];
+        assert_levels_iter(&rep_levels, &def_levels, &expected)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_levels_iter_2d_array() -> ParquetResult<()> {
+        let rep_levels = vec![0_u32, 2, 1, 2, 0];
+        let def_levels = vec![3_u32, 2, 3, 2, 3];
+        let expected: Vec<(Vec<u32>, Vec<u32>)> =
+            vec![(vec![0, 2, 1, 2], vec![3, 2, 3, 2]), (vec![0], vec![3])];
+        assert_levels_iter(&rep_levels, &def_levels, &expected)?;
+        Ok(())
+    }
+
+    fn assert_levels_iter(
+        rep_levels: &Vec<u32>,
+        def_levels: &Vec<u32>,
+        expected: &Vec<(Vec<u32>, Vec<u32>)>,
+    ) -> ParquetResult<()> {
+        let max_rep_level = *rep_levels.iter().max().unwrap();
+        let mut rep_levels_buf: Vec<u8> = vec![];
+        encode_group_levels(
+            &mut rep_levels_buf,
+            rep_levels.iter().map(|v| *v),
+            rep_levels.len(),
+            max_rep_level,
+            Version::V2,
+        )?;
+
+        let max_def_level = *def_levels.iter().max().unwrap();
+        let mut def_levels_buf: Vec<u8> = vec![];
+        encode_group_levels(
+            &mut def_levels_buf,
+            def_levels.iter().map(|v| *v),
+            def_levels.len(),
+            max_def_level,
+            Version::V2,
+        )?;
+
+        let mut iter = LevelsIterator::try_new(
+            rep_levels.len(),
+            max_rep_level as i16,
+            max_def_level as i16,
+            &rep_levels_buf,
+            &def_levels_buf,
+        )?;
+        assert_eq!(collect_levels(&mut iter)?, expected.as_slice());
+        Ok(())
+    }
+
+    fn collect_levels(iter: &mut LevelsIterator) -> ParquetResult<Vec<(Vec<u32>, Vec<u32>)>> {
+        let mut level_pairs: Vec<(Vec<u32>, Vec<u32>)> = vec![];
+        while let Some(levels) = iter.next_levels() {
+            let levels = levels?;
+            level_pairs.push((levels.rep_levels.clone(), levels.def_levels.clone()));
+        }
+        Ok(level_pairs)
     }
 }

@@ -176,7 +176,7 @@ impl<T, I: Iterator<Item = T>> Iterator for ExactSizedIter<T, I> {
     }
 }
 
-fn encode_primitive_deflevels_v1<I: Iterator<Item = bool>>(
+fn encode_primitive_def_levels_v1<I: Iterator<Item = bool>>(
     buffer: &mut Vec<u8>,
     iter: I,
     length: usize,
@@ -193,7 +193,7 @@ fn encode_primitive_deflevels_v1<I: Iterator<Item = bool>>(
     Ok(())
 }
 
-fn encode_primitive_deflevels_v2<I: Iterator<Item = bool>>(
+fn encode_primitive_def_levels_v2<I: Iterator<Item = bool>>(
     buffer: &mut Vec<u8>,
     iter: I,
     length: usize,
@@ -201,15 +201,15 @@ fn encode_primitive_deflevels_v2<I: Iterator<Item = bool>>(
     encode_bool(buffer, iter, length)
 }
 
-pub fn encode_primitive_deflevels<I: Iterator<Item = bool>>(
+pub fn encode_primitive_def_levels<I: Iterator<Item = bool>>(
     buffer: &mut Vec<u8>,
     iter: I,
     length: usize,
     version: Version,
 ) -> io::Result<()> {
     match version {
-        Version::V1 => encode_primitive_deflevels_v1(buffer, iter, length),
-        Version::V2 => encode_primitive_deflevels_v2(buffer, iter, length),
+        Version::V1 => encode_primitive_def_levels_v1(buffer, iter, length),
+        Version::V2 => encode_primitive_def_levels_v2(buffer, iter, length),
     }
 }
 
@@ -312,7 +312,7 @@ mod tests {
     use parquet2::encoding::bitpacked;
     use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
 
-    use crate::parquet_write::util::encode_primitive_deflevels;
+    use crate::parquet_write::util::encode_primitive_def_levels;
 
     #[test]
     fn decode_bitmap_v2() {
@@ -326,7 +326,7 @@ mod tests {
             .map(|x| if *x { 1u8 } else { 0u8 })
             .collect::<Vec<_>>();
         let mut buff = vec![];
-        encode_primitive_deflevels(
+        encode_primitive_def_levels(
             &mut buff,
             expected.iter().cloned(),
             expected.len(),
@@ -359,7 +359,7 @@ mod tests {
             .map(|x| if *x { 1u8 } else { 0u8 })
             .collect::<Vec<_>>();
         let mut buff = vec![];
-        encode_primitive_deflevels(
+        encode_primitive_def_levels(
             &mut buff,
             expected.iter().cloned(),
             expected.len(),

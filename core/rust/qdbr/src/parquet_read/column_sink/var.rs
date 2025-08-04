@@ -2,15 +2,13 @@ use crate::parquet::error::{ParquetErrorReason, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::DataPageSlicer;
 use crate::parquet_read::ColumnChunkBuffers;
-use crate::parquet_write::array::{
-    append_raw_array, append_raw_array_null, append_raw_array_nulls,
-};
+use crate::parquet_write::array::{append_array_null, append_array_nulls, append_raw_array};
 use crate::parquet_write::varchar::{append_varchar, append_varchar_null, append_varchar_nulls};
 use std::mem::size_of;
 
 const VARCHAR_AUX_SIZE: usize = 2 * size_of::<u64>();
 const STRING_AUX_SIZE: usize = size_of::<u64>();
-const ARRAY_AUX_SIZE: usize = 2 * size_of::<u64>();
+pub const ARRAY_AUX_SIZE: usize = 2 * size_of::<u64>();
 
 pub struct VarcharColumnSink<'a, T: DataPageSlicer> {
     slicer: &'a mut T,
@@ -257,12 +255,12 @@ impl<'a, T: DataPageSlicer> BinaryColumnSink<'a, T> {
     }
 }
 
-pub struct ArrayColumnSink<'a, T: DataPageSlicer> {
+pub struct RawArrayColumnSink<'a, T: DataPageSlicer> {
     slicer: &'a mut T,
     pub buffers: &'a mut ColumnChunkBuffers,
 }
 
-impl<T: DataPageSlicer> Pushable for ArrayColumnSink<'_, T> {
+impl<T: DataPageSlicer> Pushable for RawArrayColumnSink<'_, T> {
     fn reserve(&mut self) -> ParquetResult<()> {
         let count = self.slicer.count();
         self.buffers.aux_vec.reserve(count * ARRAY_AUX_SIZE)?;
@@ -293,12 +291,12 @@ impl<T: DataPageSlicer> Pushable for ArrayColumnSink<'_, T> {
 
     #[inline]
     fn push_null(&mut self) -> ParquetResult<()> {
-        append_raw_array_null(&mut self.buffers.aux_vec, &self.buffers.data_vec)
+        append_array_null(&mut self.buffers.aux_vec, &self.buffers.data_vec)
     }
 
     #[inline]
     fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        append_raw_array_nulls(&mut self.buffers.aux_vec, &self.buffers.data_vec, count)
+        append_array_nulls(&mut self.buffers.aux_vec, &self.buffers.data_vec, count)
     }
 
     fn skip(&mut self, count: usize) {
@@ -310,7 +308,7 @@ impl<T: DataPageSlicer> Pushable for ArrayColumnSink<'_, T> {
     }
 }
 
-impl<'a, T: DataPageSlicer> ArrayColumnSink<'a, T> {
+impl<'a, T: DataPageSlicer> RawArrayColumnSink<'a, T> {
     pub fn new(slicer: &'a mut T, buffers: &'a mut ColumnChunkBuffers) -> Self {
         Self { slicer, buffers }
     }

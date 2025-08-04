@@ -32,7 +32,7 @@ use parquet2::types;
 use super::util::BinaryMaxMinStats;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_primitive_deflevels, ExactSizedIter};
+use crate::parquet_write::util::{build_plain_page, encode_primitive_def_levels, ExactSizedIter};
 
 pub fn binary_to_page(
     offsets: &[i64],
@@ -59,7 +59,7 @@ pub fn binary_to_page(
         };
         len >= 0
     });
-    encode_primitive_deflevels(&mut buffer, deflevels_iter, num_rows, options.version)?;
+    encode_primitive_def_levels(&mut buffer, deflevels_iter, num_rows, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
 

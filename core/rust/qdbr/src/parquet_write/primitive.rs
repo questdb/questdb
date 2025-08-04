@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, encode_primitive_deflevels, ExactSizedIter, MaxMin,
+    build_plain_page, encode_primitive_def_levels, ExactSizedIter, MaxMin,
 };
 use crate::parquet_write::Nullable;
 use parquet2::encoding::delta_bitpacked::encode;
@@ -184,7 +184,7 @@ where
         }
     });
     let mut buffer = vec![];
-    encode_primitive_deflevels(&mut buffer, deflevels_iter, num_rows, options.version)?;
+    encode_primitive_def_levels(&mut buffer, deflevels_iter, num_rows, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
     let buffer = encode_fn(slice, null_count, buffer);

@@ -1,6 +1,6 @@
 use crate::parquet::error::ParquetResult;
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_primitive_deflevels};
+use crate::parquet_write::util::{build_plain_page, encode_primitive_def_levels};
 use parquet2::encoding::Encoding;
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
@@ -54,7 +54,7 @@ pub fn bytes_to_page<const N: usize>(
             true
         }
     });
-    encode_primitive_deflevels(&mut buffer, deflevels_iter, num_rows, options.version)?;
+    encode_primitive_def_levels(&mut buffer, deflevels_iter, num_rows, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
 

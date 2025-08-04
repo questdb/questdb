@@ -1,40 +1,41 @@
 use crate::allocator::{AcVec, QdbAllocator};
 use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
+use crate::parquet::util::{align8b, ARRAY_NDIMS_LIMIT};
 use crate::parquet_read::column_sink::fixed::{
     FixedBooleanColumnSink, FixedDoubleColumnSink, FixedFloatColumnSink, FixedInt2ByteColumnSink,
     FixedInt2ShortColumnSink, FixedIntColumnSink, FixedLong128ColumnSink, FixedLong256ColumnSink,
     FixedLongColumnSink, IntDecimalColumnSink, NanoTimestampColumnSink, ReverseFixedColumnSink,
 };
+use crate::parquet_read::column_sink::var::ARRAY_AUX_SIZE;
 use crate::parquet_read::column_sink::var::{
-    ArrayColumnSink, BinaryColumnSink, StringColumnSink, VarcharColumnSink,
+    BinaryColumnSink, RawArrayColumnSink, StringColumnSink, VarcharColumnSink,
 };
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::dict_decoder::{FixedDictDecoder, VarDictDecoder};
 use crate::parquet_read::slicer::rle::{RleDictionarySlicer, RleLocalIsGlobalSymbolDecoder};
 use crate::parquet_read::slicer::{
-    BooleanBitmapSlicer, DataPageFixedSlicer, DeltaBinaryPackedSlicer, DeltaBytesArraySlicer,
-    DeltaLengthArraySlicer, PlainVarSlicer, ValueConvertSlicer,
+    BooleanBitmapSlicer, DataPageFixedSlicer, DataPageSlicer, DeltaBinaryPackedSlicer,
+    DeltaBytesArraySlicer, DeltaLengthArraySlicer, PlainVarSlicer, ValueConvertSlicer,
 };
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnChunkStats, ParquetDecoder, RowGroupBuffers, RowGroupStatBuffers,
 };
-use parquet2::deserialize::{
-    FilteredHybridEncoded, FilteredHybridRleDecoderIter, HybridDecoderBitmapIter,
-};
+use crate::parquet_write::array::{append_array_null, LevelsIterator};
+use parquet2::deserialize::{HybridDecoderBitmapIter, HybridEncoded};
 use parquet2::encoding::hybrid_rle::BitmapIter;
+use parquet2::encoding::hybrid_rle::HybridRleDecoder;
 use parquet2::encoding::{hybrid_rle, Encoding};
-use parquet2::indexes::Interval;
+use parquet2::page::DataPageHeader;
 use parquet2::page::{split_buffer, DataPage, DictPage, Page};
+use parquet2::read::levels::get_bit_width;
 use parquet2::read::{decompress, get_page_iterator};
 use parquet2::schema::types::{
     PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
-use parquet2::write::Version;
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use std::cmp;
 use std::cmp::min;
-use std::collections::VecDeque;
 use std::io::{Read, Seek};
 use std::ptr;
 
@@ -203,9 +204,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                     if decoded > 0 && decoded != column_chunk_decoded {
                         return Err(fmt_err!(
                             InvalidLayout,
-                            "column chunk size {} does not match previous size {}",
-                            column_chunk_decoded,
-                            decoded
+                            "column chunk size {column_chunk_decoded} does not match previous size {decoded}",
                         ));
                     }
                     decoded = column_chunk_decoded;
@@ -239,9 +238,8 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         let page_reader =
             get_page_iterator(column_metadata, &mut self.reader, None, vec![], chunk_size)?;
 
-        let version = match self.metadata.version {
-            1 => Ok(Version::V1),
-            2 => Ok(Version::V2),
+        match self.metadata.version {
+            1 | 2 => Ok(()),
             ver => Err(fmt_err!(Unsupported, "unsupported parquet version: {ver}")),
         }?;
 
@@ -258,16 +256,15 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                     dict = Some(page);
                 }
                 Page::Data(page) => {
-                    let page_size = page.num_values();
-                    if row_group_lo < row_count + page_size && row_group_hi > row_count {
+                    let page_row_count = page_row_count(&page, col_info.column_type)?;
+                    if row_group_lo < row_count + page_row_count && row_group_hi > row_count {
                         decode_page(
-                            version,
                             &page,
                             dict.as_ref(),
                             column_chunk_bufs,
                             col_info,
                             row_group_lo.saturating_sub(row_count),
-                            cmp::min(page_size, row_group_hi - row_count),
+                            cmp::min(page_row_count, row_group_hi - row_count),
                         )
                         .with_context(|_| {
                             format!(
@@ -281,7 +278,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                             )
                         })?;
                     }
-                    row_count += page_size;
+                    row_count += page_row_count;
                 }
             };
         }
@@ -436,7 +433,6 @@ impl<R: Read + Seek> ParquetDecoder<R> {
 }
 
 pub fn decode_page(
-    version: Version,
     page: &DataPage,
     dict: Option<&DictPage>,
     bufs: &mut ColumnChunkBuffers,
@@ -463,7 +459,6 @@ pub fn decode_page(
                     ColumnTypeTag::Short | ColumnTypeTag::Char | ColumnTypeTag::GeoShort,
                 ) => {
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -482,7 +477,6 @@ pub fn decode_page(
                     ColumnTypeTag::Short | ColumnTypeTag::Char | ColumnTypeTag::GeoShort,
                 ) => {
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -496,7 +490,6 @@ pub fn decode_page(
                 }
                 (Encoding::Plain, _, _, ColumnTypeTag::Byte | ColumnTypeTag::GeoByte) => {
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -515,7 +508,6 @@ pub fn decode_page(
                     ColumnTypeTag::Byte | ColumnTypeTag::GeoByte,
                 ) => {
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -534,7 +526,6 @@ pub fn decode_page(
                     ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
                 ) => {
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -548,7 +539,6 @@ pub fn decode_page(
                 }
                 (Encoding::Plain, _, _, ColumnTypeTag::Date) => {
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -576,7 +566,6 @@ pub fn decode_page(
                     ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
                 ) => {
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -603,7 +592,6 @@ pub fn decode_page(
                         &INT_NULL,
                     )?;
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -631,7 +619,6 @@ pub fn decode_page(
                                 &INT_NULL,
                             )?;
                             decode_page0(
-                                version,
                                 page,
                                 row_lo,
                                 row_hi,
@@ -646,7 +633,6 @@ pub fn decode_page(
                         }
                         (Encoding::Plain, _) => {
                             decode_page0(
-                                version,
                                 page,
                                 row_lo,
                                 row_hi,
@@ -677,7 +663,6 @@ pub fn decode_page(
                         &INT_NULL,
                     )?;
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -700,7 +685,6 @@ pub fn decode_page(
                         &INT_NULL,
                     )?;
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -742,7 +726,6 @@ pub fn decode_page(
                         );
 
                         decode_page0(
-                            version,
                             page,
                             row_lo,
                             row_hi,
@@ -763,7 +746,6 @@ pub fn decode_page(
                     | ColumnTypeTag::Timestamp,
                 ) => {
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -785,7 +767,6 @@ pub fn decode_page(
                     | ColumnTypeTag::GeoLong,
                 ) => {
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -815,7 +796,6 @@ pub fn decode_page(
                         &LONG_NULL,
                     )?;
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -830,7 +810,6 @@ pub fn decode_page(
             match (page.encoding(), column_type.tag()) {
                 (Encoding::Plain, ColumnTypeTag::Uuid) => {
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -849,7 +828,6 @@ pub fn decode_page(
             match (page.encoding(), column_type.tag()) {
                 (Encoding::Plain, ColumnTypeTag::Long128) => {
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -868,7 +846,6 @@ pub fn decode_page(
             match (page.encoding(), column_type.tag()) {
                 (Encoding::Plain, ColumnTypeTag::Long256) => {
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -891,7 +868,6 @@ pub fn decode_page(
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -903,7 +879,6 @@ pub fn decode_page(
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -925,7 +900,6 @@ pub fn decode_page(
                         &LONG256_NULL,
                     )?;
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -936,7 +910,6 @@ pub fn decode_page(
                 (Encoding::Plain, None, ColumnTypeTag::String) => {
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -947,7 +920,6 @@ pub fn decode_page(
                 (Encoding::Plain, _, ColumnTypeTag::Varchar) => {
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -959,7 +931,6 @@ pub fn decode_page(
                     let mut slicer =
                         DeltaBytesArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -981,7 +952,6 @@ pub fn decode_page(
                         &SYMBOL_NULL,
                     )?;
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -998,7 +968,6 @@ pub fn decode_page(
                 (Encoding::Plain, None, ColumnTypeTag::Binary) => {
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -1010,7 +979,6 @@ pub fn decode_page(
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -1032,7 +1000,6 @@ pub fn decode_page(
                         &[],
                     )?;
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -1041,13 +1008,13 @@ pub fn decode_page(
                     Ok(())
                 }
                 (Encoding::Plain, None, ColumnTypeTag::Array) => {
+                    // raw array encoding
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
-                        &mut ArrayColumnSink::new(&mut slicer, bufs),
+                        &mut RawArrayColumnSink::new(&mut slicer, bufs),
                     )?;
                     Ok(())
                 }
@@ -1055,11 +1022,10 @@ pub fn decode_page(
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
-                        &mut ArrayColumnSink::new(&mut slicer, bufs),
+                        &mut RawArrayColumnSink::new(&mut slicer, bufs),
                     )?;
                     Ok(())
                 }
@@ -1071,7 +1037,6 @@ pub fn decode_page(
             match (page.encoding(), dict, logical_type, column_type.tag()) {
                 (Encoding::Plain, _, _, ColumnTypeTag::Timestamp) => {
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -1098,7 +1063,6 @@ pub fn decode_page(
                         &TIMESTAMP_96_EMPTY,
                     )?;
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -1116,7 +1080,6 @@ pub fn decode_page(
             match (page.encoding(), dict, typ, column_type.tag()) {
                 (Encoding::Plain, None, PhysicalType::Double, ColumnTypeTag::Double) => {
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -1143,7 +1106,6 @@ pub fn decode_page(
                         &DOUBLE_NULL,
                     )?;
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -1166,7 +1128,6 @@ pub fn decode_page(
                         &FLOAT_NULL,
                     )?;
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -1176,7 +1137,6 @@ pub fn decode_page(
                 }
                 (Encoding::Plain, None, PhysicalType::Float, ColumnTypeTag::Float) => {
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -1190,7 +1150,6 @@ pub fn decode_page(
                 }
                 (Encoding::Plain, None, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -1204,7 +1163,6 @@ pub fn decode_page(
                 }
                 (Encoding::Rle, None, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
                     decode_page0(
-                        version,
                         page,
                         row_lo,
                         row_hi,
@@ -1214,6 +1172,11 @@ pub fn decode_page(
                             &[0],
                         ),
                     )?;
+                    Ok(())
+                }
+                (Encoding::Plain, None, PhysicalType::Double, ColumnTypeTag::Array) => {
+                    let mut slicer = DataPageFixedSlicer::<8>::new(values_buffer, row_count);
+                    decode_array_page(page, row_lo, row_hi, &mut slicer, bufs)?;
                     Ok(())
                 }
                 _ => Err(encoding_error),
@@ -1242,22 +1205,21 @@ pub fn decode_page(
 
 #[allow(clippy::while_let_on_iterator)]
 fn decode_page0<T: Pushable>(
-    version: Version,
     page: &DataPage,
     row_lo: usize,
     row_hi: usize,
     sink: &mut T,
 ) -> ParquetResult<()> {
     sink.reserve()?;
-    let iter = decode_null_bitmap(version, page, row_hi)?;
+    let iter = decode_null_bitmap(page, row_hi)?;
     if let Some(iter) = iter {
         let mut skip_count = row_lo;
         for run in iter {
             let run = run?;
             match run {
-                FilteredHybridEncoded::Bitmap { values, offset, length } => {
+                HybridEncoded::Bitmap(values, length) => {
                     // consume `length` items
-                    let mut iter = BitmapIter::new(values, offset, length);
+                    let mut iter = BitmapIter::new(values, 0, length);
                     // first, scan values to skip, if any
                     let local_skip_count = min(skip_count, length);
                     skip_count -= local_skip_count;
@@ -1277,7 +1239,7 @@ fn decode_page0<T: Pushable>(
                         }
                     }
                 }
-                FilteredHybridEncoded::Repeated { is_set, length } => {
+                HybridEncoded::Repeated(is_set, length) => {
                     let local_skip_count = min(skip_count, length);
                     let local_push_count = length - local_skip_count;
                     skip_count -= local_skip_count;
@@ -1292,10 +1254,6 @@ fn decode_page0<T: Pushable>(
                         sink.push_nulls(local_push_count)?;
                     }
                 }
-                FilteredHybridEncoded::Skipped(length) => {
-                    // for now, we don't use filters, so this is a never-taken branch
-                    sink.skip(length);
-                }
             };
         }
     } else {
@@ -1305,11 +1263,10 @@ fn decode_page0<T: Pushable>(
     sink.result()
 }
 
-pub fn decode_null_bitmap(
-    _version: Version,
+fn decode_null_bitmap(
     page: &DataPage,
     count: usize,
-) -> ParquetResult<Option<FilteredHybridRleDecoderIter<'_>>> {
+) -> ParquetResult<Option<HybridDecoderBitmapIter<'_>>> {
     let def_levels = split_buffer(page)?.1;
     if def_levels.is_empty() {
         return Ok(None);
@@ -1317,17 +1274,158 @@ pub fn decode_null_bitmap(
 
     let iter = hybrid_rle::Decoder::new(def_levels, 1);
     let iter = HybridDecoderBitmapIter::new(iter, count);
-    let selected_rows = get_selected_rows(page);
-    let iter = FilteredHybridRleDecoderIter::new(iter, selected_rows);
     Ok(Some(iter))
 }
 
-pub fn get_selected_rows(page: &DataPage) -> VecDeque<Interval> {
-    page.selected_rows()
-        .unwrap_or(&[Interval::new(0, page.num_values())])
-        .iter()
-        .copied()
-        .collect()
+#[allow(clippy::while_let_on_iterator)]
+fn decode_array_page<T: DataPageSlicer>(
+    page: &DataPage,
+    row_lo: usize,
+    row_hi: usize,
+    slicer: &mut T,
+    buffers: &mut ColumnChunkBuffers,
+) -> ParquetResult<()> {
+    let count = slicer.count();
+    buffers.aux_vec.reserve(count * ARRAY_AUX_SIZE)?;
+    buffers.data_vec.reserve(slicer.data_size())?;
+
+    let (rep_levels, def_levels, _) = split_buffer(page)?;
+
+    let max_rep_level = page.descriptor.max_rep_level;
+    let max_def_level = page.descriptor.max_def_level;
+
+    let mut levels_iter = LevelsIterator::try_new(
+        page.num_values(),
+        max_rep_level,
+        max_def_level,
+        rep_levels,
+        def_levels,
+    )?;
+    let mut row = 0;
+    let mut skip_count = row_lo;
+    while let Some(levels) = levels_iter.next_levels() {
+        let levels = levels?;
+        // process levels accumulated for an array
+        if skip_count == 0 {
+            append_array(
+                &mut buffers.aux_vec,
+                &mut buffers.data_vec,
+                max_rep_level as u32,
+                max_def_level as u32,
+                &levels.rep_levels,
+                &levels.def_levels,
+                slicer,
+            )?;
+        } else {
+            skip_array(slicer, max_def_level as u32, &levels.def_levels);
+            skip_count -= 1;
+        }
+        row += 1;
+        if row >= row_hi {
+            return Ok(());
+        }
+    }
+    Ok(())
+}
+
+fn append_array<T: DataPageSlicer>(
+    aux_mem: &mut AcVec<u8>,
+    data_mem: &mut AcVec<u8>,
+    max_rep_level: u32,
+    max_def_level: u32,
+    rep_levels: &Vec<u32>,
+    def_levels: &Vec<u32>,
+    slicer: &mut T,
+) -> ParquetResult<()> {
+    if def_levels.len() == 1 && def_levels[0] == 0 {
+        append_array_null(aux_mem, data_mem)?;
+    } else {
+        let shape_size = align8b(4 * max_rep_level as usize);
+        let value_size = shape_size + 8 * rep_levels.len();
+
+        aux_mem.extend_from_slice(&data_mem.len().to_le_bytes())?;
+        aux_mem.extend_from_slice(&value_size.to_le_bytes())?;
+
+        // first, calculate and write shape
+        let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
+        calculate_array_shape(&mut shape, max_rep_level, rep_levels);
+        for i in 0..max_rep_level as usize {
+            data_mem.extend_from_slice(&shape[i].to_le_bytes())?;
+        }
+        // add an optional padding
+        if max_rep_level % 2 != 0 {
+            data_mem.extend_from_slice(&0_u32.to_le_bytes())?;
+        }
+
+        // next, copy elements
+        data_mem.reserve(value_size)?;
+        for i in 0..def_levels.len() {
+            if def_levels[i] == max_def_level {
+                data_mem.extend_from_slice(slicer.next())?;
+            } else {
+                data_mem.extend_from_slice(&std::f64::NAN.to_le_bytes())?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn calculate_array_shape(
+    shape: &mut [u32; ARRAY_NDIMS_LIMIT],
+    _max_rep_level: u32,
+    _rep_levels: &Vec<u32>,
+) {
+    shape[0] = 7;
+}
+
+fn skip_array<T: DataPageSlicer>(slicer: &mut T, max_def_level: u32, def_levels: &Vec<u32>) {
+    for i in 0..def_levels.len() {
+        if def_levels[i] == max_def_level {
+            slicer.next();
+        }
+    }
+}
+
+fn page_row_count(page: &DataPage, column_type: ColumnType) -> ParquetResult<usize> {
+    match page.header() {
+        // V2 has explicit number of rows in the header.
+        DataPageHeader::V2(header) => Ok(header.num_rows as usize),
+        // V1 is more tricky in case of group types.
+        DataPageHeader::V1(header) => {
+            match column_type.tag() {
+                ColumnTypeTag::Array => {
+                    if page.descriptor.primitive_type.physical_type == PhysicalType::ByteArray {
+                        // It's native array encoding, so we can just use the number of values.
+                        Ok(header.num_values as usize)
+                    } else {
+                        // Slow path: array as LIST encoding + V1 format.
+                        // We have to calculate the number of rows based on the repetition levels.
+                        let (rep_levels, _, _) = split_buffer(page)?;
+
+                        let num_rows = HybridRleDecoder::try_new(
+                            rep_levels,
+                            get_bit_width(page.descriptor.max_rep_level),
+                            header.num_values as usize,
+                        )?
+                        .filter_map(|rep_level| match rep_level {
+                            Ok(rep_level) => {
+                                if rep_level == 0 {
+                                    Some(())
+                                } else {
+                                    None
+                                }
+                            }
+                            _ => None,
+                        })
+                        .count();
+                        Ok(num_rows)
+                    }
+                }
+                // For primitive types number of rows matches the number of values.
+                _ => Ok(header.num_values as usize),
+            }
+        }
+    }
 }
 
 fn long_stat_value(value: &Option<Vec<u8>>) -> ParquetResult<i64> {
@@ -1353,7 +1451,7 @@ mod tests {
     use crate::parquet::tests::ColumnTypeTagExt;
     use crate::parquet_read::decode::{INT_NULL, LONG_NULL, UUID_NULL};
     use crate::parquet_read::{ColumnChunkBuffers, ParquetDecoder};
-    use crate::parquet_write::array::{append_raw_array, append_raw_array_null};
+    use crate::parquet_write::array::{append_array_null, append_raw_array};
     use crate::parquet_write::file::ParquetWriter;
     use crate::parquet_write::schema::{Column, Partition};
     use crate::parquet_write::varchar::{append_varchar, append_varchar_null};
@@ -2071,7 +2169,7 @@ mod tests {
             i += 1;
 
             if i < row_count {
-                append_raw_array_null(&mut aux_buff, &data_buff).unwrap();
+                append_array_null(&mut aux_buff, &data_buff).unwrap();
                 i += 1;
             }
         }

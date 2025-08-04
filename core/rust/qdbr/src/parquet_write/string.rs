@@ -26,7 +26,7 @@ use super::util::BinaryMaxMinStats;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, encode_primitive_deflevels, transmute_slice, ExactSizedIter,
+    build_plain_page, encode_primitive_def_levels, transmute_slice, ExactSizedIter,
 };
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
@@ -62,7 +62,7 @@ pub fn string_to_page(
 
     let deflevels_iter =
         (0..num_rows).map(|i| i >= column_top && utf16_slices[i - column_top].is_some());
-    encode_primitive_deflevels(&mut buffer, deflevels_iter, num_rows, options.version)?;
+    encode_primitive_def_levels(&mut buffer, deflevels_iter, num_rows, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
 

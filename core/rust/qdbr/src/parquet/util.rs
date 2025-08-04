@@ -21,25 +21,11 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-pub(crate) mod error;
-pub(crate) mod io;
-pub(crate) mod qdb_metadata;
-pub(crate) mod util;
 
-// Don't expose this in the general API, as it heightens the risk
-// of constructing an invalid `ColumnType`, e.g. one without the appropriate
-// extra type info for Geo types.
-#[cfg(test)]
-pub(crate) mod tests {
-    use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+// must be kept in sync with Java's ColumnType#ARRAY_NDIMS_LIMIT
+pub const ARRAY_NDIMS_LIMIT: usize = 32;
 
-    pub trait ColumnTypeTagExt {
-        fn into_type(self) -> ColumnType;
-    }
-
-    impl ColumnTypeTagExt for ColumnTypeTag {
-        fn into_type(self) -> ColumnType {
-            ColumnType::new(self, 0)
-        }
-    }
+#[inline]
+pub fn align8b(v: usize) -> usize {
+    (v + 7) & !0x7
 }
