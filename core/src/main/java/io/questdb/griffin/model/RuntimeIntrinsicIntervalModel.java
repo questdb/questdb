@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -35,4 +36,6 @@ public interface RuntimeIntrinsicIntervalModel extends QuietCloseable, Plannable
     boolean allIntervalsHitOnePartition();
 
     LongList calculateIntervals(SqlExecutionContext sqlExecutionContext) throws SqlException;
+
+    TimestampDriver getTimestampDriver();
 }

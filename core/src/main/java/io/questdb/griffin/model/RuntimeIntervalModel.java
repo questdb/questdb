@@ -104,6 +104,11 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     }
 
     @Override
+    public TimestampDriver getTimestampDriver() {
+        return timestampDriver;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         if (intervals != null && intervals.size() > 0) {
             sink.val('[');

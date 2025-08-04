@@ -42,7 +42,6 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     protected final IntervalPartitionFrame frame = new IntervalPartitionFrame();
     protected final RuntimeIntrinsicIntervalModel intervalModel;
     protected final PartitionDecoder parquetDecoder = new PartitionDecoder();
-    protected final TimestampDriver timestampDriver;
     protected final int timestampIndex;
     private final NativeTimestampFinder nativeTimestampFinder = new NativeTimestampFinder();
     private final ParquetTimestampFinder parquetTimestampFinder;
@@ -63,12 +62,11 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     private int initialPartitionHi;
     private int initialPartitionLo;
 
-    public AbstractIntervalPartitionFrameCursor(RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex, TimestampDriver timestampDriver) {
+    public AbstractIntervalPartitionFrameCursor(RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex) {
         assert timestampIndex > -1;
         this.intervalModel = intervalModel;
         this.timestampIndex = timestampIndex;
         this.parquetTimestampFinder = new ParquetTimestampFinder(parquetDecoder);
-        this.timestampDriver = timestampDriver;
     }
 
     @Override

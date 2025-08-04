@@ -218,8 +218,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                             reader.getPartitionedBy(),
                             intervals
                     ),
-                    reader.getMetadata().getTimestampIndex(),
-                    ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType())
+                    reader.getMetadata().getTimestampIndex()
             );
             cursor.of(reader, null);
             cursor.close();
@@ -742,8 +741,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                                     reader.getPartitionedBy(),
                                     intervals
                             ),
-                            reader.getMetadata().getTimestampIndex(),
-                            ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType())
+                            reader.getMetadata().getTimestampIndex()
                     )
             ) {
                 final TestTableReaderRecord record = new TestTableReaderRecord();
