@@ -44,7 +44,7 @@ import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
@@ -108,7 +108,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     private final Log log;
     private final MemoryConfigurationWrapper memoryConfig;
     private final Metrics metrics;
-    private final Clock microsecondClock;
+    private final MicrosecondClock microsecondClock;
     private final HttpMinServerConfigurationWrapper minHttpServerConfig;
     private final PGWireConfigurationWrapper pgWireConfig;
     private final Properties properties;
@@ -123,7 +123,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             Log log,
             BuildInformation buildInformation,
             FilesFacade filesFacade,
-            Clock microsecondClock,
+            MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf,
             boolean loadAdditionalConfigurations
     ) throws ServerConfigurationException, JsonException {
@@ -169,7 +169,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             Log log,
             BuildInformation buildInformation,
             FilesFacade filesFacade,
-            Clock microsecondClock,
+            MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf
     ) throws ServerConfigurationException, JsonException {
         this(

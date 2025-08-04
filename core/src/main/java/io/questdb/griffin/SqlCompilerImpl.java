@@ -1864,8 +1864,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 tz = unquote(tok).toString();
                                 try {
                                     tzRules = driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
-                                } catch (NumericException e) {
-                                    throw SqlException.position(lexer.lastTokenPosition()).put("invalid timezone: ").put(tz);
+                                } catch (CairoException e) {
+                                    throw SqlException.position(lexer.lastTokenPosition()).put(e.getFlyweightMessage());
                                 }
                                 tok = expectToken(lexer, "'delay' or ')'");
                             }
@@ -1905,8 +1905,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     // validate time zone
                                     try {
                                         driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
-                                    } catch (NumericException e) {
-                                        throw SqlException.position(lexer.lastTokenPosition()).put("invalid timezone: ").put(tz);
+                                    } catch (CairoException e) {
+                                        throw SqlException.position(lexer.lastTokenPosition()).put(e.getFlyweightMessage());
                                     }
                                     tok = SqlUtil.fetchNext(lexer);
                                 }

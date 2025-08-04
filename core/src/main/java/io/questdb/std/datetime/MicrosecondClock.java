@@ -22,16 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.datetime.microtime;
+package io.questdb.std.datetime;
 
-import io.questdb.std.Os;
-import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.cairo.ColumnType;
 
-public class MicrosecondClockImpl implements MicrosecondClock {
-    public static final MicrosecondClock INSTANCE = new MicrosecondClockImpl();
-
+public interface MicrosecondClock extends Clock {
     @Override
-    public long getTicks() {
-        return Os.currentTimeMicros();
+    default int getClockTimestampType() {
+        return ColumnType.TIMESTAMP_MICRO;
     }
 }

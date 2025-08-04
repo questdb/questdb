@@ -24,7 +24,6 @@
 
 package io.questdb.test.log;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.log.LogAlertSocket;
 import io.questdb.log.LogAlertSocketWriter;
 import io.questdb.log.LogError;
@@ -43,6 +42,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
@@ -286,17 +286,7 @@ public class LogAlertSocketWriterTest {
     @Test
     public void testOnLogRecordInternationalTemplate() throws Exception {
         withLogAlertSocketWriter(
-                new Clock() {
-                    @Override
-                    public int getClockTimestampType() {
-                        return ColumnType.TIMESTAMP_MICRO;
-                    }
-
-                    @Override
-                    public long getTicks() {
-                        return 1637091363010000L;
-                    }
-                },
+                (MicrosecondClock) () -> 1637091363010000L,
                 writer -> {
                     // this test does not interact with server
                     final int logRecordBuffSize = 1024; // plenty, to allow for encoding/escaping
@@ -528,17 +518,7 @@ public class LogAlertSocketWriterTest {
         // replace build info
 
         withLogAlertSocketWriter(
-                new Clock() {
-                    @Override
-                    public int getClockTimestampType() {
-                        return ColumnType.TIMESTAMP_MICRO;
-                    }
-
-                    @Override
-                    public long getTicks() {
-                        return 1637091363010000L;
-                    }
-                },
+                (MicrosecondClock) () -> 1637091363010000L,
                 writer -> {
 
                     final int logRecordBuffSize = 1024; // plenty, to allow for encoding/escaping

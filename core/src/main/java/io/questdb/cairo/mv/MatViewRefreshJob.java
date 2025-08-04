@@ -58,7 +58,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -80,7 +80,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final FixedOffsetIntervalIterator fixedOffsetIterator = new FixedOffsetIntervalIterator();
     private final MatViewGraph graph;
     private final LongList intervals = new LongList();
-    private final Clock microsecondClock;
+    private final MicrosecondClock microsecondClock;
     private final RefreshContext refreshContext = new RefreshContext();
     private final MatViewRefreshSqlExecutionContext refreshSqlExecutionContext;
     private final MatViewRefreshTask refreshTask = new MatViewRefreshTask();
@@ -630,7 +630,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
             for (int i = 0; i <= maxRetries; i++) {
                 try {
+                    boolean cacheFactoryForEmptyTable = true;
                     if (factory == null) {
+                        cacheFactoryForEmptyTable = false;
                         final String viewSql = viewDefinition.getMatViewSql();
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
                             LOG.info().$("compiling materialized view [view=").$(viewTableToken).$(", attempt=").$(i).I$();
@@ -655,10 +657,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                     assert factory != null;
                     assert copier != null;
-
-                    final CharSequence timestampName = walWriter.getMetadata().getColumnName(walWriter.getMetadata().getTimestampIndex());
-                    final int cursorTimestampIndex = factory.getMetadata().getColumnIndex(timestampName);
-                    assert cursorTimestampIndex > -1;
                     if (factory.getMetadata().getTimestampType() != walWriter.getMetadata().getTimestampType()) {
                         throw CairoException.nonCritical().put("timestamp type mismatch between materialized view and query [view=")
                                 .put(ColumnType.nameOf(walWriter.getMetadata().getTimestampType()))
@@ -668,6 +666,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
 
                     if (intervalIterator == null) {
+                        boolean result;
                         // We don't have intervals to query, but we may need to bump base table txn or last period hi.
                         if (refreshContext.toBaseTxn != -1 || refreshContext.periodHi != Numbers.LONG_NULL) {
                             final long commitBaseTxn = refreshContext.toBaseTxn != -1 ? refreshContext.toBaseTxn : viewState.getLastRefreshBaseTxn();
@@ -680,10 +679,21 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                     commitBaseTxn,
                                     commitPeriodHi
                             );
-                            return true;
+                            result = true;
+                        } else {
+                            result = false;
                         }
-                        return false;
+                        if (cacheFactoryForEmptyTable) {
+                            viewState.assignRecordCursorFactory(factory);
+                        } else {
+                            factory = Misc.free(factory);
+                        }
+                        return result;
                     }
+
+                    final CharSequence timestampName = walWriter.getMetadata().getColumnName(walWriter.getMetadata().getTimestampIndex());
+                    final int cursorTimestampIndex = factory.getMetadata().getColumnIndex(timestampName);
+                    assert cursorTimestampIndex > -1;
 
                     long commitTarget = batchSize;
                     long rowCount = 0;

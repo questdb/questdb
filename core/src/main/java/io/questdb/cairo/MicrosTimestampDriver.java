@@ -892,8 +892,12 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException {
-        return Timestamps.getTimezoneRules(locale, timezone);
+    public TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) {
+        try {
+            return Timestamps.getTimezoneRules(locale, timezone);
+        } catch (NumericException e) {
+            throw CairoException.critical(0).put("invalid timezone: ").put(timezone);
+        }
     }
 
     @Override

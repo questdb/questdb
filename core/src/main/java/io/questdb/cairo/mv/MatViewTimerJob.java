@@ -39,7 +39,7 @@ import io.questdb.mp.Queue;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -56,7 +56,7 @@ public class MatViewTimerJob extends SynchronizedJob {
     private static final int INITIAL_QUEUE_CAPACITY = 16;
     private static final Log LOG = LogFactory.getLog(MatViewTimerJob.class);
     private static final Comparator<Timer> timerComparator = Comparator.comparingLong(Timer::getDeadlineMicros);
-    private final Clock clock;
+    private final MicrosecondClock clock;
     private final CairoConfiguration configuration;
     private final ObjList<Timer> expired = new ObjList<>();
     private final Predicate<Timer> filterByDirName;
@@ -77,15 +77,7 @@ public class MatViewTimerJob extends SynchronizedJob {
     }
 
     public static long periodDelay(TimestampDriver driver, int periodDelay, char periodDelayUnit) {
-        switch (periodDelayUnit) {
-            case 'm':
-                return driver.fromMinutes(periodDelay);
-            case 'h':
-                return driver.fromHours(periodDelay);
-            case 'd':
-                return driver.fromDays(periodDelay);
-        }
-        return 0;
+        return driver.from(periodDelay, periodDelayUnit);
     }
 
     private void addTimers(TableToken viewToken) {

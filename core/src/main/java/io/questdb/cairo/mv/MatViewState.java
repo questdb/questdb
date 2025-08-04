@@ -195,6 +195,11 @@ public class MatViewState implements QuietCloseable {
         return factory;
     }
 
+    public void assignRecordCursorFactory(@NotNull RecordCursorFactory factory) {
+        assert latch.get();
+        this.cursorFactory = factory;
+    }
+
     @Override
     public void close() {
         cursorFactory = Misc.free(cursorFactory);

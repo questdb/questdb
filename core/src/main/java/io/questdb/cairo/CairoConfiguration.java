@@ -40,9 +40,10 @@ import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Rnd;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.RostiAllocFacadeImpl;
-import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -309,7 +310,7 @@ public interface CairoConfiguration {
     Metrics getMetrics();
 
     @NotNull
-    default Clock getMicrosecondClock() {
+    default MicrosecondClock getMicrosecondClock() {
         return MicrosecondClockImpl.INSTANCE;
     }
 
@@ -322,8 +323,7 @@ public interface CairoConfiguration {
 
     int getMkDirMode();
 
-    @NotNull
-    default Clock getNanosecondClock() {
+    default NanosecondClock getNanosecondClock() {
         return NanosecondClockImpl.INSTANCE;
     }
 

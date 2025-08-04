@@ -22,27 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cairo.mv;
+package io.questdb.std.datetime;
 
-import io.questdb.std.datetime.Clock;
+import io.questdb.cairo.ColumnType;
 
-import java.util.concurrent.atomic.AtomicLong;
-
-class TestClock implements Clock {
-    AtomicLong micros;
-    int type;
-
-    public TestClock(long micros, int type) {
-        this.micros = new AtomicLong(micros);
-    }
-
+public interface NanosecondClock extends Clock {
     @Override
-    public int getClockTimestampType() {
-        return type;
-    }
-
-    @Override
-    public long getTicks() {
-        return micros.get();
+    default int getClockTimestampType() {
+        return ColumnType.TIMESTAMP_NANO;
     }
 }

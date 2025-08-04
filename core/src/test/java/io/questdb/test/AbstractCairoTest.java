@@ -100,7 +100,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
@@ -157,30 +158,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static CairoConfiguration configuration;
     protected static TestCairoConfigurationFactory configurationFactory;
     protected static long currentMicros = -1;
-    protected static final Clock defaultMicrosecondClock = new Clock() {
-        @Override
-        public int getClockTimestampType() {
-            return ColumnType.TIMESTAMP_MICRO;
-        }
-
-        @Override
-        public long getTicks() {
-            return currentMicros != -1 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
-        }
-    };
-    protected static Clock testMicrosClock = defaultMicrosecondClock;
-    protected static final Clock defaultNanosecondClock = new Clock() {
-        @Override
-        public int getClockTimestampType() {
-            return ColumnType.TIMESTAMP_NANO;
-        }
-
-        @Override
-        public long getTicks() {
-            return currentMicros != -1 ? currentMicros * 1000L : NanosecondClockImpl.INSTANCE.getTicks();
-        }
-    };
-    protected static Clock testNanoClock = defaultNanosecondClock;
+    protected static final MicrosecondClock defaultMicrosecondClock = (MicrosecondClock) () -> currentMicros != -1 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+    protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
+    protected static final NanosecondClock defaultNanosecondClock = (NanosecondClock) () -> currentMicros != -1 ? currentMicros * 1000L : NanosecondClockImpl.INSTANCE.getTicks();
+    protected static NanosecondClock testNanoClock = defaultNanosecondClock;
     protected static CairoEngine engine;
     protected static TestCairoEngineFactory engineFactory;
     protected static FactoryProvider factoryProvider;

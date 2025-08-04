@@ -24,7 +24,6 @@
 
 package io.questdb.test.log;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.log.GuaranteedLogger;
@@ -57,6 +56,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.GcUtf8String;
@@ -1309,7 +1309,7 @@ public class LogFactoryTest {
         Assert.assertEquals(expectedMemUsage, Unsafe.getMemUsed());
     }
 
-    private static class TestMicrosecondClock implements Clock {
+    private static class TestMicrosecondClock implements MicrosecondClock {
         private final long limit;
         private final long speed;
         private final long start;
@@ -1320,11 +1320,6 @@ public class LogFactoryTest {
             this.speed = speed;
             this.limit = limit - 1;
             this.k = 0;
-        }
-
-        @Override
-        public int getClockTimestampType() {
-            return ColumnType.TIMESTAMP_MICRO;
         }
 
         @Override

@@ -22,16 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.datetime.microtime;
+package io.questdb.test.cairo.mv;
 
-import io.questdb.std.Os;
 import io.questdb.std.datetime.MicrosecondClock;
 
-public class MicrosecondClockImpl implements MicrosecondClock {
-    public static final MicrosecondClock INSTANCE = new MicrosecondClockImpl();
+import java.util.concurrent.atomic.AtomicLong;
+
+class TestMicroClock implements MicrosecondClock {
+    AtomicLong micros;
+
+    public TestMicroClock(long micros) {
+        this.micros = new AtomicLong(micros);
+    }
 
     @Override
     public long getTicks() {
-        return Os.currentTimeMicros();
+        return micros.get();
     }
 }

@@ -98,6 +98,30 @@ public interface TimestampDriver {
 
     long from(long timestamp, int timestampType);
 
+    default long from(long value, char unit) {
+        switch (unit) {
+            case 'n':
+                return fromNanos(value);
+            case 'u':
+            case 'U':
+                return fromMicros(value);
+            case 'T':
+                return fromMillis(value);
+            case 's':
+                return fromSeconds(value);
+            case 'm':
+                return fromMinutes((int) value);
+            case 'H':
+            case 'h':
+                return fromHours((int) value);
+            case 'd':
+                return fromDays((int) value);
+            case 'w':
+                return fromWeeks((int) value);
+        }
+        return 0;
+    }
+
     default long from(long ts, byte unit) {
         switch (unit) {
             case CommonUtils.TIMESTAMP_UNIT_NANOS:
@@ -348,7 +372,7 @@ public interface TimestampDriver {
 
     CommonUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType);
 
-    TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException;
+    TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone);
 
     /**
      * Gets the week of year from a timestamp value.

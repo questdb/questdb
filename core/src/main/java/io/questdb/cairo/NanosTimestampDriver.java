@@ -910,8 +910,12 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException {
-        return Nanos.getTimezoneRules(locale, timezone);
+    public TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) {
+        try {
+            return Nanos.getTimezoneRules(locale, timezone);
+        } catch (NumericException e) {
+            throw CairoException.critical(0).put("invalid timezone: ").put(timezone);
+        }
     }
 
     @Override

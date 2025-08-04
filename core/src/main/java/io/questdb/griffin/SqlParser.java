@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
@@ -963,8 +964,8 @@ public class SqlParser {
                     tz = unquote(tok).toString();
                     try {
                         tzRules = driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
-                    } catch (NumericException e) {
-                        throw SqlException.position(lexer.lastTokenPosition()).put("invalid timezone: ").put(tz);
+                    } catch (CairoException e) {
+                        throw SqlException.position(lexer.lastTokenPosition()).put(e.getFlyweightMessage());
                     }
                     tok = tok(lexer, "'delay' or ')'");
                 }

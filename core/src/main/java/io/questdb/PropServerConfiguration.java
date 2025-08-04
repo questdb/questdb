@@ -93,6 +93,7 @@ import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosFormatFactory;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -318,7 +319,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final Metrics metrics;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
-    private final io.questdb.std.datetime.Clock microsecondClock;
+    private final MicrosecondClock microsecondClock;
     private final int mkdirMode;
     private final int o3CallbackQueueCapacity;
     private final int o3ColumnMemorySize;
@@ -677,7 +678,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             Log log,
             BuildInformation buildInformation,
             FilesFacade filesFacade,
-            io.questdb.std.datetime.Clock microsecondClock,
+            MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf
     ) throws ServerConfigurationException, JsonException {
         this(
@@ -701,7 +702,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             Log log,
             BuildInformation buildInformation,
             FilesFacade filesFacade,
-            io.questdb.std.datetime.Clock microsecondClock,
+            MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf
     ) throws ServerConfigurationException, JsonException {
         this(
@@ -726,7 +727,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             Log log,
             BuildInformation buildInformation,
             FilesFacade filesFacade,
-            io.questdb.std.datetime.Clock microsecondClock,
+            MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf,
             boolean loadAdditionalConfigurations
     ) throws ServerConfigurationException, JsonException {
@@ -3090,7 +3091,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public @NotNull io.questdb.std.datetime.Clock getMicrosecondClock() {
+        public @NotNull MicrosecondClock getMicrosecondClock() {
             return microsecondClock;
         }
 

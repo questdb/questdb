@@ -47,7 +47,8 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.LongList;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
@@ -190,7 +191,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testMatViewsRefreshIntervalsReloadOnServerStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final long now = parseFloorPartialTimestamp("2024-01-01T01:01:01.000001Z");
-            final TestClock testClock = new TestClock(now, ColumnType.TIMESTAMP_MICRO);
+            final TestMicroClock testClock = new TestMicroClock(now);
 
             final LongList expectedIntervals = new LongList();
             expectedIntervals.add(timestampDriver.parseFloorLiteral("2024-09-11T12:01"), timestampDriver.parseFloorLiteral("2024-09-11T12:02"));
@@ -716,7 +717,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testPeriodMatViewsReloadOnServerStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final long start = TimestampFormatUtils.parseUTCTimestamp("2024-12-12T00:00:00.000000Z");
-            final TestClock testClock = new TestClock(start, ColumnType.TIMESTAMP_MICRO);
+            final TestMicroClock testClock = new TestMicroClock(start);
 
             final String firstExpected = "sym\tprice\tts\n" +
                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
@@ -781,7 +782,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             final String startStr = "2024-12-12T00:00:00.000000Z";
             final long start = TimestampFormatUtils.parseUTCTimestamp(startStr);
-            final TestClock testClock = new TestClock(start, ColumnType.TIMESTAMP_MICRO);
+            final TestMicroClock testClock = new TestMicroClock(start);
 
             final String firstExpected = "sym\tprice\tts\n" +
                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
@@ -887,7 +888,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             final String startStr = "2024-12-12T00:00:00.000000Z";
             final long start = TimestampFormatUtils.parseUTCTimestamp(startStr);
             // Set the clock to an earlier timestamp.
-            final TestClock testClock = new TestClock(start - Timestamps.DAY_MICROS, ColumnType.TIMESTAMP_MICRO);
+            final TestMicroClock testClock = new TestMicroClock(start - Timestamps.DAY_MICROS);
 
             // Timer refresh should not kick in during the first server start.
             final String firstExpected = "sym\tprice\tts\n";
@@ -960,7 +961,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         serverMain.ddl(sql);
     }
 
-    private static Bootstrap newBootstrapWithClock(Clock microsecondClock, Map<String, String> envs) {
+    private static Bootstrap newBootstrapWithClock(MicrosecondClock microsecondClock, Map<String, String> envs) {
         Map<String, String> env = new HashMap<>(System.getenv());
         env.putAll(envs);
         return new Bootstrap(
@@ -973,7 +974,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 getServerMainArgs()
         ) {
             @Override
-            public Clock getMicrosecondClock() {
+            public MicrosecondClock getMicrosecondClock() {
                 return microsecondClock != null ? microsecondClock : super.getMicrosecondClock();
             }
         };
@@ -992,20 +993,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     }
 
     @NotNull
-    private static TestServerMain startMainPortsDisabled(Clock microsecondClock, String... extraEnvs) {
+    private static TestServerMain startMainPortsDisabled(MicrosecondClock microsecondClock, String... extraEnvs) {
         assert extraEnvs.length % 2 == 0;
         ((MicrosTimestampDriver) (MicrosTimestampDriver.INSTANCE)).setTicker(microsecondClock);
-        ((NanosTimestampDriver) (NanosTimestampDriver.INSTANCE)).setTicker(new Clock() {
-            @Override
-            public int getClockTimestampType() {
-                return ColumnType.TIMESTAMP_NANO;
-            }
-
-            @Override
-            public long getTicks() {
-                return NanosTimestampDriver.INSTANCE.fromMicros(microsecondClock.getTicks());
-            }
-        });
+        ((NanosTimestampDriver) (NanosTimestampDriver.INSTANCE)).setTicker((NanosecondClock) () -> NanosTimestampDriver.INSTANCE.fromMicros(microsecondClock.getTicks()));
 
         final String[] disablePortsEnvs = new String[]{
                 PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
@@ -1033,7 +1024,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         return startWithEnvVariables0(null, envs);
     }
 
-    private static TestServerMain startWithEnvVariables0(Clock microsecondClock, String... envs) {
+    private static TestServerMain startWithEnvVariables0(MicrosecondClock microsecondClock, String... envs) {
         assert envs.length % 2 == 0;
 
         Map<String, String> envMap = new HashMap<>();

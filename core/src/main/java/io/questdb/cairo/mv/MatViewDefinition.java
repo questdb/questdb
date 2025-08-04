@@ -43,7 +43,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
@@ -620,11 +619,7 @@ public class MatViewDefinition implements Mutable {
         }
 
         if (timeZone != null) {
-            try {
-                this.rules = baseTableTimestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone);
-            } catch (NumericException e) {
-                throw CairoException.critical(0).put("invalid timezone: ").put(timeZone);
-            }
+            this.rules = baseTableTimestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone);
         } else {
             this.rules = null;
         }
@@ -661,11 +656,7 @@ public class MatViewDefinition implements Mutable {
         this.periodDelay = periodDelay;
         this.periodDelayUnit = periodDelayUnit;
         if (timerTimeZone != null) {
-            try {
-                this.timerRules = baseTableTimestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);
-            } catch (NumericException e) {
-                throw CairoException.critical(0).put("invalid timer timezone: ").put(timerTimeZone);
-            }
+            this.timerRules = baseTableTimestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);
         } else {
             this.timerRules = null;
         }
