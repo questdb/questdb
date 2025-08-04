@@ -1159,7 +1159,7 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     null,
                     false,
-                    true
+                    false
             );
         });
     }
