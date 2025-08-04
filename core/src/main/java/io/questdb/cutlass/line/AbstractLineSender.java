@@ -108,7 +108,6 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         put(keyId);
         putAsciiInternal('\n');
         sendAll();
-        System.out.println(Thread.currentThread().getName() + " sent all authentication data, waiting for challenge...");
 
         byte[] challengeBytes = receiveChallengeBytes();
         byte[] signature = signAndEncode(privateKey, challengeBytes);
@@ -378,7 +377,6 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 break;
             }
             n += rc;
-            System.out.println(Thread.currentThread().getName() + " received " + rc + " bytes of challenge data, no EOL");
             if (n == capacity) {
                 close();
                 throw new LineSenderException("challenge did not fit into buffer");
