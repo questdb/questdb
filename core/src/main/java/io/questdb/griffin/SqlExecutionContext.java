@@ -123,9 +123,13 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     long getNanosecondTimestamp();
 
-    long getNow();
-
-    int getNowTimestampType();
+    /**
+     * Gets the current timestamp with specified precision.
+     *
+     * @param timestampType the timestamp precision type (micros or nanos)
+     * @return current timestamp value in the specified precision
+     */
+    long getNow(int timestampType);
 
     QueryFutureUpdateListener getQueryFutureUpdateListener();
 

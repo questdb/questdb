@@ -1364,6 +1364,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long toNanos(long timestamp) {
+        return timestamp == Numbers.LONG_NULL ? timestamp : timestamp * Timestamps.MICRO_NANOS;
+    }
+
+    @Override
     public long toNanosScale() {
         return Timestamps.MICRO_NANOS;
     }

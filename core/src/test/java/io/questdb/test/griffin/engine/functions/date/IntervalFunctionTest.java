@@ -87,9 +87,9 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             execute("CREATE TABLE x (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WAL;");
             // should have interval scans despite use of function
             // due to optimisation step to convert it to a constant
-            long today = today(sqlExecutionContext.getNow());
-            long tomorrow = tomorrow(sqlExecutionContext.getNow());
-            long yesterday = yesterday(sqlExecutionContext.getNow());
+            long today = today(sqlExecutionContext.getNow(ColumnType.TIMESTAMP_MICRO));
+            long tomorrow = tomorrow(sqlExecutionContext.getNow(ColumnType.TIMESTAMP_MICRO));
+            long yesterday = yesterday(sqlExecutionContext.getNow(ColumnType.TIMESTAMP_MICRO));
             long tomorrowAndOne = Timestamps.addDays(tomorrow, 1);
             long todayAndOne = Timestamps.addDays(today, 1);
 
@@ -327,8 +327,8 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     @Test
     public void testToday1() throws Exception {
         assertMemoryLeak(() -> {
-            long todayStart = today(sqlExecutionContext.getNow());
-            long todayEnd = tomorrow(sqlExecutionContext.getNow()) - 1;
+            long todayStart = today(sqlExecutionContext.getNow(ColumnType.TIMESTAMP_MICRO));
+            long todayEnd = tomorrow(sqlExecutionContext.getNow(ColumnType.TIMESTAMP_MICRO)) - 1;
             final Interval interval = new Interval(todayStart, todayEnd);
             assertSql("today\n" + intervalAsString(interval, ColumnType.INTERVAL_TIMESTAMP_MICRO) + "\n", "select today()");
         });
@@ -378,7 +378,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     @Test
     public void testTomorrow() throws Exception {
         assertMemoryLeak(() -> {
-            long tomorrowStart = tomorrow(sqlExecutionContext.getNow());
+            long tomorrowStart = tomorrow(sqlExecutionContext.getNow(ColumnType.TIMESTAMP_MICRO));
             long tomorrowEnd = Timestamps.addDays(tomorrowStart, 1) - 1;
             final Interval interval = new Interval(tomorrowStart, tomorrowEnd);
             assertSql("tomorrow\n" + intervalAsString(interval, ColumnType.INTERVAL_TIMESTAMP_MICRO) + "\n", "select tomorrow()");
@@ -429,8 +429,8 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     @Test
     public void testYesterday() throws Exception {
         assertMemoryLeak(() -> {
-            long yesterdayStart = yesterday(sqlExecutionContext.getNow());
-            long yesterdayEnd = today(sqlExecutionContext.getNow()) - 1;
+            long yesterdayStart = yesterday(sqlExecutionContext.getNow(ColumnType.TIMESTAMP_MICRO));
+            long yesterdayEnd = today(sqlExecutionContext.getNow(ColumnType.TIMESTAMP_MICRO)) - 1;
             final Interval interval = new Interval(yesterdayStart, yesterdayEnd);
             assertSql("yesterday\n" + intervalAsString(interval, ColumnType.INTERVAL_TIMESTAMP_MICRO) + "\n", "select yesterday()");
         });

@@ -120,13 +120,8 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public long getNow() {
+    public long getNow(int timestampType) {
         return 0L;
-    }
-
-    @Override
-    public int getNowTimestampType() {
-        return ColumnType.TIMESTAMP_MICRO;
     }
 
     @Override

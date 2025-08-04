@@ -56,7 +56,7 @@ public class NowFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(sqlExecutionContext.getNowTimestampType());
+        return new Func(configuration.getDefaultTimestampType());
     }
 
     private static class Func extends TimestampFunction implements Function {
@@ -73,7 +73,7 @@ public class NowFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            now = executionContext.getNow();
+            now = executionContext.getNow(getType());
         }
 
         @Override

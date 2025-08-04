@@ -467,6 +467,8 @@ public interface TimestampDriver {
 
     long toMicros(long timestamp);
 
+    long toNanos(long timestamp);
+
     long toNanosScale();
 
     long toSeconds(long timestamp);

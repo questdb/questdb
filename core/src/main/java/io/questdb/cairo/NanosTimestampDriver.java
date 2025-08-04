@@ -1365,6 +1365,11 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long toNanos(long timestamp) {
+        return timestamp;
+    }
+
+    @Override
     public long toNanosScale() {
         return 1;
     }

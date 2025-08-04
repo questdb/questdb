@@ -89,7 +89,7 @@ public abstract class AbstractDayIntervalFunction extends IntervalFunction imple
         // the intervalType here must remain consistent with the intervalType used during function creation.
         intervalType = executionContext.getIntervalFunctionType();
         timestampDriver = ColumnType.getTimestampDriverByIntervalType(intervalType);
-        final long now = timestampDriver.from(executionContext.getNow(), executionContext.getNowTimestampType());
+        final long now = executionContext.getNow(timestampDriver.getColumnType());
         final long start = timestampDriver.dayStart(now, shiftFromToday());
         final long end = timestampDriver.dayEnd(start);
         interval.of(start, end);
