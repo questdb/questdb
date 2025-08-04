@@ -370,6 +370,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long openRONoCache(LPSZ path) {
+        return Files.openRONoCache(path);
+    }
+
+    @Override
     public long openRW(LPSZ name, int opts) {
         return Files.openRW(name, opts);
     }
@@ -512,11 +517,6 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public long write(long fd, long address, long len, long offset) {
         return Files.write(fd, address, len, offset);
-    }
-
-    @Override
-    public long openRODir(LPSZ path) {
-        return Files.openRODir(path);
     }
 
     private long computeMapPageSize() {

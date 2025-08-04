@@ -181,12 +181,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRWOpts
     return open((const char *) lpszName, O_CREAT | O_RDWR | opts, 0644);
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRWOptsNoCreate
-        (JNIEnv *e, jclass cl, jlong lpszName, jint opts) {
-    umask(2);
-    return open((const char *) lpszName, O_RDWR | opts, 0644);
-}
-
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openAppend
         (JNIEnv *e, jclass cl, jlong lpszName) {
     umask(2);

@@ -412,7 +412,7 @@ public final class Files {
         }
     }
 
-    public static long openRODir(LPSZ path) {
+    public static long openRONoCache(LPSZ path) {
         return fdCache.createUniqueFdNonCached(openRO(path.ptr()));
     }
 

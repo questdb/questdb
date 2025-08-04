@@ -614,18 +614,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRWOpts
     ));
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRWOptsNoCreate
-        (JNIEnv *e, jclass cl, jlong lpszName, jlong opts) {
-    // consider using FILE_FLAG_WRITE_THROUGH
-    return HANDLE_TO_FD(openUtf8(
-            lpszName,
-            GENERIC_WRITE | GENERIC_READ,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            // Ignore any other flags than OPEN_EXISTING and OPEN_ALWAYS, Windows does not support anything else
-            opts & (OPEN_EXISTING | OPEN_ALWAYS)
-    ));
-}
-
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openAppend
         (JNIEnv *e, jclass cl, jlong lpszName) {
     HANDLE handle = openUtf8(

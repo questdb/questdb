@@ -134,6 +134,8 @@ public interface FilesFacade {
 
     long openRO(LPSZ name);
 
+    long openRONoCache(LPSZ path);
+
     long openRW(LPSZ name, int opts);
 
     long openRWNoCache(LPSZ name, int opts);
@@ -179,6 +181,4 @@ public interface FilesFacade {
     void walk(Path src, FindVisitor func);
 
     long write(long fd, long address, long len, long offset);
-
-    long openRODir(LPSZ path);
 }

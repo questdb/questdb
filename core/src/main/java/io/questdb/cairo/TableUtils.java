@@ -493,7 +493,7 @@ public final class TableUtils {
             int tableId,
             CharSequence txnFileName
     ) {
-        final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRODir(ff, path.trimTo(rootLen).$(), LOG) : 0;
+        final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRONoCache(ff, path.trimTo(rootLen).$(), LOG) : 0;
         try (MemoryMARW mem = memory) {
             mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             mem.jumpTo(0);
@@ -1298,8 +1298,8 @@ public final class TableUtils {
         throw CairoException.critical(errno).put("could not open read-only [file=").put(path).put(']');
     }
 
-    public static long openRODir(FilesFacade ff, LPSZ path, Log log) {
-        final long fd = ff.openRODir(path);
+    public static long openRONoCache(FilesFacade ff, LPSZ path, Log log) {
+        final long fd = ff.openRONoCache(path);
         if (fd > -1) {
             log.debug().$("open [file=").$(path).$(", fd=").$(fd).I$();
             return fd;

@@ -362,6 +362,14 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     @Override
+    public long openRONoCache(LPSZ path) {
+        if (checkForFailure()) {
+            return -1;
+        }
+        return ff.openRONoCache(path);
+    }
+
+    @Override
     public long openRW(LPSZ name, int opts) {
         if (checkForFailure()) {
             return -1;
@@ -539,14 +547,6 @@ public class FailureFileFacade implements FilesFacade {
             return -1;
         }
         return ff.write(fd, address, len, offset);
-    }
-
-    @Override
-    public long openRODir(LPSZ path) {
-        if (checkForFailure()) {
-            return -1;
-        }
-        return ff.openRODir(path);
     }
 
     private boolean checkForFailure() {
