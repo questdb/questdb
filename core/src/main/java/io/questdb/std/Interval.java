@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
@@ -85,7 +86,7 @@ public class Interval implements Mutable {
             if (intervalType == ColumnType.INTERVAL_RAW) {
                 sink.put(lo);
             } else {
-                sink.put(ColumnType.getTimestampDriverByIntervalType(intervalType).toString(lo));
+                sink.put(IntervalUtils.getTimestampDriverByIntervalType(intervalType).toString(lo));
             }
             sink.putAscii('\'');
         } else {
@@ -97,7 +98,7 @@ public class Interval implements Mutable {
             if (intervalType == ColumnType.INTERVAL_RAW) {
                 sink.put(hi);
             } else {
-                sink.put(ColumnType.getTimestampDriverByIntervalType(intervalType).toString(hi));
+                sink.put(IntervalUtils.getTimestampDriverByIntervalType(intervalType).toString(hi));
             }
             sink.putAscii('\'');
         } else {

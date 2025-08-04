@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
@@ -66,7 +67,7 @@ public class IntervalFunctionFactory implements FunctionFactory {
         int rightTimestampType = ColumnType.getTimestampType(hiFunc.getType(), configuration);
         int timestampType = Math.max(leftTimestampType, rightTimestampType);
         TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
-        int intervalType = ColumnType.getIntervalType(timestampType);
+        int intervalType = IntervalUtils.getIntervalType(timestampType);
         if (loFunc.isConstant() && hiFunc.isConstant()) {
             long lo = driver.from(loFunc.getTimestamp(null), leftTimestampType);
             long hi = driver.from(hiFunc.getTimestamp(null), rightTimestampType);

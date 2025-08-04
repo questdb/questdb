@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
@@ -101,7 +102,7 @@ public class InTimestampIntervalFunctionFactory implements FunctionFactory {
             getLeft().init(symbolTableSource, executionContext);
             int oldIntervalType = executionContext.getIntervalFunctionType();
             try {
-                executionContext.setIntervalFunctionType(ColumnType.getIntervalType(leftTimestampType));
+                executionContext.setIntervalFunctionType(IntervalUtils.getIntervalType(leftTimestampType));
                 getRight().init(symbolTableSource, executionContext);
             } finally {
                 executionContext.setIntervalFunctionType(oldIntervalType);

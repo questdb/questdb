@@ -24,12 +24,12 @@
 
 package io.questdb.griffin.engine.functions.date;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -56,7 +56,7 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         UnaryFunction.super.init(symbolTableSource, executionContext);
         intervalType = executionContext.getIntervalFunctionType();
-        this.timestampDriver = ColumnType.getTimestampDriverByIntervalType(intervalType);
+        this.timestampDriver = IntervalUtils.getTimestampDriverByIntervalType(intervalType);
     }
 
     @Override

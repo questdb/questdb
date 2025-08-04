@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
 import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceIntHashMap;
@@ -663,7 +664,7 @@ public final class WhereClauseParser implements Mutable {
         }
         int oldIntervalFuncType = executionContext.getIntervalFunctionType();
         try {
-            executionContext.setIntervalFunctionType(ColumnType.getIntervalType(timestampDriver.getColumnType()));
+            executionContext.setIntervalFunctionType(IntervalUtils.getIntervalType(timestampDriver.getColumnType()));
             if (in.paramCount == 2) {
                 ExpressionNode inArg = in.rhs;
                 if (inArg.type == ExpressionNode.CONSTANT) {

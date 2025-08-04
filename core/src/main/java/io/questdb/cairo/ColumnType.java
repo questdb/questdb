@@ -125,6 +125,11 @@ public final class ColumnType {
     public static final int INTERVAL_TIMESTAMP_NANO = INTERVAL | 1 << 18;
     public static final int TIMESTAMP_MICRO = TIMESTAMP;
     public static final int TIMESTAMP_NANO = 1 << 18 | TIMESTAMP;
+    // Timestamp type priority lookup table: [type][priority]
+    private static final int[][] TIMESTAMP_TYPE_PRIORITY_TABLE = {
+            {TIMESTAMP_MICRO, 1},
+            {TIMESTAMP_NANO, 2}
+    };
     public static final int VARCHAR_AUX_SHL = 4;
     // column type version as written to the metadata file
     public static final int VERSION = 426;
@@ -248,16 +253,13 @@ public final class ColumnType {
         return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
     }
 
-    public static int getIntervalType(int timestampType) {
-        assert isTimestamp(timestampType);
-        switch (timestampType) {
-            case TIMESTAMP_MICRO:
-                return INTERVAL_TIMESTAMP_MICRO;
-            case TIMESTAMP_NANO:
-                return INTERVAL_TIMESTAMP_NANO;
-            default:
-                return UNDEFINED;
-        }
+    public static int getHigherPrecisionTimestampType(int left, int right, CairoConfiguration configuration) {
+        int leftTimestampType = getTimestampType(left, configuration);
+        int rightTimestampType = getTimestampType(right, configuration);
+        int leftPriority = getTimestampTypePriority(leftTimestampType);
+        int rightPriority = getTimestampTypePriority(rightTimestampType);
+        // Return the timestamp type with higher precision using explicit priority
+        return leftPriority >= rightPriority ? leftTimestampType : rightTimestampType;
     }
 
     public static TimestampDriver getTimestampDriver(int timestampType) {
@@ -278,21 +280,6 @@ public final class ColumnType {
         }
     }
 
-    public static TimestampDriver getTimestampDriverByIntervalType(int intervalType) {
-        assert intervalType == INTERVAL_TIMESTAMP_MICRO || intervalType == INTERVAL_TIMESTAMP_NANO;
-        if (intervalType == INTERVAL_TIMESTAMP_MICRO) {
-            return MicrosTimestampDriver.INSTANCE;
-        } else {
-            return NanosTimestampDriver.INSTANCE;
-        }
-    }
-
-    public static int getTimestampType(int left, int right, CairoConfiguration configuration) {
-        left = getTimestampType(left, configuration);
-        right = getTimestampType(right, configuration);
-        return Math.max(left, right);
-    }
-
     /**
      * Determines the (implicit) conversion rule from the other columnTypes to the Timestamp type.
      * <p>
@@ -306,7 +293,7 @@ public final class ColumnType {
      * - TIMESTAMP types: returned as-is to preserve existing precision
      * - DATE types: converted to {@link #TIMESTAMP_MICRO}
      * - String types (VARCHAR, STRING, SYMBOL): converted to {@link #TIMESTAMP_NANO} for maximum precision when parsing timestamp strings
-     * - All other types: fall back to the configuration's default timestamp type
+     * - All other types(Long, Int and so on): fall back to the configuration's default timestamp type
      */
     public static int getTimestampType(int left, CairoConfiguration configuration) {
         switch (tagOf(left)) {
@@ -320,19 +307,6 @@ public final class ColumnType {
                 return ColumnType.TIMESTAMP_NANO;
             default:
                 return configuration.getDefaultTimestampType();
-        }
-    }
-
-    public static int getTimestampTypeByIntervalType(int intervalType) {
-        assert isInterval(intervalType);
-        switch (intervalType) {
-            case INTERVAL_RAW:
-            case INTERVAL_TIMESTAMP_MICRO:
-                return TIMESTAMP_MICRO;
-            case INTERVAL_TIMESTAMP_NANO:
-                return TIMESTAMP_NANO;
-            default:
-                return ColumnType.UNDEFINED;
         }
     }
 
@@ -604,6 +578,17 @@ public final class ColumnType {
 
     public static int typeOf(CharSequence name) {
         return nameTypeMap.get(name);
+    }
+
+    private static int getTimestampTypePriority(int timestampType) {
+        assert isTimestamp(timestampType);
+        switch (timestampType) {
+            case TIMESTAMP_MICRO:
+                return 1;
+            case TIMESTAMP_NANO:
+                return 2;
+        }
+        return 0;
     }
 
     private static boolean isArrayCast(int fromType, int toType) {

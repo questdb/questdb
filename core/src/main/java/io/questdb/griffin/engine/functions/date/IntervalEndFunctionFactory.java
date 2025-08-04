@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.date;
 
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -34,6 +33,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -53,7 +53,7 @@ public class IntervalEndFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) {
         Function arg = args.getQuick(0);
-        return new Func(arg, ColumnType.getTimestampTypeByIntervalType(arg.getType()));
+        return new Func(arg, IntervalUtils.getTimestampTypeByIntervalType(arg.getType()));
     }
 
     private static class Func extends TimestampFunction implements UnaryFunction {

@@ -24,6 +24,9 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Interval;
@@ -179,6 +182,40 @@ public final class IntervalUtils {
                         intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)
                 )
         );
+    }
+
+    public static int getIntervalType(int timestampType) {
+        assert ColumnType.isTimestamp(timestampType);
+        switch (timestampType) {
+            case ColumnType.TIMESTAMP_MICRO:
+                return ColumnType.INTERVAL_TIMESTAMP_MICRO;
+            case ColumnType.TIMESTAMP_NANO:
+                return ColumnType.INTERVAL_TIMESTAMP_NANO;
+            default:
+                return ColumnType.UNDEFINED;
+        }
+    }
+
+    public static TimestampDriver getTimestampDriverByIntervalType(int intervalType) {
+        assert intervalType == ColumnType.INTERVAL_TIMESTAMP_MICRO || intervalType == ColumnType.INTERVAL_TIMESTAMP_NANO;
+        if (intervalType == ColumnType.INTERVAL_TIMESTAMP_MICRO) {
+            return MicrosTimestampDriver.INSTANCE;
+        } else {
+            return NanosTimestampDriver.INSTANCE;
+        }
+    }
+
+    public static int getTimestampTypeByIntervalType(int intervalType) {
+        assert ColumnType.isInterval(intervalType);
+        switch (intervalType) {
+            case ColumnType.INTERVAL_RAW:
+            case ColumnType.INTERVAL_TIMESTAMP_MICRO:
+                return ColumnType.TIMESTAMP_MICRO;
+            case ColumnType.INTERVAL_TIMESTAMP_NANO:
+                return ColumnType.TIMESTAMP_NANO;
+            default:
+                return ColumnType.UNDEFINED;
+        }
     }
 
     /**

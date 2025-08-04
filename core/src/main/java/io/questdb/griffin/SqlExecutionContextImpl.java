@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
@@ -102,7 +103,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         telemetry = cairoEngine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoOp;
         nowTimestampType = cairoConfiguration.getDefaultTimestampType();
-        intervalFunctionType = ColumnType.getIntervalType(nowTimestampType);
+        intervalFunctionType = IntervalUtils.getIntervalType(nowTimestampType);
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.simpleCircuitBreaker = new AtomicBooleanCircuitBreaker(cairoConfiguration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
