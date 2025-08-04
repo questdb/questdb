@@ -3061,10 +3061,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 queryRegistry.unregister(queryId, executionContext);
             }
         } finally {
-            for (int i = 0, n = tableWriters.size(); i < n; i++) {
-                tableWriters.getQuick(i).close();
-            }
-            tableWriters.clear();
+            Misc.freeObjListAndClear(tableWriters);
         }
         compiledQuery.ofTruncate();
     }
