@@ -38,6 +38,7 @@ import org.junit.Test;
 
 import java.util.HashMap;
 
+import static io.questdb.test.tools.TestUtils.assertEventually;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
@@ -88,7 +89,9 @@ public class SeqTxnMetricsTest extends AbstractCairoTest {
                 // Verify the kept table's tracker is properly initialized
                 TableToken token1 = engine.verifyTableName(toKeep);
                 SeqTxnTracker tracker1 = engine.getTableSequencerAPI().getTxnTracker(token1);
-                assertTrue("Survivor table's seq txn tracker should be initialized", tracker1.isInitialised());
+                assertEventually(() -> {
+                    assertTrue("Survivor table's seq txn tracker should be initialized", tracker1.isInitialised());
+                });
                 assertEquals(expectedSeqTxn, tracker1.getSeqTxn());
                 assertEquals(expectedSeqTxn, tracker1.getWriterTxn());
 
@@ -126,6 +129,7 @@ public class SeqTxnMetricsTest extends AbstractCairoTest {
                 // Get the txn counts for the table that will be dropped
                 TableToken tokenToDrop = engine.verifyTableName(tableToDrop);
                 SeqTxnTracker trackerToDrop = engine.getTableSequencerAPI().getTxnTracker(tokenToDrop);
+                assertTrue("table_to_drop's seq txn tracker should be initialized", trackerToDrop.isInitialised());
                 long seqTxnToBeDropped = trackerToDrop.getSeqTxn();
                 long writerTxnToBeDropped = trackerToDrop.getWriterTxn();
 
@@ -183,8 +187,10 @@ public class SeqTxnMetricsTest extends AbstractCairoTest {
                 TableToken token2 = engine.verifyTableName(table2);
                 SeqTxnTracker tracker1 = engine.getTableSequencerAPI().getTxnTracker(token1);
                 SeqTxnTracker tracker2 = engine.getTableSequencerAPI().getTxnTracker(token2);
-                assertTrue("Table1 tracker should be initialized", tracker1.isInitialised());
-                assertTrue("Table2 tracker should be initialized", tracker2.isInitialised());
+                assertEventually(() -> {
+                    assertTrue("Table1 tracker should be initialized", tracker1.isInitialised());
+                    assertTrue("Table2 tracker should be initialized", tracker2.isInitialised());
+                });
                 assertEquals(txnCount1, tracker1.getSeqTxn());
                 assertEquals(txnCount1, tracker1.getWriterTxn());
                 assertEquals(txnCount2, tracker2.getSeqTxn());
@@ -249,7 +255,7 @@ public class SeqTxnMetricsTest extends AbstractCairoTest {
                 execute(engine, "drop table " + toDrop);
 
                 SeqTxnTracker toKeepTracker = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName(toKeep));
-
+                assertTrue("table_to_keep's seq txn tracker should be initialized", toKeepTracker.isInitialised());
                 assertTrue("tracker's seq txn should be ahead of writer txn",
                         toKeepTracker.getSeqTxn() > toKeepTracker.getWriterTxn());
 
