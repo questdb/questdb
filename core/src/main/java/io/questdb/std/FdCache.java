@@ -64,7 +64,7 @@ public class FdCache {
             throw new IllegalStateException("fd " + fd + " is already closed!");
         }
 
-        int fdKind = (Numbers.decodeLowInt(fd) >>> 30) & 3;
+        int fdKind = (Numbers.decodeLowInt(fd) >>> 30) & 3; // Extract bits 30-31
         if (fdKind > 1) {
             // NON_CACHED. Simply close the underlying fd.
             int osFd = Numbers.decodeHighInt(fd);
@@ -81,16 +81,16 @@ public class FdCache {
         // Remove unique FD tracking.
         openFdMapByFd.removeAt(keyIndex);
 
-        if (fdCacheRecord.count == 1) {
+        fdCacheRecord.count--;
+        if (fdCacheRecord.count == 0) {
+            openFdMapByPath.remove(fdCacheRecord.path);
             int res = Files.close0(fdCacheRecord.osFd);
             if (res != 0) {
+                // If closing fails, we still decrement the open file count
                 return res;
             }
             OPEN_OS_FILE_COUNT.decrementAndGet();
         }
-
-        fdCacheRecord.count--;
-        removeFdCacheSafe(fdCacheRecord);
 
         return 0;
     }
@@ -135,8 +135,8 @@ public class FdCache {
                     openFdMapByPath.removeAt(cacheKeyByPath);
                 }
             }
+            OPEN_OS_FILE_COUNT.decrementAndGet();
         }
-        OPEN_OS_FILE_COUNT.decrementAndGet();
     }
 
     public synchronized long getOpenCachedFileCount() {
@@ -202,8 +202,16 @@ public class FdCache {
      * @return 0 on success, -1 on failure
      */
     public synchronized int rename(LPSZ oldName, LPSZ newName) {
-        openFdMapByPath.remove(oldName);
-        return Files.rename(oldName.ptr(), newName.ptr());
+        int keyIndex = openFdMapByPath.keyIndex(oldName);
+        int result = Files.rename(oldName.ptr(), newName.ptr());
+        if (result == 0 && keyIndex < 0) {
+            FdCacheRecord record = openFdMapByPath.valueAt(keyIndex);
+            openFdMapByPath.removeAt(keyIndex);
+            Utf8String path = Utf8String.newInstance(newName);
+            openFdMapByPath.put(path, record);
+            record.path = path;
+        }
+        return result;
     }
 
     /**
@@ -268,25 +276,12 @@ public class FdCache {
         return holder;
     }
 
-    private void removeFdCacheSafe(FdCacheRecord fdCacheRecord) {
-        if (fdCacheRecord.count == 0) {
-            int fdRecIndex = openFdMapByPath.keyIndex(fdCacheRecord.path);
-            if (fdRecIndex < 0) {
-                // If the record is the same object, we can remove it
-                if (openFdMapByPath.valueAt(fdRecIndex) == fdCacheRecord) {
-                    openFdMapByPath.removeAt(fdRecIndex);
-                }
-            }
-        }
-    }
-
     /**
      * Cache record holding file path, OS file descriptor, reference count, and mmap cache link.
      */
     private static class FdCacheRecord {
         private static final FdCacheRecord EMPTY = new FdCacheRecord(null, 0);
-
-        private final Utf8String path;
+        private Utf8String path;
         long mmapCacheFd;
         private int count;
         private int osFd;

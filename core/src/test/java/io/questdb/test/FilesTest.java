@@ -482,6 +482,21 @@ public class FilesTest {
     }
 
     @Test
+    public void testFdCache() {
+        for (int index = 0; index < 128; index++) {
+            int NON_CACHED = (2 << 30);
+            long fd = Numbers.encodeLowHighInts(index | NON_CACHED, 3342);
+            int fdKind = (Numbers.decodeLowInt(fd) >>> 30) & 3;
+            Assert.assertTrue(fdKind > 1);
+
+            int RO_MASK = 0;
+            fd = Numbers.encodeLowHighInts(index | RO_MASK, 78234);
+            fdKind = (Numbers.decodeLowInt(fd) >>> 30) & 3;
+            Assert.assertEquals(0, fdKind);
+        }
+    }
+
+    @Test
     public void testHardLinkAsciiName() throws Exception {
         assertHardLinkPreservesFileContent("some_column.d");
     }
