@@ -2517,6 +2517,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             if (suffixType == O3_BLOCK_DATA && srcDataTop > 0) {
                 suffixHi -= srcDataTop;
                 suffixLo -= srcDataTop;
+                if (suffixHi < 0) {
+                    suffixType = O3_BLOCK_NONE;
+                }
             }
 
             if (indexBlockCapacity > -1) {
