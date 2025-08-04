@@ -87,7 +87,7 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
                 protected void setupWalApplyJob(
                         WorkerPool workerPool,
                         CairoEngine engine,
-                        int sharedWorkerCount
+                        int sharedQueryWorkerCount
                 ) {
                 }
             }) {

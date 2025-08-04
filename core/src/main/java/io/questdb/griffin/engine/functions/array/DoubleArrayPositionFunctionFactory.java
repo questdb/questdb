@@ -101,8 +101,8 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
 
     static class ArrayIndexOfFunction extends IntFunction implements BinaryFunction {
 
-        protected final Function arrayArg;
-        protected final Function valueArg;
+        private final Function arrayArg;
+        private final Function valueArg;
 
         ArrayIndexOfFunction(Function arrayArg, Function valueArg) {
             this.arrayArg = arrayArg;
@@ -138,8 +138,8 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
 
     static class ArrayPositionConstFunction extends IntFunction implements UnaryFunction {
 
-        protected final Function arrayArg;
-        protected final double value;
+        private final Function arrayArg;
+        private final double value;
 
         ArrayPositionConstFunction(Function arrayArg, double value) {
             this.arrayArg = arrayArg;
@@ -169,7 +169,7 @@ public class DoubleArrayPositionFunctionFactory implements FunctionFactory {
 
     static class ArrayPositionConstNullFunction extends IntFunction implements UnaryFunction {
 
-        protected final Function arrayArg;
+        private final Function arrayArg;
 
         ArrayPositionConstNullFunction(Function arrayArg) {
             this.arrayArg = arrayArg;

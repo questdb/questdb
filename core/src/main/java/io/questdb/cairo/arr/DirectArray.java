@@ -57,7 +57,6 @@ public final class DirectArray extends MutableArray implements Mutable {
         this.configuration = configuration;
     }
 
-
     public DirectArray() {
         this.flatView = new BorrowedFlatArrayView();
         this.configuration = null;
@@ -96,6 +95,21 @@ public final class DirectArray extends MutableArray implements Mutable {
         shape.clear();
         strides.clear();
         assert ptr == 0;
+    }
+
+    /**
+     * Copies the type and shape from the source array, and then calls
+     * {@link #startMemoryA()}. The returned {@code MemoryA} is ready to be populated
+     * by as many elements as there are in the source array, of the same type.
+     *
+     * @param sourceArray the source array
+     * @return memory ready to get populated
+     */
+    public MemoryA copyShapeAndStartMemoryA(ArrayView sourceArray) {
+        setType(sourceArray.getType());
+        copyShapeFrom(sourceArray);
+        applyShape();
+        return startMemoryA();
     }
 
     public IntList getShape() {
