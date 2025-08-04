@@ -125,11 +125,6 @@ public final class ColumnType {
     public static final int INTERVAL_TIMESTAMP_NANO = INTERVAL | 1 << 18;
     public static final int TIMESTAMP_MICRO = TIMESTAMP;
     public static final int TIMESTAMP_NANO = 1 << 18 | TIMESTAMP;
-    // Timestamp type priority lookup table: [type][priority]
-    private static final int[][] TIMESTAMP_TYPE_PRIORITY_TABLE = {
-            {TIMESTAMP_MICRO, 1},
-            {TIMESTAMP_NANO, 2}
-    };
     public static final int VARCHAR_AUX_SHL = 4;
     // column type version as written to the metadata file
     public static final int VERSION = 426;

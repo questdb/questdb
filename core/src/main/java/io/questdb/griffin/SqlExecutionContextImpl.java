@@ -78,7 +78,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private MicrosecondClock microClock;
     private long nowMicros;
     private long nowNanos;
-    // Timestamp type for now() function, used by NowFunctionFactory
+    // Timestamp type only for now() function, used by NowFunctionFactory
     private int nowTimestampType;
     private boolean parallelFilterEnabled;
     private boolean parallelGroupByEnabled;

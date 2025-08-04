@@ -65,7 +65,7 @@ public class IntervalFunctionFactory implements FunctionFactory {
         final Function hiFunc = args.getQuick(1);
         int leftTimestampType = ColumnType.getTimestampType(loFunc.getType(), configuration);
         int rightTimestampType = ColumnType.getTimestampType(hiFunc.getType(), configuration);
-        int timestampType = Math.max(leftTimestampType, rightTimestampType);
+        int timestampType = ColumnType.getHigherPrecisionTimestampType(leftTimestampType, rightTimestampType, configuration);
         TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         int intervalType = IntervalUtils.getIntervalType(timestampType);
         if (loFunc.isConstant() && hiFunc.isConstant()) {
@@ -85,7 +85,7 @@ public class IntervalFunctionFactory implements FunctionFactory {
         }
         if (leftTimestampType == rightTimestampType) {
             return new Func(loFunc, hiFunc, intervalType, driver);
-        } else if (leftTimestampType < rightTimestampType) {
+        } else if (leftTimestampType != timestampType) {
             return new LeftConvert(loFunc, hiFunc, intervalType, driver, leftTimestampType);
         } else {
             return new RightConvert(loFunc, hiFunc, intervalType, driver, rightTimestampType);
