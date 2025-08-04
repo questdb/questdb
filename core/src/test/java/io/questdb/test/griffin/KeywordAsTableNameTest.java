@@ -130,8 +130,8 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             assertException("rename table \"from\" to to", 23, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"to\"");
             execute("rename table \"from\" to \"to\"");
             assertSql(
-                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
-                            "1\tto\t\tNONE\t1000\t300000000\tfalse\tto~\tfalse\t0\tHOUR\tfalse\n",
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type\n" +
+                            "1\tto\t\tNONE\t1000\t300000000\tfalse\tto~\tfalse\t0\tHOUR\tT\n",
                     "tables()"
             );
         });

@@ -155,6 +155,12 @@ class AbstractViewTest extends AbstractCairoTest {
         assertExceptionNoLeakCheck("COMPILE VIEW " + viewName, 14, expectedErrorMessage);
     }
 
+    void createMatView(String matViewName, String matViewQuery) throws SqlException {
+        execute("CREATE MATERIALIZED VIEW " + matViewName + " AS (" + matViewQuery + ") PARTITION BY DAY");
+        drainViewQueue();
+        drainWalAndMatViewQueues();
+    }
+
     void createTable(String tableName) throws SqlException {
         execute(
                 "create table if not exists " + tableName +

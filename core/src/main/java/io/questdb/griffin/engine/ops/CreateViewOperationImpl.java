@@ -47,28 +47,10 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-/**
- * Create view operation relies on implicit create table as select operation.
- * <p>
- * The supported clauses are the following:
- * - index
- * - timestamp
- * - partition by
- * - ttl
- * - in volume
- * <p>
- * Other than that, at the execution phase the query is compiled and optimized
- * and validated. All columns are added to the create table operation
- * and key SAMPLE BY columns and timestamp are marked as dedup keys. Sampling interval
- * and unit are also parsed at this stage as we want to support GROUP BY timestamp_floor(ts)
- * queries.
- */
 public class CreateViewOperationImpl implements CreateViewOperation {
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
     private final String sqlText;
     private final ViewDefinition viewDefinition = new ViewDefinition();
-
-    // TODO: remove createTableOperation and delegated methods, they should throw UnsupportedOperationException?
     private CreateTableOperationImpl createTableOperation;
 
     public CreateViewOperationImpl(
@@ -81,7 +63,6 @@ public class CreateViewOperationImpl implements CreateViewOperation {
         final ObjList<CharSequence> deps = viewDefinition.getDependencies();
         for (int i = 0, n = dependencies.size(); i < n; i++) {
             final CharSequence tableName = dependencies.getQuick(i);
-            // todo: use an object pool instead of toString()?
             deps.add(tableName.toString());
         }
     }
@@ -126,12 +107,12 @@ public class CreateViewOperationImpl implements CreateViewOperation {
 
     @Override
     public int getMaxUncommittedRows() {
-        return createTableOperation.getMaxUncommittedRows();
+        return -1;
     }
 
     @Override
     public long getO3MaxLag() {
-        return createTableOperation.getO3MaxLag();
+        return -1;
     }
 
     @Override

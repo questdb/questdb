@@ -135,10 +135,10 @@ import java.util.stream.Stream;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-import static io.questdb.test.tools.TestUtils.*;
 import static io.questdb.test.tools.TestUtils.assertEquals;
-import static org.junit.Assert.*;
+import static io.questdb.test.tools.TestUtils.*;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.*;
 
 /**
  * This class contains tests which replay PGWIRE traffic.
@@ -3088,8 +3088,8 @@ if __name__ == "__main__":
             try (Statement stmt = connection.createStatement()) {
                 stmt.execute("create table x as (select x::timestamp as ts from long_sequence(100)) timestamp (ts)");
                 try (ResultSet rs = stmt.executeQuery("tables();")) {
-                    assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]\n" +
-                                    "2,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
+                    assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],table_type[CHAR]\n" +
+                                    "2,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,T\n",
                             sink, rs
                     );
                 }
@@ -3099,8 +3099,8 @@ if __name__ == "__main__":
                 stmt.execute("create table x as (select x::timestamp as ts from long_sequence(100)) timestamp (ts)");
 
                 try (ResultSet rs = stmt.executeQuery("tables();")) {
-                    assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]\n" +
-                                    "3,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
+                    assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],table_type[CHAR]\n" +
+                                    "3,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,T\n",
                             sink, rs
                     );
                 }

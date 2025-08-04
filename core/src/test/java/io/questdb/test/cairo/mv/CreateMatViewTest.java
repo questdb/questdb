@@ -833,6 +833,15 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery0("ts\tavg\n", "test", "ts");
             assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 30, 's', null, null);
             assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 30, 's', null, null);
+
+            assertQuery(
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type\n" +
+                            "2\ttest\tts\tWEEK\t1000\t-1\ttrue\ttest~2\tfalse\t0\tHOUR\tM\n" +
+                            "1\ttable1\tts\tDAY\t1000\t300000000\ttrue\ttable1~1\tfalse\t0\tHOUR\tT\n",
+                    "tables()",
+                    false,
+                    false
+            );
         });
     }
 
@@ -853,6 +862,15 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertFalse(metadata.isDedupKey(2));
                 assertEquals(0, metadata.getTtlHoursOrMonths());
             }
+
+            assertQuery(
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type\n" +
+                            "2\ttest\tts\tWEEK\t1000\t-1\ttrue\ttest~2\tfalse\t0\tHOUR\tM\n" +
+                            "1\ttable1\tts\tDAY\t1000\t300000000\ttrue\ttable1~1\tfalse\t0\tHOUR\tT\n",
+                    "tables()",
+                    false,
+                    false
+            );
         });
     }
 
