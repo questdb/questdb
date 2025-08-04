@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.AtomicIntList;
 import io.questdb.std.BoolList;
 import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.OffHeapCharSequenceIntHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
@@ -65,7 +66,7 @@ class WalEventWriter implements Closeable {
     private long startOffset = 0;
     private BoolList symbolMapNullFlags;
     private int txn = 0;
-    private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
+    private ObjList<OffHeapCharSequenceIntHashMap> txnSymbolMaps;
 
     WalEventWriter(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -204,7 +205,7 @@ class WalEventWriter implements Closeable {
     private void writeSymbolMapDiffs() {
         final int columns = txnSymbolMaps.size();
         for (int columnIndex = 0; columnIndex < columns; columnIndex++) {
-            final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(columnIndex);
+            final OffHeapCharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(columnIndex);
             if (symbolMap != null) {
                 final int initialCount = initialSymbolCounts.get(columnIndex);
                 if (initialCount > 0 || (initialCount == 0 && symbolMap.size() > 0)) {
@@ -382,7 +383,7 @@ class WalEventWriter implements Closeable {
         return txn++;
     }
 
-    void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, AtomicIntList initialSymbolCounts, BoolList symbolMapNullFlags) {
+    void of(ObjList<OffHeapCharSequenceIntHashMap> txnSymbolMaps, AtomicIntList initialSymbolCounts, BoolList symbolMapNullFlags) {
         this.txnSymbolMaps = txnSymbolMaps;
         this.initialSymbolCounts = initialSymbolCounts;
         this.symbolMapNullFlags = symbolMapNullFlags;

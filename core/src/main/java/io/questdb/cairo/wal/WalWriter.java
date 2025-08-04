@@ -70,6 +70,7 @@ import io.questdb.std.AtomicIntList;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BoolList;
 import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.OffHeapCharSequenceIntHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -130,7 +131,7 @@ public class WalWriter implements TableWriterAPI {
     private final TableSequencerAPI sequencer;
     private final BoolList symbolMapNullFlags = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
-    private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
+    private final ObjList<OffHeapCharSequenceIntHashMap> symbolMaps = new ObjList<>();
     private final int timestampIndex;
     private final ObjList<Utf8StringIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final Uuid uuid = new Uuid();
@@ -311,6 +312,7 @@ public class WalWriter implements TableWriterAPI {
                 doClose(walDirectoryPolicy.truncateFilesOnClose());
             }
         }
+        Misc.freeObjList(symbolMaps);
     }
 
     @Override
@@ -1097,7 +1099,7 @@ public class WalWriter implements TableWriterAPI {
         initialSymbolCounts.extendAndSet(columnWriterIndex, 0);
         localSymbolIds.extendAndSet(columnWriterIndex, 0);
         symbolMapNullFlags.extendAndSet(columnWriterIndex, false);
-        symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
+        symbolMaps.extendAndSet(columnWriterIndex, new OffHeapCharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
         utf8SymbolMaps.extendAndSet(columnWriterIndex, new Utf8StringIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
     }
 
@@ -1186,7 +1188,7 @@ public class WalWriter implements TableWriterAPI {
         );
 
         symbolMapReaders.extendAndSet(columnWriterIndex, symbolMapReader);
-        symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
+        symbolMaps.extendAndSet(columnWriterIndex, new OffHeapCharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
         utf8SymbolMaps.extendAndSet(columnWriterIndex, new Utf8StringIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
         initialSymbolCounts.extendAndSet(columnWriterIndex, symbolCount);
         localSymbolIds.extendAndSet(columnWriterIndex, 0);
@@ -1574,6 +1576,7 @@ public class WalWriter implements TableWriterAPI {
 
     private void removeSymbolMapReader(int index) {
         Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(index, null));
+        Misc.free(symbolMaps.get(index));
         symbolMaps.setQuick(index, null);
         utf8SymbolMaps.setQuick(index, null);
         initialSymbolCounts.set(index, -1);
@@ -1618,7 +1621,7 @@ public class WalWriter implements TableWriterAPI {
     private void resetSymbolMaps() {
         final int numOfColumns = symbolMaps.size();
         for (int i = 0; i < numOfColumns; i++) {
-            final CharSequenceIntHashMap symbolMap = symbolMaps.getQuick(i);
+            final OffHeapCharSequenceIntHashMap symbolMap = symbolMaps.getQuick(i);
             if (symbolMap != null) {
                 symbolMap.clear();
             }
@@ -1838,7 +1841,7 @@ public class WalWriter implements TableWriterAPI {
     private static class ConversionSymbolMapWriter implements SymbolMapWriterLite {
         private int columnIndex;
         private IntList localSymbolIds;
-        private CharSequenceIntHashMap symbolHashMap;
+        private OffHeapCharSequenceIntHashMap symbolHashMap;
         private SymbolMapReader symbolMapReader;
 
         @Override
@@ -1849,7 +1852,7 @@ public class WalWriter implements TableWriterAPI {
         private int putSym0(int columnIndex, CharSequence utf16Value, SymbolMapReader symbolMapReader) {
             int key;
             if (utf16Value != null) {
-                final CharSequenceIntHashMap utf16Map = symbolHashMap;
+                final OffHeapCharSequenceIntHashMap utf16Map = symbolHashMap;
                 final int index = utf16Map.keyIndex(utf16Value);
                 if (index > -1) {
                     key = symbolMapReader.keyOf(utf16Value);
@@ -1881,7 +1884,7 @@ public class WalWriter implements TableWriterAPI {
     private static class ConversionSymbolTable implements SymbolTable {
         private final IntList symbols = new IntList();
         private int symbolCountWatermark;
-        private CharSequenceIntHashMap symbolHashMap;
+        private OffHeapCharSequenceIntHashMap symbolHashMap;
         private SymbolMapReader symbolMapReader;
 
         @Override
@@ -2612,7 +2615,7 @@ public class WalWriter implements TableWriterAPI {
         private int putSym0(int columnIndex, CharSequence utf16Value, SymbolMapReader symbolMapReader) {
             int key;
             if (utf16Value != null) {
-                final CharSequenceIntHashMap utf16Map = symbolMaps.getQuick(columnIndex);
+                final OffHeapCharSequenceIntHashMap utf16Map = symbolMaps.getQuick(columnIndex);
                 final int index = utf16Map.keyIndex(utf16Value);
                 if (index > -1) {
                     key = symbolMapReader.keyOf(utf16Value);
