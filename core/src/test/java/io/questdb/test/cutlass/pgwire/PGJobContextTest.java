@@ -135,10 +135,10 @@ import java.util.stream.Stream;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-import static io.questdb.test.tools.TestUtils.*;
 import static io.questdb.test.tools.TestUtils.assertEquals;
-import static org.junit.Assert.*;
+import static io.questdb.test.tools.TestUtils.*;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.*;
 
 /**
  * This class contains tests which replay PGWIRE traffic.
@@ -3809,63 +3809,68 @@ if __name__ == "__main__":
 
     @Test
     public void testExplainPlanWithBindVariables() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
-                    "select x," +
-                    " timestamp_sequence(0, 1000) ts" +
-                    " from long_sequence(1000)) timestamp (ts)")) {
-                pstmt.execute();
-            }
+        sharedQueryWorkerCount = 2; // Set to 1 to enable parallel query plans
+        try {
+            assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+                try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
+                        "select x," +
+                        " timestamp_sequence(0, 1000) ts" +
+                        " from long_sequence(1000)) timestamp (ts)")) {
+                    pstmt.execute();
+                }
 
-            String query;
-            if (mode == Mode.SIMPLE && !binary) {
-                // In the simple text mode we have to explicitly cast the first variable to long
-                // otherwise JDBC driver sends just text 'explain select * from xx where x > ('0') and x < ('10.0')::double limit 10'
-                // QuestDB complains with 'there is no matching operator `>` with the argument types: LONG > CHAR'
-                query = "explain select * from xx where x > ?::long and x < ?::double limit 10";
-            } else {
-                // in other modes we can keep things simple
-                // we still cast the 2nd variable, to test it actually works
-                query = "explain select * from xx where x > ? and x < ?::double limit 10";
-            }
-            try (PreparedStatement statement = connection.prepareStatement(query)) {
-                for (int i = 0; i < 3; i++) {
-                    System.out.println(i);
-                    statement.setLong(1, i);
-                    statement.setDouble(2, (i + 1) * 10);
-                    statement.execute();
-                    sink.clear();
-                    try (ResultSet rs = statement.getResultSet()) {
-                        StringSink expectedResult = new StringSink();
-                        if (mode == Mode.SIMPLE) {
-                            // simple mode inlines variables in the sql text
-                            expectedResult.put("QUERY PLAN[VARCHAR]\n" +
-                                    "Async Filter workers: 2\n" +
-                                    "  limit: 10\n" +
-                                    "  filter: ('" + i + "'::long<x and x<'" + (i + 1) * 10 + ".0'::double) [pre-touch]\n" +
-                                    "    PageFrame\n" +
-                                    "        Row forward scan\n" +
-                                    "        Frame forward scan on: xx\n");
-                        } else {
-                            // extended mode actually uses binding vars
-                            expectedResult.put("QUERY PLAN[VARCHAR]\n" +
-                                    "Async Filter workers: 2\n" +
-                                    "  limit: 10\n" +
-                                    "  filter: ($0::long<x and x<$1::double) [pre-touch]\n" +
-                                    "    PageFrame\n" +
-                                    "        Row forward scan\n" +
-                                    "        Frame forward scan on: xx\n");
+                String query;
+                if (mode == Mode.SIMPLE && !binary) {
+                    // In the simple text mode we have to explicitly cast the first variable to long
+                    // otherwise JDBC driver sends just text 'explain select * from xx where x > ('0') and x < ('10.0')::double limit 10'
+                    // QuestDB complains with 'there is no matching operator `>` with the argument types: LONG > CHAR'
+                    query = "explain select * from xx where x > ?::long and x < ?::double limit 10";
+                } else {
+                    // in other modes we can keep things simple
+                    // we still cast the 2nd variable, to test it actually works
+                    query = "explain select * from xx where x > ? and x < ?::double limit 10";
+                }
+                try (PreparedStatement statement = connection.prepareStatement(query)) {
+                    for (int i = 0; i < 3; i++) {
+                        System.out.println(i);
+                        statement.setLong(1, i);
+                        statement.setDouble(2, (i + 1) * 10);
+                        statement.execute();
+                        sink.clear();
+                        try (ResultSet rs = statement.getResultSet()) {
+                            StringSink expectedResult = new StringSink();
+                            if (mode == Mode.SIMPLE) {
+                                // simple mode inlines variables in the sql text
+                                expectedResult.put("QUERY PLAN[VARCHAR]\n" +
+                                        "Async Filter workers: 2\n" +
+                                        "  limit: 10\n" +
+                                        "  filter: ('" + i + "'::long<x and x<'" + (i + 1) * 10 + ".0'::double) [pre-touch]\n" +
+                                        "    PageFrame\n" +
+                                        "        Row forward scan\n" +
+                                        "        Frame forward scan on: xx\n");
+                            } else {
+                                // extended mode actually uses binding vars
+                                expectedResult.put("QUERY PLAN[VARCHAR]\n" +
+                                        "Async Filter workers: 2\n" +
+                                        "  limit: 10\n" +
+                                        "  filter: ($0::long<x and x<$1::double) [pre-touch]\n" +
+                                        "    PageFrame\n" +
+                                        "        Row forward scan\n" +
+                                        "        Frame forward scan on: xx\n");
+                            }
+
+                            assertResultSet(
+                                    expectedResult,
+                                    sink,
+                                    rs
+                            );
                         }
-
-                        assertResultSet(
-                                expectedResult,
-                                sink,
-                                rs
-                        );
                     }
                 }
-            }
-        });
+            });
+        } finally {
+            sharedQueryWorkerCount = 0;
+        }
     }
 
     @Test
@@ -3884,32 +3889,37 @@ if __name__ == "__main__":
 
     @Test
     public void testExplainPlanWithWhitespaces() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
-                    "select x as x," +
-                    " 's' || x as str" +
-                    " from long_sequence(100000))")) {
-                pstmt.execute();
-            }
-
-            try (PreparedStatement statement = connection.prepareStatement("explain select * from xx where str = '\b\f\n\r\t\u0005' order by str,x limit 10")) {
-                statement.execute();
-                try (ResultSet rs = statement.getResultSet()) {
-                    assertResultSet(
-                            "QUERY PLAN[VARCHAR]\n" +
-                                    "Sort light lo: 10\n" +
-                                    "  keys: [str, x]\n" +
-                                    "    Async Filter workers: 2\n" +
-                                    "      filter: str='\\b\\f\\n\\r\\t\\u0005'\n" +
-                                    "        PageFrame\n" +
-                                    "            Row forward scan\n" +
-                                    "            Frame forward scan on: xx\n",
-                            sink,
-                            rs
-                    );
+        sharedQueryWorkerCount = 2; // Set to 1 to enable parallel query plans
+        try {
+            assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+                try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
+                        "select x as x," +
+                        " 's' || x as str" +
+                        " from long_sequence(100000))")) {
+                    pstmt.execute();
                 }
-            }
-        });
+
+                try (PreparedStatement statement = connection.prepareStatement("explain select * from xx where str = '\b\f\n\r\t\u0005' order by str,x limit 10")) {
+                    statement.execute();
+                    try (ResultSet rs = statement.getResultSet()) {
+                        assertResultSet(
+                                "QUERY PLAN[VARCHAR]\n" +
+                                        "Sort light lo: 10\n" +
+                                        "  keys: [str, x]\n" +
+                                        "    Async Filter workers: 2\n" +
+                                        "      filter: str='\\b\\f\\n\\r\\t\\u0005'\n" +
+                                        "        PageFrame\n" +
+                                        "            Row forward scan\n" +
+                                        "            Frame forward scan on: xx\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+            });
+        } finally {
+            sharedQueryWorkerCount = 0; // reset to default
+        }
     }
 
     @Test
@@ -9791,78 +9801,84 @@ create table tab as (
 
     @Test
     public void testSelectStringInWithBindVariables() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
-            connection.setAutoCommit(false);
-            connection.prepareStatement("CREATE TABLE tab (ts TIMESTAMP, s INT)").execute();
-            connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-05T11:12:22.116234Z', 1)").execute();//monday
-            connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-06T16:42:00.333999Z', 2)").execute();//tuesday
-            connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-07T03:52:00.999999Z', 3)").execute();//wednesday
-            connection.prepareStatement("INSERT INTO tab VALUES (null, 4)").execute();
-            connection.commit();
-            mayDrainWalQueue();
-            String query = "SELECT * FROM tab WHERE to_str(ts,'EE') in (?,'Wednesday',?)";
-            try (PreparedStatement stmt = connection.prepareStatement("explain " + query)) {
-                stmt.setString(1, "Tuesday");
-                stmt.setString(2, "Friday");
-                try (ResultSet rs = stmt.executeQuery()) {
-                    sink.clear();
-                    assertResultSet(
-                            "QUERY PLAN[VARCHAR]\n" +
-                                    "Async Filter workers: 2\n" +
-                                    "  filter: to_str(ts) in [$0::string,'Wednesday',$1::string] [pre-touch]\n" +
-                                    "    PageFrame\n" +
-                                    "        Row forward scan\n" +
-                                    "        Frame forward scan on: tab\n",
-                            sink,
-                            rs
-                    );
-                }
-            }
+        sharedQueryWorkerCount = 2; // Set to 1 to enable parallel query plans
 
-            try (PreparedStatement stmt = connection.prepareStatement(query)) {
-                stmt.setString(1, "Monday");
-                stmt.setString(2, null);
-                try (ResultSet resultSet = stmt.executeQuery()) {
-                    sink.clear();
-                    assertResultSet("ts[TIMESTAMP],s[INTEGER]\n" +
-                            "2023-06-05 11:12:22.116234,1\n" +
-                            "2023-06-07 03:52:00.999999,3\n" +
-                            "null,4\n", sink, resultSet);
+        try {
+            assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+                connection.setAutoCommit(false);
+                connection.prepareStatement("CREATE TABLE tab (ts TIMESTAMP, s INT)").execute();
+                connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-05T11:12:22.116234Z', 1)").execute();//monday
+                connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-06T16:42:00.333999Z', 2)").execute();//tuesday
+                connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-07T03:52:00.999999Z', 3)").execute();//wednesday
+                connection.prepareStatement("INSERT INTO tab VALUES (null, 4)").execute();
+                connection.commit();
+                mayDrainWalQueue();
+                String query = "SELECT * FROM tab WHERE to_str(ts,'EE') in (?,'Wednesday',?)";
+                try (PreparedStatement stmt = connection.prepareStatement("explain " + query)) {
+                    stmt.setString(1, "Tuesday");
+                    stmt.setString(2, "Friday");
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        sink.clear();
+                        assertResultSet(
+                                "QUERY PLAN[VARCHAR]\n" +
+                                        "Async Filter workers: 2\n" +
+                                        "  filter: to_str(ts) in [$0::string,'Wednesday',$1::string] [pre-touch]\n" +
+                                        "    PageFrame\n" +
+                                        "        Row forward scan\n" +
+                                        "        Frame forward scan on: tab\n",
+                                sink,
+                                rs
+                        );
+                    }
                 }
 
-                stmt.setString(1, "Tuesday");
-                stmt.setString(2, "Friday");
-                try (ResultSet resultSet = stmt.executeQuery()) {
-                    sink.clear();
-                    assertResultSet("ts[TIMESTAMP],s[INTEGER]\n" +
-                            "2023-06-06 16:42:00.333999,2\n" +
-                            "2023-06-07 03:52:00.999999,3\n", sink, resultSet);
+                try (PreparedStatement stmt = connection.prepareStatement(query)) {
+                    stmt.setString(1, "Monday");
+                    stmt.setString(2, null);
+                    try (ResultSet resultSet = stmt.executeQuery()) {
+                        sink.clear();
+                        assertResultSet("ts[TIMESTAMP],s[INTEGER]\n" +
+                                "2023-06-05 11:12:22.116234,1\n" +
+                                "2023-06-07 03:52:00.999999,3\n" +
+                                "null,4\n", sink, resultSet);
+                    }
+
+                    stmt.setString(1, "Tuesday");
+                    stmt.setString(2, "Friday");
+                    try (ResultSet resultSet = stmt.executeQuery()) {
+                        sink.clear();
+                        assertResultSet("ts[TIMESTAMP],s[INTEGER]\n" +
+                                "2023-06-06 16:42:00.333999,2\n" +
+                                "2023-06-07 03:52:00.999999,3\n", sink, resultSet);
+                    }
+
+                    stmt.setString(1, "Saturday");
+                    stmt.setString(2, "Sunday");
+                    try (ResultSet resultSet = stmt.executeQuery()) {
+                        sink.clear();
+                        assertResultSet("ts[TIMESTAMP],s[INTEGER]\n" +
+                                "2023-06-07 03:52:00.999999,3\n", sink, resultSet);
+                    }
                 }
 
-                stmt.setString(1, "Saturday");
-                stmt.setString(2, "Sunday");
-                try (ResultSet resultSet = stmt.executeQuery()) {
-                    sink.clear();
-                    assertResultSet("ts[TIMESTAMP],s[INTEGER]\n" +
-                            "2023-06-07 03:52:00.999999,3\n", sink, resultSet);
-                }
-            }
+                try (PreparedStatement stmt = connection.prepareStatement("SELECT * FROM tab WHERE to_str(ts,'EE') in (?)")) {
+                    stmt.setString(1, "Monday");
+                    try (ResultSet resultSet = stmt.executeQuery()) {
+                        sink.clear();
+                        assertResultSet("ts[TIMESTAMP],s[INTEGER]\n" +
+                                "2023-06-05 11:12:22.116234,1\n", sink, resultSet);
+                    }
 
-            try (PreparedStatement stmt = connection.prepareStatement("SELECT * FROM tab WHERE to_str(ts,'EE') in (?)")) {
-                stmt.setString(1, "Monday");
-                try (ResultSet resultSet = stmt.executeQuery()) {
-                    sink.clear();
-                    assertResultSet("ts[TIMESTAMP],s[INTEGER]\n" +
-                            "2023-06-05 11:12:22.116234,1\n", sink, resultSet);
+                    stmt.setString(1, "Saturday");
+                    try (ResultSet resultSet = stmt.executeQuery()) {
+                        sink.clear();
+                        assertResultSet("ts[TIMESTAMP],s[INTEGER]\n", sink, resultSet);
+                    }
                 }
-
-                stmt.setString(1, "Saturday");
-                try (ResultSet resultSet = stmt.executeQuery()) {
-                    sink.clear();
-                    assertResultSet("ts[TIMESTAMP],s[INTEGER]\n", sink, resultSet);
-                }
-            }
-        });
+            });
+        } finally {
+            sharedQueryWorkerCount = 0;
+        }
     }
 
     @Test
@@ -12263,7 +12279,7 @@ create table tab as (
                     engine,
                     workerPool,
                     registry,
-                    createPGSqlExecutionContextFactory(workerCount, workerCount, null, queryScheduledCount)
+                    createPGSqlExecutionContextFactory(null, queryScheduledCount)
             );
         } catch (Throwable t) {
             Misc.free(registry);
@@ -12273,12 +12289,10 @@ create table tab as (
     }
 
     private ObjectFactory<SqlExecutionContextImpl> createPGSqlExecutionContextFactory(
-            int workerCount,
-            int sharedWorkerCount,
             SOCountDownLatch queryStartedCount,
             SOCountDownLatch queryScheduledCount
     ) {
-        return () -> new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount) {
+        return () -> new SqlExecutionContextImpl(engine, 0) {
             @Override
             public QueryFutureUpdateListener getQueryFutureUpdateListener() {
                 return new QueryFutureUpdateListener() {
@@ -12379,7 +12393,7 @@ create table tab as (
                             engine,
                             pool,
                             registry,
-                            createPGSqlExecutionContextFactory(workerCount, workerCount, queryStartedCountDownLatch, null)
+                            createPGSqlExecutionContextFactory(queryStartedCountDownLatch, null)
                     )
             ) {
                 Assert.assertNotNull(server);
