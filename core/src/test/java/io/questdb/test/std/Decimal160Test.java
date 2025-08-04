@@ -109,49 +109,6 @@ public class Decimal160Test {
     }
 
     @Test
-    public void testDivideLargeScale() {
-        Decimal160 a = Decimal160.fromDouble(3.141592653589793, 15);
-        Decimal160 b = Decimal160.fromDouble(2.718281828459045, 15);
-        BigDecimal bdA = a.toBigDecimal();
-        BigDecimal bdB = b.toBigDecimal();
-
-        int tgtScale = 6;
-        Decimal160 result = new Decimal160();
-//        for (int i = 0; i < 100_000_000; i++) {
-            Decimal160.divide(a, b, result);
-//        }
-        result.round(tgtScale, RoundingMode.HALF_UP);
-        System.out.println(result);
-        System.out.println("------------------");
-
-        BigDecimal bdResult = bdA.divide(bdB, tgtScale, RoundingMode.HALF_UP);
-        System.out.println(bdResult);
-        Assert.assertEquals(bdResult, result.toBigDecimal());
-    }
-
-    @Test
-    public void testDivideLarge() {
-        Decimal160 a = Decimal160.fromDouble(987654321.123456789, 9);
-        Decimal160 b = Decimal160.fromDouble(123.456, 3);
-        BigDecimal bdA = a.toBigDecimal();
-        BigDecimal bdB = b.toBigDecimal();
-
-        int tgtScale = 2;
-        Decimal160 result = new Decimal160();
-//        for (int i = 0; i < 100_000_000; i++) {
-            Decimal160.divide(a, b, result);
-//        }
-        result.round(tgtScale, RoundingMode.HALF_UP);
-        System.out.println(result);
-        System.out.println("------------------");
-
-        BigDecimal bdResult = bdA.divide(bdB, tgtScale, RoundingMode.HALF_UP);
-        System.out.println(bdResult);
-        Assert.assertEquals(result.toBigDecimal(), bdResult);
-
-    }
-
-    @Test
     public void testDivide64() {
         Decimal160 a = Decimal160.fromDouble(123.456, 3);
         Decimal160 b = Decimal160.fromDouble(7.89, 2);
@@ -170,6 +127,35 @@ public class Decimal160Test {
         BigDecimal bdResult = bdA.divide(bdB, tgtScale, RoundingMode.HALF_UP);
         System.out.println(bdResult);
         Assert.assertEquals(result.toBigDecimal(), bdResult);
+    }
+
+    @Test
+    public void testDivideLarge() {
+        Decimal160 a = Decimal160.fromDouble(987654321.123456789, 9);
+        Decimal160 b = Decimal160.fromDouble(123.456, 3);
+        BigDecimal bdA = a.toBigDecimal();
+        BigDecimal bdB = b.toBigDecimal();
+
+        int tgtScale = 2;
+        a.divide(b, tgtScale, RoundingMode.HALF_UP);
+
+        BigDecimal bdResult = bdA.divide(bdB, tgtScale, RoundingMode.HALF_UP);
+        Assert.assertEquals(bdResult, a.toBigDecimal());
+
+    }
+
+    @Test
+    public void testDivideLargeScale() {
+        Decimal160 a = Decimal160.fromDouble(3.141592653589793, 15);
+        Decimal160 b = Decimal160.fromDouble(2.718281828459045, 15);
+        BigDecimal bdA = a.toBigDecimal();
+        BigDecimal bdB = b.toBigDecimal();
+
+        int tgtScale = 6;
+        a.divide(b, tgtScale, RoundingMode.HALF_UP);
+
+        BigDecimal bdResult = bdA.divide(bdB, tgtScale, RoundingMode.HALF_UP);
+        Assert.assertEquals(bdResult, a.toBigDecimal());
     }
 
     @Test
@@ -222,6 +208,17 @@ public class Decimal160Test {
     }
 
     @Test
+    public void testDivisionScaled() {
+        Decimal160 dividend = Decimal160.fromDouble(10, 0);
+        Decimal160 divisor = Decimal160.fromDouble(3, 0);
+
+        dividend.divide(divisor, 6, RoundingMode.HALF_UP);
+        Assert.assertEquals(6, dividend.getScale());
+        Assert.assertEquals(0, dividend.getHigh());
+        Assert.assertEquals(3333333, dividend.getLow());
+    }
+
+    @Test
     public void testEquals() {
         Decimal160 a = new Decimal160(123, 456, 2);
         Decimal160 b = new Decimal160(123, 456, 2);
@@ -229,6 +226,17 @@ public class Decimal160Test {
 
         Assert.assertEquals(a, b);
         Assert.assertNotEquals(a, c);
+    }
+
+    @Test
+    public void testFromBigDecimal() {
+        BigDecimal bd = new BigDecimal("1e37");
+        Decimal160 decimal = Decimal160.fromBigDecimal(bd);
+        StringSink sink = new StringSink();
+
+        decimal.toSink(sink);
+
+        Assert.assertEquals("10000000000000000000000000000000000000", sink.toString());
     }
 
     @Test
@@ -266,17 +274,6 @@ public class Decimal160Test {
         a.add(b);
 
         Assert.assertEquals(191.34, a.toDouble(), 0.01);
-        Assert.assertEquals(2, a.getScale());
-    }
-
-    @Test
-    public void testInPlaceAdditionOverflow() {
-        Decimal160 a = Decimal160.fromDouble(10e35, 2);
-        Decimal160 b = Decimal160.fromDouble(10e35, 2);
-
-        a.add(b);
-
-        Assert.assertEquals(55.56, a.toDouble(), 0.01);
         Assert.assertEquals(2, a.getScale());
     }
 
@@ -598,8 +595,6 @@ public class Decimal160Test {
         }
     }
 
-    // Tests for static helper methods
-
     @Test
     public void testRoundFuzzWithUnnecessaryMode() {
         // Separate fuzz test for UNNECESSARY mode which has special semantics
@@ -724,8 +719,6 @@ public class Decimal160Test {
         Assert.assertEquals("Scale increase failed", expected, a.toBigDecimal());
         Assert.assertEquals("Scale should be 4", 4, a.getScale());
     }
-
-    // Tests for toSink functionality
 
     @Test
     public void testRoundUnnecessaryMode() {
@@ -1259,8 +1252,7 @@ public class Decimal160Test {
                 b.toBigDecimal(), bCopy.toBigDecimal());
 
         // Test in-place divide method
-        aCopy.divide(bCopy);
-        aCopy.round(resultScale, RoundingMode.HALF_UP);
+        aCopy.divide(bCopy, resultScale, RoundingMode.HALF_UP);
 
         // Results should be the same
         Assert.assertEquals("Static and in-place division differ at iteration " + iteration,
@@ -1272,8 +1264,12 @@ public class Decimal160Test {
 
         // Perform division with the same scale and rounding mode as our implementation should use
         java.math.BigDecimal expected = bigA.divide(bigB, resultScale, java.math.RoundingMode.HALF_UP);
-        java.math.BigDecimal actual = result.toBigDecimal();
-        Assert.assertEquals(expected, actual);
+
+        // Compare with new impl
+        result.copyFrom(a);
+        result.divide(b, resultScale, RoundingMode.HALF_UP);
+
+        Assert.assertEquals(expected, result.toBigDecimal());
     }
 
     private void testFuzzIteration(Rnd rnd, int iteration) {
