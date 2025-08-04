@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -44,6 +45,8 @@ public interface BitmapIndexReader extends Closeable {
     @Override
     default void close() {
     }
+
+    long getColumnTop();
 
     /**
      * Setup value cursor. Values in this cursor will be bounded by provided
@@ -68,8 +71,6 @@ public interface BitmapIndexReader extends Closeable {
 
     long getKeyMemorySize();
 
-    long getUnIndexedNullCount();
-
     long getValueBaseAddress();
 
     int getValueBlockCapacity();
@@ -78,5 +79,13 @@ public interface BitmapIndexReader extends Closeable {
 
     boolean isOpen();
 
-    void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount);
+    void of(
+            CairoConfiguration configuration,
+            @Transient Path path,
+            CharSequence columnName,
+            long columnNameTxn,
+            long columnTop
+    );
+
+    void reloadConditionally();
 }

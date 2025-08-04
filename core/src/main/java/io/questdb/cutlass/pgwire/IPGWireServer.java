@@ -38,13 +38,13 @@ public interface IPGWireServer extends Closeable {
     static IPGWireServer newInstance(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
-            WorkerPool workerPool,
+            WorkerPool networkSharedPool,
             CircuitBreakerRegistry registry,
             ObjectFactory<SqlExecutionContextImpl> executionContextFactory
     ) {
         return configuration.isLegacyModeEnabled()
-                ? new PGWireServer(configuration, cairoEngine, workerPool, registry, executionContextFactory)
-                : new PGWireServerModern(configuration, cairoEngine, workerPool, registry, executionContextFactory);
+                ? new PGWireServer(configuration, cairoEngine, networkSharedPool, registry, executionContextFactory)
+                : new PGWireServerModern(configuration, cairoEngine, networkSharedPool, registry, executionContextFactory);
     }
 
     void clearSelectCache();
