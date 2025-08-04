@@ -195,6 +195,140 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testArrayReshape2D() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                try (DoubleArray array = new DoubleArray(1, 12)) {
+                    // fill with initial data
+                    for (int i = 0; i < 12; i++) {
+                        array.append(i + 1.0);
+                    }
+
+                    // reshape using the 2D method overload
+                    array.reshape(3, 4);
+
+                    String tableName = "reshape_2d_test";
+                    int port = serverMain.getHttpServerPort();
+                    try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                            .address("localhost:" + port)
+                            .build()) {
+
+                        sender.table(tableName)
+                                .doubleArray("arr", array)
+                                .at(IntervalUtils.parseFloorPartialTimestamp("2023-02-22"), ChronoUnit.MICROS);
+                        sender.flush();
+                    }
+
+                    serverMain.awaitTxn(tableName, 1);
+
+                    serverMain.assertSql("SELECT arr FROM " + tableName,
+                            "arr\n" +
+                                    "[[1.0,2.0,3.0,4.0],[5.0,6.0,7.0,8.0],[9.0,10.0,11.0,12.0]]\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testArrayReshape2DErrors() {
+        try (DoubleArray array = new DoubleArray(2, 2)) {
+            array.close();
+            try {
+                array.reshape(2, 3);
+                Assert.fail("Should throw IllegalStateException when reshaping closed array");
+            } catch (IllegalStateException e) {
+                Assert.assertTrue(e.getMessage().contains("Cannot reshape a closed array"));
+            }
+        }
+
+        try (DoubleArray array = new DoubleArray(2, 2)) {
+            try {
+                array.reshape(-1, 3);
+                Assert.fail("Should throw IllegalArgumentException for negative dimension");
+            } catch (IllegalArgumentException e) {
+                Assert.assertTrue(e.getMessage().contains("Array dimensions must not be negative"));
+            }
+
+            try {
+                array.reshape(3, -2);
+                Assert.fail("Should throw IllegalArgumentException for negative dimension");
+            } catch (IllegalArgumentException e) {
+                Assert.assertTrue(e.getMessage().contains("Array dimensions must not be negative"));
+            }
+        }
+    }
+
+    @Test
+    public void testArrayReshape3D() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                try (DoubleArray array = new DoubleArray(24)) {
+                    for (int i = 0; i < 24; i++) {
+                        array.append(i + 1.0);
+                    }
+
+                    // reshape using the 3D method overload
+                    array.reshape(2, 3, 4);
+
+                    String tableName = "reshape_3d_test";
+                    int port = serverMain.getHttpServerPort();
+                    try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                            .address("localhost:" + port)
+                            .build()) {
+
+                        sender.table(tableName)
+                                .doubleArray("arr", array)
+                                .at(IntervalUtils.parseFloorPartialTimestamp("2023-02-22"), ChronoUnit.MICROS);
+                        sender.flush();
+                    }
+
+                    serverMain.awaitTxn(tableName, 1);
+
+                    serverMain.assertSql("SELECT arr FROM " + tableName,
+                            "arr\n" +
+                                    "[[[1.0,2.0,3.0,4.0],[5.0,6.0,7.0,8.0],[9.0,10.0,11.0,12.0]],[[13.0,14.0,15.0,16.0],[17.0,18.0,19.0,20.0],[21.0,22.0,23.0,24.0]]]\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testArrayReshape3DErrors() {
+        try (DoubleArray array = new DoubleArray(2, 2, 2)) {
+            array.close();
+            try {
+                array.reshape(2, 3, 4);
+                Assert.fail("Should throw IllegalStateException when reshaping closed array");
+            } catch (IllegalStateException e) {
+                Assert.assertTrue(e.getMessage().contains("Cannot reshape a closed array"));
+            }
+        }
+
+        try (DoubleArray array = new DoubleArray(2, 2, 2)) {
+            try {
+                array.reshape(-1, 3, 4);
+                Assert.fail("Should throw IllegalArgumentException for negative dimension");
+            } catch (IllegalArgumentException e) {
+                Assert.assertTrue(e.getMessage().contains("Array dimensions must not be negative"));
+            }
+
+            try {
+                array.reshape(2, -3, 4);
+                Assert.fail("Should throw IllegalArgumentException for negative dimension");
+            } catch (IllegalArgumentException e) {
+                Assert.assertTrue(e.getMessage().contains("Array dimensions must not be negative"));
+            }
+
+            try {
+                array.reshape(2, 3, -4);
+                Assert.fail("Should throw IllegalArgumentException for negative dimension");
+            } catch (IllegalArgumentException e) {
+                Assert.assertTrue(e.getMessage().contains("Array dimensions must not be negative"));
+            }
+        }
+    }
+
+    @Test
     public void testArrayReshapeErrors() {
         try (DoubleArray array = new DoubleArray(2, 2)) {
             array.close();
@@ -257,11 +391,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 try (DoubleArray array = new DoubleArray(2, 3)) {
-                    // Fill with initial data
                     array.append(1.0).append(2.0).append(3.0)
                             .append(4.0).append(5.0).append(6.0);
 
-                    // Reshape to 1D
+                    // reshape to 1D
                     array.reshape(6);
 
                     String tableName = "reshape_test";
@@ -278,7 +411,6 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     serverMain.awaitTxn(tableName, 1);
 
-                    // Verify 1D array data
                     serverMain.assertSql("SELECT arr FROM " + tableName,
                             "arr\n" +
                                     "[1.0,2.0,3.0,4.0,5.0,6.0]\n");
@@ -302,7 +434,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     serverMain.awaitTxn(tableName2, 1);
 
-                    // Verify 3D array data  
+                    // Verify 3D array data
                     serverMain.assertSql("SELECT arr FROM " + tableName2,
                             "arr\n" +
                                     "[[[7.0,8.0,9.0],[10.0,11.0,12.0]]]\n");

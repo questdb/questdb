@@ -189,6 +189,58 @@ public abstract class AbstractArray implements QuietCloseable {
         memA = array.startMemoryA();
     }
 
+    /**
+     * Reshapes the array to a two-dimensional array with the specified dimensions.
+     * <p>This is a convenience method for creating or reshaping to 2D arrays (matrices)
+     * without allocating an array for the shape.
+     *
+     * @param dim1 the length of the first dimension (rows)
+     * @param dim2 the length of the second dimension (columns)
+     * @throws IllegalStateException    if the array is already closed
+     * @throws IllegalArgumentException if any dimension is negative
+     */
+    public void reshape(int dim1, int dim2) {
+        if (closed) {
+            throw new IllegalStateException("Cannot reshape a closed array");
+        }
+        if (dim1 < 0 || dim2 < 0) {
+            throw new IllegalArgumentException("Array dimensions must not be negative, but got [" + dim1 + ", " + dim2 + "]");
+        }
+        array.setType(ColumnType.encodeArrayType(array.getElemType(), 2));
+        array.setDimLen(0, dim1);
+        array.setDimLen(1, dim2);
+        array.applyShape();
+        flatLength = array.getFlatViewLength();
+        memA = array.startMemoryA();
+    }
+
+    /**
+     * Reshapes the array to a three-dimensional array with the specified dimensions.
+     * <p>This is a convenience method for creating or reshaping to 3D arrays
+     * without allocating an array for the shape.
+     *
+     * @param dim1 the length of the first dimension
+     * @param dim2 the length of the second dimension
+     * @param dim3 the length of the third dimension
+     * @throws IllegalStateException    if the array is already closed
+     * @throws IllegalArgumentException if any dimension is negative
+     */
+    public void reshape(int dim1, int dim2, int dim3) {
+        if (closed) {
+            throw new IllegalStateException("Cannot reshape a closed array");
+        }
+        if (dim1 < 0 || dim2 < 0 || dim3 < 0) {
+            throw new IllegalArgumentException("Array dimensions must not be negative, but got [" + dim1 + ", " + dim2 + ", " + dim3 + "]");
+        }
+        array.setType(ColumnType.encodeArrayType(array.getElemType(), 3));
+        array.setDimLen(0, dim1);
+        array.setDimLen(1, dim2);
+        array.setDimLen(2, dim3);
+        array.applyShape();
+        flatLength = array.getFlatViewLength();
+        memA = array.startMemoryA();
+    }
+
     protected void ensureLegalAppendPosition() {
         long elementSize = ColumnType.sizeOf(array.getElemType());
         if (memA.getAppendOffset() == flatLength * elementSize) {
