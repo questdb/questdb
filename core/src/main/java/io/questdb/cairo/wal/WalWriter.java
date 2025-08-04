@@ -69,7 +69,6 @@ import io.questdb.log.LogRecord;
 import io.questdb.std.AtomicIntList;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BoolList;
-import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.OffHeapCharSequenceIntHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;

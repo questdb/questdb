@@ -36,7 +36,6 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.AtomicIntList;
 import io.questdb.std.BoolList;
-import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.OffHeapCharSequenceIntHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
