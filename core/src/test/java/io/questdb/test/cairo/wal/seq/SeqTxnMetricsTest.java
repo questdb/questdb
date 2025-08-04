@@ -212,8 +212,10 @@ public class SeqTxnMetricsTest extends AbstractCairoTest {
                 SeqTxnTracker tracker1 = engine.getTableSequencerAPI().getTxnTracker(token1);
                 SeqTxnTracker tracker2 = engine.getTableSequencerAPI().getTxnTracker(token2);
 
-                assertTrue("Table1 tracker should be initialized after restart", tracker1.isInitialised());
-                assertTrue("Table2 tracker should be initialized after restart", tracker2.isInitialised());
+                assertEventually(() -> {
+                    assertTrue("Table1 tracker should be initialized after restart", tracker1.isInitialised());
+                    assertTrue("Table2 tracker should be initialized after restart", tracker2.isInitialised());
+                });
                 assertEquals(txnCount1, tracker1.getSeqTxn());
                 assertEquals(txnCount1, tracker1.getWriterTxn());
                 assertEquals(txnCount2, tracker2.getSeqTxn());
@@ -255,7 +257,9 @@ public class SeqTxnMetricsTest extends AbstractCairoTest {
                 execute(engine, "drop table " + toDrop);
 
                 SeqTxnTracker toKeepTracker = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName(toKeep));
-                assertTrue("table_to_keep's seq txn tracker should be initialized", toKeepTracker.isInitialised());
+                assertEventually(() -> {
+                    assertTrue("table_to_keep's seq txn tracker should be initialized", toKeepTracker.isInitialised());
+                });
                 assertTrue("tracker's seq txn should be ahead of writer txn",
                         toKeepTracker.getSeqTxn() > toKeepTracker.getWriterTxn());
 
