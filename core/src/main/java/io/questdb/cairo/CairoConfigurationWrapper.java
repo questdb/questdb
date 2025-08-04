@@ -187,6 +187,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getCompileViewModelPoolCapacity() {
+        return getDelegate().getCompileViewModelPoolCapacity();
+    }
+
+    @Override
     public @NotNull CharSequence getConfRoot() {
         return getDelegate().getConfRoot();
     }
@@ -1082,6 +1087,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getViewLexerPoolCapacity() {
+        return getDelegate().getViewLexerPoolCapacity();
+    }
+
+    @Override
     public @NotNull VolumeDefinitions getVolumeDefinitions() {
         return getDelegate().getVolumeDefinitions();
     }
@@ -1324,6 +1334,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isValidateSampleByFillType() {
         return getDelegate().isValidateSampleByFillType();
+    }
+
+    @Override
+    public boolean isViewEnabled() {
+        return getDelegate().isViewEnabled();
     }
 
     @Override

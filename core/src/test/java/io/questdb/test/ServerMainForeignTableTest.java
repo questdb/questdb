@@ -525,6 +525,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                             resultSink.put(result.getLong(i));
                             break;
                         case Types.VARCHAR:
+                        case Types.CHAR:
                             resultSink.put(result.getString(i));
                             break;
                         default:

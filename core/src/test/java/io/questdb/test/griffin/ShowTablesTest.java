@@ -24,14 +24,23 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Before;
 import org.junit.Test;
 
 public class ShowTablesTest extends AbstractCairoTest {
+
+    @Before
+    public void setUp() {
+        // enable views
+        setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true");
+        super.setUp();
+    }
 
     @Test
     public void testDropAndRecreateTable() throws Exception {
@@ -56,8 +65,8 @@ public class ShowTablesTest extends AbstractCairoTest {
                 try (RecordCursorFactory recordCursorFactory = compile.getRecordCursorFactory()) {
                     try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
                         assertCursor(
-                                "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
-                                        "1\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tfalse\n",
+                                "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type\n" +
+                                        "1\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tT\n",
                                 false,
                                 true,
                                 true,
@@ -75,8 +84,8 @@ public class ShowTablesTest extends AbstractCairoTest {
                     try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
                         // note the ID is 2 now!
                         assertCursor(
-                                "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
-                                        "2\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tfalse\n",
+                                "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type\n" +
+                                        "2\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tT\n",
                                 false,
                                 true,
                                 true,
@@ -249,10 +258,12 @@ public class ShowTablesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table balances (ts timestamp, cust_id int, ccy symbol, balance double) timestamp(ts) partition by day wal");
             execute("create materialized view balances_1h as (select ts, max(balance) from balances sample by 1h) partition by week");
+            execute("create view balances_view as (select ts, max(balance) from balances sample by 1h)");
             assertSql(
-                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
-                            "1\tbalances\tts\tDAY\t1000\t300000000\ttrue\tbalances~1\tfalse\t0\tHOUR\tfalse\n" +
-                            "2\tbalances_1h\tts\tWEEK\t1000\t-1\ttrue\tbalances_1h~2\tfalse\t0\tHOUR\ttrue\n",
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type\n" +
+                            "1\tbalances\tts\tDAY\t1000\t300000000\ttrue\tbalances~1\tfalse\t0\tHOUR\tT\n" +
+                            "2\tbalances_1h\tts\tWEEK\t1000\t-1\ttrue\tbalances_1h~2\tfalse\t0\tHOUR\tM\n" +
+                            "3\tbalances_view\tts\tN/A\t-1\t-1\ttrue\tbalances_view~3\tfalse\t0\tHOUR\tV\n",
                     "tables() order by table_name"
             );
         });
