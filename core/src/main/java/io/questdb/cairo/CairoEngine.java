@@ -1828,7 +1828,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     protected SqlExecutionContext createRootExecutionContext() {
-        return new SqlExecutionContextImpl(this, 1).with(AllowAllSecurityContext.INSTANCE);
+        return new SqlExecutionContextImpl(this, 0).with(AllowAllSecurityContext.INSTANCE);
     }
 
     protected @NotNull <T extends AbstractTelemetryTask> Telemetry<T> createTelemetry(

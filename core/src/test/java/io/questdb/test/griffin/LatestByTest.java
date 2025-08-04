@@ -207,7 +207,7 @@ public class LatestByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     "LatestByAllIndexed\n" +
-                            "    Async index backward scan on: device_id workers: 1\n" +
+                            "    Async index backward scan on: device_id workers: 2\n" +
                             "      filter: g8c within(\"0010000110110001110001111100010000100000\")\n" +
                             "    Interval backward scan on: pos_test\n" +
                             (timestampType.equals("TIMESTAMP") ?

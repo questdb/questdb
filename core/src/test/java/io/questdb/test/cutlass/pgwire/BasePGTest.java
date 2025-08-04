@@ -90,6 +90,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
     public static final long CONN_AWARE_EXTENDED = CONN_AWARE_EXTENDED_LIMITED | CONN_AWARE_QUIRKS;
     public static final long CONN_AWARE_SIMPLE = 2;
     public static final long CONN_AWARE_ALL = CONN_AWARE_SIMPLE | CONN_AWARE_EXTENDED;
+    protected static int sharedQueryWorkerCount = 0;
     protected final boolean legacyMode;
     protected CopyRequestJob copyRequestJob = null;
     protected int forceRecvFragmentationChunkSize = 1024 * 1024;
@@ -139,7 +140,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
                 cairoEngine,
                 workerPool,
                 registry,
-                () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
+                () -> new SqlExecutionContextImpl(cairoEngine, sharedQueryWorkerCount)
         );
     }
 

@@ -148,9 +148,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     @NotNull
     SecurityContext getSecurityContext();
 
-    default int getSharedWorkerCount() {
-        return getWorkerCount();
-    }
+    int getSharedQueryWorkerCount();
 
     SqlExecutionCircuitBreaker getSimpleCircuitBreaker();
 
@@ -179,8 +177,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     WindowContext getWindowContext();
-
-    int getWorkerCount();
 
     void initNow();
 
