@@ -43,7 +43,6 @@ use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
     build_plain_page, encode_group_levels, encode_primitive_deflevels, ExactSizedIter,
 };
-use parquet2::schema::types::PhysicalType;
 
 const HEADER_SIZE_NULL: [u8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
 // must be kept in sync with Java's ColumnType#ARRAY_NDIMS_LIMIT
@@ -158,6 +157,8 @@ impl Iterator for DefLevelsIterator<'_> {
 
 // encodes array as nested lists
 pub fn array_to_page(
+    // inner-most type of the array group field
+    primitive_type: PrimitiveType,
     dim: usize,
     aux: &[[u8; 16]],
     data: &[u8],
@@ -290,7 +291,8 @@ pub fn array_to_page(
 
     let null_count = column_top + null_count;
     let stats = ArrayStats::new(null_count);
-    build_page(
+    build_array_page(
+        primitive_type,
         buffer,
         num_values,
         num_rows,
@@ -319,7 +321,9 @@ fn encode_data_plain(arr_slices: &[Option<(&[i32], &[f64])>], buffer: &mut Vec<u
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_page(
+fn build_array_page(
+    // inner-most type of array group field
+    primitive_type: PrimitiveType,
     buffer: Vec<u8>,
     num_values: usize,
     num_rows: usize,
@@ -349,14 +353,12 @@ fn build_page(
             statistics,
         }),
     };
-    // TODO(puzpuzpuz): how to avoid primitive type here???? use a global stub descriptor?
-    let t = PrimitiveType::from_physical("fdfd".to_string(), PhysicalType::Double);
     Ok(DataPage::new(
         header,
         buffer,
         Descriptor {
-            primitive_type: t,
-            // these values are ignored for group types
+            primitive_type,
+            // max level values are ignored and recalculated for group types
             max_def_level: 0,
             max_rep_level: 0,
         },

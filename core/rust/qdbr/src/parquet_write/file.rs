@@ -362,14 +362,20 @@ fn column_chunk_to_pages(
             options,
             encoding,
         ),
-        ParquetType::GroupType { .. } => {
-            column_chunk_to_group_pages(column, chunk_offset, chunk_length, options, encoding)
-        }
+        ParquetType::GroupType { .. } => column_chunk_to_group_pages(
+            column,
+            parquet_type,
+            chunk_offset,
+            chunk_length,
+            options,
+            encoding,
+        ),
     }
 }
 
 fn column_chunk_to_group_pages(
     column: Column,
+    parquet_type: ParquetType,
     chunk_offset: usize,
     chunk_length: usize,
     options: WriteOptions,
@@ -392,7 +398,14 @@ fn column_chunk_to_group_pages(
         });
 
     let pages = rows.map(move |(offset, length)| {
-        chunk_to_group_page(column, offset, length, options, encoding)
+        chunk_to_group_page(
+            column,
+            parquet_type.clone(),
+            offset,
+            length,
+            options,
+            encoding,
+        )
     });
 
     Ok(DynIter::new(pages))
@@ -400,6 +413,7 @@ fn column_chunk_to_group_pages(
 
 fn chunk_to_group_page(
     column: Column,
+    parquet_type: ParquetType,
     offset: usize,
     length: usize,
     options: WriteOptions,
@@ -423,10 +437,19 @@ fn chunk_to_group_page(
 
     match column.data_type.tag() {
         ColumnTypeTag::Array => {
+            let primitive_type = match array_primitive_type(parquet_type) {
+                None => Err(fmt_err!(
+                    InvalidType,
+                    "failed to find inner-most type for array column {}",
+                    column.name
+                )),
+                Some(t) => Ok(t),
+            }?;
             let dim = column.data_type.array_dimensionality()? as usize;
             let aux: &[[u8; 16]] = unsafe { util::transmute_slice(column.secondary_data) };
             let data = column.primary_data;
             array::array_to_page(
+                primitive_type,
                 dim,
                 &aux[lower_bound..upper_bound],
                 data,
@@ -441,6 +464,32 @@ fn chunk_to_group_page(
             column.name
         )),
     }
+}
+
+fn array_primitive_type(parquet_type: ParquetType) -> Option<PrimitiveType> {
+    let mut primitive_type = None;
+    let mut cur_type = &parquet_type;
+    loop {
+        match cur_type {
+            ParquetType::PrimitiveType(t) => {
+                primitive_type = Some(t);
+                break;
+            }
+            ParquetType::GroupType {
+                field_info: _,
+                logical_type: _,
+                converted_type: _,
+                fields,
+            } => {
+                if fields.len() == 1 {
+                    cur_type = &fields[0];
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    return primitive_type.cloned();
 }
 
 fn column_chunk_to_primitive_pages(
