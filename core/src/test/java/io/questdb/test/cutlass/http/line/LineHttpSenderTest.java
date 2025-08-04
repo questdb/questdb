@@ -235,8 +235,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             array.close();
             try {
                 array.reshape(2, 3);
-                Assert.fail("Should throw IllegalStateException when reshaping closed array");
-            } catch (IllegalStateException e) {
+                Assert.fail("Should throw LineSenderException when reshaping closed array");
+            } catch (LineSenderException e) {
                 Assert.assertTrue(e.getMessage().contains("Cannot reshape a closed array"));
             }
         }
@@ -244,15 +244,15 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         try (DoubleArray array = new DoubleArray(2, 2)) {
             try {
                 array.reshape(-1, 3);
-                Assert.fail("Should throw IllegalArgumentException for negative dimension");
-            } catch (IllegalArgumentException e) {
+                Assert.fail("Should throw LineSenderException for negative dimension");
+            } catch (LineSenderException e) {
                 Assert.assertTrue(e.getMessage().contains("Array dimensions must not be negative"));
             }
 
             try {
                 array.reshape(3, -2);
-                Assert.fail("Should throw IllegalArgumentException for negative dimension");
-            } catch (IllegalArgumentException e) {
+                Assert.fail("Should throw LineSenderException for negative dimension");
+            } catch (LineSenderException e) {
                 Assert.assertTrue(e.getMessage().contains("Array dimensions must not be negative"));
             }
         }
@@ -298,8 +298,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             array.close();
             try {
                 array.reshape(2, 3, 4);
-                Assert.fail("Should throw IllegalStateException when reshaping closed array");
-            } catch (IllegalStateException e) {
+                Assert.fail("Should throw LineSenderException when reshaping closed array");
+            } catch (LineSenderException e) {
                 Assert.assertTrue(e.getMessage().contains("Cannot reshape a closed array"));
             }
         }
@@ -307,23 +307,113 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         try (DoubleArray array = new DoubleArray(2, 2, 2)) {
             try {
                 array.reshape(-1, 3, 4);
-                Assert.fail("Should throw IllegalArgumentException for negative dimension");
-            } catch (IllegalArgumentException e) {
+                Assert.fail("Should throw LineSenderException for negative dimension");
+            } catch (LineSenderException e) {
                 Assert.assertTrue(e.getMessage().contains("Array dimensions must not be negative"));
             }
 
             try {
                 array.reshape(2, -3, 4);
-                Assert.fail("Should throw IllegalArgumentException for negative dimension");
-            } catch (IllegalArgumentException e) {
+                Assert.fail("Should throw LineSenderException for negative dimension");
+            } catch (LineSenderException e) {
                 Assert.assertTrue(e.getMessage().contains("Array dimensions must not be negative"));
             }
 
             try {
                 array.reshape(2, 3, -4);
-                Assert.fail("Should throw IllegalArgumentException for negative dimension");
-            } catch (IllegalArgumentException e) {
+                Assert.fail("Should throw LineSenderException for negative dimension");
+            } catch (LineSenderException e) {
                 Assert.assertTrue(e.getMessage().contains("Array dimensions must not be negative"));
+            }
+        }
+    }
+
+    @Test
+    public void testArrayConstructorValidation() {
+        // Test negative dimensions in constructor
+        try {
+            new DoubleArray(-1, 5);
+            Assert.fail("Should throw LineSenderException for negative dimension");
+        } catch (LineSenderException e) {
+            Assert.assertTrue(e.getMessage().contains("dimension length must not be negative"));
+        }
+
+        // Test empty shape
+        try {
+            new DoubleArray();
+            Assert.fail("Should throw LineSenderException for empty shape");
+        } catch (LineSenderException e) {
+            Assert.assertTrue(e.getMessage().contains("Shape must have at least one dimension"));
+        }
+
+        // Test dimension exceeding DIM_MAX_LEN
+        int maxDim = (1 << 28) - 1; // ArrayView.DIM_MAX_LEN
+        try {
+            new DoubleArray(maxDim + 1);
+            Assert.fail("Should throw LineSenderException for dimension exceeding max length");
+        } catch (LineSenderException e) {
+            Assert.assertTrue(e.getMessage().contains("dimension length out of range"));
+        }
+
+        // Test too many dimensions (more than 32)
+        int[] tooManyDims = new int[33];
+        for (int i = 0; i < 33; i++) {
+            tooManyDims[i] = 2;
+        }
+        try {
+            new DoubleArray(tooManyDims);
+            Assert.fail("Should throw LineSenderException for too many dimensions");
+        } catch (LineSenderException e) {
+            Assert.assertTrue(e.getMessage().contains("Maximum supported dimensionality is 32D"));
+        }
+    }
+
+    @Test
+    public void testArrayReshapeDimensionLimits() {
+        try (DoubleArray array = new DoubleArray(2, 2)) {
+            // Test dimension exceeding DIM_MAX_LEN for reshape(int)
+            int maxDim = (1 << 28) - 1; // ArrayView.DIM_MAX_LEN
+            try {
+                array.reshape(maxDim + 1);
+                Assert.fail("Should throw LineSenderException for dimension exceeding max length");
+            } catch (LineSenderException e) {
+                Assert.assertTrue(e.getMessage().contains("Array size out of range"));
+            }
+
+            // Test dimension exceeding DIM_MAX_LEN for reshape(int, int)
+            try {
+                array.reshape(100, maxDim + 1);
+                Assert.fail("Should throw LineSenderException for dimension exceeding max length");
+            } catch (LineSenderException e) {
+                Assert.assertTrue(e.getMessage().contains("Array dimensions out of range"));
+            }
+
+            // Test dimension exceeding DIM_MAX_LEN for reshape(int, int, int)
+            try {
+                array.reshape(10, 10, maxDim + 1);
+                Assert.fail("Should throw LineSenderException for dimension exceeding max length");
+            } catch (LineSenderException e) {
+                Assert.assertTrue(e.getMessage().contains("Array dimensions out of range"));
+            }
+
+            // Test empty shape for varargs reshape
+            try {
+                array.reshape(new int[0]);
+                Assert.fail("Should throw LineSenderException for empty shape");
+            } catch (LineSenderException e) {
+                Assert.assertTrue(e.getMessage().contains("Shape must have at least one dimension"));
+            }
+
+            // Test too many dimensions
+            int[] tooManyDims = new int[33];
+            for (int i = 0; i < 33; i++) {
+                tooManyDims[i] = 2;
+            }
+            try {
+                array.reshape(tooManyDims);
+                Assert.fail("Should throw LineSenderException for too many dimensions");
+            } catch (LineSenderException e) {
+                Assert.assertTrue(e.getMessage().contains("Maximum supported dimensionality is 32D"));
             }
         }
     }
@@ -334,8 +424,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             array.close();
             try {
                 array.reshape(4);
-                Assert.fail("Should throw IllegalStateException when reshaping closed array");
-            } catch (IllegalStateException e) {
+                Assert.fail("Should throw LineSenderException when reshaping closed array");
+            } catch (LineSenderException e) {
                 Assert.assertTrue(e.getMessage().contains("Cannot reshape a closed array"));
             }
         }
@@ -343,8 +433,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         try (DoubleArray array = new DoubleArray(2, 2)) {
             try {
                 array.reshape(-1);
-                Assert.fail("Should throw IllegalArgumentException for negative dimension");
-            } catch (IllegalArgumentException e) {
+                Assert.fail("Should throw LineSenderException for negative dimension");
+            } catch (LineSenderException e) {
                 Assert.assertTrue(e.getMessage().contains("Array size must not be negative"));
             }
         }

@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.array;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedFlatArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -64,6 +65,22 @@ public abstract class AbstractArray implements QuietCloseable {
     protected MemoryA memA = array.startMemoryA();
 
     protected AbstractArray(int[] shape, short columnType) {
+        if (shape.length == 0) {
+            throw new LineSenderException("Shape must have at least one dimension");
+        }
+        if (shape.length > ColumnType.ARRAY_NDIMS_LIMIT) {
+            throw new LineSenderException("Maximum supported dimensionality is " +
+                    ColumnType.ARRAY_NDIMS_LIMIT + "D, but got " + shape.length + "D");
+        }
+        for (int dim = 0; dim < shape.length; dim++) {
+            if (shape[dim] < 0) {
+                throw new LineSenderException("dimension length must not be negative [dim=" + dim + ", dimLen=" + shape[dim] + "]");
+            }
+            if (shape[dim] > ArrayView.DIM_MAX_LEN) {
+                throw new LineSenderException("dimension length out of range [dim=" + dim + ", dimLen=" + shape[dim] + ", maxLen=" + ArrayView.DIM_MAX_LEN + "]");
+            }
+        }
+
         array.setType(ColumnType.encodeArrayType(columnType, shape.length));
         for (int dim = 0, size = shape.length; dim < size; dim++) {
             array.setDimLen(dim, shape[dim]);
@@ -142,23 +159,30 @@ public abstract class AbstractArray implements QuietCloseable {
      * Note: It resets the append position to the start of the array.
      *
      * @param shape the new dimensions for the array
-     * @throws IllegalStateException    if the array is already closed
-     * @throws IllegalArgumentException if shape has invalid dimensions
+     * @throws LineSenderException if the array is already closed or shape has invalid dimensions
      * @see #reshape(int)
      * @see #reshape(int, int)
      * @see #reshape(int, int, int)
      */
     public void reshape(int... shape) {
         if (closed) {
-            throw new IllegalStateException("Cannot reshape a closed array");
+            throw new LineSenderException("Cannot reshape a closed array");
         }
         int nDim = shape.length;
         if (nDim > ColumnType.ARRAY_NDIMS_LIMIT) {
-            throw new IllegalArgumentException("Maximum supported dimensionality is " +
+            throw new LineSenderException("Maximum supported dimensionality is " +
                     ColumnType.ARRAY_NDIMS_LIMIT + "D, but got " + nDim + "D");
         }
         if (nDim == 0) {
-            throw new IllegalArgumentException("Shape must have at least one dimension");
+            throw new LineSenderException("Shape must have at least one dimension");
+        }
+        for (int dim = 0; dim < nDim; dim++) {
+            if (shape[dim] < 0) {
+                throw new LineSenderException("dimension length must not be negative [dim=" + dim + ", dimLen=" + shape[dim] + "]");
+            }
+            if (shape[dim] > ArrayView.DIM_MAX_LEN) {
+                throw new LineSenderException("dimension length out of range [dim=" + dim + ", dimLen=" + shape[dim] + ", maxLen=" + ArrayView.DIM_MAX_LEN + "]");
+            }
         }
         array.setType(ColumnType.encodeArrayType(array.getElemType(), nDim));
         for (int dim = 0; dim < nDim; dim++) {
@@ -175,15 +199,17 @@ public abstract class AbstractArray implements QuietCloseable {
      * one-dimensional arrays or resizing existing one-dimensional arrays without allocating an array for the shape.
      *
      * @param dimLen the length of the single dimension
-     * @throws IllegalStateException    if the array is already closed
-     * @throws IllegalArgumentException if dimLen is negative
+     * @throws LineSenderException if the array is already closed or dimLen is negative
      */
     public void reshape(int dimLen) {
         if (closed) {
-            throw new IllegalStateException("Cannot reshape a closed array");
+            throw new LineSenderException("Cannot reshape a closed array");
         }
         if (dimLen < 0) {
-            throw new IllegalArgumentException("Array size must not be negative, but got " + dimLen);
+            throw new LineSenderException("Array size must not be negative, but got " + dimLen);
+        }
+        if (dimLen > ArrayView.DIM_MAX_LEN) {
+            throw new LineSenderException("Array size out of range [dimLen=" + dimLen + ", maxLen=" + ArrayView.DIM_MAX_LEN + "]");
         }
         array.setType(ColumnType.encodeArrayType(array.getElemType(), 1));
         array.setDimLen(0, dimLen);
@@ -199,15 +225,17 @@ public abstract class AbstractArray implements QuietCloseable {
      *
      * @param dim1 the length of the first dimension (rows)
      * @param dim2 the length of the second dimension (columns)
-     * @throws IllegalStateException    if the array is already closed
-     * @throws IllegalArgumentException if any dimension is negative
+     * @throws LineSenderException if the array is already closed or any dimension is negative
      */
     public void reshape(int dim1, int dim2) {
         if (closed) {
-            throw new IllegalStateException("Cannot reshape a closed array");
+            throw new LineSenderException("Cannot reshape a closed array");
         }
         if (dim1 < 0 || dim2 < 0) {
-            throw new IllegalArgumentException("Array dimensions must not be negative, but got [" + dim1 + ", " + dim2 + "]");
+            throw new LineSenderException("Array dimensions must not be negative, but got [" + dim1 + ", " + dim2 + "]");
+        }
+        if (dim1 > ArrayView.DIM_MAX_LEN || dim2 > ArrayView.DIM_MAX_LEN) {
+            throw new LineSenderException("Array dimensions out of range [dim1=" + dim1 + ", dim2=" + dim2 + ", maxLen=" + ArrayView.DIM_MAX_LEN + "]");
         }
         array.setType(ColumnType.encodeArrayType(array.getElemType(), 2));
         array.setDimLen(0, dim1);
@@ -225,15 +253,17 @@ public abstract class AbstractArray implements QuietCloseable {
      * @param dim1 the length of the first dimension
      * @param dim2 the length of the second dimension
      * @param dim3 the length of the third dimension
-     * @throws IllegalStateException    if the array is already closed
-     * @throws IllegalArgumentException if any dimension is negative
+     * @throws LineSenderException if the array is already closed or any dimension is negative
      */
     public void reshape(int dim1, int dim2, int dim3) {
         if (closed) {
-            throw new IllegalStateException("Cannot reshape a closed array");
+            throw new LineSenderException("Cannot reshape a closed array");
         }
         if (dim1 < 0 || dim2 < 0 || dim3 < 0) {
-            throw new IllegalArgumentException("Array dimensions must not be negative, but got [" + dim1 + ", " + dim2 + ", " + dim3 + "]");
+            throw new LineSenderException("Array dimensions must not be negative, but got [" + dim1 + ", " + dim2 + ", " + dim3 + "]");
+        }
+        if (dim1 > ArrayView.DIM_MAX_LEN || dim2 > ArrayView.DIM_MAX_LEN || dim3 > ArrayView.DIM_MAX_LEN) {
+            throw new LineSenderException("Array dimensions out of range [dim1=" + dim1 + ", dim2=" + dim2 + ", dim3=" + dim3 + ", maxLen=" + ArrayView.DIM_MAX_LEN + "]");
         }
         array.setType(ColumnType.encodeArrayType(array.getElemType(), 3));
         array.setDimLen(0, dim1);

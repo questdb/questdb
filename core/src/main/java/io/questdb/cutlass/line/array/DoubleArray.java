@@ -71,7 +71,7 @@ public class DoubleArray extends AbstractArray {
      * The append position starts at the beginning (first element).
      *
      * @param shape the dimensions of the array (must have at least one dimension)
-     * @throws IllegalArgumentException if shape is empty or contains negative values
+     * @throws io.questdb.cutlass.line.LineSenderException if shape is empty or contains negative values
      * @see #reshape(int...)
      */
     public DoubleArray(int... shape) {
