@@ -77,6 +77,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private MicrosecondClock microClock;
     private long nowMicros;
     private long nowNanos;
+    // Timestamp type for now() function, used by NowFunctionFactory
+    private int nowTimestampType;
     private boolean parallelFilterEnabled;
     private boolean parallelGroupByEnabled;
     private boolean parallelReadParquetEnabled;
@@ -99,7 +101,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         parallelReadParquetEnabled = cairoConfiguration.isSqlParallelReadParquetEnabled() && sharedQueryWorkerCount > 0;
         telemetry = cairoEngine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoOp;
-        intervalFunctionType = ColumnType.getIntervalType(cairoEngine.getConfiguration().getDefaultTimestampType());
+        nowTimestampType = cairoConfiguration.getDefaultTimestampType();
+        intervalFunctionType = ColumnType.getIntervalType(nowTimestampType);
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.simpleCircuitBreaker = new AtomicBooleanCircuitBreaker(cairoConfiguration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
@@ -220,6 +223,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
                 return nowNanos;
         }
         return 0L;
+    }
+
+    @Override
+    public int getNowTimestampType() {
+        return nowTimestampType;
     }
 
     @Override
@@ -368,6 +376,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         TimestampDriver driver = ColumnType.getTimestampDriver(nowTimestampType);
         this.nowMicros = driver.toMicros(now);
         this.nowNanos = driver.toNanos(now);
+        this.nowTimestampType = nowTimestampType;
         this.clockUseNow = true;
     }
 

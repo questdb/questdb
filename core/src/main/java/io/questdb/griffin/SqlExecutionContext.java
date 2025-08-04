@@ -131,6 +131,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      */
     long getNow(int timestampType);
 
+    int getNowTimestampType();
+
     QueryFutureUpdateListener getQueryFutureUpdateListener();
 
     Rnd getRandom();

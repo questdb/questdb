@@ -125,6 +125,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public int getNowTimestampType() {
+        return ColumnType.TIMESTAMP_MICRO;
+    }
+
+    @Override
     public QueryFutureUpdateListener getQueryFutureUpdateListener() {
         return null;
     }

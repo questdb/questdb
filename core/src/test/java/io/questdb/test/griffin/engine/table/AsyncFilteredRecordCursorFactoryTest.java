@@ -1183,6 +1183,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public int getNowTimestampType() {
+            return sqlExecutionContext.getNowTimestampType();
+        }
+
+        @Override
         public QueryFutureUpdateListener getQueryFutureUpdateListener() {
             return sqlExecutionContext.getQueryFutureUpdateListener();
         }
