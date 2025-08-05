@@ -632,7 +632,7 @@ public class LatestByTest extends AbstractCairoTest {
                             "JOIN second_selection on (pair);",
                     null,
                     false,
-                    true
+                    false
             );
         });
     }
@@ -1571,7 +1571,7 @@ public class LatestByTest extends AbstractCairoTest {
                                 "xyz\t1\t42\n",
                         factory,
                         false,
-                        true
+                        false
                 );
             }
         });

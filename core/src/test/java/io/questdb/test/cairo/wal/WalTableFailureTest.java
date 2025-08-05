@@ -57,7 +57,6 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -69,8 +68,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.Arrays;
-import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -1731,30 +1728,13 @@ public class WalTableFailureTest extends AbstractCairoTest {
         }
     }
 
-    private void assertWalApplyMetrics(int suspendedTables, int seqTxnTotal, int writerTxnTotal) {
-        String tagSuspendedTables = "questdb_suspended_tables ";
-        String tagSeqTxn = "questdb_wal_apply_seq_txn_total ";
-        String tagWriterTxn = "questdb_wal_apply_writer_txn_total ";
-        String missing = "missing";
-        try (DirectUtf8Sink metricsSink = new DirectUtf8Sink(1024)) {
-            engine.getMetrics().scrapeIntoPrometheus(metricsSink);
-            String[] lines = metricsSink.toString().split("\n");
-
-            Optional<String> suspendedTablesLine = Arrays.stream(lines)
-                    .filter(line -> line.startsWith(tagSuspendedTables)).findFirst();
-            Assert.assertTrue(tagSuspendedTables + missing, suspendedTablesLine.isPresent());
-            Assert.assertEquals(tagSuspendedTables + suspendedTables, suspendedTablesLine.get());
-
-            Optional<String> seqTxnLine = Arrays.stream(lines)
-                    .filter(line -> line.startsWith(tagSeqTxn)).findFirst();
-            Assert.assertTrue(tagSeqTxn + missing, seqTxnLine.isPresent());
-            Assert.assertEquals(tagSeqTxn + seqTxnTotal, seqTxnLine.get());
-
-            Optional<String> writerTxnLine = Arrays.stream(lines)
-                    .filter(line -> line.startsWith(tagWriterTxn)).findFirst();
-            Assert.assertTrue(tagWriterTxn + missing, writerTxnLine.isPresent());
-            Assert.assertEquals(tagWriterTxn + writerTxnTotal, writerTxnLine.get());
-        }
+    private void assertWalApplyMetrics(int suspendedTables, int seqTxn, int writerTxn) {
+        String tagSuspendedTables = "questdb_suspended_tables";
+        String tagSeqTxn = "questdb_wal_apply_seq_txn";
+        String tagWriterTxn = "questdb_wal_apply_writer_txn";
+        Assert.assertEquals(tagSuspendedTables, suspendedTables, TestUtils.getMetricValue(engine, tagSuspendedTables));
+        Assert.assertEquals(tagSeqTxn, seqTxn, TestUtils.getMetricValue(engine, tagSeqTxn));
+        Assert.assertEquals(tagWriterTxn, writerTxn, TestUtils.getMetricValue(engine, tagWriterTxn));
     }
 
     private void createStandardNonWalTable(String tableName) throws SqlException {
