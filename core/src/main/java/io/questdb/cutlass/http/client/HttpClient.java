@@ -46,6 +46,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
@@ -284,25 +285,25 @@ public abstract class HttpClient implements QuietCloseable {
         public Request DELETE() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("DELETE ");
+            return putAscii("DELETE ");
         }
 
         public Request GET() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("GET ");
+            return putAscii("GET ");
         }
 
         public Request POST() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("POST ");
+            return putAscii("POST ");
         }
 
         public Request PUT() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("PUT ");
+            return putAscii("PUT ");
         }
 
         public Request authBasic(CharSequence username, CharSequence password) {
@@ -520,6 +521,15 @@ public abstract class HttpClient implements QuietCloseable {
             }
             eol();
             return this;
+        }
+
+        @Override
+        public String toString() {
+            StringSink ss = new StringSink();
+            DirectUtf8String s = new DirectUtf8String();
+            s.of(bufLo, ptr);
+            ss.put(s);
+            return ss.toString();
         }
 
         public void trimContentToLen(int contentLen) {
@@ -755,6 +765,15 @@ public abstract class HttpClient implements QuietCloseable {
                     break;
                 case '}':
                     putAsciiInternal("%7D");
+                    break;
+                case '\n':
+                    putAsciiInternal("%0A");
+                    break;
+                case '\r':
+                    putAsciiInternal("%0D");
+                    break;
+                case '\t':
+                    putAsciiInternal("%09");
                     break;
                 default:
                     // there are symbols to escape, but those we do not tend to use at all
