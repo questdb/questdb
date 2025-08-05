@@ -195,6 +195,46 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testArrayConstructorValidation() {
+        // Test negative dimensions in constructor
+        try {
+            new DoubleArray(-1, 5);
+            Assert.fail("Should throw LineSenderException for negative dimension");
+        } catch (LineSenderException e) {
+            Assert.assertTrue(e.getMessage().contains("dimension length must not be negative"));
+        }
+
+        // Test empty shape
+        try {
+            new DoubleArray();
+            Assert.fail("Should throw LineSenderException for empty shape");
+        } catch (LineSenderException e) {
+            Assert.assertTrue(e.getMessage().contains("Shape must have at least one dimension"));
+        }
+
+        // Test dimension exceeding DIM_MAX_LEN
+        int maxDim = (1 << 28) - 1; // ArrayView.DIM_MAX_LEN
+        try {
+            new DoubleArray(maxDim + 1);
+            Assert.fail("Should throw LineSenderException for dimension exceeding max length");
+        } catch (LineSenderException e) {
+            Assert.assertTrue(e.getMessage().contains("dimension length out of range"));
+        }
+
+        // Test too many dimensions (more than 32)
+        int[] tooManyDims = new int[33];
+        for (int i = 0; i < 33; i++) {
+            tooManyDims[i] = 2;
+        }
+        try {
+            new DoubleArray(tooManyDims);
+            Assert.fail("Should throw LineSenderException for too many dimensions");
+        } catch (LineSenderException e) {
+            Assert.assertTrue(e.getMessage().contains("Maximum supported dimensionality is 32D"));
+        }
+    }
+
+    @Test
     public void testArrayReshape2D() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
@@ -325,46 +365,6 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             } catch (LineSenderException e) {
                 Assert.assertTrue(e.getMessage().contains("Array dimensions must not be negative"));
             }
-        }
-    }
-
-    @Test
-    public void testArrayConstructorValidation() {
-        // Test negative dimensions in constructor
-        try {
-            new DoubleArray(-1, 5);
-            Assert.fail("Should throw LineSenderException for negative dimension");
-        } catch (LineSenderException e) {
-            Assert.assertTrue(e.getMessage().contains("dimension length must not be negative"));
-        }
-
-        // Test empty shape
-        try {
-            new DoubleArray();
-            Assert.fail("Should throw LineSenderException for empty shape");
-        } catch (LineSenderException e) {
-            Assert.assertTrue(e.getMessage().contains("Shape must have at least one dimension"));
-        }
-
-        // Test dimension exceeding DIM_MAX_LEN
-        int maxDim = (1 << 28) - 1; // ArrayView.DIM_MAX_LEN
-        try {
-            new DoubleArray(maxDim + 1);
-            Assert.fail("Should throw LineSenderException for dimension exceeding max length");
-        } catch (LineSenderException e) {
-            Assert.assertTrue(e.getMessage().contains("dimension length out of range"));
-        }
-
-        // Test too many dimensions (more than 32)
-        int[] tooManyDims = new int[33];
-        for (int i = 0; i < 33; i++) {
-            tooManyDims[i] = 2;
-        }
-        try {
-            new DoubleArray(tooManyDims);
-            Assert.fail("Should throw LineSenderException for too many dimensions");
-        } catch (LineSenderException e) {
-            Assert.assertTrue(e.getMessage().contains("Maximum supported dimensionality is 32D"));
         }
     }
 
@@ -740,6 +740,145 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         "async\twater_level\ttimestamp\n" +
                                 "true\t2.0\t2024-09-09T14:28:26.361110Z\n" +
                                 "true\t3.0\t2024-09-09T14:38:26.361110Z\n");
+            }
+        });
+    }
+
+    @Test
+    public void testEmptyArraysMultiDimensional() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "1024"
+            )) {
+                String tableName = "empty_arrays_test";
+                serverMain.ddl("CREATE TABLE " + tableName + " (a1 double[], a2 double[][], a3 double[][][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTxn(tableName, 0);
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .autoFlushRows(Integer.MAX_VALUE)
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    // Test various empty array shapes
+                    double[] empty1D = createDoubleArray(0);
+                    double[][] empty2D = createDoubleArray(0, 0);
+                    double[][][] empty3D = createDoubleArray(0, 0, 0);
+
+                    sender.table(tableName)
+                            .doubleArray("a1", empty1D)
+                            .doubleArray("a2", empty2D)
+                            .doubleArray("a3", empty3D)
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    // Test 2D array with first dimension non-zero but second dimension zero
+                    double[][] partial2D = createDoubleArray(3, 0);
+                    sender.table(tableName)
+                            .doubleArray("a1", empty1D)
+                            .doubleArray("a2", partial2D)
+                            .doubleArray("a3", empty3D)
+                            .at(200000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    // Test 3D array with various zero dimensions
+                    double[][][] partial3D_1 = createDoubleArray(2, 0, 0);
+                    double[][][] partial3D_2 = createDoubleArray(2, 3, 0);
+                    sender.table(tableName)
+                            .doubleArray("a1", empty1D)
+                            .doubleArray("a2", empty2D)
+                            .doubleArray("a3", partial3D_2)
+                            .at(300000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                serverMain.awaitTxn(tableName, 3);
+                serverMain.assertSql("select * from " + tableName,
+                        "a1\ta2\ta3\tts\n" +
+                                "[]\t[]\t[]\t1970-01-02T03:46:40.000000Z\n" +
+                                "[]\t[]\t[]\t1970-01-03T07:33:20.000000Z\n" +
+                                "[]\t[]\t[]\t1970-01-04T11:20:00.000000Z\n");
+            }
+        });
+    }
+
+    @Test
+    public void testEmptyDoubleArray() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
+            )) {
+                String tableName = "arr_double_test";
+                serverMain.ddl("CREATE TABLE " + tableName + " (a1 double[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTxn(tableName, 0);
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
+                        .retryTimeoutMillis(0)
+                        .build();
+                     DoubleArray a1 = new DoubleArray(0);
+                ) {
+                    double[] arr1d = createDoubleArray(0);
+
+                    sender.table(tableName)
+                            .doubleArray("a1", arr1d)
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                serverMain.awaitTxn(tableName, 1);
+                serverMain.assertSql("select * from " + tableName,
+                        "a1\tts\n" +
+                                "[]\t1970-01-02T03:46:40.000000Z\n");
+            }
+        });
+    }
+
+    @Test
+    public void testEsotericArrayShapes() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "1024"
+            )) {
+                String tableName = "esoteric_arrays_test";
+                serverMain.ddl("CREATE TABLE " + tableName + " (a1 double[][][], a2 double[][][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTxn(tableName, 0);
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .autoFlushRows(Integer.MAX_VALUE)
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    // Test esoteric shape [1][0][1] - should be treated as [1][0][0]
+                    double[][][] esoteric1 = new double[1][0][1];
+
+                    // Test shape [2][0][5] - should be treated as [2][0][0]
+                    double[][][] esoteric2 = new double[2][0][5];
+
+                    sender.table(tableName)
+                            .doubleArray("a1", esoteric1)
+                            .doubleArray("a2", esoteric2)
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    // Test mixed zero/non-zero dimensions
+                    double[][][] mixed1 = createDoubleArray(1, 0, 0);
+                    double[][][] mixed2 = createDoubleArray(3, 0, 0);
+
+                    sender.table(tableName)
+                            .doubleArray("a1", mixed1)
+                            .doubleArray("a2", mixed2)
+                            .at(200000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                serverMain.awaitTxn(tableName, 2);
+                serverMain.assertSql("select * from " + tableName,
+                        "a1\ta2\tts\n" +
+                                "[]\t[]\t1970-01-02T03:46:40.000000Z\n" +
+                                "[]\t[]\t1970-01-03T07:33:20.000000Z\n");
             }
         });
     }
