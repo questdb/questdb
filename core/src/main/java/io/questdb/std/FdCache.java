@@ -39,11 +39,13 @@ import static io.questdb.ParanoiaState.FD_PARANOIA_MODE;
  */
 public class FdCache {
     static final AtomicInteger OPEN_OS_FILE_COUNT = new AtomicInteger();
+    private static final int MAX_RECORD_POOL_CAPACITY = 16 * 1024;
     private static final int NON_CACHED = (2 << 30);
     private static final int RO_MASK = 0;
     private final AtomicInteger fdCounter = new AtomicInteger(1);
     private final LongObjHashMap<FdCacheRecord> openFdMapByFd = new LongObjHashMap<>();
     private final Utf8SequenceObjHashMap<FdCacheRecord> openFdMapByPath = new Utf8SequenceObjHashMap<>();
+    private final ObjStack<FdCacheRecord> recordPool = new ObjStack<>();
     private long fdReuseCount = 0;
 
     /**
@@ -85,7 +87,12 @@ public class FdCache {
         if (fdCacheRecord.count == 0) {
             openFdMapByPath.remove(fdCacheRecord.path);
             int res = Files.close0(fdCacheRecord.osFd);
+
             if (res != 0) {
+                if (recordPool.size() < MAX_RECORD_POOL_CAPACITY) {
+                    recordPool.push(fdCacheRecord);
+                    fdCacheRecord.osFd = -1;
+                }
                 // If closing fails, we still decrement the open file count
                 return res;
             }
@@ -133,6 +140,10 @@ public class FdCache {
                 if (cacheKeyByPath < 0 && openFdMapByPath.valueAt(cacheKeyByPath) == cacheRecord) {
                     // If the record is the same object, we can remove it
                     openFdMapByPath.removeAt(cacheKeyByPath);
+                }
+                if (recordPool.size() < MAX_RECORD_POOL_CAPACITY) {
+                    cacheRecord.osFd = -1;
+                    recordPool.push(cacheRecord);
                 }
             }
             OPEN_OS_FILE_COUNT.decrementAndGet();
@@ -248,6 +259,17 @@ public class FdCache {
         return toOsFd(fd);
     }
 
+    private FdCacheRecord createFdCacheRecord(Utf8String path, long mmapCacheFd) {
+        FdCacheRecord holder = recordPool.pop();
+        if (holder == null) {
+            holder = new FdCacheRecord(path, mmapCacheFd);
+        } else {
+            holder.path = path;
+            holder.mmapCacheFd = mmapCacheFd;
+        }
+        return holder;
+    }
+
     private long createUniqueFdRO(int fd) {
         int index = fdCounter.getAndIncrement();
         return Numbers.encodeLowHighInts(index | RO_MASK, fd);
@@ -265,7 +287,7 @@ public class FdCache {
             } else {
                 OPEN_OS_FILE_COUNT.incrementAndGet();
                 Utf8String path = Utf8String.newInstance(lpsz);
-                holder = new FdCacheRecord(path, Numbers.encodeLowHighInts(fdCounter.incrementAndGet(), osFd));
+                holder = createFdCacheRecord(path, Numbers.encodeLowHighInts(fdCounter.incrementAndGet(), osFd));
                 holder.osFd = osFd;
                 openFdMapByPath.putAt(keyIndex, lpsz, holder);
             }
@@ -281,10 +303,10 @@ public class FdCache {
      */
     private static class FdCacheRecord {
         private static final FdCacheRecord EMPTY = new FdCacheRecord(null, 0);
-        private Utf8String path;
         long mmapCacheFd;
         private int count;
         private int osFd;
+        private Utf8String path;
 
         public FdCacheRecord(Utf8String path, long mmapCacheFd) {
             this.path = path;

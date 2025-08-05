@@ -274,10 +274,11 @@ public class FilesCacheFuzzTest extends AbstractTest {
 
                             long fd = -1;
                             long address = 0;
+                            int mapSize = 0;
                             try {
                                 fd = Files.openRO(filePath.$());
                                 if (fd != -1) {
-                                    int mapSize = 1024 + rnd.nextInt(FILE_SIZE - 1024);
+                                    mapSize = 1024 + rnd.nextInt(FILE_SIZE - 1024);
                                     address = Files.mmap(fd, mapSize, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
 
                                     if (address != -1) {
@@ -305,7 +306,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
                             } catch (Exception e) {
                                 if (address != 0) {
                                     try {
-                                        Files.munmap(address, FILE_SIZE, MemoryTag.MMAP_DEFAULT);
+                                        Files.munmap(address, mapSize, MemoryTag.MMAP_DEFAULT);
                                         munmapCount.incrementAndGet();
                                     } catch (Exception ignored) {
                                     }
@@ -367,10 +368,11 @@ public class FilesCacheFuzzTest extends AbstractTest {
 
                             long fd = -1;
                             long address = 0;
+                            int mapSize = 0;
                             try {
                                 fd = Files.openRW(singleFile.$());
                                 if (fd != -1) {
-                                    int mapSize = 2048 + rnd.nextInt(FILE_SIZE / 2);
+                                    mapSize = 2048 + rnd.nextInt(FILE_SIZE / 2);
                                     address = Files.mmap(fd, mapSize, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
 
                                     if (address != -1) {
@@ -389,7 +391,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
                             } catch (Exception e) {
                                 if (address != 0) {
                                     try {
-                                        Files.munmap(address, FILE_SIZE, MemoryTag.MMAP_DEFAULT);
+                                        Files.munmap(address, mapSize, MemoryTag.MMAP_DEFAULT);
                                         munmapCount.incrementAndGet();
                                     } catch (Exception ignored) {
                                     }
@@ -471,6 +473,8 @@ public class FilesCacheFuzzTest extends AbstractTest {
                             long writeOffset = threadId * 8 + rnd.nextInt(2) * Files.PAGE_SIZE;
                             if (writeOffset > mapSize / 2 - 8) {
                                 writeOffset = threadId * 8;
+                                // Ensure writeOffset is within bounds, the mapping is big enough
+                                assert writeOffset < (mapSize - 8);
                             }
 
                             Unsafe.getUnsafe().putLong(address + writeOffset, testValue);

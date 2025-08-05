@@ -29,12 +29,21 @@ package io.questdb.std;
  * Reuses existing mappings for the same file when possible to reduce system calls.
  */
 public class MmapCache {
+    private static final int MAX_RECORD_POOL_CAPACITY = 16 * 1024;
     private final LongObjHashMap<MmapCacheRecord> mmapAddrCache = new LongObjHashMap<>();
     private final LongObjHashMap<MmapCacheRecord> mmapFileCache = new LongObjHashMap<>();
+    private final ObjStack<MmapCacheRecord> recordPool = new ObjStack<>();
     private long mmapReuseCount = 0;
 
     /**
      * Maps file region into memory, reusing existing mapping if available.
+     *
+     * @param fd           file descriptor to map
+     * @param fileCacheKey unique value that is safe to use as a key for caching the map. Same OS FD is not good enough
+     *                     since FD can be closed after the mapping is created and reused for a different file.
+     * @param len          length of the mapping
+     * @param offset       offset in the file to start mapping from
+     * @param flags        memory mapping flags, e.g., Files.MAP_RO for read-only
      */
     public long cacheMmap(int fd, long fileCacheKey, long len, long offset, int flags, int memoryTag) {
         if (offset != 0 || fileCacheKey == 0 || !Files.FS_CACHE_ENABLED || flags == Files.MAP_RW) {
@@ -53,7 +62,7 @@ public class MmapCache {
                 }
             }
 
-            // Always map as RW, even if the request is RO.
+            // Cache RO maps only.
             long address = mmap0(fd, len, 0, Files.MAP_RO, memoryTag);
 
             if (address == -1) {
@@ -61,7 +70,7 @@ public class MmapCache {
                 return address;
             }
             // Cache the mmap record
-            var record = new MmapCacheRecord(fd, fileCacheKey, len, address, 1, memoryTag);
+            MmapCacheRecord record = createMmapCacheRecord(fd, fileCacheKey, len, address, memoryTag);
             mmapFileCache.putAt(fdMapIndex, fileCacheKey, record);
 
             // Point the returned address to the correct offset
@@ -91,7 +100,7 @@ public class MmapCache {
      */
     public long mremap(int fd, long fileCacheKey, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
         // TODO: handle the offset
-        if (offset != 0 || fileCacheKey == 0 || !Files.FS_CACHE_ENABLED) {
+        if (offset != 0 || fileCacheKey == 0 || !Files.FS_CACHE_ENABLED || flags == Files.MAP_RW) {
             return mremap0(fd, address, previousSize, newSize, offset, flags, memoryTag, memoryTag);
         }
 
@@ -131,6 +140,10 @@ public class MmapCache {
                             unmapLen = record.length;
                             unmapTag = record.memoryTag;
                             record.address = 0;
+
+                            if (recordPool.size() < MAX_RECORD_POOL_CAPACITY) {
+                                recordPool.push(record);
+                            }
                         }
                     }
                 }
@@ -155,7 +168,7 @@ public class MmapCache {
                     newAddress = mmap0(fd, newSize, 0, Files.MAP_RO, memoryTag);
                     if (newAddress != -1) {
                         // Cache the new mmap record
-                        var newRecord = new MmapCacheRecord(fd, fileCacheKey, newSize, newAddress, 1, memoryTag);
+                        MmapCacheRecord newRecord = createMmapCacheRecord(fd, fileCacheKey, newSize, newAddress, memoryTag);
                         mmapFileCache.put(fileCacheKey, newRecord);
                         mmapAddrCache.put(newAddress, newRecord);
                     }
@@ -199,9 +212,9 @@ public class MmapCache {
 
             var record = mmapAddrCache.valueAt(addrMapIndex);
             record.count--;
-            assert record.count > -1;
 
             if (record.count != 0) {
+                assert record.count > -1;
                 return;
             }
 
@@ -220,6 +233,9 @@ public class MmapCache {
             unmapLen = record.length;
             unmapTag = record.memoryTag;
             record.address = 0;
+            if (recordPool.size() < MAX_RECORD_POOL_CAPACITY) {
+                recordPool.push(record);
+            }
         }
 
         // offload the unmap to a single thread to not block everyone under synchronized section
@@ -253,6 +269,15 @@ public class MmapCache {
         }
     }
 
+    private MmapCacheRecord createMmapCacheRecord(int fd, long fileCacheKey, long len, long address, int memoryTag) {
+        MmapCacheRecord rec = recordPool.pop();
+        if (rec != null) {
+            rec.of(fd, fileCacheKey, len, address, 1, memoryTag);
+            return rec;
+        }
+        return new MmapCacheRecord(fd, fileCacheKey, len, address, 1, memoryTag);
+    }
+
     /**
      * Cache record holding memory mapping details and reference count.
      */
@@ -268,6 +293,15 @@ public class MmapCache {
             this.fd = fd;
             this.fileCacheKey = fileCacheKey;
             this.length = length;
+            this.address = address;
+            this.count = count;
+            this.memoryTag = memoryTag;
+        }
+
+        public void of(int fd, long fileCacheKey, long len, long address, int count, int memoryTag) {
+            this.fd = fd;
+            this.fileCacheKey = fileCacheKey;
+            this.length = len;
             this.address = address;
             this.count = count;
             this.memoryTag = memoryTag;
