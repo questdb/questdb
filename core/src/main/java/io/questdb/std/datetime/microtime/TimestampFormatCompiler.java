@@ -25,6 +25,7 @@
 package io.questdb.std.datetime.microtime;
 
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.GenericLexer;
@@ -691,6 +692,16 @@ public class TimestampFormatCompiler {
             fmtAttributeIndex[FA_WEEK_OF_YEAR] = index;
         }
 
+    }
+
+    private void assembleGetColumnTypeMethod(int getColumnTypeNameIndex, int getColumnTypeSigIndex, int columnTypeIndex) {
+        asm.startMethod(getColumnTypeNameIndex, getColumnTypeSigIndex, 1, 1);
+        asm.ldc(columnTypeIndex);
+        asm.ireturn();
+        asm.endMethodCode();
+        asm.putShort(0);
+        asm.putShort(0);
+        asm.endMethod();
     }
 
     private void assembleParseMethod(
@@ -1431,6 +1442,11 @@ public class TimestampFormatCompiler {
         int formatNameIndex = asm.poolUtf8("format");
         int formatSigIndex = asm.poolUtf8("(JLio/questdb/std/datetime/DateLocale;Ljava/lang/CharSequence;Lio/questdb/std/str/CharSink;)V");
 
+        int getColumnTypeNameIndex = asm.poolUtf8("getColumnType");
+        int getColumnTypeSigIndex = asm.poolUtf8("()I");
+        int columnTypeIndex = asm.getPoolCount();
+        asm.poolIntConst(ColumnType.TIMESTAMP_MICRO);
+
         // pool only delimiters over 1 char in length
         // when delimiter is 1 char we would use shorter code path
         // that doesn't require constant
@@ -1450,7 +1466,7 @@ public class TimestampFormatCompiler {
         asm.defineClass(thisClassIndex, superclassIndex);
         asm.interfaceCount(0);
         asm.fieldCount(0);
-        asm.methodCount(3);
+        asm.methodCount(4);
         asm.defineDefaultConstructor(superIndex);
 
         assembleParseMethod(
@@ -1530,6 +1546,8 @@ public class TimestampFormatCompiler {
                 getWeekOfYearIndex,
                 getWeekIndex
         );
+
+        assembleGetColumnTypeMethod(getColumnTypeNameIndex, getColumnTypeSigIndex, columnTypeIndex);
 
         // class attribute count
         asm.putShort(0);

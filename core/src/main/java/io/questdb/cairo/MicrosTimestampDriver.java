@@ -86,6 +86,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
         }
 
         @Override
+        public int getColumnType() {
+            return ColumnType.TIMESTAMP_MICRO;
+        }
+
+        @Override
         public long parse(@NotNull CharSequence in, @NotNull DateLocale locale) {
             return parse(in, 0, in.length(), locale);
         }
@@ -1526,6 +1531,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
         }
 
         @Override
+        public int getColumnType() {
+            return ColumnType.TIMESTAMP_MICRO;
+        }
+
+        @Override
         public long parse(@NotNull CharSequence in, @NotNull DateLocale locale) throws NumericException {
             return parse(in, 0, in.length(), locale);
         }
@@ -1560,7 +1570,6 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     public static class IsoWeekPartitionFormat implements DateFormat {
-
         @Override
         public void format(long timestamp, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
             long weekTime = timestamp - Timestamps.floorWW(timestamp);
@@ -1591,6 +1600,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
                     }
                 }
             }
+        }
+
+        @Override
+        public int getColumnType() {
+            return ColumnType.TIMESTAMP_MICRO;
         }
 
         @Override

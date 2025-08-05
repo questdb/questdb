@@ -24,6 +24,7 @@
 
 package io.questdb.std.datetime.millitime;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -354,6 +355,11 @@ public class GenericDateFormat extends AbstractDateFormat {
                     break;
             }
         }
+    }
+
+    @Override
+    public int getColumnType() {
+        return ColumnType.DATE;
     }
 
     @Override

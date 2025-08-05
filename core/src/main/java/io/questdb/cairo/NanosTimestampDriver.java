@@ -87,6 +87,11 @@ public class NanosTimestampDriver implements TimestampDriver {
         }
 
         @Override
+        public int getColumnType() {
+            return ColumnType.TIMESTAMP_NANO;
+        }
+
+        @Override
         public long parse(@NotNull CharSequence in, @NotNull DateLocale locale) {
             return parse(in, 0, in.length(), locale);
         }
@@ -1524,6 +1529,11 @@ public class NanosTimestampDriver implements TimestampDriver {
         }
 
         @Override
+        public int getColumnType() {
+            return ColumnType.TIMESTAMP_NANO;
+        }
+
+        @Override
         public long parse(@NotNull CharSequence in, @NotNull DateLocale locale) throws NumericException {
             return parse(in, 0, in.length(), locale);
         }
@@ -1558,7 +1568,6 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     public static class IsoWeekPartitionFormat implements DateFormat {
-
         @Override
         public void format(long timestamp, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
             long weekTime = timestamp - Nanos.floorWW(timestamp);
@@ -1589,6 +1598,11 @@ public class NanosTimestampDriver implements TimestampDriver {
                     }
                 }
             }
+        }
+
+        @Override
+        public int getColumnType() {
+            return ColumnType.TIMESTAMP_NANO;
         }
 
         @Override

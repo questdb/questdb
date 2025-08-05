@@ -95,7 +95,6 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.MicrosFormatFactory;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -1414,9 +1413,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.writerMixedIOEnabled = getBoolean(properties, env, PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, ff.allowMixedIO(this.dbRoot));
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
-                    new DateFormatFactory(),
+                    DateFormatFactory.INSTANCE,
                     DateLocaleFactory.INSTANCE,
-                    MicrosFormatFactory.INSTANCE,
                     this.locale
             );
 

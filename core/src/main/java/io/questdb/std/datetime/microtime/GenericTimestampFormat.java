@@ -24,6 +24,7 @@
 
 package io.questdb.std.datetime.microtime;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -390,6 +391,11 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     break;
             }
         }
+    }
+
+    @Override
+    public int getColumnType() {
+        return ColumnType.TIMESTAMP_MICRO;
     }
 
     @Override
