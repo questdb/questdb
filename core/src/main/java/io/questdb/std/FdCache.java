@@ -49,15 +49,6 @@ public class FdCache {
     private long fdReuseCount = 0;
 
     /**
-     * Validates that file descriptor is currently open in cache.
-     */
-    public synchronized void checkFdOpen(long fd) {
-        if (openFdMapByFd.keyIndex(fd) > -1) {
-            throw new IllegalStateException("fd " + fd + " is not open!");
-        }
-    }
-
-    /**
      * Closes file descriptor, decrements reference count, and removes from cache if last reference.
      */
     public synchronized int close(long fd) {

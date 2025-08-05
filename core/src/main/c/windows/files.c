@@ -619,7 +619,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openAppend
     HANDLE handle = openUtf8(
             lpszName,
             FILE_APPEND_DATA,
-            FILE_SHARE_READ | FILE_SHARE_DELETE | FILE_SHARE_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_DELETE,
             OPEN_ALWAYS
     );
 
