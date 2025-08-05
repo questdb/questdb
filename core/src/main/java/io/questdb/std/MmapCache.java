@@ -90,7 +90,7 @@ public class MmapCache {
     /**
      * Checks if memory mapping has only one active reference.
      */
-    public boolean isSingleUse(long address) {
+    public synchronized boolean isSingleUse(long address) {
         var cacheRecord = mmapAddrCache.get(address);
         return cacheRecord != null && cacheRecord.count == 1;
     }

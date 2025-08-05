@@ -80,12 +80,14 @@ public class FdCache {
             int res = Files.close0(fdCacheRecord.osFd);
 
             if (res != 0) {
-                if (recordPool.size() < MAX_RECORD_POOL_CAPACITY) {
-                    recordPool.push(fdCacheRecord);
-                    fdCacheRecord.osFd = -1;
-                }
-                // If closing fails, we still decrement the open file count
+                // If closing fails, we don't want to decrement the open file count
+                // and pool the record.
                 return res;
+            }
+
+            if (recordPool.size() < MAX_RECORD_POOL_CAPACITY) {
+                fdCacheRecord.osFd = -1;
+                recordPool.push(fdCacheRecord);
             }
             OPEN_OS_FILE_COUNT.decrementAndGet();
         }
@@ -124,19 +126,11 @@ public class FdCache {
         int keyIndex = openFdMapByFd.keyIndex(fd);
         if (keyIndex < 0) {
             FdCacheRecord cacheRecord = openFdMapByFd.valueAt(keyIndex);
-            openFdMapByFd.removeAt(keyIndex);
-
             if (cacheRecord != FdCacheRecord.EMPTY) {
-                int cacheKeyByPath = openFdMapByPath.keyIndex(cacheRecord.path);
-                if (cacheKeyByPath < 0 && openFdMapByPath.valueAt(cacheKeyByPath) == cacheRecord) {
-                    // If the record is the same object, we can remove it
-                    openFdMapByPath.removeAt(cacheKeyByPath);
-                }
-                if (recordPool.size() < MAX_RECORD_POOL_CAPACITY) {
-                    cacheRecord.osFd = -1;
-                    recordPool.push(cacheRecord);
-                }
+                throw new IllegalStateException("Cannot detach file cached file descriptor");
             }
+
+            openFdMapByFd.removeAt(keyIndex);
             OPEN_OS_FILE_COUNT.decrementAndGet();
         }
     }
