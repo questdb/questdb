@@ -37,13 +37,13 @@ import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.processors.ExportQueryProcessor;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
-import io.questdb.cutlass.http.processors.TextQueryProcessor;
 import io.questdb.cutlass.text.CopyImportRequestJob;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.QueryFutureUpdateListener;
@@ -238,7 +238,7 @@ public class HttpQueryTestBuilder {
 
                     @Override
                     public HttpRequestHandler newInstance() {
-                        return new TextQueryProcessor(
+                        return new ExportQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 workerPool.getWorkerCount()

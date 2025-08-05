@@ -27,13 +27,13 @@ package io.questdb.cutlass.http;
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.http.processors.ExportQueryProcessor;
 import io.questdb.cutlass.http.processors.LineHttpPingProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.SettingsProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
-import io.questdb.cutlass.http.processors.TextQueryProcessor;
 import io.questdb.cutlass.http.processors.WarningsProcessor;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
@@ -242,7 +242,7 @@ public class HttpServer implements Closeable {
 
             @Override
             public HttpRequestHandler newInstance() {
-                return new TextQueryProcessor(
+                return new ExportQueryProcessor(
                         httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                         cairoEngine,
                         workerPool.getWorkerCount(),

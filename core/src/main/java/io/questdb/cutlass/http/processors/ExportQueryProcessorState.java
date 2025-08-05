@@ -37,12 +37,13 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
-public class TextQueryProcessorState implements Mutable, Closeable {
+public class ExportQueryProcessorState implements Mutable, Closeable {
     final StringSink query = new StringSink();
     private final HttpConnectionContext httpConnectionContext;
     HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     int columnIndex;
     boolean columnValueFullySent = true;
+    String copyID;
     long count;
     boolean countRows = false;
     RecordCursor cursor;
@@ -59,9 +60,10 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     Rnd rnd;
     long skip;
     long stop;
+    boolean waitingForCopy;
     private boolean queryCacheable = false;
 
-    public TextQueryProcessorState(HttpConnectionContext httpConnectionContext) {
+    public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext) {
         this.httpConnectionContext = httpConnectionContext;
         clear();
     }
@@ -95,6 +97,8 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         arrayState.clear();
         columnValueFullySent = true;
         metadata = null;
+        copyID = null;
+        waitingForCopy = false;
     }
 
     @Override
