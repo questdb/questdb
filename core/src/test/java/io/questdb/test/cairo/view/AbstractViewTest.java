@@ -73,7 +73,7 @@ class AbstractViewTest extends AbstractCairoTest {
         assertEquals(query, viewDefinition.getViewSql());
 
         if (expectedDependencies != null && expectedDependencies.length > 0) {
-            final ObjList<CharSequence> dependencies = viewDefinition.getDependencies();
+            final ObjList<String> dependencies = viewDefinition.getDependencies();
             assertNotNull(dependencies);
             assertEquals(expectedDependencies.length, dependencies.size());
             for (int i = 0, n = expectedDependencies.length; i < n; i++) {

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -168,4 +169,7 @@ public interface SecurityContext extends Mutable {
     }
 
     boolean isSystemAdmin();
+
+    default void setImplicitAccessList(LowerCaseCharSequenceHashSet implicitAccessList) {
+    }
 }

@@ -125,6 +125,7 @@ public class SqlParser {
     private final ObjectPool<GenericLexer> viewLexers;
     private final SqlParserCallback viewSqlParserCallback = new SqlParserCallback() {
     };
+    private final ObjList<CharSequence> views = new ObjList<>();
     private final ObjectPool<WindowColumn> windowColumnPool;
     private final ObjectPool<WithClauseModel> withClauseModelPool;
     private int digit;
@@ -773,7 +774,7 @@ public class SqlParser {
         return model;
     }
 
-    private ExecutionModel parseCompileView(GenericLexer lexer) throws SqlException {
+    private ExecutionModel parseCompileView(SqlExecutionContext executionContext, GenericLexer lexer) throws SqlException {
         expectTok(lexer, "view");
         if (!configuration.isViewEnabled()) {
             throw SqlException.$(lexer.lastTokenPosition(), "views are disabled, set 'cairo.view.enabled=true' in the config to enable them");
@@ -795,6 +796,7 @@ public class SqlParser {
         model.setQueryModel(queryModel);
 
         compileViewQuery(queryModel, tt, lexer.lastTokenPosition());
+        recordViews(executionContext, queryModel);
         return model;
     }
 
@@ -2181,7 +2183,7 @@ public class SqlParser {
         final CharSequence tok = tok(lexer, "'create', 'format', 'insert', 'update', 'select' or 'with'");
 
         if (isSelectKeyword(tok)) {
-            return parseSelect(lexer, sqlParserCallback, null);
+            return parseSelect(executionContext, lexer, sqlParserCallback, null);
         }
 
         if (isCreateKeyword(tok)) {
@@ -2197,10 +2199,10 @@ public class SqlParser {
         }
 
         if (isWithKeyword(tok)) {
-            return parseWith(lexer, sqlParserCallback, null);
+            return parseWith(executionContext, lexer, sqlParserCallback, null);
         }
 
-        return parseSelect(lexer, sqlParserCallback, null);
+        return parseSelect(executionContext, lexer, sqlParserCallback, null);
     }
 
     private int parseExplainOptions(GenericLexer lexer, CharSequence prevTok) throws SqlException {
@@ -2936,6 +2938,7 @@ public class SqlParser {
     }
 
     private ExecutionModel parseSelect(
+            SqlExecutionContext executionContext,
             GenericLexer lexer,
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
@@ -2944,6 +2947,7 @@ public class SqlParser {
         final QueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls);
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
+            recordViews(executionContext, model.getQueryModel());
             return model;
         }
         if (Chars.equals(tok, ":=")) {
@@ -3580,6 +3584,7 @@ public class SqlParser {
     @SuppressWarnings("SameParameterValue")
     @NotNull
     private ExecutionModel parseWith(
+            SqlExecutionContext executionContext,
             GenericLexer lexer,
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
@@ -3587,7 +3592,7 @@ public class SqlParser {
         parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, decls);
         CharSequence tok = tok(lexer, "'select', 'update' or name expected");
         if (isSelectKeyword(tok)) {
-            return parseSelect(lexer, sqlParserCallback, decls);
+            return parseSelect(executionContext, lexer, sqlParserCallback, decls);
         }
 
         if (isUpdateKeyword(tok)) {
@@ -3659,6 +3664,17 @@ public class SqlParser {
         model.setSampleByOffset(expectExpr(lexer, sqlParserCallback, model.getDecls()));
         tok = optTok(lexer);
         return tok;
+    }
+
+    private void recordViews(SqlExecutionContext executionContext, QueryModel model) {
+        final CairoEngine engine = executionContext.getCairoEngine();
+        views.clear();
+        SqlUtil.collectAllTableAndViewNames(model, views, true);
+        for (int i = 0; i < views.size(); i++) {
+            final TableToken viewToken = engine.getTableTokenIfExists(views.getQuick(i));
+            final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
+            executionContext.recordView(viewDefinition);
+        }
     }
 
     private void rewriteCase(ExpressionNode node) {
@@ -4261,7 +4277,7 @@ public class SqlParser {
         }
 
         if (isSelectKeyword(tok)) {
-            return parseSelect(lexer, sqlParserCallback, null);
+            return parseSelect(executionContext, lexer, sqlParserCallback, null);
         }
 
         if (isCreateKeyword(tok)) {
@@ -4285,18 +4301,18 @@ public class SqlParser {
         }
 
         if (isWithKeyword(tok)) {
-            return parseWith(lexer, sqlParserCallback, null);
+            return parseWith(executionContext, lexer, sqlParserCallback, null);
         }
 
         if (isCompileKeyword(tok)) {
-            return parseCompileView(lexer);
+            return parseCompileView(executionContext, lexer);
         }
 
         if (isFromKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "Did you mean 'select * from'?");
         }
 
-        return parseSelect(lexer, sqlParserCallback, null);
+        return parseSelect(executionContext, lexer, sqlParserCallback, null);
     }
 
     QueryModel parseAsSubQuery(

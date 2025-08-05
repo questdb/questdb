@@ -51,7 +51,7 @@ public class ViewGraph implements Mutable {
         final TableToken viewToken = viewDefinition.getViewToken();
         final ViewDefinition prevDefinition = definitionsByTableDirName.putIfAbsent(viewToken.getDirName(), viewDefinition);
 
-        final ObjList<CharSequence> dependencies = viewDefinition.getDependencies();
+        final ObjList<String> dependencies = viewDefinition.getDependencies();
         for (int i = 0, n = dependencies.size(); i < n; i++) {
             final ViewDependencyList list = getOrCreateDependentViews(dependencies.getQuick(i));
             final ObjList<TableToken> dependentViews = list.lockForWrite();
@@ -99,7 +99,7 @@ public class ViewGraph implements Mutable {
             return;
         }
 
-        final ObjList<CharSequence> dependencies = viewDefinition.getDependencies();
+        final ObjList<String> dependencies = viewDefinition.getDependencies();
         for (int i = 0, n = dependencies.size(); i < n; i++) {
             final ViewDependencyList list = getOrCreateDependentViews(dependencies.getQuick(i));
             final ObjList<TableToken> dependentViews = list.lockForWrite();

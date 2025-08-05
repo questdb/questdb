@@ -60,7 +60,7 @@ public class CreateViewOperationImpl implements CreateViewOperation {
     ) {
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
-        final ObjList<CharSequence> deps = viewDefinition.getDependencies();
+        final ObjList<String> deps = viewDefinition.getDependencies();
         for (int i = 0, n = dependencies.size(); i < n; i++) {
             final CharSequence tableName = dependencies.getQuick(i);
             deps.add(tableName.toString());

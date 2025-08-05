@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.IntrinsicModel;
@@ -206,7 +207,10 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void pushTimestampRequiredFlag(boolean flag);
 
-    void resetFlags();
+    default void recordView(ViewDefinition viewDefinition) {
+    }
+
+    void reset();
 
     void setAllowNonDeterministicFunction(boolean value);
 

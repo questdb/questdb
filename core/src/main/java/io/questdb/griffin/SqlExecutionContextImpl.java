@@ -35,10 +35,13 @@ import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.std.IntStack;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -52,6 +55,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
+    private final LowerCaseCharSequenceHashSet implicitAccessList = new LowerCaseCharSequenceHashSet();
     private final int sharedQueryWorkerCount;
     private final AtomicBooleanCircuitBreaker simpleCircuitBreaker;
     private final Telemetry<TelemetryTask> telemetry;
@@ -287,13 +291,22 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void resetFlags() {
+    public void recordView(ViewDefinition viewDefinition) {
+        final ObjList<String> dependencies = viewDefinition.getDependencies();
+        for (int i = 0, n = dependencies.size(); i < n; i++) {
+            implicitAccessList.add(dependencies.getQuick(i));
+        }
+    }
+
+    @Override
+    public void reset() {
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
         this.columnPreTouchEnabled = true;
         this.columnPreTouchEnabledOverride = true;
         this.allowNonDeterministicFunction = true;
+        this.implicitAccessList.clear();
     }
 
     @Override
@@ -377,13 +390,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.securityContext = securityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
-        resetFlags();
+        reset();
         return this;
     }
 
     public void with(long requestFd) {
         this.requestFd = requestFd;
-        resetFlags();
+        reset();
     }
 
     public void with(BindVariableService bindVariableService) {
@@ -410,11 +423,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             @Nullable SqlExecutionCircuitBreaker circuitBreaker
     ) {
         this.securityContext = securityContext;
+        this.securityContext.setImplicitAccessList(implicitAccessList);
         this.bindVariableService = bindVariableService;
         this.random = rnd;
         this.requestFd = requestFd;
         this.circuitBreaker = circuitBreaker == null ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
-        resetFlags();
+        reset();
         return this;
     }
 
