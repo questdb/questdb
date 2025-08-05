@@ -29,9 +29,9 @@ public class Decimal160 implements Sinkable {
     public static final int MAX_SCALE = 38;
     static final long LONG_MASK = 0xffffffffL;
     private static final long B = (long) 1 << Integer.SIZE;
-    private static final long INFLATED = Long.MIN_VALUE;
     private static final long HALF_LONG_MAX_VALUE = Long.MAX_VALUE / 2;
     private static final long HALF_LONG_MIN_VALUE = Long.MIN_VALUE / 2;
+    private static final long INFLATED = Long.MIN_VALUE;
     private static final int LONG_SCALE_THRESHOLD = 19; // Maximum scale for a long before overflowing
     private static final long[] LONG_TEN_POWERS_TABLE = {
             1L,                     // 0 / 10^0
@@ -420,7 +420,7 @@ public class Decimal160 implements Sinkable {
         // we may have to fall back if we're overflowing when scaling values.
         boolean compactSuccess = false;
         if (compact != INFLATED && (delta <= 0 || (this.scale + delta) <= LONG_SCALE_THRESHOLD)) {
-            if (divisor.compact != INFLATED  && (delta >= 0 || (divisor.scale - delta) <= LONG_SCALE_THRESHOLD)) {
+            if (divisor.compact != INFLATED && (delta >= 0 || (divisor.scale - delta) <= LONG_SCALE_THRESHOLD)) {
                 compactSuccess = divide(this, low, divisor.low, delta, roundingMode);
             }
         }
@@ -1301,6 +1301,12 @@ public class Decimal160 implements Sinkable {
      * @param roundingMode Rounding mode that will be used to round the result
      */
     private static void divideKnuth128x128(Decimal160 result, long dividendHH, long dividendHigh, long dividendLow, long divisorHigh, long divisorLow, boolean isNegative, RoundingMode roundingMode) {
+        // Check for overflow - if dividendHH has upper bits set, the result would overflow 128 bits
+        // We can only handle at most 160 bits (32 bits in u4)
+        if ((dividendHH >>> 32) != 0) {
+            throw new ArithmeticException("Division overflow: intermediate result exceeds 160-bit precision");
+        }
+
         int v3 = (int) (divisorHigh >>> 32);
         int v2 = (int) (divisorHigh & LONG_MASK);
         int v1 = (int) (divisorLow >>> 32);
@@ -2720,9 +2726,11 @@ public class Decimal160 implements Sinkable {
         long r2 = (r1 >>> 32) + (p1 >>> 32) + (p2 & 0xFFFFFFFFL);
         long r3 = (r2 >>> 32) + (p2 >>> 32) + (p3 & 0xFFFFFFFFL);
         long r4 = (r3 >>> 32) + (p3 >>> 32) + p4;
-        // if (r4 != 0 && r4 != 999999999999999999L) {
-        //     throw new ArithmeticException("Overflow in 128-bit multiplication");
-        // }
+        
+        // Check for overflow: if r4 has significant bits, the result exceeds 128 bits
+        if (r4 != 0) {
+            throw new ArithmeticException("Multiplication overflow: result exceeds 128-bit capacity");
+        }
 
         this.low = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
         this.high = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
@@ -2736,8 +2744,10 @@ public class Decimal160 implements Sinkable {
             return;
         }
 
+        final int max = LONG_TEN_POWERS_TABLE.length;
+
         // For small powers, use lookup table
-        if (n <= 18) {
+        if (n < max) {
             long multiplier = LONG_TEN_POWERS_TABLE[n];
             // Special case: if high is 0, use simple 64-bit multiplication
             if (this.high == 0) {
@@ -2757,9 +2767,9 @@ public class Decimal160 implements Sinkable {
 
         // For larger powers, break down into smaller chunks
         // First multiply by largest power that fits in 64 bits (10^18)
-        while (n >= 18) {
-            multiplyBy64Bit(LONG_TEN_POWERS_TABLE[18]);
-            n -= 18;
+        while (n >= max) {
+            multiplyBy64Bit(LONG_TEN_POWERS_TABLE[max - 1]);  // multiply by 10^18
+            n -= (max - 1);  // subtract 18, not 19
         }
 
         // Multiply by remaining power
