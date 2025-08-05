@@ -48,6 +48,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     RecordCursor cursor;
     char delimiter = ',';
     String fileName;
+    String format = null;
     boolean hasNext;
     RecordMetadata metadata;
     boolean noMeta = false;
@@ -69,6 +70,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     public void clear() {
         delimiter = ',';
         fileName = null;
+        format = null;
         rnd = null;
         record = null;
         cursor = Misc.free(cursor);

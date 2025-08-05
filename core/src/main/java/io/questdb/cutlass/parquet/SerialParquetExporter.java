@@ -88,14 +88,14 @@ public class SerialParquetExporter implements Closeable {
         statusReporter.report(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, CopyExportRequestTask.STATUS_STARTED, null, Long.MIN_VALUE);
 
         final String tableName = task.getTableName();
-        final String fileName = task.getFileName();
+        final String fileName = task.getFileName() != null ? task.getFileName() : tableName;
 
         tableToken = cairoEngine.getTableTokenIfExists(tableName);
 
         if (tableToken == null) {
             throw CairoException.tableDoesNotExist(tableName);
         }
-        
+
         securityContext.authorizeSelectOnAnyColumn(tableToken);
 
         final CharSequence inputRoot = configuration.getSqlCopyInputRoot();

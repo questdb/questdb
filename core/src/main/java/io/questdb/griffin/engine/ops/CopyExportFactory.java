@@ -106,18 +106,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         this.parquetVersion = model.getParquetVersion();
     }
 
-    public void createTempTable(long copyID, SqlExecutionContext executionContext) throws SqlException {
-        exportIdSink.put("CREATE TABLE 'copy.");
-        Numbers.appendHex(exportIdSink, copyID, true);
-        exportIdSink.put("' AS (").put(selectText).put(')');
-
-        if (partitionBy > -1) {
-            exportIdSink.put(" PARTITION BY ").put(PartitionBy.toString(partitionBy));
-        }
-        exportIdSink.put(';');
-        executionContext.getCairoEngine().execute(exportIdSink);
-    }
-
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RingQueue<CopyExportRequestTask> copyExportRequestQueue = messageBus.getCopyExportRequestQueue();
@@ -141,11 +129,9 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     tableName = exportIdSink.toString();
                 }
 
-
                 exportIdSink.clear();
                 Numbers.appendHex(exportIdSink, copyID, true);
                 record.setValue(exportIdSink);
-
 
                 task.of(
                         executionContext.getSecurityContext(),
@@ -188,6 +174,18 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Copy");
+    }
+
+    void createTempTable(long copyID, SqlExecutionContext executionContext) throws SqlException {
+        exportIdSink.put("CREATE TABLE 'copy.");
+        Numbers.appendHex(exportIdSink, copyID, true);
+        exportIdSink.put("' AS (").put(selectText).put(')');
+
+        if (partitionBy != PartitionBy.NONE && partitionBy > -1) {
+            exportIdSink.put(" PARTITION BY ").put(PartitionBy.toString(partitionBy));
+        }
+        exportIdSink.put(';');
+        executionContext.getCairoEngine().execute(exportIdSink);
     }
 
     private static class CopyRecord implements Record {

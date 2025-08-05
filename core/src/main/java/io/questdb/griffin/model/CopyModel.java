@@ -25,6 +25,7 @@
 package io.questdb.griffin.model;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
@@ -92,7 +93,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         cancel = false;
         timestampFormat = null;
         timestampColumnName = null;
-        partitionBy = -1;
+        partitionBy = PartitionBy.NONE;
         delimiter = -1;
         atomicity = -1;
         type = COPY_TYPE_UNKNOWN;

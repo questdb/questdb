@@ -33,6 +33,7 @@ public final class HttpConstants {
     public static final String CONTENT_TYPE_MULTIPART_FORM_DATA = "multipart/form-data";
     @SuppressWarnings("unused")
     public static final String CONTENT_TYPE_MULTIPART_MIXED = "multipart/mixed";
+    public static final String CONTENT_TYPE_PARQUET = "application/vnd.apache.parquet";
     public static final String CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
     public static final char COOKIE_VALUE_SEPARATOR = '=';
     public static final Utf8String HEADER_AUTHORIZATION = new Utf8String("Authorization");
@@ -65,6 +66,7 @@ public final class HttpConstants {
     public static final Utf8String URL_PARAM_FILENAME = new Utf8String("filename");
     public static final Utf8String URL_PARAM_FMT = new Utf8String("fmt");
     public static final Utf8String URL_PARAM_FORCE_HEADER = new Utf8String("forceHeader");
+    public static final Utf8String URL_PARAM_FORMAT = new Utf8String("format");
     public static final Utf8String URL_PARAM_LIMIT = new Utf8String("limit");
     public static final Utf8String URL_PARAM_MAX_UNCOMMITTED_ROWS = new Utf8String("maxUncommittedRows");
     public static final Utf8String URL_PARAM_NAME = new Utf8String("name");
