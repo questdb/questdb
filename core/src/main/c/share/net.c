@@ -307,7 +307,7 @@ jint JNICALL Java_io_questdb_network_Net_connect
         case AF_INET6:
             addrlen = sizeof(struct sockaddr_in6);
             break;
-#ifdef OS_LINUX
+#ifndef __APPLE__
             case AF_UNIX:
                 addrlen = sizeof(struct sockaddr_un);
                 break;
