@@ -46,7 +46,7 @@ public class MmapCache {
      * @param flags        memory mapping flags, e.g., Files.MAP_RO for read-only
      */
     public long cacheMmap(int fd, long fileCacheKey, long len, long offset, int flags, int memoryTag) {
-        if (offset != 0 || fileCacheKey == 0 || !Files.FS_CACHE_ENABLED || flags == Files.MAP_RW) {
+        if (offset != 0 || fileCacheKey == 0 || !Files.FS_CACHE_ENABLED || flags == Files.MAP_RW || len == 0) {
             return mmap0(fd, len, offset, flags, memoryTag);
         }
 
@@ -99,9 +99,12 @@ public class MmapCache {
      * Resizes existing memory mapping, reusing or creating new mapping as needed.
      */
     public long mremap(int fd, long fileCacheKey, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
-        // TODO: handle the offset
         if (offset != 0 || fileCacheKey == 0 || !Files.FS_CACHE_ENABLED || flags == Files.MAP_RW) {
             return mremap0(fd, address, previousSize, newSize, offset, flags, memoryTag, memoryTag);
+        }
+        if (previousSize == 0) {
+            // If previous size is 0, we cannot remap, just mmap a new region
+            return cacheMmap(fd, fileCacheKey, newSize, offset, flags, memoryTag);
         }
 
         long unmapPtr = 0, unmapLen = 0;
@@ -115,6 +118,7 @@ public class MmapCache {
 
             MmapCacheRecord record = mmapAddrCache.valueAt(addrMapIndex);
 
+            int fdIndex = Integer.MAX_VALUE;
             if (newSize >= previousSize) {
                 if (record.length >= newSize) {
                     // Address is already long enough, just return it
@@ -122,7 +126,7 @@ public class MmapCache {
                 }
 
                 // Check if someone else remapped this to a larger size
-                int fdIndex = mmapFileCache.keyIndex(fileCacheKey);
+                fdIndex = mmapFileCache.keyIndex(fileCacheKey);
                 if (fdIndex < 0) {
                     MmapCacheRecord updatedCacheRecord = mmapFileCache.valueAt(fdIndex);
                     if (updatedCacheRecord.length >= newSize) {
@@ -130,6 +134,9 @@ public class MmapCache {
                         // The fd cache record is already long enough, just return the address
                         updatedCacheRecord.count++;
                         newAddress = updatedCacheRecord.address;
+                        // We should not store zero addresses in the cache. We do not cache if someone maps 0 length,
+                        // and we do not allow to remap to 0 length.
+                        assert newAddress != 0;
                         mmapReuseCount++;
 
                         record.count--;
@@ -169,14 +176,18 @@ public class MmapCache {
                     if (newAddress != -1) {
                         // Cache the new mmap record
                         MmapCacheRecord newRecord = createMmapCacheRecord(fd, fileCacheKey, newSize, newAddress, memoryTag);
-                        mmapFileCache.put(fileCacheKey, newRecord);
+                        if (fdIndex != Integer.MAX_VALUE) {
+                            mmapFileCache.putAt(fdIndex, fileCacheKey, newRecord);
+                        } else {
+                            mmapFileCache.put(fileCacheKey, newRecord);
+                        }
                         mmapAddrCache.put(newAddress, newRecord);
                     }
                 }
             }
         }
 
-        // offload the unmap to a single thread to not block everyone under synchronized section
+        // unmap is usually slow OS call, to not block everyone, move it out of synchronized section
         if (unmapPtr != 0) {
             // Unmap the old address if it was not used anymore
             unmap0(unmapPtr, unmapLen, unmapTag);
