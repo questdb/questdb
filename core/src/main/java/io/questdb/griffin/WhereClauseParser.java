@@ -1630,7 +1630,7 @@ public final class WhereClauseParser implements Mutable {
         final RecordCursorFactory factory = function.getRecordCursorFactory();
         if (factory != null) {
             final RecordMetadata metadata = factory.getMetadata();
-            return metadata.getColumnCount() == 1 && metadata.getColumnType(0) == ColumnType.TIMESTAMP;
+            return metadata.getColumnCount() == 1 && ColumnType.isTimestamp(metadata.getColumnType(0));
         }
         return false;
     }
