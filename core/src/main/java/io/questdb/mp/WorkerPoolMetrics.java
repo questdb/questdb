@@ -54,18 +54,12 @@ public final class WorkerPoolMetrics implements QuietCloseable {
 
     public WorkerPoolMetrics(int workerCount) {
         this.workerCount = workerCount;
-        // Allocate memory: workerCount * WORKER_SLOT_SIZE
-        long totalSize = (long) workerCount * WORKER_SLOT_SIZE;
-        this.baseAddress = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
 
         // Create individual monitor objects for each worker
         this.parkingMonitors = new Object[workerCount];
         for (int i = 0; i < workerCount; i++) {
             parkingMonitors[i] = new Object();
         }
-
-        // Initialize all values to zero
-        Unsafe.getUnsafe().setMemory(baseAddress, totalSize, (byte) 0);
     }
 
     /**
@@ -199,6 +193,20 @@ public final class WorkerPoolMetrics implements QuietCloseable {
         assert workerId >= 0 && workerId < workerCount;
         long slotAddress = baseAddress + ((long) workerId * WORKER_SLOT_SIZE);
         return Unsafe.getUnsafe().getByte(slotAddress + PARKING_FLAG_OFFSET) != 0;
+    }
+
+    public void start() {
+        if (baseAddress != 0) {
+            // Already started
+            return;
+        }
+
+        // Allocate memory: workerCount * WORKER_SLOT_SIZE
+        long totalSize = (long) workerCount * WORKER_SLOT_SIZE;
+        this.baseAddress = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
+
+        // Initialize all values to zero
+        Unsafe.getUnsafe().setMemory(baseAddress, totalSize, (byte) 0);
     }
 
     /**

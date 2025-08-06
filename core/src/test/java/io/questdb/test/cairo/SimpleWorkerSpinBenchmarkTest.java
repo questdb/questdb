@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.fuzz;
+package io.questdb.test.cairo;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -37,41 +37,55 @@ import java.lang.management.ThreadMXBean;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
-public class SimpleWorkerSpinBenchmark {
-    private static final Log LOG = LogFactory.getLog(SimpleWorkerSpinBenchmark.class);
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+
+public class SimpleWorkerSpinBenchmarkTest {
+    private static final Log LOG = LogFactory.getLog(SimpleWorkerSpinBenchmarkTest.class);
+    private double actualItemsPerSec;
 
     // Constants for consistent work distribution
 
     @Test
+    @Ignore
     public void testWorkerCpuSpinning() throws Exception {
-        int targetWorkPerSecond = 200000;
-        int testDurationSeconds = 15;
-        int totalTargetWork = targetWorkPerSecond * testDurationSeconds;
-        LOG.info().$("=== Worker CPU Spinning Benchmark ===").$();
-        LOG.info().$("Target work per test: ").$(totalTargetWork).$(" in ").$(testDurationSeconds).$(" seconds").$();
+        assertMemoryLeak(() -> {
+            LOG.info().$("=== Worker CPU Spinning Benchmark ===").$();
 
-        // Test with different worker counts to demonstrate the issue
+            // Test with different worker counts to demonstrate the issue
+            double oIn15By2 = runBenchmark(2, "2 workers", 2000);
+            double oIn15By2_act = actualItemsPerSec;
+            double otIn15By4 = runBenchmark(4, "4 workers", 2000);
+            double otIn15By4_act = actualItemsPerSec;
 
-        double t00In15By2 = runBenchmark(2, "2 workers", 15, 20000);
-        double t00In15By4 = runBenchmark(4, "4 workers", 15, 20000);
+            double t00In15By2 = runBenchmark(2, "2 workers", 20000);
+            double t00In15By2_act = actualItemsPerSec;
+            double t00In15By4 = runBenchmark(4, "4 workers", 20000);
+            double t00In15By4_act = actualItemsPerSec;
 
-        double tIn15By2 = runBenchmark(2, "2 workers", 15, 200000);
-        double tIn15By4 = runBenchmark(4, "4 workers", 15, 200000);
+            double tIn15By2 = runBenchmark(2, "2 workers", 200000);
+            double tIn15By2_act = actualItemsPerSec;
+            double tIn15By4 = runBenchmark(4, "4 workers", 200000);
+            double tIn15By4_act = actualItemsPerSec;
 
-        double t0In15By2 = runBenchmark(2, "2 workers", 15, 200000 * 10);
-        double t0In15By4 = runBenchmark(4, "4 workers", 15, 200000 * 10);
+            double t0In15By2 = runBenchmark(2, "2 workers", 200000 * 10);
+            double t0In15By2_act = actualItemsPerSec;
+            double t0In15By4 = runBenchmark(4, "4 workers", 200000 * 10);
+            double t0In15By4_act = actualItemsPerSec;
 
-        LOG.info().$("=== Benchmark Results ===").$();
-        LOG.info().$("2 workers, 20k work/sec: ").$(String.format("%.2f", t00In15By2)).$(" work/cpu-second").$();
-        LOG.info().$("4 workers, 20k work/sec: ").$(String.format("%.2f", t00In15By4)).$(" work/cpu-second").$();
-        LOG.info().$("2 workers, 200k work/sec: ").$(String.format("%.2f", tIn15By2)).$(" work/cpu-second").$();
-        LOG.info().$("4 workers, 200k work/sec: ").$(String.format("%.2f", tIn15By4)).$(" work/cpu-second").$();
-        LOG.info().$("2 workers, 2M work/sec: ").$(String.format("%.2f", t0In15By2)).$(" work/cpu-second").$();
-        LOG.info().$("4 workers, 2M work/sec: ").$(String.format("%.2f", t0In15By4)).$(" work/cpu-second").$();
-        LOG.info().$("=== Benchmark Complete ===").$();
+            LOG.info().$("=== Benchmark Results ===").$();
+            LOG.info().$("2 workers, target: 2k/sec,   actual: ").$(String.format("%.2f", oIn15By2_act)).$(",  work/sec:  ").$(String.format("%.2f", oIn15By2)).$(" work/cpu-second").$();
+            LOG.info().$("4 workers, target: 2k/sec,   actual: ").$(String.format("%.2f", otIn15By4_act)).$(",  work/sec:  ").$(String.format("%.2f", otIn15By4)).$(" work/cpu-second").$();
+            LOG.info().$("2 workers, target: 20k/sec,  actual: ").$(String.format("%.2f", t00In15By2_act)).$(",  work/sec:  ").$(String.format("%.2f", t00In15By2)).$(" work/cpu-second").$();
+            LOG.info().$("4 workers, target: 20k/sec,  actual: ").$(String.format("%.2f", t00In15By4_act)).$(",  work/sec:  ").$(String.format("%.2f", t00In15By4)).$(" work/cpu-second").$();
+            LOG.info().$("2 workers, target: 200k/sec, actual: ").$(String.format("%.2f", tIn15By2_act)).$(",  work/sec:  ").$(String.format("%.2f", tIn15By2)).$(" work/cpu-second").$();
+            LOG.info().$("4 workers, target: 200k/sec, actual: ").$(String.format("%.2f", tIn15By4_act)).$(",  work/sec:  ").$(String.format("%.2f", tIn15By4)).$(" work/cpu-second").$();
+            LOG.info().$("2 workers, target: 2M/sec,   actual: ").$(String.format("%.2f", t0In15By2_act)).$(",  work/sec:  ").$(String.format("%.2f", t0In15By2)).$(" work/cpu-second").$();
+            LOG.info().$("4 workers, target: 2M/sec,   actual: ").$(String.format("%.2f", t0In15By4_act)).$(",  work/sec:  ").$(String.format("%.2f", t0In15By4)).$(" work/cpu-second").$();
+            LOG.info().$("=== Benchmark Complete ===").$();
+        });
     }
 
-    private double runBenchmark(int workerCount, String testName, int testDurationSeconds, int totalTargetWork) throws Exception {
+    private double runBenchmark(int workerCount, String testName, int workPerSecond) throws Exception {
         LOG.info().$("Running benchmark with ").$(testName).$();
 
         // Create worker pool configuration
@@ -87,77 +101,68 @@ public class SimpleWorkerSpinBenchmark {
             }
         };
 
-        WorkerPool workerPool = new WorkerPool(config);
+        try (WorkerPool workerPool = new WorkerPool(config)) {
 
-        // Create work coordinator to ensure consistent total work
-        WorkCoordinator workCoordinator = new WorkCoordinator(totalTargetWork, totalTargetWork / testDurationSeconds);
+            // Create work coordinator to ensure consistent total work
+            WorkCoordinator workCoordinator = new WorkCoordinator(Integer.MAX_VALUE, workPerSecond);
 
-        // Create multiple jobs to increase contention and spinning
-        // Mix of spinning jobs and idle jobs to better reproduce CPU spinning
-        int totalJobs = workerCount * 10; // 10x more jobs than workers
-        SpinningJob[] spinningJobs = new SpinningJob[workerCount];
-        IdleJob[] idleJobs = new IdleJob[totalJobs - workerCount];
+            // Create multiple jobs to increase contention and spinning
+            // Mix of spinning jobs and idle jobs to better reproduce CPU spinning
+            int totalJobs = workerCount * 10; // 10x more jobs than workers
+            SpinningJob[] spinningJobs = new SpinningJob[workerCount];
+            IdleJob[] idleJobs = new IdleJob[totalJobs - workerCount];
 
-        // Create spinning jobs (active work generators)
-        for (int i = 0; i < workerCount; i++) {
-            spinningJobs[i] = new SpinningJob(workCoordinator);
-            workerPool.assign(spinningJobs[i]);
-        }
-
-        // Create idle jobs (mostly return false, causing workers to spin)
-        for (int i = 0; i < idleJobs.length; i++) {
-            idleJobs[i] = new IdleJob(i + workerCount, workCoordinator);
-            workerPool.assign(idleJobs[i]);
-        }
-
-        // Start CPU monitoring
-        CpuTracker cpuTracker = new CpuTracker();
-        cpuTracker.start();
-
-        // Start worker pool
-        workerPool.start(LOG);
-
-        try {
-            LOG.info().$("Running ").$(testName).$(" for 15 seconds...").$();
-
-            // Phase 1: High contention (5 seconds) - jobs return true frequently
-            setIdleJobMode(idleJobs, IdleJobMode.OCCASIONAL_WORK);
-            Thread.sleep(5000);
-
-            // Get final stats
-            long actualWork = workCoordinator.getWorkCompleted();
-            CpuStats stats = cpuTracker.getStats();
-            double actualWorkRate = workCoordinator.getWorkRate();
-
-            // Log results
-            LOG.info().$("Peak CPU usage: ").$(String.format("%.1f", stats.peakCpuUsage)).$("%").$();
-            LOG.info().$("CPU efficiency: ").$(String.format("%.2f", stats.getEfficiency(actualWork))).$(" work/cpu-second").$();
-
-            return stats.getEfficiency(actualWork);
-
-        } finally {
-            // Clean up
-            for (SpinningJob job : spinningJobs) {
-                job.stop();
+            // Create spinning jobs (active work generators)
+            for (int i = 0; i < workerCount; i++) {
+                spinningJobs[i] = new SpinningJob(workCoordinator);
+                workerPool.assign(spinningJobs[i]);
             }
-            for (IdleJob job : idleJobs) {
-                job.stop();
+
+            // Create idle jobs (mostly return false, causing workers to spin)
+            for (int i = 0; i < idleJobs.length; i++) {
+                idleJobs[i] = new IdleJob(i + workerCount, workCoordinator);
+                workerPool.assign(idleJobs[i]);
             }
-            cpuTracker.stop();
-            workerPool.halt();
-        }
-    }
 
-    private void setIdleJobMode(IdleJob[] jobs, IdleJobMode mode) {
-        for (IdleJob job : jobs) {
-            job.setMode(mode);
-        }
-    }
+            // Start CPU monitoring
+            CpuTracker cpuTracker = new CpuTracker();
+            cpuTracker.start();
+            workCoordinator.start();
 
-    private enum IdleJobMode {
-        OCCASIONAL_WORK,  // Sometimes return true to add to contention
-        MOSTLY_IDLE,     // Almost always return false, maximizing spinning
-        RARE_WORK        // Very rarely return true
+            // Start worker pool
+            long startTime = System.currentTimeMillis();
+            workerPool.start(LOG);
+
+            try {
+                LOG.info().$("Running ").$(testName).$(" for 10 seconds...").$();
+
+                Thread.sleep(10000);
+
+                // Get final stats
+                long endTime = System.currentTimeMillis();
+                long actualWork = workCoordinator.getWorkCompleted();
+                CpuStats stats = cpuTracker.getStats();
+
+                // Log results
+                LOG.info().$("Peak CPU usage: ").$(String.format("%.1f", stats.peakCpuUsage)).$("%").$();
+                LOG.info().$("CPU efficiency: ").$(String.format("%.2f", stats.getEfficiency(actualWork))).$(" work/cpu-second").$();
+                this.actualItemsPerSec = actualWork * 1000.0 / (endTime - startTime);
+                LOG.info().$("items/sec: ").$(String.format("%.2f", actualItemsPerSec)).$();
+
+                return stats.getEfficiency(actualWork);
+
+            } finally {
+                // Clean up
+                for (SpinningJob job : spinningJobs) {
+                    job.stop();
+                }
+                for (IdleJob job : idleJobs) {
+                    job.stop();
+                }
+                cpuTracker.stop();
+                workerPool.halt();
+            }
+        }
     }
 
     private static class CpuStats {
@@ -300,7 +305,6 @@ public class SimpleWorkerSpinBenchmark {
         private final WorkCoordinator workCoordinator;
         double fakeTotal = 0;
         private int callCounter = 0;
-        private volatile IdleJobMode mode = IdleJobMode.MOSTLY_IDLE;
 
         public IdleJob(int jobId, WorkCoordinator workCoordinator) {
             this.jobId = jobId;
@@ -315,41 +319,12 @@ public class SimpleWorkerSpinBenchmark {
 
             callCounter++;
 
-            switch (mode) {
-                case OCCASIONAL_WORK:
-                    // Return true occasionally to add to job queue contention
-                    if (callCounter % 50 == 0 && workCoordinator.canDoWork()) {
-                        if (doMinimalWork()) {
-                            return true;
-                        }
-                    }
-                    return callCounter % 20 == 0 && workCoordinator.canDoWork(); // 5% true rate when work available
-
-                case MOSTLY_IDLE:
-                    // Almost always return false - maximum spinning
-                    if (callCounter % 5000 == 0 && workCoordinator.canDoWork()) {
-                        if (doMinimalWork()) {
-                            return true;
-                        }
-                    }
-                    return false; // 99.98% false rate - causes maximum spinning
-
-                case RARE_WORK:
-                    // Very rarely return true
-                    if (callCounter % 1000 == 0 && workCoordinator.canDoWork()) {
-                        if (doMinimalWork()) {
-                            return true;
-                        }
-                    }
-                    return callCounter % 500 == 0 && workCoordinator.canDoWork(); // 0.2% true rate when work available
-
-                default:
-                    return false;
+            // Return true occasionally to add to job queue contention
+            if (callCounter % 50 == 0 && workCoordinator.canDoWork()) {
+                fakeTotal += Math.sqrt(jobId + callCounter);
+                return true;
             }
-        }
-
-        public void setMode(IdleJobMode mode) {
-            this.mode = mode;
+            return callCounter % 20 == 0 && workCoordinator.canDoWork(); // 5% true rate when work available
         }
 
         public void stop() {
@@ -406,11 +381,10 @@ public class SimpleWorkerSpinBenchmark {
 
     // Coordinates work distribution to ensure consistent total work across tests
     private static class WorkCoordinator {
-        private final long startTime;
-        private final long totalWork;
         private final long targetWorkPerSecond;
+        private final long totalWork;
         private final AtomicLong workCompleted = new AtomicLong();
-        private volatile long lastElapsed = 0;
+        private volatile long startTime;
 
         public WorkCoordinator(long totalWork, long targetWorkPerSecond) {
             this.totalWork = totalWork;
@@ -426,32 +400,26 @@ public class SimpleWorkerSpinBenchmark {
             return workCompleted.get();
         }
 
-        public double getWorkRate() {
-            return getWorkRate(lastElapsed);
-        }
-
-        public double getWorkRate(long elapsed) {
-            if (elapsed == 0) return 0;
-            return (double) workCompleted.get() * 1000.0 / elapsed; // work per second
-        }
-
         public void incrementWorkDone() {
             workCompleted.incrementAndGet();
         }
 
         public boolean shouldThrottleWork() {
+            if (startTime == 0) {
+                return true;
+            }
+
             long elapsed = System.currentTimeMillis() - startTime;
-            if (elapsed < 100) {
-                lastElapsed = elapsed;
-                return false; // Don't throttle in first 100ms
+            if (elapsed < 10) {
+                return false; // Don't throttle in first 10ms
             }
 
             // Throttle if we're going too fast
-            boolean shouldThrottle = workCompleted.get() > (elapsed * 1000) * targetWorkPerSecond * 1.1;
-            if (!shouldThrottle) {
-                lastElapsed = elapsed;
-            }
-            return shouldThrottle;
+            return workCompleted.get() > (elapsed / 1000.0) * targetWorkPerSecond * 1.01;
+        }
+
+        public void start() {
+            this.startTime = System.currentTimeMillis();
         }
     }
 }

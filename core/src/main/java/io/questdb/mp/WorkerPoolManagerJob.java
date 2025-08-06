@@ -52,8 +52,6 @@ public class WorkerPoolManagerJob extends SynchronizedJob {
     private final String poolName;
     private final double targetUtilization;
     private final double utilizationTolerance;
-    private boolean hasAdjustedRecently = false;
-    // State tracking
     private long iterationCount = 0;
     private long lastEvaluationIteration = 0;
     private double lastUtilization = 0.0;
@@ -85,14 +83,6 @@ public class WorkerPoolManagerJob extends SynchronizedJob {
         this.minActiveWorkers = Math.max(1, minActiveWorkers);
     }
 
-    /**
-     * Gets the evaluation interval in iterations.
-     *
-     * @return evaluation interval
-     */
-    public long getEvaluationInterval() {
-        return evaluationInterval;
-    }
 
     /**
      * Gets statistics about the manager's operation.
@@ -103,24 +93,6 @@ public class WorkerPoolManagerJob extends SynchronizedJob {
         return String.format("WorkerPoolManager[pool=%s, target=%.1f%%, current=%.1f%%, active=%d/%d, iterations=%d]",
                 poolName, targetUtilization, lastUtilization,
                 poolMetrics.getActiveWorkerCount(), poolMetrics.getWorkerCount(), iterationCount);
-    }
-
-    /**
-     * Gets the current target utilization percentage.
-     *
-     * @return target utilization (0.0 to 100.0)
-     */
-    public double getTargetUtilization() {
-        return targetUtilization;
-    }
-
-    /**
-     * Gets the current utilization tolerance.
-     *
-     * @return tolerance percentage
-     */
-    public double getUtilizationTolerance() {
-        return utilizationTolerance;
     }
 
     /**
@@ -209,12 +181,9 @@ public class WorkerPoolManagerJob extends SynchronizedJob {
         }
 
         if (madeAdjustment) {
-            hasAdjustedRecently = true;
             LOG.info().$("WorkerPool adjusted [pool=").$(poolName)
                     .$(", utilization=").$(currentUtilization)
                     .$(", active=").$(poolMetrics.getActiveWorkerCount()).I$();
-        } else {
-            hasAdjustedRecently = false;
         }
 
         lastUtilization = currentUtilization;
