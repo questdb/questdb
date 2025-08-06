@@ -778,46 +778,6 @@ public class Decimal160 implements Sinkable {
     }
 
     /**
-     * Generic function to make a 128-bit addition.
-     * @param result Decimal160 that will store the result of the operation
-     * @param aH High 64-bit part of the first operand.
-     * @param aL Low 64-bit part of the first operand.
-     * @param aScale Scale of the first operand.
-     * @param bH High 64-bit part of the second operand.
-     * @param bL Low 64-bit part of the second operand.
-     * @param bScale Scale of the second operand.
-     */
-    private static void add(Decimal160 result, long aH, long aL, int aScale, long bH, long bL, int bScale) {
-        result.scale = aScale;
-        if (aScale < bScale) {
-            // We need to rescale a to the same scale as b
-            result.high = aH;
-            result.low = aL;
-            result.rescale(bScale);
-            aH = result.high;
-            aL = result.low;
-        } else if (aScale > bScale) {
-            // We need to rescale b to the same scale as a
-            result.high = bH;
-            result.low = bL;
-            result.scale = bScale;
-            result.rescale(aScale);
-            bH = result.high;
-            bL = result.low;
-        }
-
-        // Perform 128-bit addition
-        long sumLow = aL + bL;
-
-        // Check for carry
-        long carry = hasCarry(aL, bL, sumLow) ? 1 : 0;
-
-        result.low = sumLow;
-        result.high = Math.addExact(aH, Math.addExact(bH, carry));
-        result.updateCompact();
-    }
-
-    /**
      * Subtract another Decimal160 from this one (in-place)
      *
      * @param other The Decimal160 to subtract
@@ -930,6 +890,47 @@ public class Decimal160 implements Sinkable {
         StringSink sink = new StringSink();
         toSink(sink);
         return sink.toString();
+    }
+
+    /**
+     * Generic function to make a 128-bit addition.
+     *
+     * @param result Decimal160 that will store the result of the operation
+     * @param aH     High 64-bit part of the first operand.
+     * @param aL     Low 64-bit part of the first operand.
+     * @param aScale Scale of the first operand.
+     * @param bH     High 64-bit part of the second operand.
+     * @param bL     Low 64-bit part of the second operand.
+     * @param bScale Scale of the second operand.
+     */
+    private static void add(Decimal160 result, long aH, long aL, int aScale, long bH, long bL, int bScale) {
+        result.scale = aScale;
+        if (aScale < bScale) {
+            // We need to rescale a to the same scale as b
+            result.high = aH;
+            result.low = aL;
+            result.rescale(bScale);
+            aH = result.high;
+            aL = result.low;
+        } else if (aScale > bScale) {
+            // We need to rescale b to the same scale as a
+            result.high = bH;
+            result.low = bL;
+            result.scale = bScale;
+            result.rescale(aScale);
+            bH = result.high;
+            bL = result.low;
+        }
+
+        // Perform 128-bit addition
+        long sumLow = aL + bL;
+
+        // Check for carry
+        long carry = hasCarry(aL, bL, sumLow) ? 1 : 0;
+
+        result.low = sumLow;
+        result.high = Math.addExact(aH, Math.addExact(bH, carry));
+        result.updateCompact();
     }
 
     /**
