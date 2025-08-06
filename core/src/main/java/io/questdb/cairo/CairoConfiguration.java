@@ -720,6 +720,8 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelReadParquetEnabled();
 
+    boolean isSqlParallelTopKEnabled();
+
     boolean isTableTypeConversionEnabled();
 
     /**

@@ -782,6 +782,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 if (tableWriter.isCommitReplaceMode()) {
                     if (prefixHi < prefixLo) {
                         prefixType = O3_BLOCK_NONE;
+                        // prefixType == O3_BLOCK_NONE and prefixHi >= also is used
+                        // to indicate split partition. To avoid that, set prefixHi to -1.
+                        prefixLo = 0;
+                        prefixHi = -1;
                     }
                     if (suffixHi < suffixLo) {
                         suffixType = O3_BLOCK_NONE;
@@ -907,6 +911,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // srcOooLo > srcOooHi means that O3 data is empty
                         if (prefixType == O3_BLOCK_O3) {
                             prefixType = O3_BLOCK_NONE;
+                            // prefixType == O3_BLOCK_NONE and prefixHi >= also is used
+                            // to indicate split partition. To avoid that, set prefixHi to -1.
+                            prefixLo = 0;
+                            prefixHi = -1;
                         }
 
                         // srcOooLo > srcOooHi means that O3 data is empty
