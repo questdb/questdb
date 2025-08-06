@@ -297,7 +297,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 // this size DOES NOT INCLUDE N+1, so it is N here
                 final long wouldBeAuxSize = columnTypeDriver.getAuxVectorSize(srcDataMax);
 
-                if ((srcDataTop > prefixHi && prefixType == O3_BLOCK_DATA) || prefixType == O3_BLOCK_O3 || tableWriter.isCommitReplaceMode()) {
+                if (srcDataTop > prefixHi || prefixType == O3_BLOCK_O3) {
                     // Extend the existing column down, we will be discarding it anyway.
                     // Materialize nulls at the end of the column and add non-null data to merge.
                     // Do all of this beyond existing written data, using column as a buffer.
@@ -2444,7 +2444,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 final long srcDataActualBytes = (srcDataMax - srcDataTop) << shl;
                 // Size of data in the file if it didn't have column top.
                 final long srcDataMaxBytes = srcDataMax << shl;
-                if ((srcDataTop > prefixHi && prefixType == O3_BLOCK_DATA) || prefixType == O3_BLOCK_O3 || tableWriter.isCommitReplaceMode()) {
+                if (srcDataTop > prefixHi || prefixType == O3_BLOCK_O3) {
                     // Extend the existing column down, we will be discarding it anyway.
                     // Materialize nulls at the end of the column and add non-null data to merge.
                     // Do all of this beyond existing written data, using column as a buffer.
@@ -2517,9 +2517,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             if (suffixType == O3_BLOCK_DATA && srcDataTop > 0) {
                 suffixHi -= srcDataTop;
                 suffixLo -= srcDataTop;
-                if (suffixHi < 0) {
-                    suffixType = O3_BLOCK_NONE;
-                }
             }
 
             if (indexBlockCapacity > -1) {
