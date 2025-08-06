@@ -193,7 +193,12 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             Function function = recordFunctions.getQuick(i);
             if (function instanceof GroupByFunction) {
                 if (fillIndex == fillValueCount) {
-                    throw SqlException.position(0).put("not enough values");
+                    throw SqlException.position(fillValues.getQuick(fillIndex - 1).position)
+                            .put("insufficient fill values for SAMPLE BY FILL: expected ")
+                            .put(groupByFunctions.size())
+                            .put(" values but only ")
+                            .put(fillValueCount)
+                            .put(" provided");
                 }
                 ExpressionNode fillNode = fillValues.getQuick(fillIndex++);
                 if (isNullKeyword(fillNode.token)) {
