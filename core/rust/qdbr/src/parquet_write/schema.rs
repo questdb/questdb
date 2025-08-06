@@ -188,6 +188,7 @@ pub fn column_type_to_parquet_types(
                 parquet_types.push(t);
             } else {
                 // encode as nested lists
+                // see https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists
                 let elem_type = column_type.array_element_type()?;
                 if elem_type != ColumnTypeTag::Double {
                     return Err(fmt_err!(
