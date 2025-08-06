@@ -66,6 +66,31 @@ public class Decimal160Test {
     }
 
     @Test
+    public void testCompareToFuzz() {
+        Rnd rnd = TestUtils.generateRandom(null);
+
+        // Number of test iterations
+        final int ITERATIONS = 10_000;
+
+        for (int i = 0; i < ITERATIONS; i++) {
+            // Generate random operands with various scales and values
+            Decimal160 a = rnd.nextDecimal160();
+            Decimal160 b = rnd.nextDecimal160();
+
+            BigDecimal bdA = a.toBigDecimal();
+            BigDecimal bdB = b.toBigDecimal();
+
+            // The comparison may overflow during rescaling
+            try {
+                int actual = a.compareTo(b);
+                int expected = bdA.compareTo(bdB);
+                Assert.assertEquals("iteration: " + i + " expected:<" + expected + "> but was:<" + actual + ">", expected, actual);
+            } catch (ArithmeticException ignore) {
+            }
+        }
+    }
+
+    @Test
     public void testCompareToWithDifferentScales() {
         // Test 12.34 (scale 2) vs 12.345 (scale 3)
         Decimal160 a = Decimal160.fromDouble(12.34, 2);   // 12.34

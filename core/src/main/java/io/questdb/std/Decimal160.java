@@ -296,6 +296,10 @@ public class Decimal160 implements Sinkable {
 
             // Multiply by 10^scaleDiff
             for (int i = 0; i < scaleDiff; i++) {
+                if ((scaledHigh >>> 3) != 0) {
+                    throw new ArithmeticException("Overflow, not enough precision to accommodate for scale");
+                }
+
                 // Multiply by 10: (8x + 2x)
                 long high8 = (scaledHigh << 3) | (scaledLow >>> 61);
                 long low8 = scaledLow << 3;
@@ -304,7 +308,7 @@ public class Decimal160 implements Sinkable {
 
                 scaledLow = low8 + low2;
                 long carry = hasCarry(low8, low2, scaledLow) ? 1 : 0;
-                scaledHigh = high8 + high2 + carry;
+                scaledHigh = Math.addExact(high8, Math.addExact(high2, carry));
             }
 
             // Compare scaled this with other
@@ -320,6 +324,10 @@ public class Decimal160 implements Sinkable {
 
             // Multiply by 10^scaleDiff
             for (int i = 0; i < scaleDiff; i++) {
+                if ((scaledHigh >>> 3) != 0) {
+                    throw new ArithmeticException("Overflow, not enough precision to accommodate for scale");
+                }
+
                 // Multiply by 10: (8x + 2x)
                 long high8 = (scaledHigh << 3) | (scaledLow >>> 61);
                 long low8 = scaledLow << 3;
@@ -328,7 +336,7 @@ public class Decimal160 implements Sinkable {
 
                 scaledLow = low8 + low2;
                 long carry = hasCarry(low8, low2, scaledLow) ? 1 : 0;
-                scaledHigh = high8 + high2 + carry;
+                scaledHigh = Math.addExact(high8, Math.addExact(high2, carry));
             }
 
             // Compare this with scaled other
