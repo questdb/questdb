@@ -113,7 +113,7 @@ public class Decimal160Test {
         Rnd rnd = TestUtils.generateRandom(null);
 
         // Number of test iterations
-        final int ITERATIONS = 10000;
+        final int ITERATIONS = 100_000;
 
         for (int i = 0; i < ITERATIONS; i++) {
             // Generate random operands with various scales and values
@@ -136,16 +136,9 @@ public class Decimal160Test {
 
         int tgtScale = 2;
         Decimal160 result = new Decimal160();
-        for (int i = 0; i < 100_000_000; i++) {
-            Decimal160.divide(a, b, result);
-        }
-        result.round(tgtScale, RoundingMode.HALF_UP);
-        System.out.println(result);
-        System.out.println("------------------");
-
+        Decimal160.divide(a, b, result, tgtScale, RoundingMode.HALF_UP);
         BigDecimal bdResult = bdA.divide(bdB, tgtScale, RoundingMode.HALF_UP);
-        System.out.println(bdResult);
-        Assert.assertEquals(result.toBigDecimal(), bdResult);
+        Assert.assertEquals(bdResult, result.toBigDecimal());
     }
 
     @Test
@@ -186,16 +179,9 @@ public class Decimal160Test {
 
         int tgtScale = 2;
         Decimal160 result = new Decimal160();
-        for (int i = 0; i < 10_000_000; i++) {
-            Decimal160.divide(a, b, result);
-        }
-        System.out.println(a);
-        System.out.println(result);
-        a.round(tgtScale, RoundingMode.HALF_UP);
-        System.out.println(a);
-        System.out.println("------------------");
+        Decimal160.divide(a, b, result, tgtScale, RoundingMode.HALF_UP);
 
-        System.out.println(bdA.divide(bdB, tgtScale, RoundingMode.HALF_UP));
+        Assert.assertEquals(result.toBigDecimal(), bdA.divide(bdB, tgtScale, RoundingMode.HALF_UP));
     }
 
     @Test(expected = ArithmeticException.class)
@@ -216,6 +202,20 @@ public class Decimal160Test {
         Assert.assertEquals(6, dividend.getScale());
         Assert.assertEquals(0, dividend.getHigh());
         Assert.assertEquals(3333333, dividend.getLow());
+    }
+
+    @Test
+    public void testEnd() {
+        BigDecimal a = new BigDecimal("30450464.57299");
+        BigDecimal b = new BigDecimal("-0.0000000006363875680102");
+        BigDecimal expected = a.divide(b, 6, RoundingMode.HALF_UP);
+
+        Decimal160 da = Decimal160.fromBigDecimal(a);
+        Decimal160 db = Decimal160.fromBigDecimal(b);
+
+        da.divide(db, 6, RoundingMode.HALF_UP);
+
+        Assert.assertEquals(expected, da.toBigDecimal());
     }
 
     @Test
@@ -282,8 +282,7 @@ public class Decimal160Test {
         Decimal160 a = Decimal160.fromDouble(100.0, 2);
         Decimal160 b = Decimal160.fromDouble(4.0, 1);
 
-        a.divide(b);
-        a.round(2, RoundingMode.HALF_UP);
+        a.divide(b, 2, RoundingMode.HALF_UP);
 
         Assert.assertEquals(25.0, a.toDouble(), 0.01);
         Assert.assertEquals(2, a.getScale());
@@ -350,6 +349,17 @@ public class Decimal160Test {
         // The result should be 2 * (2^64 - 1)
         Assert.assertEquals(0x1L, a.getHigh());
         Assert.assertEquals(0xFFFFFFFFFFFFFFFEL, a.getLow());
+    }
+
+    @Test
+    public void testLimit() {
+        BigDecimal a = new BigDecimal("-2937");
+        BigDecimal b = new BigDecimal("1E-33");
+
+        Decimal160 da = Decimal160.fromBigDecimal(a);
+        Decimal160 db = Decimal160.fromBigDecimal(b);
+
+        da.divide(db, 2, RoundingMode.HALF_UP);
     }
 
     @Test(expected = ArithmeticException.class)
@@ -768,24 +778,6 @@ public class Decimal160Test {
     }
 
     @Test
-    public void testSimple() {
-        int scale = 6;
-        BigDecimal bd1 = new BigDecimal("-0.51009773");
-        BigDecimal bd2 = new BigDecimal("0.0000000000000000000000000268600563");
-
-        Decimal160 d1 = Decimal160.fromBigDecimal(bd1);
-        Decimal160 d2 = Decimal160.fromBigDecimal(bd2);
-        System.out.println(bd1.divide(bd2, scale, RoundingMode.HALF_UP));
-        d1.divide(d2, scale, RoundingMode.HALF_UP);
-
-        System.out.println(d1);
-        System.out.println(Decimal160.fromBigDecimal(new BigDecimal("-18990940462027251968194869.345825")));
-        //0000000000000000000000000268600563
-        //3458248633678403719503745046133801
-        //
-    }
-
-    @Test
     public void testSinkableInterface() {
         // Test that Decimal160 can be used as a Sinkable
         Decimal160 decimal = Decimal160.fromDouble(42.99, 2);
@@ -819,8 +811,7 @@ public class Decimal160Test {
         Decimal160 b = Decimal160.fromDouble(4.0, 1);
         Decimal160 result = new Decimal160();
 
-        Decimal160.divide(a, b, result);
-        result.round(2, RoundingMode.HALF_UP);
+        Decimal160.divide(a, b, result, 2, RoundingMode.HALF_UP);
 
         Assert.assertEquals(25.0, result.toDouble(), 0.01);
         Assert.assertEquals(2, result.getScale());
@@ -1252,26 +1243,6 @@ public class Decimal160Test {
         // Choose a reasonable result scale
         int resultScale = Math.min(a.getScale() + 2, 6); // Limit to avoid precision issues
 
-        Decimal160 aCopy = new Decimal160();
-        aCopy.copyFrom(a);
-
-        // Test static divide method
-//        Decimal160.divide(aCopy, bCopy, result);
-//        result.round(resultScale, RoundingMode.HALF_UP);
-//
-        // Verify operands unchanged
-//        Assert.assertEquals("Division modified first operand at iteration " + iteration,
-//                a.toBigDecimal(), aCopy.toBigDecimal());
-//        Assert.assertEquals("Division modified second operand at iteration " + iteration,
-//                b.toBigDecimal(), bCopy.toBigDecimal());
-
-        // Test in-place divide method
-//        aCopy.divide(bCopy, resultScale, RoundingMode.HALF_UP);
-
-        // Results should be the same
-//        Assert.assertEquals("Static and in-place division differ at iteration " + iteration,
-//                result.toBigDecimal(), aCopy.toBigDecimal());
-
         // Test division accuracy with BigDecimal
         BigDecimal bigA = a.toBigDecimal();
         BigDecimal bigB = b.toBigDecimal();
@@ -1279,34 +1250,33 @@ public class Decimal160Test {
         // Perform division with the same scale and rounding mode as our implementation should use
         BigDecimal expected = bigA.divide(bigB, resultScale, RoundingMode.HALF_UP);
 
-        // Compare with new impl - catch overflow exceptions
+        // catch overflow exceptions
         try {
-            aCopy.divide(b, resultScale, RoundingMode.HALF_UP);
-            
-            // Allow for small rounding errors
-            BigDecimal actual = aCopy.toBigDecimal();
-            BigDecimal difference = expected.subtract(actual).abs();
-            
-            // Use relative tolerance for large numbers, absolute tolerance for small numbers
-            BigDecimal absoluteTolerance = BigDecimal.valueOf(1, resultScale); // 1 ULP at the result scale
-            BigDecimal relativeTolerance = expected.abs().multiply(BigDecimal.valueOf(5, 8)); // 5e-8 relative error
-            BigDecimal tolerance = absoluteTolerance.max(relativeTolerance);
-            
-            if (difference.compareTo(tolerance) > 0) {
-                // Add debug output for the failing case
-                if (iteration == 9443) {
-                    System.out.println("Debug iteration 9443:");
-                    System.out.println("a = " + a.toBigDecimal() + " (scale=" + a.getScale() + ")");
-                    System.out.println("b = " + b.toBigDecimal() + " (scale=" + b.getScale() + ")");
-                    System.out.println("resultScale = " + resultScale);
-                    System.out.println("delta = " + (resultScale + (b.getScale() - a.getScale())));
-                    System.out.println("expected = " + expected);
-                    System.out.println("actual = " + actual);
-                    System.out.println("difference = " + difference);
-                    System.out.println("tolerance = " + tolerance);
-                    System.out.println("relative error = " + difference.divide(expected.abs(), 10, RoundingMode.HALF_UP));
-                }
-                Assert.fail("iteration: " + iteration + " expected:<" + expected + "> but was:<" + actual + "> (difference: " + difference + ", tolerance: " + tolerance + ")");
+            Decimal160 staticResult = new Decimal160();
+
+            // Test static divide method
+            Decimal160.divide(a, b, staticResult, resultScale, RoundingMode.HALF_UP);
+
+            // Verify operands unchanged
+            Assert.assertEquals("Division modified first operand at iteration " + iteration,
+                    a.toBigDecimal(), a.toBigDecimal());
+            Assert.assertEquals("Division modified second operand at iteration " + iteration,
+                    b.toBigDecimal(), b.toBigDecimal());
+
+            Decimal160 result = new Decimal160();
+            result.copyFrom(a);
+
+            // Test in-place divide method
+            result.divide(b, resultScale, RoundingMode.HALF_UP);
+
+            // Results should be the same
+            Assert.assertEquals("Static and in-place division differ at iteration " + iteration,
+                    result.toBigDecimal(), staticResult.toBigDecimal());
+
+            BigDecimal actual = result.toBigDecimal();
+            if (expected.compareTo(actual) != 0) {
+                BigDecimal difference = expected.subtract(actual).abs();
+                Assert.fail("iteration: " + iteration + " expected:<" + expected + "> but was:<" + result + "> (difference: " + difference + ")");
             }
         } catch (ArithmeticException e) {
             // Skip this test case if overflow occurs during scaling
