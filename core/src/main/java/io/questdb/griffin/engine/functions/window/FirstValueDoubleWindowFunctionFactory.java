@@ -77,7 +77,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
         windowContext.checkWindowParameters(position, supportNullsDesc());
         long rowsLo = windowContext.getRowsLo();
-        long rowsHi = windowContext.getAdjustedRowsHi();
+        long rowsHi = windowContext.getRowsHi();
         if (rowsHi < rowsLo) {
             return new DoubleNullFunction(args.get(0),
                     NAME,
@@ -103,7 +103,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
         long rowsLo = windowContext.getRowsLo();
-        long rowsHi = windowContext.getAdjustedRowsHi();
+        long rowsHi = windowContext.getRowsHi();
         if (partitionByRecord != null) {
             if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // moving first_value() ignore nulls over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)
@@ -307,7 +307,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
 
         long rowsLo = windowContext.getRowsLo();
-        long rowsHi = windowContext.getAdjustedRowsHi();
+        long rowsHi = windowContext.getRowsHi();
         if (partitionByRecord != null) {
             if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // moving average over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)

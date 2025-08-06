@@ -2250,6 +2250,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
+                    "ts\ti\tj\tlast_value\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t2.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t4.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\n",
+                    "select ts, i, j,\n" +
+                            "last_value(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row)\n" +
+                            "from tab;",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
                     "ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
                             "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\tnull\t1.0\t1.0\t1.0\t2\t2\t2\t2\t1.0\t1.0\n" +
                             "1970-01-01T00:00:00.000002Z\t0\t2\t1.5\t3.0\tnull\t1.0\t2.0\t2.0\t3\t3\t3\t3\t2.0\t1.0\n" +
@@ -5165,6 +5182,31 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 true,
                 false
         );
+    }
+
+    @Test
+    public void testThisThing() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)");
+            execute("insert into tab select x::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, x%5, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(7)");
+            
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\tlast_value\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t2.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t4.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\tnull\n",
+                    "select ts, i, j,\n" +
+                            "last_value(j) over (partition by i order by ts rows between 2 preceding and current row exclude current row)\n" +
+                            "from tab;",
+                    "ts",
+                    false,
+                    true
+            );
+        });
     }
 
     @Test

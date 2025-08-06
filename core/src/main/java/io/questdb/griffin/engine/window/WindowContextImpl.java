@@ -68,8 +68,6 @@ public class WindowContextImpl implements WindowContext, Mutable {
             throw SqlException.$(getNullsDescPos(), "RESPECT/IGNORE NULLS is not supported for current window function");
         }
 
-        rowsHi = getRowsHi();
-
         if (!isDefaultFrame()) {
             if (rowsLo > 0) {
                 throw SqlException.$(getRowsLoKindPos(), "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only");
@@ -124,13 +122,6 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.nullsDescPos = 0;
     }
 
-    public long getAdjustedRowsHi() {
-        if (exclusionKind == WindowColumn.EXCLUDE_CURRENT_ROW && rowsHi == 0) {
-            return -1;
-        }
-        return rowsHi;
-    }
-
     public int getExclusionKind() {
         return exclusionKind;
     }
@@ -169,6 +160,9 @@ public class WindowContextImpl implements WindowContext, Mutable {
     }
 
     public long getRowsHi() {
+        if (exclusionKind == WindowColumn.EXCLUDE_CURRENT_ROW && rowsHi == 0) {
+            return -1;
+        }
         return rowsHi;
     }
 

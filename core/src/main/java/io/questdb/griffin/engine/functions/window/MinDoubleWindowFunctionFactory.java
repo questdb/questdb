@@ -68,7 +68,7 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
         long rowsLo = windowContext.getRowsLo();
-        long rowsHi = windowContext.getAdjustedRowsHi();
+        long rowsHi = windowContext.getRowsHi();
         if (rowsHi < rowsLo) {
             return new DoubleNullFunction(args.get(0),
                     NAME,

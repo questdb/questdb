@@ -66,7 +66,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
         long rowsLo = windowContext.getRowsLo();
-        long rowsHi = windowContext.getAdjustedRowsHi();
+        long rowsHi = windowContext.getRowsHi();
         if (rowsHi < rowsLo) {
             return new LongNullFunction(null,
                     CountFunctionFactoryHelper.COUNT_NAME,

@@ -34,8 +34,6 @@ public interface WindowContext {
 
     void checkWindowParameters(int position, boolean supportTNullsDesc) throws SqlException;
 
-    long getAdjustedRowsHi();
-
     int getExclusionKind();
 
     int getExclusionKindPos();
