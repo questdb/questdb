@@ -120,25 +120,25 @@ public class Rnd {
         int scale = nextInt(Decimal160.MAX_SCALE + 1);
 
         // Generate random value - mix of small, medium and large values
-        long value;
+        Decimal160 value;
         int valueType = nextInt(4);
 
         switch (valueType) {
             case 0: // Small values (-1000 to 1000)
-                value = nextLong() % 2000 - 1000;
+                value = new Decimal160(0, nextLong() % 2000 - 1000, scale);
                 break;
             case 1: // Medium values (up to int range)
-                value = nextInt();
+                value = new Decimal160(0, nextInt(), scale);
                 break;
             case 2: // Large positive values
-                value = Math.abs(nextLong() % (Long.MAX_VALUE / 1000000));
+                value = new Decimal160(nextLong() & 0x7FFFFFFFL, nextLong(), scale);
                 break;
             default: // Large negative values
-                value = -(Math.abs(nextLong() % (Long.MAX_VALUE / 1000000)));
+                value = new Decimal160((1L << 63) | (nextLong() & 0x7FFFFFFFL), nextLong(), scale);
                 break;
         }
 
-        sink.copyFrom(Decimal160.fromLong(value, scale));
+        sink.copyFrom(value);
     }
 
     /**
