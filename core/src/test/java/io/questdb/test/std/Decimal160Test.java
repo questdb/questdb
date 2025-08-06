@@ -38,7 +38,6 @@ import java.math.RoundingMode;
  * Tests for the consolidated Decimal160 class
  */
 public class Decimal160Test {
-
     @Test
     public void testAdditionFuzz() {
         Rnd rnd = TestUtils.generateRandom(null);
@@ -53,26 +52,6 @@ public class Decimal160Test {
 
             // Test addition accuracy
             testAdditionAccuracy(a, b, i);
-        }
-    }
-
-
-    @Test
-    public void testModuloFuzz() {
-        Rnd rnd = TestUtils.generateRandom(null);
-
-        // Number of test iterations
-        final int ITERATIONS = 10_000;
-
-        for (int i = 0; i < ITERATIONS; i++) {
-            // Generate random operands with various scales and values
-            Decimal160 a = rnd.nextDecimal160();
-            Decimal160 b = rnd.nextDecimal160();
-
-            if (!b.isZero()) {
-                // Test modulo accuracy
-                testModuloAccuracy(a, b, i);
-            }
         }
     }
 
@@ -393,6 +372,25 @@ public class Decimal160Test {
         Decimal160 zero = Decimal160.fromDouble(0.0, 2);
 
         a.modulo(zero);
+    }
+
+    @Test
+    public void testModuloFuzz() {
+        Rnd rnd = TestUtils.generateRandom(null);
+
+        // Number of test iterations
+        final int ITERATIONS = 10_000;
+
+        for (int i = 0; i < ITERATIONS; i++) {
+            // Generate random operands with various scales and values
+            Decimal160 a = rnd.nextDecimal160();
+            Decimal160 b = rnd.nextDecimal160();
+
+            if (!b.isZero()) {
+                // Test modulo accuracy
+                testModuloAccuracy(a, b, i);
+            }
+        }
     }
 
     @Test
