@@ -75,7 +75,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
-        windowContext.checkWindowParameters(position, supportNullsDesc());
+        windowContext.validate(position, supportNullsDesc());
         long rowsLo = windowContext.getRowsLo();
         long rowsHi = windowContext.getRowsHi();
         if (rowsHi < rowsLo) {

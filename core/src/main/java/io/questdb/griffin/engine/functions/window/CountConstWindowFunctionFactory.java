@@ -60,7 +60,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
-        windowContext.checkWindowParameters(position, supportNullsDesc());
+        windowContext.validate(position, supportNullsDesc());
         int framingMode = windowContext.getFramingMode();
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();

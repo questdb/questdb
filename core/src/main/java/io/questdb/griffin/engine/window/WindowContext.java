@@ -32,8 +32,6 @@ import io.questdb.griffin.SqlException;
 public interface WindowContext {
     boolean baseSupportsRandomAccess();
 
-    void checkWindowParameters(int position, boolean supportTNullsDesc) throws SqlException;
-
     int getExclusionKind();
 
     int getExclusionKindPos();
@@ -69,4 +67,6 @@ public interface WindowContext {
     boolean isOrdered();
 
     boolean isOrderedByDesignatedTimestamp();
+
+    void validate(int position, boolean supportTNullsDesc) throws SqlException;
 }

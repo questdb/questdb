@@ -80,7 +80,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
-        windowContext.checkWindowParameters(position, supportNullsDesc());
+        windowContext.validate(position, supportNullsDesc());
         int framingMode = windowContext.getFramingMode();
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();

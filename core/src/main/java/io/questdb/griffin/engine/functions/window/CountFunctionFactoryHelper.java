@@ -66,7 +66,7 @@ public class CountFunctionFactoryHelper {
                                            SqlExecutionContext sqlExecutionContext,
                                            IsRecordNotNull isRecordNotNull) throws SqlException {
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
-        windowContext.checkWindowParameters(position, factory.supportNullsDesc());
+        windowContext.validate(position, factory.supportNullsDesc());
         long rowsLo = windowContext.getRowsLo();
         long rowsHi = windowContext.getRowsHi();
         int framingMode = windowContext.getFramingMode();
