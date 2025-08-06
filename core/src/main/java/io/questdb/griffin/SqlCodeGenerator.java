@@ -404,6 +404,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final WhereClauseSymbolEstimator symbolEstimator = new WhereClauseSymbolEstimator();
     private final IntList tempAggIndex = new IntList();
+    private final ObjList<QueryColumn> tempColumnsList = new ObjList<>();
+    private final ObjList<ExpressionNode> tempExpressionNodeList = new ObjList<>();
     private final IntList tempKeyIndex = new IntList();
     private final IntList tempKeyIndexesInBase = new IntList();
     private final IntList tempKeyKinds = new IntList();
@@ -3783,9 +3785,37 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         final RecordMetadata baseMetadata = factory.getMetadata();
-        final ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
+        ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
         final TimestampSampler timestampSampler;
-        final int fillCount = sampleByFill.size();
+        int fillCount = sampleByFill.size();
+
+        // sampleByFill is originally set up based on GroupByFunctions in BottomUpColumns,
+        // but TopDownColumns may have different order and count with BottomUpColumns.
+        // Need to reorganize sampleByFill according to the position relationship between
+        // TopDownColumns and BottomUpColumns to ensure correct fill value alignment.
+        if (fillCount != 0 && model.getTopDownColumns().size() != 0) {
+            tempColumnsList.clear();
+            for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
+                final QueryColumn column = model.getBottomUpColumns().getQuick(i);
+                if (!column.isWindowColumn()) {
+                    final ExpressionNode node = column.getAst();
+                    if (node.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
+                        tempColumnsList.add(column);
+                    }
+                }
+            }
+
+            tempExpressionNodeList.clear();
+            for (int i = 0, n = model.getTopDownColumns().size(); i < n; i++) {
+                int index = tempColumnsList.indexOf(model.getTopDownColumns().getQuick(i));
+                if (index != -1 && fillCount > index) {
+                    tempExpressionNodeList.add(sampleByFill.getQuick(index));
+                }
+            }
+            sampleByFill = tempExpressionNodeList;
+            fillCount = sampleByFill.size();
+        }
+
         try {
             if (sampleByUnits == null) {
                 timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
