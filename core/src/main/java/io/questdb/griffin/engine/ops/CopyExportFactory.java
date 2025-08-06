@@ -44,6 +44,7 @@ import io.questdb.griffin.model.CopyModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
+import io.questdb.network.SuspendEvent;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
@@ -58,22 +59,23 @@ import static io.questdb.std.GenericLexer.unquote;
 public class CopyExportFactory extends AbstractRecordCursorFactory {
 
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
-    private final int compressionCodec;
-    private final int compressionLevel;
-    private final CopyContext copyContext;
-    private final int dataPageSize;
-    private final StringSink exportIdSink = new StringSink();
-    private final String fileName;
-    private final MessageBus messageBus;
-    private final int parquetVersion;
-    private final int partitionBy;
-    private final CopyRecord record = new CopyRecord();
-    private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
-    private final int rowGroupSize;
-    private final @Nullable SecurityContext securityContext;
-    private final int sizeLimit;
-    private final boolean statisticsEnabled;
+    private int compressionCodec;
+    private int compressionLevel;
+    private CopyContext copyContext;
+    private int dataPageSize;
+    private StringSink exportIdSink = new StringSink();
+    private String fileName;
+    private MessageBus messageBus;
+    private int parquetVersion;
+    private int partitionBy;
+    private CopyRecord record = new CopyRecord();
+    private SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
+    private int rowGroupSize;
+    private @Nullable SecurityContext securityContext;
     private @Nullable String selectText = null;
+    private int sizeLimit;
+    private boolean statisticsEnabled;
+    private @Nullable SuspendEvent suspendEvent = null;
     private @Nullable String tableName = null;
 
     public CopyExportFactory(
@@ -83,27 +85,19 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             SecurityContext securityContext
     ) throws SqlException {
         super(METADATA);
-        this.messageBus = messageBus;
-        this.copyContext = copyContext;
+        this.of(messageBus, copyContext, model, securityContext);
+    }
 
-        if (model.getTableName() != null) {
-            this.tableName = model.getTableName().toString();
-        } else {
-            assert model.getSelectText() != null;
-        }
-
-        final ExpressionNode fileNameExpr = model.getFileName();
-        this.fileName = fileNameExpr != null ? GenericLexer.assertNoDots(unquote(fileNameExpr.token), fileNameExpr.position).toString() : null;
-        this.securityContext = securityContext;
-        this.selectText = model.getSelectText();
-        this.partitionBy = model.getPartitionBy();
-        this.sizeLimit = model.getSizeLimit();
-        this.compressionCodec = model.getCompressionCodec();
-        this.compressionLevel = model.getCompressionLevel();
-        this.rowGroupSize = model.getRowGroupSize();
-        this.dataPageSize = model.getDataPageSize();
-        this.statisticsEnabled = model.isStatisticsEnabled();
-        this.parquetVersion = model.getParquetVersion();
+    public CopyExportFactory(
+            MessageBus messageBus,
+            CopyContext copyContext,
+            CopyModel model,
+            SecurityContext securityContext,
+            @Nullable SuspendEvent suspendEvent
+    ) throws SqlException {
+        super(METADATA);
+        this.suspendEvent = suspendEvent;
+        this.of(messageBus, copyContext, model, securityContext);
     }
 
     @Override
@@ -144,13 +138,13 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         rowGroupSize,
                         dataPageSize,
                         statisticsEnabled,
-                        parquetVersion
+                        parquetVersion,
+                        suspendEvent
                 );
 
                 circuitBreaker.reset();
                 copyRequestPubSeq.done(processingCursor);
-
-
+                
                 cursor.toTop();
                 return cursor;
             } else {
@@ -174,6 +168,33 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Copy");
+    }
+
+    private void of(MessageBus messageBus,
+                    CopyContext copyContext,
+                    CopyModel model,
+                    SecurityContext securityContext) throws SqlException {
+        this.messageBus = messageBus;
+        this.copyContext = copyContext;
+
+        if (model.getTableName() != null) {
+            this.tableName = model.getTableName().toString();
+        } else {
+            assert model.getSelectText() != null;
+        }
+
+        final ExpressionNode fileNameExpr = model.getFileName();
+        this.fileName = fileNameExpr != null ? GenericLexer.assertNoDots(unquote(fileNameExpr.token), fileNameExpr.position).toString() : null;
+        this.securityContext = securityContext;
+        this.selectText = model.getSelectText();
+        this.partitionBy = model.getPartitionBy();
+        this.sizeLimit = model.getSizeLimit();
+        this.compressionCodec = model.getCompressionCodec();
+        this.compressionLevel = model.getCompressionLevel();
+        this.rowGroupSize = model.getRowGroupSize();
+        this.dataPageSize = model.getDataPageSize();
+        this.statisticsEnabled = model.isStatisticsEnabled();
+        this.parquetVersion = model.getParquetVersion();
     }
 
     void createTempTable(long copyID, SqlExecutionContext executionContext) throws SqlException {

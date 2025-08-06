@@ -26,14 +26,17 @@ package io.questdb.cutlass.parquet;
 
 
 import io.questdb.cairo.SecurityContext;
+import io.questdb.network.SuspendEvent;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Mutable;
+import org.jetbrains.annotations.Nullable;
 
 public class CopyExportRequestTask implements Mutable {
     public static final byte PHASE_NONE = -1; // -1
     public static final byte PHASE_CREATING_TEMP_TABLE = PHASE_NONE + 1; // 0
     public static final byte PHASE_CONVERTING_PARTITIONS = PHASE_CREATING_TEMP_TABLE + 1; // 1
     public static final byte PHASE_DROPPING_TEMP_TABLE = PHASE_CONVERTING_PARTITIONS + 1; // 2
+    public static final byte PHASE_SIGNALLING_EXP = PHASE_DROPPING_TEMP_TABLE + 1; // 2
     public static final byte STATUS_STARTED = 0; // 0
     public static final byte STATUS_FINISHED = STATUS_STARTED + 1; // 1
     public static final byte STATUS_FAILED = STATUS_FINISHED + 1; // 2
@@ -51,6 +54,7 @@ public class CopyExportRequestTask implements Mutable {
     private SecurityContext securityContext;
     private int sizeLimit;
     private boolean statisticsEnabled;
+    private @Nullable SuspendEvent suspendEvent;
     private String tableName;
 
     public static String getPhaseName(byte status) {
@@ -74,6 +78,7 @@ public class CopyExportRequestTask implements Mutable {
         this.rowGroupSize = -1;
         this.sizeLimit = -1;
         this.statisticsEnabled = true;
+        this.suspendEvent = null;
     }
 
     public int getCompressionCodec() {
@@ -112,6 +117,10 @@ public class CopyExportRequestTask implements Mutable {
         return sizeLimit;
     }
 
+    public @Nullable SuspendEvent getSuspendEvent() {
+        return suspendEvent;
+    }
+
     public String getTableName() {
         return tableName;
     }
@@ -147,11 +156,31 @@ public class CopyExportRequestTask implements Mutable {
         this.parquetVersion = parquetVersion;
     }
 
+    public void of(
+            SecurityContext securityContext,
+            long copyID,
+            String tableName,
+            String fileName,
+            int sizeLimit,
+            int compressionCodec,
+            int compressionLevel,
+            int rowGroupSize,
+            int dataPageSize,
+            boolean statisticsEnabled,
+            int parquetVersion,
+            @Nullable SuspendEvent suspendEvent
+    ) {
+        this.clear();
+        this.of(securityContext, copyID, tableName, fileName, sizeLimit, compressionCodec, compressionLevel, rowGroupSize, dataPageSize, statisticsEnabled, parquetVersion);
+        this.suspendEvent = suspendEvent;
+    }
+
     static {
         PHASE_NAME_MAP.put(PHASE_NONE, null);
         PHASE_NAME_MAP.put(PHASE_CREATING_TEMP_TABLE, "creating_temp_table");
         PHASE_NAME_MAP.put(PHASE_CONVERTING_PARTITIONS, "converting_partitions");
         PHASE_NAME_MAP.put(PHASE_DROPPING_TEMP_TABLE, "dropping_temp_table");
+        PHASE_NAME_MAP.put(PHASE_SIGNALLING_EXP, "signalling_exp");
         STATUS_NAME_MAP.put(STATUS_STARTED, "started");
         STATUS_NAME_MAP.put(STATUS_FINISHED, "finished");
         STATUS_NAME_MAP.put(STATUS_FAILED, "failed");

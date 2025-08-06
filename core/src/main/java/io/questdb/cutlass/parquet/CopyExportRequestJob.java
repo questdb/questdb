@@ -192,6 +192,11 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                     }
                     updateStatus(CopyExportRequestTask.PHASE_DROPPING_TEMP_TABLE, CopyExportRequestTask.STATUS_FINISHED, task.getTableName(), Long.MIN_VALUE);
                 }
+                if (task.getSuspendEvent() != null) {
+                    updateStatus(CopyExportRequestTask.PHASE_SIGNALLING_EXP, CopyExportRequestTask.STATUS_STARTED, null, Long.MIN_VALUE);
+                    task.getSuspendEvent().trigger();
+                    updateStatus(CopyExportRequestTask.PHASE_SIGNALLING_EXP, CopyExportRequestTask.STATUS_FINISHED, null, Long.MIN_VALUE);
+                }
                 updateStatus(CopyExportRequestTask.PHASE_NONE, CopyExportRequestTask.STATUS_FINISHED, null, Long.MIN_VALUE);
             } catch (CopyExportException e) {
                 updateStatus(

@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
+import io.questdb.network.SuspendEvent;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Rnd;
@@ -60,6 +61,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     Rnd rnd;
     long skip;
     long stop;
+    SuspendEvent suspendEvent;
     boolean waitingForCopy;
     private boolean queryCacheable = false;
 
@@ -99,12 +101,14 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         metadata = null;
         copyID = null;
         waitingForCopy = false;
+        suspendEvent = null;
     }
 
     @Override
     public void close() {
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
+        Misc.free(suspendEvent);
     }
 
     public long getFd() {

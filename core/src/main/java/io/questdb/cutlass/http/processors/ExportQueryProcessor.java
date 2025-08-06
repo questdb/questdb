@@ -31,10 +31,10 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.ExportInProgressException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
@@ -49,6 +49,7 @@ import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
+import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -59,11 +60,13 @@ import io.questdb.griffin.model.CopyModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
+import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
+import io.questdb.network.SuspendEventFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Interval;
@@ -337,6 +340,36 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();
     }
 
+    private int checkForParquetExportCompletion(String copyID) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            // todo: reduce allocation
+            String statusSQL = "SELECT phase, status FROM 'sys.copy_export_log' WHERE id = '" + copyID + "' ORDER BY ts DESC LIMIT 1";
+            final CompiledQuery cc = compiler.compile(statusSQL, sqlExecutionContext);
+
+            try (RecordCursor cursor = cc.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
+                if (cursor.hasNext()) {
+                    CharSequence phase = cursor.getRecord().getSymA(0);
+                    CharSequence status = cursor.getRecord().getSymA(1);
+                    assert status != null;
+                    if (phase == null) {
+                        if (SqlKeywords.isFinishedKeyword(status)) {
+                            return CopyExportRequestTask.STATUS_FINISHED;
+                        } else if (SqlKeywords.isFailedKeyword(status)) {
+                            return CopyExportRequestTask.STATUS_FAILED;
+                        } else if (SqlKeywords.isCancelledKeyword(status)) {
+                            return CopyExportRequestTask.STATUS_CANCELLED;
+                        } else {
+                            return CopyExportRequestTask.STATUS_PENDING;
+                        }
+                    }
+                } else {
+                    return CopyExportRequestTask.STATUS_PENDING;
+                }
+            }
+        }
+        throw new UnsupportedOperationException();
+    }
+
     private String createTempTableForQuery(CharSequence query, long copyID) throws SqlException {
         String tempTableName = "copy." + Long.toHexString(copyID);
         String createTableSQL = "CREATE TABLE '" + tempTableName + "' AS (" + query + ")";
@@ -464,6 +497,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             } catch (DataUnavailableException e) {
                 response.resetToBookmark();
                 throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
+            } catch (ExportInProgressException e) {
+                response.resetToBookmark();
+                throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
             } catch (NoSpaceLeftInResponseBufferException ignored) {
                 if (response.resetToBookmark()) {
                     response.sendChunk(false);
@@ -502,10 +538,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         ExportQueryProcessorState state = LV.get(context);
 
-
-        if (state.copyID == null) {
-            // need to set up the temp table
-            try {
+        try {
+            if (state.copyID == null) {
+                // need to set up the temp table
+                state.suspendEvent = SuspendEventFactory.newInstance(DefaultIODispatcherConfiguration.INSTANCE);
+                // todo: set timeout
                 CopyModel model = new CopyModel();
                 model.clear();
                 model.setParquetDefaults(engine.getConfiguration());
@@ -513,64 +550,54 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 model.setFormat(CopyModel.COPY_FORMAT_PARQUET);
                 model.setPartitionBy(PartitionBy.NONE);
 
+                // todo: allocations
                 // Create a temporary table for the query result and initiate parquet export
-                String copyID = initiateParquetExport(model, context.getSecurityContext());
+                CopyExportFactory factory = new CopyExportFactory(
+                        engine.getMessageBus(),
+                        engine.getCopyContext(),
+                        model,
+                        context.getSecurityContext(),
+                        state.suspendEvent
+                );
 
-                state.copyID = copyID;
-
-                // Wait for export completion
-                boolean exportCompleted = waitForParquetExportCompletion(copyID);
-
-                if (exportCompleted) {
-                    // Find and serve the parquet file
-                    String exportPath = findParquetExportFile(copyID);
-                    if (exportPath != null) {
-                        sendParquetFile(context.getChunkedResponse(), exportPath, state);
-                    } else {
-                        sendException(context.getChunkedResponse(), 0, "Parquet export file not found", state);
-                    }
-                } else {
-                    sendException(context.getChunkedResponse(), 0, "Parquet export failed or timed out", state);
+                // todo: cleanup
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assert (cursor.hasNext());
+                    Record record = cursor.getRecord();
+                    state.copyID = record.getStrA(0).toString();
                 }
-
-            } catch (Exception e) {
-                internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e, state);
-            } finally {
-                readyForNextRequest(context);
+                state.waitingForCopy = true;
             }
+
+            // Wait for export completion
+            int completion = checkForParquetExportCompletion(state.copyID);
+
+            switch (completion) {
+                case CopyExportRequestTask.STATUS_PENDING:
+                    throw ExportInProgressException.instance(state.copyID, state.suspendEvent);
+                case CopyExportRequestTask.STATUS_FAILED:
+                    sendException(context.getChunkedResponse(), 0, "copy task failed [id=" + state.copyID + ']', state);
+                    break;
+                case CopyExportRequestTask.STATUS_CANCELLED:
+                    sendException(context.getChunkedResponse(), 0, "copy task was cancelled [id=" + state.copyID + ']', state);
+                    break;
+                case CopyExportRequestTask.STATUS_FINISHED:
+                    String exportPath = findParquetExportFile(state.copyID);
+                    if (exportPath == null) {
+                        sendException(context.getChunkedResponse(), 0, "exported parquet files not found [id=" + state.copyID + ']', state);
+                    }
+                    sendParquetFile(context.getChunkedResponse(), exportPath, state);
+                    break;
+            }
+        } catch (Exception e) {
+            internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e, state);
+        } finally {
+            readyForNextRequest(context);
         }
-
-
-        if (state.waitingForCopy && state.copyID != null) {
-            // copy is in progress
-        } else {
-            // better set up the copy
-        }
-
-
     }
 
     private LogRecord info(ExportQueryProcessorState state) {
         return LOG.info().$('[').$(state.getFd()).$("] ");
-    }
-
-    private String initiateParquetExport(CopyModel model, SecurityContext securityContext) throws SqlException {
-        // todo: allocations
-
-        CopyExportFactory factory = new CopyExportFactory(
-                engine.getMessageBus(),
-                engine.getCopyContext(),
-                model,
-                securityContext
-        );
-
-        // todo: cleanup
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            assert (cursor.hasNext());
-            Record record = cursor.getRecord();
-            CharSequence copyId = record.getStrA(0);
-            return copyId.toString();
-        }
     }
 
     private void internalError(
@@ -929,50 +956,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 .$("`, at=").$(container.getPosition())
                 .$(", message=`").$safe(container.getFlyweightMessage()).$('`').I$();
         sendException(response, container.getPosition(), container.getFlyweightMessage(), state);
-    }
-
-    private boolean waitForParquetExportCompletion(String copyID) throws SqlException {
-        // todo: configurable. also move to a background job to stop thread blocking
-        int maxWaitSeconds = 300; // 5 minutes timeout
-        int waitedSeconds = 0;
-
-        while (waitedSeconds < maxWaitSeconds) {
-            if (circuitBreaker.checkIfTripped()) {
-                return false;
-            }
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                // todo: reduce allocation
-                String statusSQL = "SELECT phase, status FROM 'sys.copy_export_log' WHERE id = '" + copyID + "' ORDER BY ts DESC LIMIT 1";
-                final CompiledQuery cc = compiler.compile(statusSQL, sqlExecutionContext);
-
-                try (RecordCursor cursor = cc.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
-                    if (cursor.hasNext()) {
-                        CharSequence phase = cursor.getRecord().getSymA(0);
-                        CharSequence status = cursor.getRecord().getSymA(1);
-                        assert status != null;
-                        if (phase == null) {
-                            if (SqlKeywords.isFinishedKeyword(status)) {
-                                return true;
-                            } else if (SqlKeywords.isFailedKeyword(status) || SqlKeywords.isCancelledKeyword(status)) {
-                                return false;
-                            }
-                        }
-                    }
-                }
-            } catch (SqlException e) {
-                // Status table might not exist yet, continue waiting
-            }
-
-            try {
-                Thread.sleep(1000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return false;
-            }
-            waitedSeconds++;
-        }
-
-        return false; // Timeout
     }
 
     protected void header(

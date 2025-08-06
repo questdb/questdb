@@ -26,6 +26,7 @@ package io.questdb.griffin.model;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.network.SuspendEvent;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
@@ -62,6 +63,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     private int compressionLevel;
     private int dataPageSize;
     private byte delimiter;
+    private SuspendEvent event;
     private ExpressionNode fileName;
     private int format;
     private boolean header;
