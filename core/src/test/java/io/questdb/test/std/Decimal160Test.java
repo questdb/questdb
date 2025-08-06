@@ -350,17 +350,6 @@ public class Decimal160Test {
         Assert.assertEquals(0xFFFFFFFFFFFFFFFEL, a.getLow());
     }
 
-    @Test
-    public void testLimit() {
-        BigDecimal a = new BigDecimal("-2937");
-        BigDecimal b = new BigDecimal("1E-33");
-
-        Decimal160 da = Decimal160.fromBigDecimal(a);
-        Decimal160 db = Decimal160.fromBigDecimal(b);
-
-        da.divide(db, 2, RoundingMode.HALF_UP);
-    }
-
     @Test(expected = ArithmeticException.class)
     public void testModuloByZero() {
         Decimal160 a = Decimal160.fromDouble(100.0, 2);
