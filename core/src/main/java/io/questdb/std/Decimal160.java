@@ -133,10 +133,12 @@ public class Decimal160 implements Sinkable {
      * @param a    First operand (dividend)
      * @param b    Second operand (divisor)
      * @param sink Destination for the result
+     * @param scale Result scale
+     * @param roundingMode Rounding Mode used to round the result
      */
-    public static void divide(Decimal160 a, Decimal160 b, Decimal160 sink) {
+    public static void divide(Decimal160 a, Decimal160 b, Decimal160 sink, int scale, RoundingMode roundingMode) {
         sink.copyFrom(a);
-        sink.divide(b);
+        sink.divide(b, scale, roundingMode);
     }
 
     /**
@@ -1209,7 +1211,7 @@ public class Decimal160 implements Sinkable {
         long estProduct = (qhat & LONG_MASK) * (vnm2 & LONG_MASK);
         if (unsignedLongCompare(estProduct, rs)) {
             qhat--;
-            rhat += vnm1Long;
+            rhat = (rhat + vnm1Long) & 0xFFFFFFFFL;
             if (rhat >= vnm1Long) {
                 estProduct -= vnm2 & LONG_MASK;
                 rs = ((rhat & LONG_MASK) << 32) | nl;
@@ -1509,7 +1511,7 @@ public class Decimal160 implements Sinkable {
 
         // j = 2
         // Step D3
-        long nChunk = ((long) u4 << Integer.SIZE) | (u3 & LONG_MASK);
+        long nChunk = ((u4 & LONG_MASK) << Integer.SIZE) | (u3 & LONG_MASK);
         long qhat = Long.divideUnsigned(nChunk, v1Long);
         long rhat = Long.remainderUnsigned(nChunk, v1Long);
 
@@ -1541,7 +1543,7 @@ public class Decimal160 implements Sinkable {
 
         // j = 1
         // Step D3
-        nChunk = ((long) u3 << Integer.SIZE) | (u2 & LONG_MASK);
+        nChunk = ((u3 & LONG_MASK) << Integer.SIZE) | (u2 & LONG_MASK);
         qhat = Long.divideUnsigned(nChunk, v1Long);
         rhat = Long.remainderUnsigned(nChunk, v1Long);
 
@@ -1575,7 +1577,7 @@ public class Decimal160 implements Sinkable {
 
         // j = 0
         // Step D3
-        nChunk = ((long) u2 << Integer.SIZE) | (u1 & LONG_MASK);
+        nChunk = ((u2 & LONG_MASK) << Integer.SIZE) | (u1 & LONG_MASK);
         qhat = Long.divideUnsigned(nChunk, v1Long);
         rhat = Long.remainderUnsigned(nChunk, v1Long);
 
