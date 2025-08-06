@@ -24,7 +24,12 @@
 
 package io.questdb;
 
-@FunctionalInterface
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.ObjHashSet;
+import org.jetbrains.annotations.NotNull;
+
+import java.util.concurrent.atomic.AtomicInteger;
+
 public interface ConfigReloader {
 
     /**
@@ -33,4 +38,85 @@ public interface ConfigReloader {
      * @return true if the config was reloaded
      */
     boolean reload();
+
+    void unwatch(int watchId);
+
+    /**
+     * Register a listener for specific config keys.
+     *
+     * @param listener the listener to notify
+     * @return watch ID for later unregistration
+     */
+    int watch(ConfigReloader.Listener listener);
+
+    interface Listener {
+        /**
+         * The configuration has changed.
+         */
+        void configChanged();
+
+        /**
+         * Gets the list of config keys that the listener wants to be notified about.
+         */
+        @NotNull ConfigPropertyKey[] getWatchedConfigKeys();
+    }
+
+    class WatchRegistry {
+        public static final int UNREGISTERED = -1;
+        private final AtomicInteger nextWatchId = new AtomicInteger(UNREGISTERED + 1);
+        private final IntObjHashMap<Listener> watchers = new IntObjHashMap<>();
+
+        /**
+         * Notify all watchers whose config keys intersect with the changed keys.
+         * Each watcher is notified at most once per call, even if multiple
+         * config keys they are watching have changed.
+         *
+         * @param changedKeys the set of config keys that changed
+         */
+        public synchronized void notifyWatchers(ObjHashSet<String> changedKeys) {
+            final int noEntryKeyValue = watchers.getNoEntryKey();
+            final int[] keys = watchers.getKeys();
+            final Listener[] values = watchers.getValues();
+            for (int slotIndex = 0, n = values.length; slotIndex < n; slotIndex++) {
+                if (keys[slotIndex] == noEntryKeyValue) {
+                    continue;
+                }
+                final Listener listener = values[slotIndex];
+                final ConfigPropertyKey[] watchedKeys = listener.getWatchedConfigKeys();
+                if (hasIntersection(watchedKeys, changedKeys)) {
+                    listener.configChanged();
+                }
+            }
+        }
+
+        /**
+         * Unregister a listener by watch ID.
+         *
+         * @param watchId the ID returned from watch()
+         */
+        public synchronized void unwatch(int watchId) {
+            watchers.remove(watchId);
+        }
+
+        /**
+         * Register a listener for specific config keys.
+         *
+         * @param listener the listener to notify
+         * @return watch ID for later unregistration
+         */
+        public synchronized int watch(ConfigReloader.Listener listener) {
+            final int watchId = nextWatchId.getAndIncrement();
+            watchers.put(watchId, listener);
+            return watchId;
+        }
+
+        private static boolean hasIntersection(ConfigPropertyKey[] watchedKeys, ObjHashSet<String> changedKeys) {
+            for (ConfigPropertyKey watchedKey : watchedKeys) {
+                if (changedKeys.contains(watchedKey.getPropertyPath())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
 }

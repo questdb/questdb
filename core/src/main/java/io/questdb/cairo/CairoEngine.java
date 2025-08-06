@@ -177,7 +177,22 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
-    private @NotNull ConfigReloader configReloader = () -> false; // no-op
+    private @NotNull ConfigReloader configReloader = new ConfigReloader() {
+        @Override
+        public boolean reload() {
+            return false;
+        }
+
+        @Override
+        public void unwatch(int watchId) {
+
+        }
+
+        @Override
+        public int watch(Listener listener) {
+            return WatchRegistry.UNREGISTERED;
+        }
+    }; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
