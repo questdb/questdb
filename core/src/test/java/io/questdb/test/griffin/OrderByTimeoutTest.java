@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
@@ -97,7 +96,6 @@ public class OrderByTimeoutTest extends AbstractCairoTest {
 
     @Test
     public void testTimeoutLimitedSizeSortedLightRecordCursor() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED, "false");
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE trips as (" +
@@ -110,7 +108,13 @@ public class OrderByTimeoutTest extends AbstractCairoTest {
             // We should select more rows than max value of the break limit.
             int breakTestLimit = 20;
             String sql = "select * from trips order by b desc limit 30";
-            testSql(breakTestLimit, sql);
+            final boolean oldParallelTopKEnabled = sqlExecutionContext.isParallelTopKEnabled();
+            sqlExecutionContext.setParallelTopKEnabled(false);
+            try {
+                testSql(breakTestLimit, sql);
+            } finally {
+                sqlExecutionContext.setParallelTopKEnabled(oldParallelTopKEnabled);
+            }
         });
     }
 
