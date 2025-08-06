@@ -54,6 +54,8 @@ public class FdCache {
     public synchronized int close(long fd) {
         int keyIndex = openFdMapByFd.keyIndex(fd);
         if (keyIndex > -1) {
+            // ALl long FDs are unique and tracked in the map, unless detached.
+            // If not found in openFdMapByFd map it means double close.
             throw new IllegalStateException("fd " + fd + " is already closed!");
         }
 
