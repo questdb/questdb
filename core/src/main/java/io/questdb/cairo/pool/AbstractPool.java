@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -38,7 +38,7 @@ public abstract class AbstractPool implements Closeable {
     public static final long UNALLOCATED = -1L;
     private static final int FALSE = 0;
     private static final int TRUE = 1;
-    protected final Clock clock;
+    protected final MicrosecondClock clock;
     protected final FilesFacade ff;
     private final CairoConfiguration configuration;
     private final long inactiveTtlUs;

@@ -24,11 +24,5 @@
 
 package io.questdb.std.datetime;
 
-import io.questdb.cairo.ColumnType;
-
 public interface MicrosecondClock extends Clock {
-    @Override
-    default int getClockTimestampType() {
-        return ColumnType.TIMESTAMP_MICRO;
-    }
 }

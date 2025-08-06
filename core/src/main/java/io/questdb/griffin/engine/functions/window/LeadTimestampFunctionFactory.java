@@ -65,7 +65,7 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
                 configuration,
                 sqlExecutionContext,
                 (defaultValue) -> {
-                    if (!ColumnType.isAssignableFrom(defaultValue.getType(), ColumnType.TIMESTAMP)) {
+                    if (!ColumnType.isAssignableFrom(defaultValue.getType(), args.getQuick(0).getType())) {
                         throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to timestamp");
                     }
                 },

@@ -51,7 +51,7 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
             StringSink sink = Misc.getThreadLocalSink();
-            sink.put(func.getTimestamp(null));
+            ColumnType.getTimestampDriver(func.getType()).append(sink, func.getTimestamp(null));
             return new StrConstant(Chars.toString(sink));
         }
         return new Func(args.getQuick(0));
@@ -60,10 +60,11 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
     public static class Func extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
-        private final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
+        private final TimestampDriver timestampDriver;
 
         public Func(Function arg) {
             super(arg);
+            timestampDriver = ColumnType.getTimestampDriver(arg.getType());
         }
 
         @Override
