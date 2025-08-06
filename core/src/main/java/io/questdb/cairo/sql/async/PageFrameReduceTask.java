@@ -58,7 +58,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private long frameSequenceId;
     private boolean isCancelled;
     private boolean isOutOfMemory;
-    private byte type;
+    private byte taskType;
 
     public PageFrameReduceTask(CairoConfiguration configuration, int memoryTag) {
         try {
@@ -142,8 +142,8 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         return frameSequenceId;
     }
 
-    public byte getType() {
-        return type;
+    public byte getTaskType() {
+        return taskType;
     }
 
     public boolean hasError() {
@@ -161,10 +161,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public void of(PageFrameSequence<?> frameSequence, int frameIndex) {
         this.frameSequence = frameSequence;
         this.frameSequenceId = frameSequence.getId();
-        this.type = frameSequence.getTaskType();
+        this.taskType = frameSequence.getTaskType();
         this.frameIndex = frameIndex;
         // Top K uses its own frame memory pool.
-        if (type != TYPE_TOP_K) {
+        if (taskType != TYPE_TOP_K) {
             frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         }
         frameMemory = null;
@@ -175,7 +175,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     }
 
     public PageFrameMemory populateFrameMemory() {
-        assert type != TYPE_TOP_K;
+        assert taskType != TYPE_TOP_K;
         frameMemory = frameMemoryPool.navigateTo(frameIndex);
         return frameMemory;
     }
@@ -239,8 +239,8 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         }
     }
 
-    public void setType(byte type) {
-        this.type = type;
+    public void setTaskType(byte taskType) {
+        this.taskType = taskType;
     }
 
     void collected() {

@@ -587,7 +587,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         if (localTask == null) {
             localTask = localTaskFactory.getInstance();
-            localTask.setType(taskType);
+            localTask.setTaskType(taskType);
         }
         localTask.of(this, dispatchStartFrameIndex++);
 
