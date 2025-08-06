@@ -80,7 +80,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
         windowContext.checkWindowParameters(position, supportNullsDesc());
         long rowsLo = windowContext.getRowsLo();
-        long rowsHi = windowContext.getRowsHi();
+        long rowsHi = windowContext.getAdjustedRowsHi();
         if (rowsHi < rowsLo) {
             return new DoubleNullFunction(args.get(0),
                     NAME,
@@ -291,7 +291,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
         long rowsLo = windowContext.getRowsLo();
-        long rowsHi = windowContext.getRowsHi();
+        long rowsHi = windowContext.getAdjustedRowsHi();
 
         if (partitionByRecord != null) {
             if (framingMode == WindowColumn.FRAMING_RANGE) {
