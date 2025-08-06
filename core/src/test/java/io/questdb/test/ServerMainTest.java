@@ -682,6 +682,50 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "query.within.latest.by.optimisation.enabled\tQDB_QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.preferences.string.pool.capacity\tQDB_CAIRO_PREFERENCES_STRING_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
                                     "http.settings.readonly\tQDB_HTTP_SETTINGS_READONLY\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "http.worker.target.utilization\tQDB_HTTP_WORKER_TARGET_UTILIZATION\t0.8\tdefault\tfalse\tfalse\n" +
+                                    "http.worker.utilization.tolerance\tQDB_HTTP_WORKER_UTILIZATION_TOLERANCE\t0.1\tdefault\tfalse\tfalse\n" +
+                                    "http.worker.min.active.workers\tQDB_HTTP_WORKER_MIN_ACTIVE_WORKERS\t1\tdefault\tfalse\tfalse\n" +
+                                    "http.worker.evaluation.interval\tQDB_HTTP_WORKER_EVALUATION_INTERVAL\t5000\tdefault\tfalse\tfalse\n" +
+                                    "http.min.worker.target.utilization\tQDB_HTTP_MIN_WORKER_TARGET_UTILIZATION\t0.8\tdefault\tfalse\tfalse\n" +
+                                    "http.min.worker.utilization.tolerance\tQDB_HTTP_MIN_WORKER_UTILIZATION_TOLERANCE\t0.1\tdefault\tfalse\tfalse\n" +
+                                    "http.min.worker.min.active.workers\tQDB_HTTP_MIN_WORKER_MIN_ACTIVE_WORKERS\t1\tdefault\tfalse\tfalse\n" +
+                                    "http.min.worker.evaluation.interval\tQDB_HTTP_MIN_WORKER_EVALUATION_INTERVAL\t5000\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.writer.worker.target.utilization\tQDB_LINE_TCP_WRITER_WORKER_TARGET_UTILIZATION\t0.8\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.writer.worker.utilization.tolerance\tQDB_LINE_TCP_WRITER_WORKER_UTILIZATION_TOLERANCE\t0.1\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.writer.worker.min.active.workers\tQDB_LINE_TCP_WRITER_WORKER_MIN_ACTIVE_WORKERS\t1\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.writer.worker.evaluation.interval\tQDB_LINE_TCP_WRITER_WORKER_EVALUATION_INTERVAL\t5000\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.io.worker.target.utilization\tQDB_LINE_TCP_IO_WORKER_TARGET_UTILIZATION\t0.8\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.io.worker.utilization.tolerance\tQDB_LINE_TCP_IO_WORKER_UTILIZATION_TOLERANCE\t0.1\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.io.worker.min.active.workers\tQDB_LINE_TCP_IO_WORKER_MIN_ACTIVE_WORKERS\t1\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.io.worker.evaluation.interval\tQDB_LINE_TCP_IO_WORKER_EVALUATION_INTERVAL\t5000\tdefault\tfalse\tfalse\n" +
+                                    "mat.view.refresh.worker.target.utilization\tQDB_MAT_VIEW_REFRESH_WORKER_TARGET_UTILIZATION\t0.8\tdefault\tfalse\tfalse\n" +
+                                    "mat.view.refresh.worker.utilization.tolerance\tQDB_MAT_VIEW_REFRESH_WORKER_UTILIZATION_TOLERANCE\t0.1\tdefault\tfalse\tfalse\n" +
+                                    "mat.view.refresh.worker.min.active.workers\tQDB_MAT_VIEW_REFRESH_WORKER_MIN_ACTIVE_WORKERS\t1\tdefault\tfalse\tfalse\n" +
+                                    "mat.view.refresh.worker.evaluation.interval\tQDB_MAT_VIEW_REFRESH_WORKER_EVALUATION_INTERVAL\t5000\tdefault\tfalse\tfalse\n" +
+                                    "pg.worker.target.utilization\tQDB_PG_WORKER_TARGET_UTILIZATION\t0.8\tdefault\tfalse\tfalse\n" +
+                                    "pg.worker.utilization.tolerance\tQDB_PG_WORKER_UTILIZATION_TOLERANCE\t0.1\tdefault\tfalse\tfalse\n" +
+                                    "pg.worker.min.active.workers\tQDB_PG_WORKER_MIN_ACTIVE_WORKERS\t1\tdefault\tfalse\tfalse\n" +
+                                    "pg.worker.evaluation.interval\tQDB_PG_WORKER_EVALUATION_INTERVAL\t5000\tdefault\tfalse\tfalse\n" +
+                                    "shared.worker.target.utilization\tQDB_SHARED_WORKER_TARGET_UTILIZATION\t0.8\tdefault\tfalse\tfalse\n" +
+                                    "shared.worker.utilization.tolerance\tQDB_SHARED_WORKER_UTILIZATION_TOLERANCE\t0.1\tdefault\tfalse\tfalse\n" +
+                                    "shared.worker.min.active.workers\tQDB_SHARED_WORKER_MIN_ACTIVE_WORKERS\t1\tdefault\tfalse\tfalse\n" +
+                                    "shared.worker.evaluation.interval\tQDB_SHARED_WORKER_EVALUATION_INTERVAL\t5000\tdefault\tfalse\tfalse\n" +
+                                    "shared.network.worker.target.utilization\tQDB_SHARED_NETWORK_WORKER_TARGET_UTILIZATION\t0.8\tdefault\tfalse\tfalse\n" +
+                                    "shared.network.worker.utilization.tolerance\tQDB_SHARED_NETWORK_WORKER_UTILIZATION_TOLERANCE\t0.1\tdefault\tfalse\tfalse\n" +
+                                    "shared.network.worker.min.active.workers\tQDB_SHARED_NETWORK_WORKER_MIN_ACTIVE_WORKERS\t1\tdefault\tfalse\tfalse\n" +
+                                    "shared.network.worker.evaluation.interval\tQDB_SHARED_NETWORK_WORKER_EVALUATION_INTERVAL\t5000\tdefault\tfalse\tfalse\n" +
+                                    "shared.query.worker.target.utilization\tQDB_SHARED_QUERY_WORKER_TARGET_UTILIZATION\t0.8\tdefault\tfalse\tfalse\n" +
+                                    "shared.query.worker.utilization.tolerance\tQDB_SHARED_QUERY_WORKER_UTILIZATION_TOLERANCE\t0.1\tdefault\tfalse\tfalse\n" +
+                                    "shared.query.worker.min.active.workers\tQDB_SHARED_QUERY_WORKER_MIN_ACTIVE_WORKERS\t1\tdefault\tfalse\tfalse\n" +
+                                    "shared.query.worker.evaluation.interval\tQDB_SHARED_QUERY_WORKER_EVALUATION_INTERVAL\t5000\tdefault\tfalse\tfalse\n" +
+                                    "shared.write.worker.target.utilization\tQDB_SHARED_WRITE_WORKER_TARGET_UTILIZATION\t0.8\tdefault\tfalse\tfalse\n" +
+                                    "shared.write.worker.utilization.tolerance\tQDB_SHARED_WRITE_WORKER_UTILIZATION_TOLERANCE\t0.1\tdefault\tfalse\tfalse\n" +
+                                    "shared.write.worker.min.active.workers\tQDB_SHARED_WRITE_WORKER_MIN_ACTIVE_WORKERS\t1\tdefault\tfalse\tfalse\n" +
+                                    "shared.write.worker.evaluation.interval\tQDB_SHARED_WRITE_WORKER_EVALUATION_INTERVAL\t5000\tdefault\tfalse\tfalse\n" +
+                                    "wal.apply.worker.target.utilization\tQDB_WAL_APPLY_WORKER_TARGET_UTILIZATION\t0.8\tdefault\tfalse\tfalse\n" +
+                                    "wal.apply.worker.utilization.tolerance\tQDB_WAL_APPLY_WORKER_UTILIZATION_TOLERANCE\t0.1\tdefault\tfalse\tfalse\n" +
+                                    "wal.apply.worker.min.active.workers\tQDB_WAL_APPLY_WORKER_MIN_ACTIVE_WORKERS\t1\tdefault\tfalse\tfalse\n" +
+                                    "wal.apply.worker.evaluation.interval\tQDB_WAL_APPLY_WORKER_EVALUATION_INTERVAL\t5000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.column.alias.expression.enabled\tQDB_CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.column.alias.generated.max.size\tQDB_CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE\t64\tdefault\tfalse\tfalse\n"
                     )
