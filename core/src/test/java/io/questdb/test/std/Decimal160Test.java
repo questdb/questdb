@@ -189,8 +189,7 @@ public class Decimal160Test {
         Decimal160 a = Decimal160.fromDouble(100.0, 2);
         Decimal160 zero = Decimal160.fromDouble(0.0, 2);
 
-        a.divide(zero);
-        a.round(2, RoundingMode.HALF_UP);
+        a.divide(zero, 2, RoundingMode.HALF_UP);
     }
 
     @Test
@@ -471,7 +470,7 @@ public class Decimal160Test {
     @Test
     public void testRoundFuzz() {
         // Fuzz test for round() method using BigDecimal as oracle
-        final int iterations = 1000;  // Reduced for debugging
+        final int iterations = 10_000;  // Reduced for debugging
         final Rnd rnd = TestUtils.generateRandom(null);
 
         // All rounding modes except UNNECESSARY (which requires special handling)
@@ -1166,8 +1165,7 @@ public class Decimal160Test {
 
         // Divide by 5 -> 45
         Decimal160 divisor = Decimal160.fromLong(5, 0);
-        accumulator.divide(divisor);
-        accumulator.round(2, RoundingMode.HALF_UP);
+        accumulator.divide(divisor, 2, RoundingMode.HALF_UP);
         Assert.assertEquals(45.0, accumulator.toDouble(), 0.01);
 
         // Modulo 10 -> 5

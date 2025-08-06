@@ -111,8 +111,7 @@ public class Decimal160DivideBenchmark {
     @Benchmark
     public Decimal160 decimal160Divide() {
         decimal160Result.copyFrom(decimal160Dividend);
-        decimal160Result.divide(decimal160Divisor);
-        decimal160Result.round(6, java.math.RoundingMode.HALF_UP);
+        decimal160Result.divide(decimal160Divisor, 6, RoundingMode.HALF_UP);
         return decimal160Result;
     }
 
@@ -134,8 +133,7 @@ public class Decimal160DivideBenchmark {
         largeDividend.set(123456789L, 987654321098765432L, 6);
         
         decimal160Result.copyFrom(largeDividend);
-        decimal160Result.divide(decimal160Divisor);
-        decimal160Result.round(6, java.math.RoundingMode.HALF_UP);
+        decimal160Result.divide(decimal160Divisor, 6, RoundingMode.HALF_UP);
     }
 
     public static void main(String[] args) throws RunnerException {
