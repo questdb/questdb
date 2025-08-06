@@ -286,64 +286,101 @@ public class Decimal160 implements Sinkable {
             return Long.compareUnsigned(this.low, other.low);
         }
 
+        boolean aNeg = isNegative();
+        boolean bNeg = other.isNegative();
+        if (aNeg != bNeg) {
+            return aNeg ? -1 : 1;
+        }
+
+        // Stores the coefficient to apply to the response, if both numbers are negative, then
+        // we have to reverse the result
+        int diffQ = 1;
+
+        // We need to make both operands positive to detect overflows when scaling them
+        long aH = this.high;
+        long aL = this.low;
+        long bH = other.high;
+        long bL = other.low;
+        if (aNeg) {
+            diffQ = -1;
+            long oldLow = aL;
+
+            // Two's complement: invert all bits and add 1
+            aL = ~aL + 1;
+            aH = ~aH;
+
+            // Check for carry from low
+            if (aL == 0 && oldLow != 0) {
+                aH += 1;
+            }
+
+            // Negate b
+            oldLow = bL;
+
+            // Two's complement: invert all bits and add 1
+            bL = ~bL + 1;
+            bH = ~bH;
+
+            // Check for carry from low
+            if (bL == 0 && oldLow != 0) {
+                bH += 1;
+            }
+        }
+
         // Different scales - need to align for comparison
         // We'll scale up the one with smaller scale
         if (this.scale < other.scale) {
             // Scale up this to match other's scale
             int scaleDiff = other.scale - this.scale;
-            long scaledHigh = this.high;
-            long scaledLow = this.low;
 
             // Multiply by 10^scaleDiff
             for (int i = 0; i < scaleDiff; i++) {
-                if ((scaledHigh >>> 3) != 0) {
+                if ((aH >>> 3) != 0) {
                     throw new ArithmeticException("Overflow, not enough precision to accommodate for scale");
                 }
 
                 // Multiply by 10: (8x + 2x)
-                long high8 = (scaledHigh << 3) | (scaledLow >>> 61);
-                long low8 = scaledLow << 3;
-                long high2 = (scaledHigh << 1) | (scaledLow >>> 63);
-                long low2 = scaledLow << 1;
+                long high8 = (aH << 3) | (aL >>> 61);
+                long low8 = aL << 3;
+                long high2 = (aH << 1) | (aL >>> 63);
+                long low2 = aL << 1;
 
-                scaledLow = low8 + low2;
-                long carry = hasCarry(low8, low2, scaledLow) ? 1 : 0;
-                scaledHigh = Math.addExact(high8, Math.addExact(high2, carry));
+                aL = low8 + low2;
+                long carry = hasCarry(low8, low2, aL) ? 1 : 0;
+                aH = Math.addExact(high8, Math.addExact(high2, carry));
             }
 
             // Compare scaled this with other
-            if (scaledHigh != other.high) {
-                return Long.compare(scaledHigh, other.high);
+            if (aH != bH) {
+                return Long.compare(aH, bH) * diffQ;
             }
-            return Long.compareUnsigned(scaledLow, other.low);
+            return Long.compareUnsigned(aL, bL) * diffQ;
         } else {
             // Scale up other to match this scale
             int scaleDiff = this.scale - other.scale;
-            long scaledHigh = other.high;
-            long scaledLow = other.low;
 
             // Multiply by 10^scaleDiff
             for (int i = 0; i < scaleDiff; i++) {
-                if ((scaledHigh >>> 3) != 0) {
+                if ((bH >>> 3) != 0) {
                     throw new ArithmeticException("Overflow, not enough precision to accommodate for scale");
                 }
 
                 // Multiply by 10: (8x + 2x)
-                long high8 = (scaledHigh << 3) | (scaledLow >>> 61);
-                long low8 = scaledLow << 3;
-                long high2 = (scaledHigh << 1) | (scaledLow >>> 63);
-                long low2 = scaledLow << 1;
+                long high8 = (bH << 3) | (bL >>> 61);
+                long low8 = bL << 3;
+                long high2 = (bH << 1) | (bL >>> 63);
+                long low2 = bL << 1;
 
-                scaledLow = low8 + low2;
-                long carry = hasCarry(low8, low2, scaledLow) ? 1 : 0;
-                scaledHigh = Math.addExact(high8, Math.addExact(high2, carry));
+                bL = low8 + low2;
+                long carry = hasCarry(low8, low2, bL) ? 1 : 0;
+                bH = Math.addExact(high8, Math.addExact(high2, carry));
             }
 
             // Compare this with scaled other
-            if (this.high != scaledHigh) {
-                return Long.compare(this.high, scaledHigh);
+            if (aH != bH) {
+                return Long.compare(aH, bH) * diffQ;
             }
-            return Long.compareUnsigned(this.low, scaledLow);
+            return Long.compareUnsigned(aL, bL) * diffQ;
         }
     }
 
