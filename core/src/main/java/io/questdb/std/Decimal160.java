@@ -278,7 +278,11 @@ public class Decimal160 implements Sinkable {
 
             // Update values in place
             this.low = sumLow;
-            this.high = this.high + other.high + carry;
+            long sumHigh = this.high + other.high + carry;
+            if (hasCarry(this.high, other.high, sumHigh)) {
+                throw new ArithmeticException("Overflow, not enough precision to accommodate for scale");
+            }
+            this.high = sumHigh;
             updateCompact();
             return;
         }
@@ -294,30 +298,21 @@ public class Decimal160 implements Sinkable {
             this.high = this.high + other.high + carry;
             updateCompact();
         } else {
-            // Need to rescale other - we'll do it mathematically
-            // Scale difference
-            int scaleDiff = this.scale - other.scale;
-            long otherHigh = other.high;
-            long otherLow = other.low;
-
-            // Multiply other by 10^scaleDiff
-            for (int i = 0; i < scaleDiff; i++) {
-                // Multiply by 10: (8x + 2x)
-                long high8 = (otherHigh << 3) | (otherLow >>> 61);
-                long low8 = otherLow << 3;
-                long high2 = (otherHigh << 1) | (otherLow >>> 63);
-                long low2 = otherLow << 1;
-
-                otherLow = low8 + low2;
-                long carry = hasCarry(low8, low2, otherLow) ? 1 : 0;
-                otherHigh = high8 + high2 + carry;
-            }
+            long thisHigh = this.high;
+            long thisLow = this.low;
+            int thisScale = this.scale;
+            // Need to rescale other - we'll swap this with other to do it
+            this.high = other.high;
+            this.low = other.low;
+            this.compact = other.compact;
+            this.scale = other.scale;
+            rescale(thisScale);
 
             // Now add the scaled value
-            long sumLow = this.low + otherLow;
-            long carry = hasCarry(this.low, otherLow, sumLow) ? 1 : 0;
+            long sumLow = thisLow + this.low;
+            long carry = hasCarry(thisLow, this.low, sumLow) ? 1 : 0;
             this.low = sumLow;
-            this.high = this.high + otherHigh + carry;
+            this.high = thisHigh + this.high + carry;
             updateCompact();
         }
     }
@@ -2106,8 +2101,17 @@ public class Decimal160 implements Sinkable {
 
         int scaleDiff = newScale - this.scale;
 
+        boolean isNegative = isNegative();
+        if (isNegative) {
+            negate();
+        }
+
         // Multiply by 10^scaleDiff
         multiplyByPowerOf10InPlace(scaleDiff);
+
+        if (isNegative) {
+            negate();
+        }
 
         this.scale = newScale;
     }

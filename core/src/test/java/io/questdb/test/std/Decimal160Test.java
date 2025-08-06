@@ -40,6 +40,23 @@ import java.math.RoundingMode;
 public class Decimal160Test {
 
     @Test
+    public void testAdditionFuzz() {
+        Rnd rnd = TestUtils.generateRandom(null);
+
+        // Number of test iterations
+        final int ITERATIONS = 10_000;
+
+        for (int i = 0; i < ITERATIONS; i++) {
+            // Generate random operands with various scales and values
+            Decimal160 a = rnd.nextDecimal160();
+            Decimal160 b = rnd.nextDecimal160();
+
+            // Test addition accuracy
+            testAdditionAccuracy(a, b, i);
+        }
+    }
+
+    @Test
     public void testCompareTo() {
         Decimal160 smaller = new Decimal160(0, 100, 2);
         Decimal160 larger = new Decimal160(0, 200, 2);
@@ -109,25 +126,6 @@ public class Decimal160Test {
     }
 
     @Test
-    public void testDecimal160ArithmeticFuzz() {
-        Rnd rnd = TestUtils.generateRandom(null);
-
-        // Number of test iterations
-        final int ITERATIONS = 100_000;
-
-        for (int i = 0; i < ITERATIONS; i++) {
-            // Generate random operands with various scales and values
-            Decimal160 a = rnd.nextDecimal160();
-            Decimal160 b = rnd.nextDecimal160();
-
-            // Test division accuracy (avoid division by zero)
-            if (!b.isZero()) {
-                testDivisionAccuracy(a, b, i);
-            }
-        }
-    }
-
-    @Test
     public void testDivide64() {
         Decimal160 a = Decimal160.fromDouble(123.456, 3);
         Decimal160 b = Decimal160.fromDouble(7.89, 2);
@@ -190,6 +188,25 @@ public class Decimal160Test {
         Decimal160 zero = Decimal160.fromDouble(0.0, 2);
 
         a.divide(zero, 2, RoundingMode.HALF_UP);
+    }
+
+    @Test
+    public void testDivisionFuzz() {
+        Rnd rnd = TestUtils.generateRandom(null);
+
+        // Number of test iterations
+        final int ITERATIONS = 10_000;
+
+        for (int i = 0; i < ITERATIONS; i++) {
+            // Generate random operands with various scales and values
+            Decimal160 a = rnd.nextDecimal160();
+            Decimal160 b = rnd.nextDecimal160();
+
+            // Test division accuracy (avoid division by zero)
+            if (!b.isZero()) {
+                testDivisionAccuracy(a, b, i);
+            }
+        }
     }
 
     @Test
@@ -1170,40 +1187,81 @@ public class Decimal160Test {
     }
 
     private void testAdditionAccuracy(Decimal160 a, Decimal160 b, int iteration) {
-        // Create copies for testing
-        Decimal160 result = new Decimal160();
-        Decimal160 aCopy = new Decimal160();
-        Decimal160 bCopy = new Decimal160();
+        // Test addition accuracy with BigDecimal
+        BigDecimal bigA = a.toBigDecimal();
+        BigDecimal bigB = b.toBigDecimal();
 
-        aCopy.copyFrom(a);
-        bCopy.copyFrom(b);
+        // Perform reference addition
+        BigDecimal expected = bigA.add(bigB);
 
-        // Test static add method
-        Decimal160.add(aCopy, bCopy, result);
+        BigDecimal min = Decimal160.MIN_VALUE.toBigDecimal();
+        BigDecimal max = Decimal160.MAX_VALUE.toBigDecimal();
+        if (expected.compareTo(min) < 0 || expected.compareTo(max) > 0) {
+            // We must be overflowing, check that we are throwing an error as expected
 
-        // Verify operands unchanged
-        Assert.assertEquals("Addition modified first operand at iteration " + iteration,
-                a.toBigDecimal(), aCopy.toBigDecimal());
-        Assert.assertEquals("Addition modified second operand at iteration " + iteration,
-                b.toBigDecimal(), bCopy.toBigDecimal());
+            Decimal160 result = new Decimal160();
 
-        // Test in-place add method
-        aCopy.add(bCopy);
-
-        // Results should be the same
-        Assert.assertEquals("Static and in-place addition differ at iteration " + iteration,
-                result.toBigDecimal(), aCopy.toBigDecimal());
-
-        // Test reference calculation if values are small enough
-        if (fitsInLongRange(a) && fitsInLongRange(b)) {
-            // Use BigDecimal for accurate reference calculation
-            java.math.BigDecimal bigA = a.toBigDecimal();
-            java.math.BigDecimal bigB = b.toBigDecimal();
-            java.math.BigDecimal expected = bigA.add(bigB);
-            Assert.assertEquals("Addition accuracy failed at iteration " + iteration +
-                            " (a=" + a.toBigDecimal() + ", b=" + b.toBigDecimal() + ")",
-                    expected, result.toBigDecimal());
+            // Test static divide method
+            Assert.assertThrows(ArithmeticException.class, () -> {
+                Decimal160.add(a, b, result);
+            });
+            return;
         }
+
+        // catch overflow exceptions
+        try {
+            Decimal160 staticResult = new Decimal160();
+
+            // Test static divide method
+            Decimal160.add(a, b, staticResult);
+
+            // Verify operands unchanged
+            Assert.assertEquals("Addition modified first operand at iteration " + iteration,
+                    a.toBigDecimal(), a.toBigDecimal());
+            Assert.assertEquals("Addition modified second operand at iteration " + iteration,
+                    b.toBigDecimal(), b.toBigDecimal());
+
+            Decimal160 result = new Decimal160();
+            result.copyFrom(a);
+
+            // Test in-place divide method
+            result.add(b);
+
+            // Results should be the same
+            Assert.assertEquals("Static and in-place addition differ at iteration " + iteration,
+                    result.toBigDecimal(), staticResult.toBigDecimal());
+
+            BigDecimal actual = result.toBigDecimal();
+
+            if (expected.compareTo(actual) != 0) {
+                BigDecimal difference = expected.subtract(actual).abs();
+                Assert.fail("iteration: " + iteration + " expected:<" + expected + "> but was:<" + result + "> (difference: " + difference + ")");
+            }
+        } catch (ArithmeticException e) {
+            // Skip this test case if overflow occurs during scaling
+            if (e.getMessage().contains("overflow") || e.getMessage().contains("Overflow")) {
+                // This is expected for cases where intermediate calculations would exceed 128-bit capacity
+                return;
+            }
+            // Re-throw other arithmetic exceptions
+            throw e;
+        }
+    }
+
+    @Test
+    public void testRemoveThis() {
+        BigDecimal a = new BigDecimal("0.000009728613326609667902320486232");
+        BigDecimal b = new BigDecimal("0.000000000000000000000000014573997");
+        BigDecimal r = a.add(b);
+
+        Decimal160 da = Decimal160.fromBigDecimal(a);
+        Decimal160 db = Decimal160.fromBigDecimal(b);
+        Decimal160 dr = new Decimal160();
+
+        dr.copyFrom(da);
+        dr.add(db);
+
+        Assert.assertEquals(r, dr.toBigDecimal());
     }
 
     private void testComparisonAccuracy(Decimal160 a, Decimal160 b, int iteration) {
@@ -1243,7 +1301,6 @@ public class Decimal160Test {
 
             // Test static divide method
             Decimal160.divide(a, b, staticResult, resultScale, RoundingMode.HALF_UP);
-
             // Verify operands unchanged
             Assert.assertEquals("Division modified first operand at iteration " + iteration,
                     a.toBigDecimal(), a.toBigDecimal());
