@@ -708,7 +708,7 @@ public class Decimal160 implements Sinkable {
             return;
         }
 
-        divide(0, 1, 1, targetScale, roundingMode);
+        divide(0, 1, 0, targetScale, roundingMode);
     }
 
     /**
