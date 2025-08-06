@@ -2931,6 +2931,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         tok = SqlUtil.fetchNext(lexer);
+        boolean hasIfExists = false;
+        if (tok != null && isIfKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || !isExistsKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("EXISTS table-name");
+            }
+            hasIfExists = true;
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
         if (tok != null && isOnlyKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
         }
@@ -2949,15 +2959,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (Chars.isQuoted(tok)) {
                     tok = unquote(tok);
                 }
-                final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
-                checkMatViewModification(tableToken);
-                executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
-                try {
-                    tableWriters.add(engine.getTableWriterAPI(tableToken, "truncateTables"));
-                } catch (CairoException e) {
-                    LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).I$();
-                    throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
+
+                final TableToken tableToken = executionContext.getTableTokenIfExists(tok);
+                if (tableToken == null && !hasIfExists) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "table does not exist [table=").put(tok).put(']');
                 }
+                if (tableToken != null) {
+                    checkMatViewModification(tableToken);
+                    executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
+                    try {
+                        tableWriters.add(engine.getTableWriterAPI(tableToken, "truncateTables"));
+                    } catch (CairoException e) {
+                        LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).I$();
+                        throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
+                    }
+                }
+
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null || Chars.equals(tok, ';') || isKeepKeyword(tok)) {
                     break;
@@ -3022,10 +3039,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 queryRegistry.unregister(queryId, executionContext);
             }
         } finally {
-            for (int i = 0, n = tableWriters.size(); i < n; i++) {
-                tableWriters.getQuick(i).close();
-            }
-            tableWriters.clear();
+            Misc.freeObjListAndClear(tableWriters);
         }
         compiledQuery.ofTruncate();
     }
