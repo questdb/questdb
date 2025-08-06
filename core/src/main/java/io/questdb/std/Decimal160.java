@@ -529,13 +529,6 @@ public class Decimal160 implements Sinkable {
      * @param other The Decimal160 to multiply by
      */
     public void multiply(Decimal160 other) {
-        // Fast path for 64-bit values using magnitude arithmetic
-        // TEMPORARILY DISABLED - debugging modulo issue
-        // if (this.is64BitValue() && other.is64BitValue()) {
-        //     multiply64BitOptimized(other);
-        //     return;
-        // }
-
         // Result scale is sum of scales
         int resultScale = this.scale + other.scale;
 
@@ -572,25 +565,41 @@ public class Decimal160 implements Sinkable {
         long b1 = otherLowAbs >>> 32;
         long b0 = otherLowAbs & 0xFFFFFFFFL;
 
-        // Multiply all combinations
+        // Compute all partial products
         long p00 = a0 * b0;
         long p01 = a0 * b1;
-        long p10 = a1 * b0;
         long p02 = a0 * b2;
-        long p11 = a1 * b1;
-        long p20 = a2 * b0;
         long p03 = a0 * b3;
+        long p10 = a1 * b0;
+        long p11 = a1 * b1;
         long p12 = a1 * b2;
+        long p13 = a1 * b3;
+        long p20 = a2 * b0;
         long p21 = a2 * b1;
+        long p22 = a2 * b2;
+        long p23 = a2 * b3;
         long p30 = a3 * b0;
+        long p31 = a3 * b1;
+        long p32 = a3 * b2;
+        long p33 = a3 * b3;
 
-        // Accumulate results
-        long r0 = p00 & 0xFFFFFFFFL;
-        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
+        // Gather results into 128-bit result
+        long r0 = (p00 & LONG_MASK);
+        long r1 = (p00 >>> 32) + (p01 & LONG_MASK) + (p10 & LONG_MASK);
         long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
-                (p02 & 0xFFFFFFFFL) + (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
+                (p02 & LONG_MASK) + (p11 & LONG_MASK) + (p20 & LONG_MASK);
         long r3 = (r2 >>> 32) + (p02 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
-                (p03 & 0xFFFFFFFFL) + (p12 & 0xFFFFFFFFL) + (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
+                (p03 & LONG_MASK) + (p12 & LONG_MASK) + (p21 & LONG_MASK) + (p30 & LONG_MASK);
+        long r4 = (r3 >>> 32) + (p03 >>> 32) + (p12 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
+                (p13 & LONG_MASK) + (p22 & LONG_MASK) + (p31 & LONG_MASK);
+        long r5 = (r4 >>> 32) + (p13 >>> 32) + (p22 >>> 32) + (p31 >>> 32) +
+                (p23 & LONG_MASK) + (p32 & LONG_MASK);
+        long r6 = (r5 >>> 32) + (p23 >>> 32) + (p32 >>> 32) +
+                (p33 & LONG_MASK);
+
+        if ((r3 >>> 31) != 0 || r4 != 0 || r5 != 0 || r6 != 0) {
+            throw new ArithmeticException("Overflow, not enough precision to accommodate for scale");
+        }
 
         this.low = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
         this.high = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
