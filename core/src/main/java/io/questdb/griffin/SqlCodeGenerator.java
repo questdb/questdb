@@ -458,9 +458,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     @TestOnly
     public static int[][] expectedUnionCastMatrix() {
         final int[][] expected = new int[ColumnType.NULL + 1][ColumnType.NULL + 1];
-        for (short typeA = 0; typeA <= ColumnType.NULL; typeA++) {
-            for (short typeB = 0; typeB <= ColumnType.NULL; typeB++) {
-                final short outType = (isGeoType(typeA) || isGeoType(typeB)) ? -1 : commonWideningType(typeA, typeB);
+        for (int typeA = 0; typeA <= ColumnType.NULL; typeA++) {
+            for (int typeB = 0; typeB <= ColumnType.NULL; typeB++) {
+                final int outType = (isGeoType(typeA) || isGeoType(typeB)) ? -1 : commonWideningType(typeA, typeB);
                 expected[typeA][typeB] = outType;
             }
         }
@@ -524,10 +524,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // Neither type is geohash, use the type cast matrix to resolve.
         int result = UNION_CAST_MATRIX[tagA][tagB];
 
-        //  indicate at least one of typeA or typeA is timestamp(timestamp_ns) type
+        //  indicate at least one of typeA or typeB is timestamp(timestamp_ns) type
         if (result == TIMESTAMP) {
             if (ColumnType.isTimestamp(typeA) && ColumnType.isTimestamp(typeB)) {
-                return Math.max(typeA, typeB);
+                return getHigherPrecisionTimestampType(typeA, typeB, null);
             } else if (ColumnType.isTimestamp(typeA)) {
                 return typeA;
             } else {
@@ -4882,7 +4882,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 if (targetColumnType != -1 && targetColumnType != columnType) {
                     // This is an update and the target column does not match with column the update is trying to perform
-                    if (ColumnType.isBuiltInWideningCast(ColumnType.tagOf(function.getType()), targetColumnType)) {
+                    if (ColumnType.isBuiltInWideningCast(function.getType(), targetColumnType)) {
                         // All functions will be able to getLong() if they support getInt(), no need to generate cast here
                         columnType = targetColumnType;
                     } else {
@@ -5700,7 +5700,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     myMeta.setTimestampIndex(myMeta.getColumnCount() - 1);
 
                     columnIndexes.add(readerTimestampIndex);
-                    columnSizeShifts.add(Numbers.msb(TIMESTAMP));
+                    columnSizeShifts.add(Numbers.msb(ColumnType.TIMESTAMP));
                 }
             }
         } finally {

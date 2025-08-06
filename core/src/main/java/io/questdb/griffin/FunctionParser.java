@@ -353,7 +353,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             // we don't wrap function in a memoizer if it is a group by or window function
             // otherwise SqlCodeGen would not recognize the function as a Window or GroupBy function
             if (function != null && !(function instanceof GroupByFunction) && !(function instanceof WindowFunction) && function.shouldMemoize()) {
-                switch (function.getType()) {
+                switch (ColumnType.tagOf(function.getType())) {
                     case ColumnType.LONG:
                         return new LongFunctionMemoizer(function);
                     case ColumnType.INT:

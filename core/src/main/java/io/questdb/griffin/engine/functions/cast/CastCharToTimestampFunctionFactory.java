@@ -63,7 +63,7 @@ public class CastCharToTimestampFunctionFactory implements FunctionFactory {
             if (v > -1 && v < 10) {
                 return v;
             }
-            throw ImplicitCastException.inconvertibleValue(c, ColumnType.CHAR, ColumnType.TIMESTAMP);
+            throw ImplicitCastException.inconvertibleValue(c, ColumnType.CHAR, getType());
         }
     }
 }

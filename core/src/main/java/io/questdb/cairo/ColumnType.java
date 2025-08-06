@@ -147,7 +147,7 @@ public final class ColumnType {
     private ColumnType() {
     }
 
-    public static short commonWideningType(short typeA, short typeB) {
+    public static int commonWideningType(int typeA, int typeB) {
         return (typeA == typeB && typeA != SYMBOL) ? typeA
                 : (isStringyType(typeA) && isStringyType(typeB)) ? STRING
                 : (isStringyType(typeA) && isParseableType(typeB)) ? typeA
@@ -158,8 +158,9 @@ public final class ColumnType {
                 : ((typeB == NULL) && isCastableFromNull(typeA) && (typeA != SYMBOL)) ? typeA
 
                 // cast long and timestamp to timestamp in unions instead of longs.
-                : ((typeA == TIMESTAMP) && (typeB == LONG)) ? TIMESTAMP
-                : ((typeA == LONG) && (typeB == TIMESTAMP)) ? TIMESTAMP
+                : ((isTimestamp(typeA)) && (typeB == LONG)) ? typeA
+                : ((typeA == LONG) && (isTimestamp(typeB))) ? typeB
+                : (isTimestamp(typeA) && (isTimestamp(typeB))) ? getHigherPrecisionTimestampType(typeA, typeB, null)
 
                 // Varchars take priority over strings, but strings over most types.
                 : (typeA == VARCHAR || typeB == VARCHAR) ? VARCHAR
@@ -337,6 +338,8 @@ public final class ColumnType {
         // For example IntFunction has getDouble() method implemented and does not need
         // additional wrap function to CAST to double.
         // This is usually case for widening conversions.
+        fromType = tagOf(fromType);
+        toType = tagOf(toType);
         return (fromType >= BYTE && toType >= BYTE && toType <= DOUBLE && fromType < toType) || fromType == NULL
                 // char can be short and short can be char for symmetry
                 || (fromType == CHAR && toType == SHORT)
@@ -427,7 +430,7 @@ public final class ColumnType {
     }
 
     public static boolean isParseableType(int colType) {
-        return colType == TIMESTAMP || colType == LONG256;
+        return isTimestamp(colType) || colType == LONG256;
     }
 
     public static boolean isPersisted(int columnType) {
@@ -464,7 +467,7 @@ public final class ColumnType {
 
     public static boolean isToSameOrWider(int fromType, int toType) {
         return (tagOf(fromType) == tagOf(toType) && !isArray(fromType) && (getGeoHashBits(fromType) == 0 || getGeoHashBits(fromType) >= getGeoHashBits(toType)))
-                || isBuiltInWideningCast(tagOf(fromType), tagOf(toType))
+                || isBuiltInWideningCast(fromType, toType)
                 || isStringCast(fromType, toType)
                 || isVarcharCast(fromType, toType)
                 || isGeoHashWideningCast(fromType, toType)
