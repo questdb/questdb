@@ -21,7 +21,7 @@ use crate::parquet_read::slicer::{
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnChunkStats, ParquetDecoder, RowGroupBuffers, RowGroupStatBuffers,
 };
-use crate::parquet_write::array::{append_array_null, LevelsIterator};
+use crate::parquet_write::array::{append_array_null, calculate_array_shape, LevelsIterator};
 use parquet2::deserialize::{HybridDecoderBitmapIter, HybridEncoded};
 use parquet2::encoding::hybrid_rle::BitmapIter;
 use parquet2::encoding::hybrid_rle::HybridRleDecoder;
@@ -1368,14 +1368,6 @@ fn append_array<T: DataPageSlicer>(
         }
     }
     Ok(())
-}
-
-fn calculate_array_shape(
-    shape: &mut [u32; ARRAY_NDIMS_LIMIT],
-    _max_rep_level: u32,
-    _rep_levels: &Vec<u32>,
-) {
-    shape[0] = 7;
 }
 
 fn skip_array<T: DataPageSlicer>(slicer: &mut T, max_def_level: u32, def_levels: &Vec<u32>) {

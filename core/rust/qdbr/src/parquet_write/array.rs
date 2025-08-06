@@ -590,6 +590,37 @@ impl Levels {
     }
 }
 
+pub fn calculate_array_shape(
+    shape: &mut [u32; ARRAY_NDIMS_LIMIT],
+    max_rep_level: u32,
+    rep_levels: &Vec<u32>,
+) {
+    if rep_levels.len() == 0 {
+        return;
+    }
+
+    let max_rep_level = max_rep_level as usize;
+    let mut counts = [0_u32; ARRAY_NDIMS_LIMIT];
+    for &rep_level in rep_levels {
+        let rep_level = std::cmp::max(rep_level, 1) as usize;
+        // Reset counts for dimensions deeper than repetition level
+        for dim in rep_level..max_rep_level {
+            counts[dim] = 0;
+        }
+        // Increment count at the deepest level (where actual values are)
+        counts[max_rep_level - 1] += 1;
+        // Update shape with maximum counts seen so far
+        for dim in 0..max_rep_level {
+            shape[dim] = std::cmp::max(shape[dim], counts[dim]);
+        }
+        // If this is not the first element, increment deeper dimension counts
+        for dim in rep_level - 1..max_rep_level - 1 {
+            counts[dim] += 1;
+            shape[dim] = std::cmp::max(shape[dim], counts[dim]);
+        }
+    }
+}
+
 pub fn append_raw_array(
     aux_mem: &mut AcVec<u8>,
     data_mem: &mut AcVec<u8>,
@@ -739,6 +770,54 @@ mod tests {
             vec![(vec![0, 2, 1, 2], vec![3, 2, 3, 2]), (vec![0], vec![3])];
         assert_levels_iter(&rep_levels, &def_levels, &expected)?;
         Ok(())
+    }
+
+    #[test]
+    fn test_calculate_array_shape_empty() {
+        let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
+        let rep_levels = vec![];
+        calculate_array_shape(&mut shape, 0, &rep_levels);
+        assert_eq!(shape, [0_u32; ARRAY_NDIMS_LIMIT]);
+    }
+
+    #[test]
+    fn test_calculate_array_shape_1d() {
+        let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
+        let rep_levels = vec![0, 1, 1, 1];
+        calculate_array_shape(&mut shape, 1, &rep_levels);
+        assert_eq!(shape[0..1], [4_u32]);
+    }
+
+    #[test]
+    fn test_calculate_array_shape_2d() {
+        let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
+        let rep_levels = vec![0, 2, 2, 1, 2, 2, 1, 2, 2];
+        calculate_array_shape(&mut shape, 2, &rep_levels);
+        assert_eq!(shape[0..2], [3_u32, 3]);
+    }
+
+    #[test]
+    fn test_calculate_array_shape_2d2() {
+        let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
+        let rep_levels = vec![0, 2, 2, 1, 2, 2];
+        calculate_array_shape(&mut shape, 2, &rep_levels);
+        assert_eq!(shape[0..2], [2_u32, 3]);
+    }
+
+    #[test]
+    fn test_calculate_array_shape_3d() {
+        let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
+        let rep_levels = vec![0, 3, 3, 2, 3, 3, 1, 3, 3, 2, 3, 3];
+        calculate_array_shape(&mut shape, 3, &rep_levels);
+        assert_eq!(shape[0..3], [2_u32, 2, 3]);
+    }
+
+    #[test]
+    fn test_calculate_array_shape_3d2() {
+        let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
+        let rep_levels = vec![0, 3, 3, 2, 3, 3];
+        calculate_array_shape(&mut shape, 3, &rep_levels);
+        assert_eq!(shape[0..3], [1_u32, 2, 3]);
     }
 
     fn assert_levels_iter(
