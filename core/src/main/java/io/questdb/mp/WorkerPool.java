@@ -88,7 +88,14 @@ public class WorkerPool implements Closeable {
             threadLocalCleaners.add(new ObjList<>());
         }
 
-        WorkerPoolManagerJob managerJob = new WorkerPoolManagerJob(this.getPoolMetrics(), poolName);
+        WorkerPoolManagerJob managerJob = new WorkerPoolManagerJob(
+                this.getPoolMetrics(),
+                poolName,
+                configuration.getTargetUtilization(),
+                configuration.getUtilizationTolerance(),
+                configuration.getEvaluationInterval(),
+                configuration.getMinActiveWorkers()
+        );
         assign(managerJob);
     }
 

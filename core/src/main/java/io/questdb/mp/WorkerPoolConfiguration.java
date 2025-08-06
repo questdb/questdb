@@ -28,8 +28,16 @@ import io.questdb.Metrics;
 
 public interface WorkerPoolConfiguration {
 
+    default long getEvaluationInterval() {
+        return 100;
+    }
+
     default Metrics getMetrics() {
         return Metrics.ENABLED;
+    }
+
+    default int getMinActiveWorkers() {
+        return 1;
     }
 
     default long getNapThreshold() {
@@ -46,6 +54,14 @@ public interface WorkerPoolConfiguration {
 
     default long getSleepTimeout() {
         return 10;
+    }
+
+    default double getTargetUtilization() {
+        return 60.0;
+    }
+
+    default double getUtilizationTolerance() {
+        return 5.0;
     }
 
     default int[] getWorkerAffinity() {

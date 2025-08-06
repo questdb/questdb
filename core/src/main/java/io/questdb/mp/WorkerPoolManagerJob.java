@@ -40,11 +40,7 @@ import io.questdb.log.LogFactory;
  * preventing race conditions when making parking/unparking decisions.
  */
 public class WorkerPoolManagerJob extends SynchronizedJob {
-    private static final long DEFAULT_EVALUATION_INTERVAL_ITERATIONS = 1000; // Check every 1000 iterations
-    private static final int DEFAULT_MIN_ACTIVE_WORKERS = 1;
     // Default configuration values
-    private static final double DEFAULT_TARGET_UTILIZATION = 60.0;
-    private static final double DEFAULT_UTILIZATION_TOLERANCE = 5.0; // +/- 5%
     private static final Log LOG = LogFactory.getLog(WorkerPoolManagerJob.class);
     private final long evaluationInterval;
     private final int minActiveWorkers;
@@ -56,16 +52,6 @@ public class WorkerPoolManagerJob extends SynchronizedJob {
     private long lastEvaluationIteration = 0;
     private double lastUtilization = 0.0;
 
-    public WorkerPoolManagerJob(WorkerPoolMetrics poolMetrics, String poolName) {
-        this(
-                poolMetrics,
-                poolName,
-                DEFAULT_TARGET_UTILIZATION,
-                DEFAULT_UTILIZATION_TOLERANCE,
-                DEFAULT_EVALUATION_INTERVAL_ITERATIONS,
-                DEFAULT_MIN_ACTIVE_WORKERS
-        );
-    }
 
     public WorkerPoolManagerJob(
             WorkerPoolMetrics poolMetrics,
