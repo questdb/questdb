@@ -24,11 +24,11 @@
 
 package io.questdb;
 
-import io.questdb.std.IntObjHashMap;
+import io.questdb.std.LongObjHashMap;
 import io.questdb.std.ObjHashSet;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 public interface ConfigReloader {
 
@@ -39,7 +39,7 @@ public interface ConfigReloader {
      */
     boolean reload();
 
-    void unwatch(int watchId);
+    void unwatch(long watchId);
 
     /**
      * Register a listener for specific config keys.
@@ -47,24 +47,29 @@ public interface ConfigReloader {
      * @param listener the listener to notify
      * @return watch ID for later unregistration
      */
-    int watch(ConfigReloader.Listener listener);
+    long watch(Listener listener);
 
+    // Ent.
+    @SuppressWarnings("unused")
     interface Listener {
         /**
          * The configuration has changed.
          */
+        @SuppressWarnings("unused")
         void configChanged();
 
         /**
          * Gets the list of config keys that the listener wants to be notified about.
          */
+        @SuppressWarnings("unused")
         @NotNull ConfigPropertyKey[] getWatchedConfigKeys();
     }
 
     class WatchRegistry {
-        public static final int UNREGISTERED = -1;
-        private final AtomicInteger nextWatchId = new AtomicInteger(UNREGISTERED + 1);
-        private final IntObjHashMap<Listener> watchers = new IntObjHashMap<>();
+        public static final long UNREGISTERED = -1;
+        private final AtomicLong nextWatchId = new AtomicLong(UNREGISTERED + 1);
+        private final LongObjHashMap<Listener> watchers = new LongObjHashMap<>();
+        private ObjHashSet<String> changedKeys = null;
 
         /**
          * Notify all watchers whose config keys intersect with the changed keys.
@@ -74,19 +79,9 @@ public interface ConfigReloader {
          * @param changedKeys the set of config keys that changed
          */
         public synchronized void notifyWatchers(ObjHashSet<String> changedKeys) {
-            final int noEntryKeyValue = watchers.getNoEntryKey();
-            final int[] keys = watchers.getKeys();
-            final Listener[] values = watchers.getValues();
-            for (int slotIndex = 0, n = values.length; slotIndex < n; slotIndex++) {
-                if (keys[slotIndex] == noEntryKeyValue) {
-                    continue;
-                }
-                final Listener listener = values[slotIndex];
-                final ConfigPropertyKey[] watchedKeys = listener.getWatchedConfigKeys();
-                if (hasIntersection(watchedKeys, changedKeys)) {
-                    listener.configChanged();
-                }
-            }
+            this.changedKeys = changedKeys;
+            watchers.forEach(this::notifyWatcher);
+            this.changedKeys = null;
         }
 
         /**
@@ -94,7 +89,7 @@ public interface ConfigReloader {
          *
          * @param watchId the ID returned from watch()
          */
-        public synchronized void unwatch(int watchId) {
+        public synchronized void unwatch(long watchId) {
             watchers.remove(watchId);
         }
 
@@ -104,8 +99,8 @@ public interface ConfigReloader {
          * @param listener the listener to notify
          * @return watch ID for later unregistration
          */
-        public synchronized int watch(ConfigReloader.Listener listener) {
-            final int watchId = nextWatchId.getAndIncrement();
+        public synchronized long watch(ConfigReloader.Listener listener) {
+            final long watchId = nextWatchId.getAndIncrement();
             watchers.put(watchId, listener);
             return watchId;
         }
@@ -117,6 +112,13 @@ public interface ConfigReloader {
                 }
             }
             return false;
+        }
+
+        private void notifyWatcher(long watchId, Listener listener) {
+            final ConfigPropertyKey[] watchedKeys = listener.getWatchedConfigKeys();
+            if (hasIntersection(watchedKeys, changedKeys)) {
+                listener.configChanged();
+            }
         }
     }
 }

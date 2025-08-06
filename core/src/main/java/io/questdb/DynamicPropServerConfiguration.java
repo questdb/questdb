@@ -402,12 +402,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
-    public void unwatch(int watchId) {
+    public void unwatch(long watchId) {
         watchRegistry.unwatch(watchId);
     }
 
     @Override
-    public int watch(ConfigReloader.Listener listener) {
+    public long watch(Listener listener) {
         return watchRegistry.watch(listener);
     }
 

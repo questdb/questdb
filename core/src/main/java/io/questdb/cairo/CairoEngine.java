@@ -184,12 +184,12 @@ public class CairoEngine implements Closeable, WriterSource {
         }
 
         @Override
-        public void unwatch(int watchId) {
+        public void unwatch(long watchId) {
 
         }
 
         @Override
-        public int watch(Listener listener) {
+        public long watch(Listener listener) {
             return WatchRegistry.UNREGISTERED;
         }
     }; // no-op
