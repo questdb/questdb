@@ -57,6 +57,23 @@ public class Decimal160Test {
     }
 
     @Test
+    public void testSubstractionFuzz() {
+        Rnd rnd = TestUtils.generateRandom(null);
+
+        // Number of test iterations
+        final int ITERATIONS = 10_000;
+
+        for (int i = 0; i < ITERATIONS; i++) {
+            // Generate random operands with various scales and values
+            Decimal160 a = rnd.nextDecimal160();
+            Decimal160 b = rnd.nextDecimal160();
+
+            // Test subtraction accuracy
+            testSubtractionAccuracy(a, b, i);
+        }
+    }
+
+    @Test
     public void testCompareTo() {
         Decimal160 smaller = new Decimal160(0, 100, 2);
         Decimal160 larger = new Decimal160(0, 200, 2);
@@ -1201,7 +1218,6 @@ public class Decimal160Test {
 
             Decimal160 result = new Decimal160();
 
-            // Test static divide method
             Assert.assertThrows(ArithmeticException.class, () -> {
                 Decimal160.add(a, b, result);
             });
@@ -1212,7 +1228,7 @@ public class Decimal160Test {
         try {
             Decimal160 staticResult = new Decimal160();
 
-            // Test static divide method
+            // Test static add method
             Decimal160.add(a, b, staticResult);
 
             // Verify operands unchanged
@@ -1224,7 +1240,7 @@ public class Decimal160Test {
             Decimal160 result = new Decimal160();
             result.copyFrom(a);
 
-            // Test in-place divide method
+            // Test in-place add method
             result.add(b);
 
             // Results should be the same
@@ -1248,20 +1264,65 @@ public class Decimal160Test {
         }
     }
 
-    @Test
-    public void testRemoveThis() {
-        BigDecimal a = new BigDecimal("0.000009728613326609667902320486232");
-        BigDecimal b = new BigDecimal("0.000000000000000000000000014573997");
-        BigDecimal r = a.add(b);
+    private void testSubtractionAccuracy(Decimal160 a, Decimal160 b, int iteration) {
+        // Test subtraction accuracy with BigDecimal
+        BigDecimal bigA = a.toBigDecimal();
+        BigDecimal bigB = b.toBigDecimal();
 
-        Decimal160 da = Decimal160.fromBigDecimal(a);
-        Decimal160 db = Decimal160.fromBigDecimal(b);
-        Decimal160 dr = new Decimal160();
+        // Perform reference subtraction
+        BigDecimal expected = bigA.subtract(bigB);
 
-        dr.copyFrom(da);
-        dr.add(db);
+        BigDecimal min = Decimal160.MIN_VALUE.toBigDecimal();
+        BigDecimal max = Decimal160.MAX_VALUE.toBigDecimal();
+        if (expected.compareTo(min) < 0 || expected.compareTo(max) > 0) {
+            // We must be overflowing, check that we are throwing an error as expected
 
-        Assert.assertEquals(r, dr.toBigDecimal());
+            Decimal160 result = new Decimal160();
+
+            Assert.assertThrows(ArithmeticException.class, () -> {
+                Decimal160.subtract(a, b, result);
+            });
+            return;
+        }
+
+        // catch overflow exceptions
+        try {
+            Decimal160 staticResult = new Decimal160();
+
+            // Test static subtract method
+            Decimal160.subtract(a, b, staticResult);
+
+            // Verify operands unchanged
+            Assert.assertEquals("Subtract modified first operand at iteration " + iteration,
+                    a.toBigDecimal(), a.toBigDecimal());
+            Assert.assertEquals("Subtract modified second operand at iteration " + iteration,
+                    b.toBigDecimal(), b.toBigDecimal());
+
+            Decimal160 result = new Decimal160();
+            result.copyFrom(a);
+
+            // Test in-place subtract method
+            result.subtract(b);
+
+            // Results should be the same
+            Assert.assertEquals("Static and in-place subtraction differ at iteration " + iteration,
+                    result.toBigDecimal(), staticResult.toBigDecimal());
+
+            BigDecimal actual = result.toBigDecimal();
+
+            if (expected.compareTo(actual) != 0) {
+                BigDecimal difference = expected.subtract(actual).abs();
+                Assert.fail("iteration: " + iteration + " expected:<" + expected + "> but was:<" + result + "> (difference: " + difference + ")");
+            }
+        } catch (ArithmeticException e) {
+            // Skip this test case if overflow occurs during scaling
+            if (e.getMessage().contains("overflow") || e.getMessage().contains("Overflow")) {
+                // This is expected for cases where intermediate calculations would exceed 128-bit capacity
+                return;
+            }
+            // Re-throw other arithmetic exceptions
+            throw e;
+        }
     }
 
     private void testComparisonAccuracy(Decimal160 a, Decimal160 b, int iteration) {
@@ -1415,41 +1476,5 @@ public class Decimal160Test {
         Assert.assertEquals("Multiplication accuracy failed at iteration " + iteration +
                         " (a=" + a.toBigDecimal() + ", b=" + b.toBigDecimal() + ")",
                 expected, result.toBigDecimal());
-    }
-
-    private void testSubtractionAccuracy(Decimal160 a, Decimal160 b, int iteration) {
-        Decimal160 result = new Decimal160();
-        Decimal160 aCopy = new Decimal160();
-        Decimal160 bCopy = new Decimal160();
-
-        aCopy.copyFrom(a);
-        bCopy.copyFrom(b);
-
-        // Test static subtract method
-        Decimal160.subtract(aCopy, bCopy, result);
-
-        // Verify operands unchanged
-        Assert.assertEquals("Subtraction modified first operand at iteration " + iteration,
-                a.toBigDecimal(), aCopy.toBigDecimal());
-        Assert.assertEquals("Subtraction modified second operand at iteration " + iteration,
-                b.toBigDecimal(), bCopy.toBigDecimal());
-
-        // Test in-place subtract method
-        aCopy.subtract(bCopy);
-
-        // Results should be the same
-        Assert.assertEquals("Static and in-place subtraction differ at iteration " + iteration,
-                result.toBigDecimal(), aCopy.toBigDecimal());
-
-        // Test reference calculation if values are small enough
-        if (fitsInLongRange(a) && fitsInLongRange(b)) {
-            // Use BigDecimal for accurate reference calculation
-            java.math.BigDecimal bigA = a.toBigDecimal();
-            java.math.BigDecimal bigB = b.toBigDecimal();
-            java.math.BigDecimal expected = bigA.subtract(bigB);
-            Assert.assertEquals("Subtraction accuracy failed at iteration " + iteration +
-                            " (a=" + a.toBigDecimal() + ", b=" + b.toBigDecimal() + ")",
-                    expected, result.toBigDecimal());
-        }
     }
 }

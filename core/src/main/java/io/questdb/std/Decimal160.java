@@ -268,53 +268,7 @@ public class Decimal160 implements Sinkable {
      * @param other The Decimal160 to add
      */
     public void add(Decimal160 other) {
-        // If scales match, use direct addition
-        if (this.scale == other.scale) {
-            // Perform 128-bit addition
-            long sumLow = this.low + other.low;
-
-            // Check for carry
-            long carry = hasCarry(this.low, other.low, sumLow) ? 1 : 0;
-
-            // Update values in place
-            this.low = sumLow;
-            long sumHigh = this.high + other.high + carry;
-            if (hasCarry(this.high, other.high, sumHigh)) {
-                throw new ArithmeticException("Overflow, not enough precision to accommodate for scale");
-            }
-            this.high = sumHigh;
-            updateCompact();
-            return;
-        }
-
-        // Handle different scales
-        if (this.scale < other.scale) {
-            // Rescale this to match other's scale
-            rescale(other.scale);
-            // Now add with same scale
-            long sumLow = this.low + other.low;
-            long carry = hasCarry(this.low, other.low, sumLow) ? 1 : 0;
-            this.low = sumLow;
-            this.high = this.high + other.high + carry;
-            updateCompact();
-        } else {
-            long thisHigh = this.high;
-            long thisLow = this.low;
-            int thisScale = this.scale;
-            // Need to rescale other - we'll swap this with other to do it
-            this.high = other.high;
-            this.low = other.low;
-            this.compact = other.compact;
-            this.scale = other.scale;
-            rescale(thisScale);
-
-            // Now add the scaled value
-            long sumLow = thisLow + this.low;
-            long carry = hasCarry(thisLow, this.low, sumLow) ? 1 : 0;
-            this.low = sumLow;
-            this.high = thisHigh + this.high + carry;
-            updateCompact();
-        }
+        add(this, this.high, this.low, this.scale, other.high, other.low, other.scale);
     }
 
     /**
@@ -770,75 +724,68 @@ public class Decimal160 implements Sinkable {
     }
 
     /**
+     * Generic function to make a 128-bit addition.
+     * @param result Decimal160 that will store the result of the operation
+     * @param aH High 64-bit part of the first operand.
+     * @param aL Low 64-bit part of the first operand.
+     * @param aScale Scale of the first operand.
+     * @param bH High 64-bit part of the second operand.
+     * @param bL Low 64-bit part of the second operand.
+     * @param bScale Scale of the second operand.
+     */
+    private static void add(Decimal160 result, long aH, long aL, int aScale, long bH, long bL, int bScale) {
+        result.scale = aScale;
+        if (aScale < bScale) {
+            // We need to rescale a to the same scale as b
+            result.high = aH;
+            result.low = aL;
+            result.rescale(bScale);
+            aH = result.high;
+            aL = result.low;
+        } else if (aScale > bScale) {
+            // We need to rescale b to the same scale as a
+            result.high = bH;
+            result.low = bL;
+            result.scale = bScale;
+            result.rescale(aScale);
+            bH = result.high;
+            bL = result.low;
+        }
+
+        // Perform 128-bit addition
+        long sumLow = aL + bL;
+
+        // Check for carry
+        long carry = hasCarry(aL, bL, sumLow) ? 1 : 0;
+
+        result.low = sumLow;
+        result.high = Math.addExact(aH, Math.addExact(bH, carry));
+        result.updateCompact();
+    }
+
+    /**
      * Subtract another Decimal160 from this one (in-place)
      *
      * @param other The Decimal160 to subtract
      */
     public void subtract(Decimal160 other) {
-        // Handle scale differences first
-        if (this.scale < other.scale) {
-            // Rescale this to match other's scale
-            rescale(other.scale);
-        }
+        // Negate other and perform addition
+        long bH = other.high;
+        long bL = other.low;
 
-        // Now perform subtraction
-        if (this.scale == other.scale) {
-            // Special case: subtracting zero
-            if (other.isZero()) {
-                // Nothing to do - subtracting zero doesn't change the value
-                return;
+        if (bH != 0 || bL != 0) {
+            long oldLow = bL;
+
+            // Two's complement: invert all bits and add 1
+            bL = ~bL + 1;
+            bH = ~bH;
+
+            // Check for carry from low
+            if (bL == 0 && oldLow != 0) {
+                bH += 1;
             }
 
-            // Direct subtraction via two's complement addition
-            // Negate other: ~other + 1
-            long otherLow = ~other.low + 1;
-            long otherHigh = ~other.high;
-            if (otherLow == 0 && other.low != 0) {
-                otherHigh += 1;
-            }
-
-            long sumLow = this.low + otherLow;
-            long carry = hasCarry(this.low, otherLow, sumLow) ? 1 : 0;
-            this.low = sumLow;
-            this.high = this.high + otherHigh + carry;
-        } else {
-            // this.scale > other.scale
-
-            // Special case: subtracting zero
-            if (other.isZero()) {
-                // Nothing to do - subtracting zero doesn't change the value
-                return;
-            }
-
-            // Need to scale other up by (this.scale - other.scale)
-            int scaleDiff = this.scale - other.scale;
-            long otherHigh = other.high;
-            long otherLow = other.low;
-
-            // Multiply other by 10^scaleDiff
-            for (int i = 0; i < scaleDiff; i++) {
-                // Multiply by 10: (8x + 2x)
-                long high8 = (otherHigh << 3) | (otherLow >>> 61);
-                long low8 = otherLow << 3;
-                long high2 = (otherHigh << 1) | (otherLow >>> 63);
-                long low2 = otherLow << 1;
-
-                otherLow = low8 + low2;
-                long carry = hasCarry(low8, low2, otherLow) ? 1 : 0;
-                otherHigh = high8 + high2 + carry;
-            }
-
-            // Now negate the scaled value and add
-            long negLow = ~otherLow + 1;
-            long negHigh = ~otherHigh;
-            if (negLow == 0 && otherLow != 0) {
-                negHigh += 1;
-            }
-
-            long sumLow = this.low + negLow;
-            long carry = hasCarry(this.low, negLow, sumLow) ? 1 : 0;
-            this.low = sumLow;
-            this.high = this.high + negHigh + carry;
+            add(this, this.high, this.low, this.scale, bH, bL, other.scale);
         }
     }
 
