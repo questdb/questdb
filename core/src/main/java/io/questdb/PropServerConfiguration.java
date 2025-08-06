@@ -926,18 +926,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             final int forceSendFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE, Integer.MAX_VALUE);
             final int forceRecvFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE, Integer.MAX_VALUE);
             // Set HTTP server worker pool configuration directly
-            httpServerConfiguration.workerCount = getInt(properties, env, PropertyKey.HTTP_WORKER_COUNT, 0);
-            httpServerConfiguration.workerAffinity = getAffinity(properties, env, PropertyKey.HTTP_WORKER_AFFINITY, httpServerConfiguration.workerCount);
-            httpServerConfiguration.haltOnError = getBoolean(properties, env, PropertyKey.HTTP_WORKER_HALT_ON_ERROR, false);
-            httpServerConfiguration.yieldThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_YIELD_THRESHOLD, 10);
-            httpServerConfiguration.napThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_NAP_THRESHOLD, 7_000);
-            httpServerConfiguration.sleepThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_SLEEP_THRESHOLD, 10_000);
-            httpServerConfiguration.sleepTimeout = getMillis(properties, env, PropertyKey.HTTP_WORKER_SLEEP_TIMEOUT, 10);
-            httpServerConfiguration.targetUtilization = getDouble(properties, env, PropertyKey.HTTP_WORKER_TARGET_UTILIZATION, String.valueOf(sharedWorkerTargetUtilization));
-            httpServerConfiguration.utilizationTolerance = getDouble(properties, env, PropertyKey.HTTP_WORKER_UTILIZATION_TOLERANCE, String.valueOf(sharedWorkerUtilizationTolerance));
-            httpServerConfiguration.minActiveWorkers = getInt(properties, env, PropertyKey.HTTP_WORKER_MIN_ACTIVE_WORKERS, sharedWorkerMinActiveWorkers);
-            httpServerConfiguration.evaluationInterval = getMillis(properties, env, PropertyKey.HTTP_WORKER_EVALUATION_INTERVAL, sharedWorkerEvaluationInterval);
-            httpServerConfiguration.metrics = this.metrics;
+            initWorkerPoolConfiguration(properties, env, httpServerConfiguration,
+                    "HTTP_WORKER", 0, false, 10, 7_000, 10_000, 10,
+                    sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
+                    sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
 
             this.httpSettingsReadOnly = getBoolean(properties, env, PropertyKey.HTTP_SETTINGS_READONLY, false);
 
@@ -1224,17 +1216,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                     throw ServerConfigurationException.forInvalidKey(PropertyKey.PG_DATE_LOCALE.getPropertyPath(), dateLocale);
                 }
                 // Set PG Wire worker pool configuration directly
-                pgWireConfiguration.workerCount = getInt(properties, env, PropertyKey.PG_WORKER_COUNT, 0);
-                pgWireConfiguration.workerAffinity = getAffinity(properties, env, PropertyKey.PG_WORKER_AFFINITY, pgWireConfiguration.workerCount);
-                pgWireConfiguration.haltOnError = getBoolean(properties, env, PropertyKey.PG_HALT_ON_ERROR, false);
-                pgWireConfiguration.yieldThreshold = getLong(properties, env, PropertyKey.PG_WORKER_YIELD_THRESHOLD, 10);
-                pgWireConfiguration.napThreshold = getLong(properties, env, PropertyKey.PG_WORKER_NAP_THRESHOLD, 7_000);
-                pgWireConfiguration.sleepThreshold = getLong(properties, env, PropertyKey.PG_WORKER_SLEEP_THRESHOLD, 10_000);
-                pgWireConfiguration.targetUtilization = getDouble(properties, env, PropertyKey.PG_WORKER_TARGET_UTILIZATION, String.valueOf(sharedWorkerTargetUtilization));
-                pgWireConfiguration.utilizationTolerance = getDouble(properties, env, PropertyKey.PG_WORKER_UTILIZATION_TOLERANCE, String.valueOf(sharedWorkerUtilizationTolerance));
-                pgWireConfiguration.minActiveWorkers = getInt(properties, env, PropertyKey.PG_WORKER_MIN_ACTIVE_WORKERS, sharedWorkerMinActiveWorkers);
-                pgWireConfiguration.evaluationInterval = getMillis(properties, env, PropertyKey.PG_WORKER_EVALUATION_INTERVAL, sharedWorkerEvaluationInterval);
-                pgWireConfiguration.metrics = this.metrics;
+                initWorkerPoolConfiguration(properties, env, pgWireConfiguration,
+                        "PG_WORKER", 0, false, 10, 7_000, 10_000, 10,
+                        sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
+                        sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
                 this.pgDaemonPool = getBoolean(properties, env, PropertyKey.PG_DAEMON_POOL, true);
                 this.pgInsertCacheEnabled = getBoolean(properties, env, PropertyKey.PG_INSERT_CACHE_ENABLED, true);
                 this.pgInsertCacheBlockCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_BLOCK_COUNT, 4);
@@ -1254,37 +1239,21 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
 
             // Set WAL Apply worker pool configuration directly
-            walApplyPoolConfiguration.workerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, 0); // Use shared write pool by default;
-            walApplyPoolConfiguration.workerAffinity = getAffinity(properties, env, PropertyKey.WAL_APPLY_WORKER_AFFINITY, walApplyPoolConfiguration.workerCount);
-            walApplyPoolConfiguration.haltOnError = getBoolean(properties, env, PropertyKey.WAL_APPLY_WORKER_HALT_ON_ERROR, false);
-            walApplyPoolConfiguration.napThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_NAP_THRESHOLD, 7_000);
-            walApplyPoolConfiguration.sleepThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_THRESHOLD, 10_000);
-            walApplyPoolConfiguration.sleepTimeout = getMillis(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_TIMEOUT, 10);
+            initWorkerPoolConfiguration(properties, env, walApplyPoolConfiguration,
+                    "WAL_APPLY_WORKER", 0, false, 1000, 7_000, 10_000, 10,
+                    sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
+                    sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
             this.walApplySleepTimeout = walApplyPoolConfiguration.sleepTimeout;
-            walApplyPoolConfiguration.yieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
-            walApplyPoolConfiguration.targetUtilization = getDouble(properties, env, PropertyKey.WAL_APPLY_WORKER_TARGET_UTILIZATION, String.valueOf(sharedWorkerTargetUtilization));
-            walApplyPoolConfiguration.utilizationTolerance = getDouble(properties, env, PropertyKey.WAL_APPLY_WORKER_UTILIZATION_TOLERANCE, String.valueOf(sharedWorkerUtilizationTolerance));
-            walApplyPoolConfiguration.minActiveWorkers = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_MIN_ACTIVE_WORKERS, sharedWorkerMinActiveWorkers);
-            walApplyPoolConfiguration.evaluationInterval = getMillis(properties, env, PropertyKey.WAL_APPLY_WORKER_EVALUATION_INTERVAL, sharedWorkerEvaluationInterval);
-            walApplyPoolConfiguration.metrics = this.metrics;
 
             // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
             this.matViewRefreshOomRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 200);
             // Set Mat View Refresh worker pool configuration directly
-            matViewRefreshPoolConfiguration.workerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, 0); // Use shared write pool by default
-            matViewRefreshPoolConfiguration.workerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshPoolConfiguration.workerCount);
-            matViewRefreshPoolConfiguration.haltOnError = getBoolean(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
-            matViewRefreshPoolConfiguration.napThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD, 7_000);
-            matViewRefreshPoolConfiguration.sleepThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD, 10_000);
-            matViewRefreshPoolConfiguration.sleepTimeout = getMillis(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT, 10);
-            matViewRefreshPoolConfiguration.yieldThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
-            matViewRefreshPoolConfiguration.targetUtilization = getDouble(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_TARGET_UTILIZATION, String.valueOf(sharedWorkerTargetUtilization));
-            matViewRefreshPoolConfiguration.utilizationTolerance = getDouble(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_UTILIZATION_TOLERANCE, String.valueOf(sharedWorkerUtilizationTolerance));
-            matViewRefreshPoolConfiguration.minActiveWorkers = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_MIN_ACTIVE_WORKERS, sharedWorkerMinActiveWorkers);
-            matViewRefreshPoolConfiguration.evaluationInterval = getMillis(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_EVALUATION_INTERVAL, sharedWorkerEvaluationInterval);
-            matViewRefreshPoolConfiguration.metrics = this.metrics;
+            initWorkerPoolConfiguration(properties, env, matViewRefreshPoolConfiguration,
+                    "MAT_VIEW_REFRESH_WORKER", 0, false, 1000, 7_000, 10_000, 10,
+                    sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
+                    sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
 
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
@@ -1561,30 +1530,16 @@ public class PropServerConfiguration implements ServerConfiguration {
 
                 this.lineTcpWriterQueueCapacity = getQueueCapacity(properties, env, PropertyKey.LINE_TCP_WRITER_QUEUE_CAPACITY, 128);
                 // Set Line TCP Writer worker pool configuration directly
-                lineTcpWriterWorkerPoolConfiguration.workerCount = getInt(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_COUNT, 0); // Use shared write pool by default
-                lineTcpWriterWorkerPoolConfiguration.workerAffinity = getAffinity(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_AFFINITY, lineTcpWriterWorkerPoolConfiguration.workerCount);
-                lineTcpWriterWorkerPoolConfiguration.haltOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_WRITER_HALT_ON_ERROR, false);
-                lineTcpWriterWorkerPoolConfiguration.yieldThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_YIELD_THRESHOLD, 10);
-                lineTcpWriterWorkerPoolConfiguration.napThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_NAP_THRESHOLD, 7_000);
-                lineTcpWriterWorkerPoolConfiguration.sleepThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_SLEEP_THRESHOLD, 10_000);
-                lineTcpWriterWorkerPoolConfiguration.targetUtilization = getDouble(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_TARGET_UTILIZATION, String.valueOf(sharedWorkerTargetUtilization));
-                lineTcpWriterWorkerPoolConfiguration.utilizationTolerance = getDouble(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_UTILIZATION_TOLERANCE, String.valueOf(sharedWorkerUtilizationTolerance));
-                lineTcpWriterWorkerPoolConfiguration.minActiveWorkers = getInt(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_MIN_ACTIVE_WORKERS, sharedWorkerMinActiveWorkers);
-                lineTcpWriterWorkerPoolConfiguration.evaluationInterval = getMillis(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_EVALUATION_INTERVAL, sharedWorkerEvaluationInterval);
-                lineTcpWriterWorkerPoolConfiguration.metrics = this.metrics;
+                initWorkerPoolConfiguration(properties, env, lineTcpWriterWorkerPoolConfiguration,
+                        "LINE_TCP_WRITER_WORKER", 0, false, 10, 7_000, 10_000, 10,
+                        sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
+                        sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
                 this.symbolCacheWaitBeforeReload = getMicros(properties, env, PropertyKey.LINE_TCP_SYMBOL_CACHE_WAIT_BEFORE_RELOAD, 500_000);
                 // Set Line TCP IO worker pool configuration directly
-                lineTcpIOWorkerPoolConfiguration.workerCount = getInt(properties, env, PropertyKey.LINE_TCP_IO_WORKER_COUNT, 0); // Use shared IO pool by default
-                lineTcpIOWorkerPoolConfiguration.workerAffinity = getAffinity(properties, env, PropertyKey.LINE_TCP_IO_WORKER_AFFINITY, lineTcpIOWorkerPoolConfiguration.workerCount);
-                lineTcpIOWorkerPoolConfiguration.haltOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_IO_HALT_ON_ERROR, false);
-                lineTcpIOWorkerPoolConfiguration.yieldThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_YIELD_THRESHOLD, 10);
-                lineTcpIOWorkerPoolConfiguration.napThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_NAP_THRESHOLD, 7_000);
-                lineTcpIOWorkerPoolConfiguration.sleepThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_SLEEP_THRESHOLD, 10_000);
-                lineTcpIOWorkerPoolConfiguration.targetUtilization = getDouble(properties, env, PropertyKey.LINE_TCP_IO_WORKER_TARGET_UTILIZATION, String.valueOf(sharedWorkerTargetUtilization));
-                lineTcpIOWorkerPoolConfiguration.utilizationTolerance = getDouble(properties, env, PropertyKey.LINE_TCP_IO_WORKER_UTILIZATION_TOLERANCE, String.valueOf(sharedWorkerUtilizationTolerance));
-                lineTcpIOWorkerPoolConfiguration.minActiveWorkers = getInt(properties, env, PropertyKey.LINE_TCP_IO_WORKER_MIN_ACTIVE_WORKERS, sharedWorkerMinActiveWorkers);
-                lineTcpIOWorkerPoolConfiguration.evaluationInterval = getMillis(properties, env, PropertyKey.LINE_TCP_IO_WORKER_EVALUATION_INTERVAL, sharedWorkerEvaluationInterval);
-                lineTcpIOWorkerPoolConfiguration.metrics = this.metrics;
+                initWorkerPoolConfiguration(properties, env, lineTcpIOWorkerPoolConfiguration,
+                        "LINE_TCP_IO_WORKER", 0, false, 10, 7_000, 10_000, 10,
+                        sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
+                        sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
                 this.lineTcpMaintenanceInterval = getMillis(properties, env, PropertyKey.LINE_TCP_MAINTENANCE_JOB_INTERVAL, 1000);
                 this.lineTcpCommitIntervalFraction = getDouble(properties, env, PropertyKey.LINE_TCP_COMMIT_INTERVAL_FRACTION, "0.5");
                 this.lineTcpCommitIntervalDefault = getMillis(properties, env, PropertyKey.LINE_TCP_COMMIT_INTERVAL_DEFAULT, COMMIT_INTERVAL_DEFAULT);
@@ -1940,6 +1895,77 @@ public class PropServerConfiguration implements ServerConfiguration {
             httpContextWebConsole = httpContextWebConsole.substring(0, httpContextWebConsole.length() - n);
         }
         return httpContextWebConsole;
+    }
+
+    private void initWorkerPoolConfiguration(
+            Properties properties,
+            Map<String, String> env,
+            PropWorkerPoolConfiguration poolConfiguration,
+            String enumPrefix,
+            int defaultWorkerCount,
+            boolean defaultHaltOnError,
+            long defaultYieldThreshold,
+            long defaultNapThreshold,
+            long defaultSleepThreshold,
+            long defaultSleepTimeout,
+            double sharedTargetUtilization,
+            double sharedUtilizationTolerance,
+            int sharedMinActiveWorkers,
+            long sharedEvaluationInterval
+    ) throws ServerConfigurationException {
+        // Try to find PropertyKey enum values by constructing the expected names
+        try {
+            PropertyKey workerCountProp = PropertyKey.valueOf(enumPrefix + "_COUNT");
+            PropertyKey affinityProp = PropertyKey.valueOf(enumPrefix + "_AFFINITY");
+            PropertyKey haltOnErrorProp = getHaltOnErrorProperty(enumPrefix);
+            PropertyKey yieldThresholdProp = safeValueOf(enumPrefix + "_YIELD_THRESHOLD");  
+            PropertyKey napThresholdProp = safeValueOf(enumPrefix + "_NAP_THRESHOLD");
+            PropertyKey sleepThresholdProp = safeValueOf(enumPrefix + "_SLEEP_THRESHOLD");
+            PropertyKey sleepTimeoutProp = safeValueOf(enumPrefix + "_SLEEP_TIMEOUT");
+            PropertyKey targetUtilizationProp = safeValueOf(enumPrefix + "_TARGET_UTILIZATION");
+            PropertyKey utilizationToleranceProp = safeValueOf(enumPrefix + "_UTILIZATION_TOLERANCE");
+            PropertyKey minActiveWorkersProp = safeValueOf(enumPrefix + "_MIN_ACTIVE_WORKERS");
+            PropertyKey evaluationIntervalProp = safeValueOf(enumPrefix + "_EVALUATION_INTERVAL");
+
+            poolConfiguration.workerCount = getInt(properties, env, workerCountProp, defaultWorkerCount);
+            poolConfiguration.workerAffinity = getAffinity(properties, env, affinityProp, poolConfiguration.workerCount);
+            poolConfiguration.haltOnError = haltOnErrorProp != null ? getBoolean(properties, env, haltOnErrorProp, defaultHaltOnError) : defaultHaltOnError;
+            poolConfiguration.yieldThreshold = yieldThresholdProp != null ? getLong(properties, env, yieldThresholdProp, defaultYieldThreshold) : defaultYieldThreshold;
+            poolConfiguration.napThreshold = napThresholdProp != null ? getLong(properties, env, napThresholdProp, defaultNapThreshold) : defaultNapThreshold;
+            poolConfiguration.sleepThreshold = sleepThresholdProp != null ? getLong(properties, env, sleepThresholdProp, defaultSleepThreshold) : defaultSleepThreshold;
+            poolConfiguration.sleepTimeout = sleepTimeoutProp != null ? getMillis(properties, env, sleepTimeoutProp, defaultSleepTimeout) : defaultSleepTimeout;
+            poolConfiguration.targetUtilization = targetUtilizationProp != null ? getDouble(properties, env, targetUtilizationProp, String.valueOf(sharedTargetUtilization)) : sharedTargetUtilization;
+            poolConfiguration.utilizationTolerance = utilizationToleranceProp != null ? getDouble(properties, env, utilizationToleranceProp, String.valueOf(sharedUtilizationTolerance)) : sharedUtilizationTolerance;
+            poolConfiguration.minActiveWorkers = minActiveWorkersProp != null ? getInt(properties, env, minActiveWorkersProp, sharedMinActiveWorkers) : sharedMinActiveWorkers;
+            poolConfiguration.evaluationInterval = evaluationIntervalProp != null ? getMillis(properties, env, evaluationIntervalProp, sharedEvaluationInterval) : sharedEvaluationInterval;
+            poolConfiguration.metrics = this.metrics;
+            
+            // Initialize affinity array with -1 if property wasn't found
+        } catch (IllegalArgumentException e) {
+            throw new ServerConfigurationException("Missing PropertyKey for worker pool: " + enumPrefix);
+        }
+    }
+    
+    private PropertyKey safeValueOf(String enumName) {
+        try {
+            return PropertyKey.valueOf(enumName);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private PropertyKey getHaltOnErrorProperty(String enumPrefix) {
+        // Handle special cases where halt.on.error property names don't follow standard pattern
+        switch (enumPrefix) {
+            case "PG_WORKER":
+                return safeValueOf("PG_HALT_ON_ERROR");
+            case "LINE_TCP_WRITER_WORKER":
+                return safeValueOf("LINE_TCP_WRITER_HALT_ON_ERROR");
+            case "LINE_TCP_IO_WORKER":
+                return safeValueOf("LINE_TCP_IO_HALT_ON_ERROR");
+            default:
+                return safeValueOf(enumPrefix + "_HALT_ON_ERROR");
+        }
     }
 
     private int configureSharedThreadPool(
