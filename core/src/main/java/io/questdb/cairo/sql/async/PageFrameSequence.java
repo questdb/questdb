@@ -93,6 +93,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     // Must be initialized from the original SQL context's circuit breaker before use.
     private SqlExecutionCircuitBreakerWrapper workStealCircuitBreaker;
 
+    /**
+     * Constructs a page frame sequence instance. The returned instance takes ownership of the input atom.
+     */
     public PageFrameSequence(
             CairoConfiguration configuration,
             MessageBus messageBus,
@@ -102,15 +105,20 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             int sharedQueryWorkerCount,
             byte taskType
     ) {
-        this.frameAddressCache = new PageFrameAddressCache(configuration);
-        this.messageBus = messageBus;
-        this.atom = atom;
-        this.reducer = reducer;
-        this.clock = configuration.getMillisecondClock();
-        this.localTaskFactory = localTaskFactory;
-        this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, sharedQueryWorkerCount);
-        this.taskType = taskType;
-        this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(configuration.getCircuitBreakerConfiguration());
+        try {
+            this.atom = atom;
+            this.frameAddressCache = new PageFrameAddressCache(configuration);
+            this.messageBus = messageBus;
+            this.reducer = reducer;
+            this.clock = configuration.getMillisecondClock();
+            this.localTaskFactory = localTaskFactory;
+            this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, sharedQueryWorkerCount);
+            this.taskType = taskType;
+            this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(configuration.getCircuitBreakerConfiguration());
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     /**
