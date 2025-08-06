@@ -574,7 +574,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_TXN_SCOREBOARD_FORMAT("cairo.txn.scoreboard.format"),
     DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY("debug.wal.apply.block.failure.no.retry", false, true),
     CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED("cairo.sql.column.alias.expression.enabled"),
-    CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE("cairo.sql.column.alias.generated.max.size");
+    CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE("cairo.sql.column.alias.generated.max.size"),
+    CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED("cairo.file.descriptor.cache.enabled");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

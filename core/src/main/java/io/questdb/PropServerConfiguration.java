@@ -208,6 +208,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean devModeEnabled;
     private final Set<? extends ConfigPropertyKey> dynamicProperties;
     private final boolean enableTestFactories;
+    private final boolean fileDescriptorCacheEnabled;
     private final int fileOperationRetryCount;
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
@@ -518,7 +519,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerDataAppendPageSize;
     private final long writerDataIndexKeyAppendPageSize;
     private final long writerDataIndexValueAppendPageSize;
-    private final long writerFileOpenOpts;
+    private final int writerFileOpenOpts;
     private final long writerMiscAppendPageSize;
     private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
@@ -1408,7 +1409,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.maxSqlRecompileAttempts = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, 10);
 
             String value = getString(properties, env, PropertyKey.CAIRO_WRITER_FO_OPTS, "o_none");
-            long lopts = CairoConfiguration.O_NONE;
+            int lopts = CairoConfiguration.O_NONE;
             String[] opts = value.split("\\|");
             for (String opt : opts) {
                 int index = WRITE_FO_OPTS.keyIndex(opt.trim());
@@ -1419,6 +1420,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.writerFileOpenOpts = lopts;
 
             this.writerMixedIOEnabled = getBoolean(properties, env, PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, ff.allowMixedIO(this.dbRoot));
+            this.fileDescriptorCacheEnabled = getBoolean(properties, env, PropertyKey.CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED, true);
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),
@@ -3019,6 +3021,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean getFileDescriptorCacheEnabled() {
+            return fileDescriptorCacheEnabled;
+        }
+
+        @Override
         public int getFileOperationRetryCount() {
             return fileOperationRetryCount;
         }
@@ -3919,7 +3926,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getWriterFileOpenOpts() {
+        public int getWriterFileOpenOpts() {
             return writerFileOpenOpts;
         }
 
@@ -5837,9 +5844,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     static {
-        WRITE_FO_OPTS.put("o_direct", (int) CairoConfiguration.O_DIRECT);
-        WRITE_FO_OPTS.put("o_sync", (int) CairoConfiguration.O_SYNC);
-        WRITE_FO_OPTS.put("o_async", (int) CairoConfiguration.O_ASYNC);
-        WRITE_FO_OPTS.put("o_none", (int) CairoConfiguration.O_NONE);
+        WRITE_FO_OPTS.put("o_direct", CairoConfiguration.O_DIRECT);
+        WRITE_FO_OPTS.put("o_sync", CairoConfiguration.O_SYNC);
+        WRITE_FO_OPTS.put("o_async", CairoConfiguration.O_ASYNC);
+        WRITE_FO_OPTS.put("o_none", CairoConfiguration.O_NONE);
     }
 }
