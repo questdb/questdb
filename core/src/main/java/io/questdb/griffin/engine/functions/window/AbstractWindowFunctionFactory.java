@@ -31,10 +31,6 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.window.WindowContext;
-import io.questdb.griffin.model.WindowColumn;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
@@ -197,7 +193,7 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         }
     }
 
-    static class RingBufferDesc {
+    protected static class RingBufferDesc {
         long capacity;
         long firstIdx;
         LongList freeList;
