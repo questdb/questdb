@@ -52,13 +52,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
-    private final int sharedWorkerCount;
+    private final int sharedQueryWorkerCount;
     private final AtomicBooleanCircuitBreaker simpleCircuitBreaker;
     private final Telemetry<TelemetryTask> telemetry;
     private final TelemetryFacade telemetryFacade;
     private final IntStack timestampRequiredStack = new IntStack();
     private final WindowContextImpl windowContext = new WindowContextImpl();
-    private final int workerCount;
     protected BindVariableService bindVariableService;
     protected SecurityContext securityContext;
     private boolean allowNonDeterministicFunction = true;
@@ -79,29 +78,23 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long requestFd = -1;
     private boolean useSimpleCircuitBreaker;
 
-    public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
-        assert workerCount > 0;
-        this.workerCount = workerCount;
-        assert sharedWorkerCount > 0;
-        this.sharedWorkerCount = sharedWorkerCount;
+    public SqlExecutionContextImpl(CairoEngine cairoEngine, int sharedQueryWorkerCount) {
+        assert sharedQueryWorkerCount >= 0;
+        this.sharedQueryWorkerCount = sharedQueryWorkerCount;
         this.cairoEngine = cairoEngine;
 
         cairoConfiguration = cairoEngine.getConfiguration();
         clock = cairoConfiguration.getMicrosecondClock();
         securityContext = DenyAllSecurityContext.INSTANCE;
         jitMode = cairoConfiguration.getSqlJitMode();
-        parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled();
-        parallelGroupByEnabled = cairoConfiguration.isSqlParallelGroupByEnabled();
-        parallelReadParquetEnabled = cairoConfiguration.isSqlParallelReadParquetEnabled();
+        parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled() && sharedQueryWorkerCount > 0;
+        parallelGroupByEnabled = cairoConfiguration.isSqlParallelGroupByEnabled() && sharedQueryWorkerCount > 0;
+        parallelReadParquetEnabled = cairoConfiguration.isSqlParallelReadParquetEnabled() && sharedQueryWorkerCount > 0;
         telemetry = cairoEngine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoOp;
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.simpleCircuitBreaker = new AtomicBooleanCircuitBreaker(cairoConfiguration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
-    }
-
-    public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
-        this(cairoEngine, workerCount, workerCount);
     }
 
     @Override
@@ -225,8 +218,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public int getSharedWorkerCount() {
-        return sharedWorkerCount;
+    public int getSharedQueryWorkerCount() {
+        return sharedQueryWorkerCount;
     }
 
     @Override
@@ -237,11 +230,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public WindowContext getWindowContext() {
         return windowContext;
-    }
-
-    @Override
-    public int getWorkerCount() {
-        return workerCount;
     }
 
     @Override
