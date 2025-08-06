@@ -43,6 +43,7 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.std.IntList;
@@ -73,7 +74,10 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        checkWindowParameter(position, sqlExecutionContext);
+        WindowContext windowContext = sqlExecutionContext.getWindowContext();
+        windowContext.checkWindowParameters(position, supportNullsDesc());
+        long rowsLo = windowContext.getRowsLo();
+        long rowsHi = windowContext.getAdjustedRowsHi();
         if (rowsHi < rowsLo) {
             return new DoubleNullFunction(args.get(0),
                     NAME,
@@ -84,20 +88,22 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         }
 
         return windowContext.isIgnoreNulls() ?
-                this.generateIgnoreNullsFunction(position, args, configuration) :
-                this.generateRespectNullsFunction(position, args, configuration);
+                this.generateIgnoreNullsFunction(position, args, configuration, windowContext) :
+                this.generateRespectNullsFunction(position, args, configuration, windowContext);
     }
 
     private Function generateIgnoreNullsFunction(
             int position,
             ObjList<Function> args,
-            CairoConfiguration configuration
+            CairoConfiguration configuration,
+            WindowContext windowContext
     ) throws SqlException {
         int framingMode = windowContext.getFramingMode();
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
-
+        long rowsLo = windowContext.getRowsLo();
+        long rowsHi = windowContext.getAdjustedRowsHi();
         if (partitionByRecord != null) {
             if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // moving first_value() ignore nulls over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)
@@ -292,13 +298,16 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
     private Function generateRespectNullsFunction(
             int position,
             ObjList<Function> args,
-            CairoConfiguration configuration
+            CairoConfiguration configuration,
+            WindowContext windowContext
     ) throws SqlException {
         int framingMode = windowContext.getFramingMode();
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
 
+        long rowsLo = windowContext.getRowsLo();
+        long rowsHi = windowContext.getAdjustedRowsHi();
         if (partitionByRecord != null) {
             if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // moving average over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)

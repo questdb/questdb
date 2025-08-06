@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.std.Mutable;
 import io.questdb.std.Transient;
@@ -39,6 +40,8 @@ public class WindowContextImpl implements WindowContext, Mutable {
     private int exclusionKind;
     private int exclusionKindPos;
     private int framingMode;
+    private boolean ignoreNulls;
+    private int nullsDescPos;
     private int orderByDirection;
     private int orderByPos;
     private boolean ordered;
@@ -50,12 +53,53 @@ public class WindowContextImpl implements WindowContext, Mutable {
     private long rowsLo;
     private int rowsLoKindPos;
     private int timestampIndex;
-    private boolean ignoreNulls;
-    private int nullsDescPos;
 
     @Override
     public boolean baseSupportsRandomAccess() {
         return baseSupportsRandomAccess;
+    }
+
+    public void checkWindowParameters(int position, boolean supportTNullsDesc) throws SqlException {
+        if (isEmpty()) {
+            throw SqlException.emptyWindowContext(position);
+        }
+
+        if (getNullsDescPos() > 0 && !supportTNullsDesc) {
+            throw SqlException.$(getNullsDescPos(), "RESPECT/IGNORE NULLS is not supported for current window function");
+        }
+
+        rowsHi = getRowsHi();
+
+        if (!isDefaultFrame()) {
+            if (rowsLo > 0) {
+                throw SqlException.$(getRowsLoKindPos(), "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only");
+            }
+            if (rowsHi > 0) {
+                if (rowsHi != Long.MAX_VALUE) {
+                    throw SqlException.$(getRowsHiKindPos(), "frame end supports _number_ PRECEDING and CURRENT ROW only");
+                } else if (rowsLo != Long.MIN_VALUE) {
+                    throw SqlException.$(getRowsHiKindPos(), "frame end supports UNBOUNDED FOLLOWING only when frame start is UNBOUNDED PRECEDING");
+                }
+            }
+        }
+
+        int exclusionKind = getExclusionKind();
+        int exclusionKindPos = getExclusionKindPos();
+        if (exclusionKind != WindowColumn.EXCLUDE_NO_OTHERS
+                && exclusionKind != WindowColumn.EXCLUDE_CURRENT_ROW) {
+            throw SqlException.$(exclusionKindPos, "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported");
+        }
+
+        if (exclusionKind == WindowColumn.EXCLUDE_CURRENT_ROW) {
+            // assumes frame doesn't use 'following'
+            if (rowsHi == Long.MAX_VALUE) {
+                throw SqlException.$(exclusionKindPos, "EXCLUDE CURRENT ROW not supported with UNBOUNDED FOLLOWING frame boundary");
+            }
+        }
+
+        if (getFramingMode() == WindowColumn.FRAMING_GROUPS) {
+            throw SqlException.$(position, "function not implemented for given window parameters");
+        }
     }
 
     @Override
@@ -80,6 +124,13 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.nullsDescPos = 0;
     }
 
+    public long getAdjustedRowsHi() {
+        if (exclusionKind == WindowColumn.EXCLUDE_CURRENT_ROW && rowsHi == 0) {
+            return -1;
+        }
+        return rowsHi;
+    }
+
     public int getExclusionKind() {
         return exclusionKind;
     }
@@ -91,6 +142,11 @@ public class WindowContextImpl implements WindowContext, Mutable {
 
     public int getFramingMode() {
         return framingMode;
+    }
+
+    @Override
+    public int getNullsDescPos() {
+        return nullsDescPos;
     }
 
     public int getOrderByPos() {
@@ -150,18 +206,13 @@ public class WindowContextImpl implements WindowContext, Mutable {
     }
 
     @Override
-    public boolean isOrdered() {
-        return ordered;
-    }
-
-    @Override
     public boolean isIgnoreNulls() {
         return ignoreNulls;
     }
 
     @Override
-    public int getNullsDescPos() {
-        return nullsDescPos;
+    public boolean isOrdered() {
+        return ordered;
     }
 
     public boolean isOrderedByDesignatedTimestamp() {
