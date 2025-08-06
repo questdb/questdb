@@ -70,7 +70,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.network.IOContext;
-import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.Net;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
@@ -79,6 +78,7 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.network.SuspendEvent;
+import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -505,8 +505,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     doSend(bufferRemainingOffset, bufferRemainingSize);
                 }
                 tlsSessionStarting = false;
-                if (socket.startTlsSession(null) != 0) {
-                    LOG.error().$("failed to create new TLS session").$();
+                try {
+                    socket.startTlsSession(null);
+                } catch (TlsSessionInitFailedException e) {
+                    LOG.error().$("failed to create new TLS session").$((Throwable) e).$();
                     throw BadProtocolException.INSTANCE;
                 }
                 // Start listening for read.
@@ -585,22 +587,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         } catch (Throwable th) {
             handleException(-1, th.getMessage(), true, -1, true);
         }
-    }
-
-    @Override
-    public PGConnectionContext of(long fd, @NotNull IODispatcher<PGConnectionContext> dispatcher) {
-        super.of(fd, dispatcher);
-        sqlExecutionContext.with(fd);
-        if (recvBuffer == 0) {
-            this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
-        }
-        if (sendBuffer == 0) {
-            this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
-            this.sendBufferPtr = sendBuffer;
-            this.sendBufferLimit = sendBuffer + sendBufferSize;
-        }
-        authenticator.init(socket, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
-        return this;
     }
 
     public void setAuthenticator(SocketAuthenticator authenticator) {
@@ -1750,7 +1736,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void freeUpdateCommand(UpdateOperation op) {
         // Create a copy of sqlExecutionContext here
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-        SqlExecutionContextImpl newSqlExecutionContext = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedWorkerCount());
+        SqlExecutionContextImpl newSqlExecutionContext = new SqlExecutionContextImpl(engine, sqlExecutionContext.getSharedQueryWorkerCount());
         newSqlExecutionContext.with(sqlExecutionContext.getSecurityContext(), bindVariableService, sqlExecutionContext.getRandom(), sqlExecutionContext.getRequestFd(), circuitBreaker);
         sqlExecutionContext = newSqlExecutionContext;
 
@@ -2937,6 +2923,21 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             StdoutSink.INSTANCE.put(direction);
             Net.dump(buffer, len);
         }
+    }
+
+    @Override
+    protected void doInit() {
+        sqlExecutionContext.with(getFd());
+
+        assert recvBuffer == 0;
+        this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
+
+        assert sendBuffer == 0;
+        this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
+        this.sendBufferPtr = sendBuffer;
+        this.sendBufferLimit = sendBuffer + sendBufferSize;
+
+        authenticator.init(socket, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
     }
 
     int doReceive(int remaining) {
