@@ -2728,7 +2728,7 @@ public class Decimal160 implements Sinkable {
         long r4 = (r3 >>> 32) + (p3 >>> 32) + p4;
         
         // Check for overflow: if r4 has significant bits, the result exceeds 128 bits
-        if (r4 != 0) {
+        if (r4 != 0 || (r3 >> 31) != 0) {
             throw new ArithmeticException("Multiplication overflow: result exceeds 128-bit capacity");
         }
 
