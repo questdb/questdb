@@ -281,6 +281,9 @@ public class ExpressionParser {
             scopeStack.setBottom(scopeStack.sizeRaw());
             boolean parsedDeclaration = false;
 
+            boolean unexpectedLiteral = false;
+            int unexpectedLiteralPosition = -1;
+
             ExpressionNode node;
             CharSequence tok;
             char thisChar;
@@ -1607,9 +1610,17 @@ public class ExpressionParser {
                             }
                         }
                         // literal can be at start of input, after a bracket or part of an operator
+                        // this can be due to a function call not being closed properly, so we should
+                        // delay throwing an exception to check if this is the case for better error reporting
                         // all other cases are illegal and will be considered end-of-input
-                        if (scopeStack.notEmpty() && scopeStack.peek() != Scope.PAREN && scopeStack.peek() != Scope.BRACKET) {
-                            throw SqlException.$(lastPos, "dangling literal");
+
+                        if (scopeStack.notEmpty()) {
+                            if (opStack.notEmpty() && opStack.peek(1).type == ExpressionNode.LITERAL && opStack.peek().token.charAt(0) == '(') {
+                                unexpectedLiteral = true;
+                                unexpectedLiteralPosition = lastPos;
+                            } else {
+                                throw SqlException.$(lastPos, "dangling literal");
+                            }
                         }
                         lexer.unparseLast();
                         break;
@@ -1619,6 +1630,22 @@ public class ExpressionParser {
 
             if (thisBranch == BRANCH_TIMESTAMP_ZONE) {
                 throw SqlException.$(lexer.lastTokenPosition(), "did you mean 'at time zone <tz>'?");
+            }
+
+            if (unexpectedLiteral) {
+                while (lexer.hasNext()) {
+                    CharSequence tempTok = lexer.next();
+                    if (tempTok.charAt(0) == '(') {
+                        ExpressionNode tempNode = ExpressionNode.FACTORY.newInstance();
+                        tempNode.position = lexer.lastTokenPosition();
+                        tempNode.token = tempTok;
+                        opStack.push(tempNode);
+                    } else if (tempTok.charAt(0) == ')' && opStack.peek().token.charAt(0) == '(') {
+                        opStack.pop();
+                    } else if (tempTok.charAt(0) == ')' && opStack.peek().token.charAt(0) != '(') {
+                        throw SqlException.$(unexpectedLiteralPosition, "dangling literal");
+                    }
+                }
             }
 
             while ((node = opStack.pop()) != null) {
@@ -1643,6 +1670,10 @@ public class ExpressionParser {
                 }
 
                 argStackDepth = onNode(listener, node, argStackDepth, prevBranch, caseCount == 0);
+            }
+
+            if (unexpectedLiteral) {
+                throw SqlException.$(unexpectedLiteralPosition, "dangling literal");
             }
 
             if (shadowParseMismatchFirstPosition != -1) {
