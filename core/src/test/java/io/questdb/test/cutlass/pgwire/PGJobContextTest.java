@@ -135,10 +135,10 @@ import java.util.stream.Stream;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-import static io.questdb.test.tools.TestUtils.assertEquals;
 import static io.questdb.test.tools.TestUtils.*;
-import static org.junit.Assert.assertEquals;
+import static io.questdb.test.tools.TestUtils.assertEquals;
 import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
 
 /**
  * This class contains tests which replay PGWIRE traffic.
@@ -3904,13 +3904,12 @@ if __name__ == "__main__":
                     try (ResultSet rs = statement.getResultSet()) {
                         assertResultSet(
                                 "QUERY PLAN[VARCHAR]\n" +
-                                        "Sort light lo: 10\n" +
+                                        "Async Top K lo: 10 workers: 2\n" +
+                                        "  filter: str='\\b\\f\\n\\r\\t\\u0005'\n" +
                                         "  keys: [str, x]\n" +
-                                        "    Async Filter workers: 2\n" +
-                                        "      filter: str='\\b\\f\\n\\r\\t\\u0005'\n" +
-                                        "        PageFrame\n" +
-                                        "            Row forward scan\n" +
-                                        "            Frame forward scan on: xx\n",
+                                        "    PageFrame\n" +
+                                        "        Row forward scan\n" +
+                                        "        Frame forward scan on: xx\n",
                                 sink,
                                 rs
                         );

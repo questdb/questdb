@@ -367,10 +367,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, null, null, -1, null);
         }
         authenticator = Misc.free(authenticator);
-        tasCache = Misc.free(tasCache);
         taiCache = Misc.free(taiCache);
 
-        // assert is intentionally commented out. uncomment if you suspect a PGPipelieEntry leak and run all tests
+        // assert is intentionally commented out. uncomment if you suspect a PGPipelineEntry leak and run all tests
         // do not forget to remove entryPool.clear() from clear()
         // assert entryPool.getPos() == 0 : "possible resource leak detected, not all entries were returned to pool [pos=" + entryPool.getPos() + ']';
     }

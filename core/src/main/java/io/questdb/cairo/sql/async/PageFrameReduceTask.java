@@ -36,11 +36,13 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public static final byte TYPE_FILTER = 0;
     public static final byte TYPE_GROUP_BY = 1;
     public static final byte TYPE_GROUP_BY_NOT_KEYED = 2;
+    public static final byte TYPE_TOP_K = 3;
     private static final String exceptionMessage = "unexpected filter error";
 
     private final DirectLongList auxAddresses;
@@ -56,7 +58,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private long frameSequenceId;
     private boolean isCancelled;
     private boolean isOutOfMemory;
-    private byte type;
+    private byte taskType;
 
     public PageFrameReduceTask(CairoConfiguration configuration, int memoryTag) {
         try {
@@ -140,8 +142,8 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         return frameSequenceId;
     }
 
-    public byte getType() {
-        return type;
+    public byte getTaskType() {
+        return taskType;
     }
 
     public boolean hasError() {
@@ -158,25 +160,33 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public void of(PageFrameSequence<?> frameSequence, int frameIndex) {
         this.frameSequence = frameSequence;
-        this.frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         this.frameSequenceId = frameSequence.getId();
-        this.type = frameSequence.getTaskType();
+        this.taskType = frameSequence.getTaskType();
         this.frameIndex = frameIndex;
+        // Top K uses its own frame memory pool.
+        if (taskType != TYPE_TOP_K) {
+            frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
+        }
+        frameMemory = null;
+        filteredRows.clear();
         errorMsg.clear();
         isCancelled = false;
         isOutOfMemory = false;
-        frameMemory = null;
-        filteredRows.clear();
     }
 
     public PageFrameMemory populateFrameMemory() {
+        assert taskType != TYPE_TOP_K;
         frameMemory = frameMemoryPool.navigateTo(frameIndex);
         return frameMemory;
     }
 
     // Must be called after populateFrameMemory.
     public void populateJitData() {
-        assert frameMemory != null;
+        populateJitData(frameMemory);
+    }
+
+    // Useful when using external frame memory pool.
+    public void populateJitData(@NotNull PageFrameMemory frameMemory) {
         assert frameMemory.getFrameIndex() == frameIndex;
 
         final PageFrameAddressCache pageAddressCache = frameSequence.getPageFrameAddressCache();
@@ -229,8 +239,8 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         }
     }
 
-    public void setType(byte type) {
-        this.type = type;
+    public void setTaskType(byte taskType) {
+        this.taskType = taskType;
     }
 
     void collected() {
