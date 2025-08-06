@@ -3641,7 +3641,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             compileWorkerFilterConditionally(
                                                     executionContext,
                                                     filter,
-                                                    executionContext.getSharedWorkerCount(),
+                                                    executionContext.getSharedQueryWorkerCount(),
                                                     locatePotentiallyFurtherNestedWhereClause(nested),
                                                     baseFactory.getMetadata()
                                             ),
@@ -3652,7 +3652,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             listColumnFilterA.copy(),
                                             metadata,
                                             lo,
-                                            executionContext.getSharedWorkerCount()
+                                            executionContext.getSharedQueryWorkerCount()
                                     );
                                 }
                             }
