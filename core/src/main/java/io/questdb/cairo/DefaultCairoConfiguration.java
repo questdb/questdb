@@ -1340,6 +1340,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelTopKEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isTableTypeConversionEnabled() {
         return true;
     }
