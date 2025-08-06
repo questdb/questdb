@@ -27,12 +27,11 @@ public class Decimal160 implements Sinkable {
      * Maximum allowed scale (number of decimal places)
      */
     public static final int MAX_SCALE = 38;
+    public static final Decimal160 MAX_VALUE = new Decimal160(Long.MAX_VALUE, Long.MIN_VALUE, 0);
+    public static final Decimal160 MIN_VALUE = new Decimal160(Long.MIN_VALUE, Long.MIN_VALUE, 0);
     static final long LONG_MASK = 0xffffffffL;
     private static final long B = (long) 1 << Integer.SIZE;
-    private static final long HALF_LONG_MAX_VALUE = Long.MAX_VALUE / 2;
-    private static final long HALF_LONG_MIN_VALUE = Long.MIN_VALUE / 2;
     private static final long INFLATED = Long.MIN_VALUE;
-    private static final int LONG_SCALE_THRESHOLD = 19; // Maximum scale for a long before overflowing
     private static final long[] LONG_TEN_POWERS_TABLE = {
             1L,                     // 0 / 10^0
             10L,                    // 1 / 10^1
@@ -54,28 +53,6 @@ public class Decimal160 implements Sinkable {
             100000000000000000L,   // 17 / 10^17
             1000000000000000000L   // 18 / 10^18
     };
-    private static final long THRESHOLDS_TABLE[] = {
-            Long.MAX_VALUE,                     // 0
-            Long.MAX_VALUE / 10L,                 // 1
-            Long.MAX_VALUE / 100L,                // 2
-            Long.MAX_VALUE / 1000L,               // 3
-            Long.MAX_VALUE / 10000L,              // 4
-            Long.MAX_VALUE / 100000L,             // 5
-            Long.MAX_VALUE / 1000000L,            // 6
-            Long.MAX_VALUE / 10000000L,           // 7
-            Long.MAX_VALUE / 100000000L,          // 8
-            Long.MAX_VALUE / 1000000000L,         // 9
-            Long.MAX_VALUE / 10000000000L,        // 10
-            Long.MAX_VALUE / 100000000000L,       // 11
-            Long.MAX_VALUE / 1000000000000L,      // 12
-            Long.MAX_VALUE / 10000000000000L,     // 13
-            Long.MAX_VALUE / 100000000000000L,    // 14
-            Long.MAX_VALUE / 1000000000000000L,   // 15
-            Long.MAX_VALUE / 10000000000000000L,  // 16
-            Long.MAX_VALUE / 100000000000000000L, // 17
-            Long.MAX_VALUE / 1000000000000000000L // 18
-    };
-    private static final double TWO_POW_64 = Math.pow(2, 64);
     // Cache for common small values
     private static final Decimal160[] ZERO_THROUGH_TEN = new Decimal160[11];
     private transient long compact;  // Compact representation for values fitting in a signed long
@@ -96,8 +73,8 @@ public class Decimal160 implements Sinkable {
     /**
      * Constructor with initial values.
      *
-     * @param high the high 64 bits of the decimal value
-     * @param low the low 64 bits of the decimal value
+     * @param high  the high 64 bits of the decimal value
+     * @param low   the low 64 bits of the decimal value
      * @param scale the number of decimal places
      * @throws IllegalArgumentException if scale is invalid
      */
@@ -432,7 +409,7 @@ public class Decimal160 implements Sinkable {
      * @param roundingMode The Rounding mode to use if the remainder is non-zero
      */
     public void divide(Decimal160 divisor, int scale, RoundingMode roundingMode) {
-        divide(divisor.high, divisor.low, divisor.compact, divisor.scale, scale, roundingMode);
+        divide(divisor.high, divisor.low, divisor.scale, scale, roundingMode);
     }
 
     /**
@@ -441,24 +418,10 @@ public class Decimal160 implements Sinkable {
      * @param scale        The decimal place
      * @param roundingMode The Rounding mode to use if the remainder is non-zero
      */
-    public void divide(long divisorHigh, long divisorLow, long divisorCompact, int divisorScale, int scale, RoundingMode roundingMode) {
+    public void divide(long divisorHigh, long divisorLow, int divisorScale, int scale, RoundingMode roundingMode) {
         validateScale(scale);
         // Compute the delta: how much power of 10 we should raise either the dividend or divisor.
         int delta = scale + (divisorScale - this.scale);
-
-        // Tries to avoid heavy computation if we have compacted values,
-        // we may have to fall back if we're overflowing when scaling values.
-        boolean compactSuccess = false;
-        if (compact != INFLATED && (delta <= 0 || (this.scale + delta) <= LONG_SCALE_THRESHOLD)) {
-            if (divisorCompact != INFLATED && (delta >= 0 || (divisorScale - delta) <= LONG_SCALE_THRESHOLD)) {
-                compactSuccess = divide(this, low, divisorLow, delta, roundingMode);
-            }
-        }
-        if (compactSuccess) {
-            this.scale = scale;
-            this.updateCompact();
-            return;
-        }
 
         // Fail early if we're sure to overflow.
         if (delta > 0 && (this.scale + delta) > MAX_SCALE) {
@@ -726,7 +689,7 @@ public class Decimal160 implements Sinkable {
      * @param targetScale  the desired scale (number of decimal places)
      * @param roundingMode the rounding mode to use
      * @throws IllegalArgumentException if targetScale is invalid
-     * @throws ArithmeticException if roundingMode is UNNECESSARY and rounding is required
+     * @throws ArithmeticException      if roundingMode is UNNECESSARY and rounding is required
      */
     public void round(int targetScale, RoundingMode roundingMode) {
         validateScale(targetScale);
@@ -750,14 +713,14 @@ public class Decimal160 implements Sinkable {
             return;
         }
 
-        divide(0, 1, 1, 0, targetScale, roundingMode);
+        divide(0, 1, 1, targetScale, roundingMode);
     }
 
     /**
      * Set values directly.
      *
-     * @param high the high 64 bits of the decimal value
-     * @param low the low 64 bits of the decimal value
+     * @param high  the high 64 bits of the decimal value
+     * @param low   the low 64 bits of the decimal value
      * @param scale the number of decimal places
      */
     public void set(long high, long low, int scale) {
@@ -1013,47 +976,6 @@ public class Decimal160 implements Sinkable {
     }
 
     /**
-     * Shared logic of need increment computation.
-     */
-    private static boolean commonNeedIncrement(RoundingMode roundingMode, int qsign,
-                                               int cmpFracHalf, boolean oddQuot) {
-        switch (roundingMode) {
-            case UNNECESSARY:
-                throw new ArithmeticException("Rounding necessary");
-
-            case UP: // Away from zero
-                return true;
-
-            case DOWN: // Towards zero
-                return false;
-
-            case CEILING: // Towards +infinity
-                return qsign > 0;
-
-            case FLOOR: // Towards -infinity
-                return qsign < 0;
-
-            default: // Some kind of half-way rounding
-                if (cmpFracHalf < 0) // We're closer to higher digit
-                    return false;
-                else if (cmpFracHalf > 0) // We're closer to lower digit
-                    return true;
-                else { // half-way
-                    switch (roundingMode) {
-                        case HALF_DOWN:
-                            return false;
-                        case HALF_UP:
-                            return true;
-                        case HALF_EVEN:
-                            return oddQuot;
-                        default:
-                            return false;
-                    }
-                }
-        }
-    }
-
-    /**
      * Compare a against half of b.
      *
      * @param aH High 64-bit part of a.
@@ -1134,57 +1056,6 @@ public class Decimal160 implements Sinkable {
             value /= 10;
         }
         return count;
-    }
-
-    /**
-     * Divide 2 compacted values by one another, it might fail when raising operands to the right scale.
-     *
-     * @param delta        The power of 10 to either raise the dividend or divisor
-     * @param roundingMode The Rounding mode to use if the remainder is non-zero
-     * @return true if the division was able to take place
-     */
-    private static boolean divide(Decimal160 result, long dividend, long divisor, int delta, RoundingMode roundingMode) {
-        if (dividend == 0) {
-            return true;
-        } else if (divisor == 0) {
-            throw new ArithmeticException("Division by zero");
-        }
-
-        if (delta > 0) {
-            if ((dividend = longMultiplyPowerTen(dividend, delta)) == 0) {
-                // Overflow, we need to fallback on bigger values to properly scale.
-                return false;
-            }
-        } else if (delta < 0) {
-            if ((divisor = longMultiplyPowerTen(divisor, -delta)) == 0) {
-                // Overflow, we need to fallback on bigger values to properly scale.
-                return false;
-            }
-        }
-        divideAndRound(result, dividend, divisor, roundingMode);
-        return true;
-    }
-
-    /**
-     * Internally used for division operation for division {@code long} by
-     * {@code long}.
-     * The returned {@code BigDecimal} object is the quotient whose scale is set
-     * to the passed in scale. If the remainder is not zero, it will be rounded
-     * based on the passed in roundingMode. Also, if the remainder is zero and
-     * the last parameter, i.e. preferredScale is NOT equal to scale, the
-     * trailing zeros of the result is stripped to match the preferredScale.
-     */
-    private static void divideAndRound(Decimal160 result, long ldividend, long ldivisor, RoundingMode roundingMode) {
-        int qsign; // quotient sign
-        long q = ldividend / ldivisor; // store quotient in long
-        long r = ldividend % ldivisor; // store remainder in long
-        qsign = ((ldividend < 0) == (ldivisor < 0)) ? 1 : -1;
-        if (r != 0) {
-            boolean increment = needIncrement(ldivisor, roundingMode, qsign, q, r);
-            q = increment ? q + qsign : q;
-        }
-        result.low = q;
-        result.high = q < 0 ? -1L : 0;
     }
 
     /**
@@ -1913,48 +1784,6 @@ public class Decimal160 implements Sinkable {
         }
     }
 
-    private static int longCompareMagnitude(long x, long y) {
-        if (x < 0)
-            x = -x;
-        if (y < 0)
-            y = -y;
-        return (x < y) ? -1 : ((x == y) ? 0 : 1);
-    }
-
-    /**
-     * Compute val * 10 ^ n; return this product if it is
-     * representable as a long, 0 otherwise.
-     */
-    private static long longMultiplyPowerTen(long val, int n) {
-        long[] tab = LONG_TEN_POWERS_TABLE;
-        long[] bounds = THRESHOLDS_TABLE;
-        if (n < tab.length && n < bounds.length) {
-            long tenpower = tab[n];
-            if (val == 1)
-                return tenpower;
-            if (Math.abs(val) <= bounds[n])
-                return val * tenpower;
-        }
-        return 0;
-    }
-
-    /**
-     * Tests if quotient has to be incremented according the roundingMode
-     */
-    private static boolean needIncrement(long ldivisor, RoundingMode roundingMode,
-                                         int qsign, long q, long r) {
-        assert r != 0L;
-
-        int cmpFracHalf;
-        if (r <= HALF_LONG_MIN_VALUE || r > HALF_LONG_MAX_VALUE) {
-            cmpFracHalf = 1; // 2 * r can't fit into long
-        } else {
-            cmpFracHalf = longCompareMagnitude(2 * r, ldivisor);
-        }
-
-        return commonNeedIncrement(roundingMode, qsign, cmpFracHalf, (q & 1L) != 0L);
-    }
-
     /**
      * Compare two longs as if they were unsigned.
      * Returns true iff one is bigger than two.
@@ -2236,7 +2065,7 @@ public class Decimal160 implements Sinkable {
         if (n < max) {
             long multiplier = LONG_TEN_POWERS_TABLE[n];
             // Special case: if high is 0, use simple 64-bit multiplication
-            if (this.high == 0) {
+            if (this.high == 0 && this.low >= 0) {
                 // Check if result will overflow 64 bits
                 if (this.low <= Long.MAX_VALUE / multiplier) {
                     this.low *= multiplier;
