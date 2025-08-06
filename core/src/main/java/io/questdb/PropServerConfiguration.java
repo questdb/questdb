@@ -871,22 +871,14 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.httpMinServerEnabled = getBoolean(properties, env, PropertyKey.HTTP_MIN_ENABLED, true);
             if (httpMinServerEnabled) {
-                httpMinServerConfiguration.haltOnError = getBoolean(properties, env, PropertyKey.HTTP_MIN_WORKER_HALT_ON_ERROR, false);
-                httpMinServerConfiguration.workerCount = getInt(properties, env, PropertyKey.HTTP_MIN_WORKER_COUNT, 1);
+                // Set HTTP Min server worker pool configuration directly  
+                initWorkerPoolConfiguration(properties, env, httpMinServerConfiguration,
+                        "HTTP_MIN_WORKER", 1, false, 10, 100, 100, 50,
+                        sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
+                        sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
 
                 final int httpMinWorkerPoolPriority = getInt(properties, env, PropertyKey.HTTP_MIN_WORKER_POOL_PRIORITY, Thread.MAX_PRIORITY - 2);
                 httpMinServerConfiguration.workerPoolPriority = Math.min(Thread.MAX_PRIORITY, Math.max(Thread.MIN_PRIORITY, httpMinWorkerPoolPriority));
-
-                httpMinServerConfiguration.workerAffinity = getAffinity(properties, env, PropertyKey.HTTP_MIN_WORKER_AFFINITY, httpMinServerConfiguration.workerCount);
-                httpMinServerConfiguration.yieldThreshold = getLong(properties, env, PropertyKey.HTTP_MIN_WORKER_YIELD_THRESHOLD, 10);
-                httpMinServerConfiguration.napThreshold = getLong(properties, env, PropertyKey.HTTP_MIN_WORKER_NAP_THRESHOLD, 100);
-                httpMinServerConfiguration.sleepThreshold = getLong(properties, env, PropertyKey.HTTP_MIN_WORKER_SLEEP_THRESHOLD, 100);
-                httpMinServerConfiguration.sleepTimeout = getMillis(properties, env, PropertyKey.HTTP_MIN_WORKER_SLEEP_TIMEOUT, 50);
-                httpMinServerConfiguration.targetUtilization = getDouble(properties, env, PropertyKey.HTTP_MIN_WORKER_TARGET_UTILIZATION, String.valueOf(sharedWorkerTargetUtilization));
-                httpMinServerConfiguration.utilizationTolerance = getDouble(properties, env, PropertyKey.HTTP_MIN_WORKER_UTILIZATION_TOLERANCE, String.valueOf(sharedWorkerUtilizationTolerance));
-                httpMinServerConfiguration.minActiveWorkers = getInt(properties, env, PropertyKey.HTTP_MIN_WORKER_MIN_ACTIVE_WORKERS, sharedWorkerMinActiveWorkers);
-                httpMinServerConfiguration.evaluationInterval = getMillis(properties, env, PropertyKey.HTTP_MIN_WORKER_EVALUATION_INTERVAL, sharedWorkerEvaluationInterval);
-                httpMinServerConfiguration.metrics = this.metrics;
 
                 // deprecated
                 String httpMinBindTo = getString(properties, env, PropertyKey.HTTP_MIN_BIND_TO, "0.0.0.0:9003");
