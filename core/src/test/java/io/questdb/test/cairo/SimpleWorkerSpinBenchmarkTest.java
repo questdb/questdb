@@ -29,6 +29,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -52,36 +53,31 @@ public class SimpleWorkerSpinBenchmarkTest {
             LOG.info().$("=== Worker CPU Spinning Benchmark ===").$();
 
             // Test with different worker counts to demonstrate the issue
-            double oIn15By2 = runBenchmark(2, "2 workers", 2000);
-            double oIn15By2_act = actualItemsPerSec;
-            double otIn15By4 = runBenchmark(4, "4 workers", 2000);
-            double otIn15By4_act = actualItemsPerSec;
+            int[] itemsPerSecTestCases = {2000, 20000, 200000, 2000000, 4000000};
+            double[] actualItemsPerSecs = new double[itemsPerSecTestCases.length * 2];
+            double[] workPerSec = new double[itemsPerSecTestCases.length * 2];
 
-            double t00In15By2 = runBenchmark(2, "2 workers", 20000);
-            double t00In15By2_act = actualItemsPerSec;
-            double t00In15By4 = runBenchmark(4, "4 workers", 20000);
-            double t00In15By4_act = actualItemsPerSec;
+            for (int i = 0; i < itemsPerSecTestCases.length; i++) {
+                int workPerSecond = itemsPerSecTestCases[i];
+                LOG.info().$("Running benchmark for target: ").$(workPerSecond).$(" items/sec").$();
+                workPerSec[i * 2] = runBenchmark(2, "2 workers", workPerSecond);
+                actualItemsPerSecs[i * 2] = this.actualItemsPerSec;
 
-            double tIn15By2 = runBenchmark(2, "2 workers", 200000);
-            double tIn15By2_act = actualItemsPerSec;
-            double tIn15By4 = runBenchmark(4, "4 workers", 200000);
-            double tIn15By4_act = actualItemsPerSec;
-
-            double t0In15By2 = runBenchmark(2, "2 workers", 200000 * 10);
-            double t0In15By2_act = actualItemsPerSec;
-            double t0In15By4 = runBenchmark(4, "4 workers", 200000 * 10);
-            double t0In15By4_act = actualItemsPerSec;
+                workPerSec[i * 2 + 1] = runBenchmark(4, "4 workers", workPerSecond);
+                actualItemsPerSecs[i * 2 + 1] = this.actualItemsPerSec;
+            }
 
             LOG.info().$("=== Benchmark Results ===").$();
-            LOG.info().$("2 workers, target: 2k/sec,   actual: ").$(String.format("%.2f", oIn15By2_act)).$(",  work/sec:  ").$(String.format("%.2f", oIn15By2)).$(" work/cpu-second").$();
-            LOG.info().$("4 workers, target: 2k/sec,   actual: ").$(String.format("%.2f", otIn15By4_act)).$(",  work/sec:  ").$(String.format("%.2f", otIn15By4)).$(" work/cpu-second").$();
-            LOG.info().$("2 workers, target: 20k/sec,  actual: ").$(String.format("%.2f", t00In15By2_act)).$(",  work/sec:  ").$(String.format("%.2f", t00In15By2)).$(" work/cpu-second").$();
-            LOG.info().$("4 workers, target: 20k/sec,  actual: ").$(String.format("%.2f", t00In15By4_act)).$(",  work/sec:  ").$(String.format("%.2f", t00In15By4)).$(" work/cpu-second").$();
-            LOG.info().$("2 workers, target: 200k/sec, actual: ").$(String.format("%.2f", tIn15By2_act)).$(",  work/sec:  ").$(String.format("%.2f", tIn15By2)).$(" work/cpu-second").$();
-            LOG.info().$("4 workers, target: 200k/sec, actual: ").$(String.format("%.2f", tIn15By4_act)).$(",  work/sec:  ").$(String.format("%.2f", tIn15By4)).$(" work/cpu-second").$();
-            LOG.info().$("2 workers, target: 2M/sec,   actual: ").$(String.format("%.2f", t0In15By2_act)).$(",  work/sec:  ").$(String.format("%.2f", t0In15By2)).$(" work/cpu-second").$();
-            LOG.info().$("4 workers, target: 2M/sec,   actual: ").$(String.format("%.2f", t0In15By4_act)).$(",  work/sec:  ").$(String.format("%.2f", t0In15By4)).$(" work/cpu-second").$();
-            LOG.info().$("=== Benchmark Complete ===").$();
+
+            for (int i = 0; i < actualItemsPerSecs.length; i += 2) {
+                LOG.info().$("2 workers, target: ").$(itemsPerSecTestCases[i / 2]).$("/sec, actual: ")
+                        .$(String.format("%.2f", actualItemsPerSecs[i])).$(", work/sec: ")
+                        .$(String.format("%.2f", workPerSec[i])).$(" work/cpu-second").$();
+
+                LOG.info().$("4 workers, target: ").$(itemsPerSecTestCases[i / 2]).$("/sec, actual: ")
+                        .$(String.format("%.2f", actualItemsPerSecs[i + 1])).$(", work/sec: ")
+                        .$(String.format("%.2f", workPerSec[i + 1])).$(" work/cpu-second").$();
+            }
         });
     }
 
@@ -244,6 +240,7 @@ public class SimpleWorkerSpinBenchmarkTest {
         private void trackCpuUsage() {
             while (tracking.get()) {
                 try {
+                    //noinspection BusyWait
                     Thread.sleep(200); // Sample every 200ms
 
                     long currentTime = System.nanoTime();
@@ -312,7 +309,7 @@ public class SimpleWorkerSpinBenchmarkTest {
         }
 
         @Override
-        public boolean run(int workerId, RunStatus runStatus) {
+        public boolean run(int workerId, @NotNull RunStatus runStatus) {
             if (!running.get()) {
                 return false;
             }
@@ -330,12 +327,6 @@ public class SimpleWorkerSpinBenchmarkTest {
         public void stop() {
             running.set(false);
         }
-
-        private boolean doMinimalWork() {
-            // Only do work if coordinator allows it
-            fakeTotal += Math.sqrt(jobId + callCounter);
-            return true;
-        }
     }
 
     // Job that simulates different workload patterns to trigger CPU spinning
@@ -349,7 +340,7 @@ public class SimpleWorkerSpinBenchmarkTest {
         }
 
         @Override
-        public boolean run(int workerId, RunStatus runStatus) {
+        public boolean run(int workerId, @NotNull RunStatus runStatus) {
             if (!running.get()) {
                 return false;
             }
