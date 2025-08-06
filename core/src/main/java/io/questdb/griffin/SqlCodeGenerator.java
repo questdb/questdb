@@ -3610,7 +3610,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
                                 }
 
-                                final boolean parallelTopKEnabled = configuration.isSqlParallelTopKEnabled();
+                                final boolean parallelTopKEnabled = executionContext.isParallelTopKEnabled();
                                 if (parallelTopKEnabled && (recordCursorFactory.supportsPageFrameCursor() || recordCursorFactory.supportsFilterStealing())) {
                                     QueryModel.restoreWhereClause(expressionNodePool, model);
 
