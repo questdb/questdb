@@ -66,7 +66,7 @@ public class ConvertOperatorImpl implements Closeable {
     private final CairoConfiguration configuration;
     private final SOUnboundedCountDownLatch countDownLatch;
     private final FilesFacade ff;
-    private final long fileOpenOpts;
+    private final int fileOpenOpts;
     private final MessageBus messageBus;
     private final ColumnConversionOffsetSink noopConversionOffsetSink = new ColumnConversionOffsetSink() {
         @Override

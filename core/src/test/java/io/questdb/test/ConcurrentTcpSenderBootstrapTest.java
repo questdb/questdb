@@ -24,10 +24,12 @@
 
 package io.questdb.test;
 
+import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.client.Sender;
 import io.questdb.std.Files;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.test.cutlass.line.tcp.AbstractLineTcpReceiverTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
@@ -80,7 +82,9 @@ public class ConcurrentTcpSenderBootstrapTest extends AbstractBootstrapTest {
     }
 
     private static void testConcurrentSenders(int nThreads, int startingOffset) throws InterruptedException {
-        try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+        try (final TestServerMain serverMain = startWithEnvVariables(
+                PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT.getEnvVarName(), String.valueOf(nThreads + 1)
+        )) {
             serverMain.start();
             AtomicReference<Throwable> error = new AtomicReference<>();
             ObjList<Thread> threads = new ObjList<>();
@@ -103,17 +107,20 @@ public class ConcurrentTcpSenderBootstrapTest extends AbstractBootstrapTest {
                 threads.add(th);
                 th.start();
             }
-            for (int i = startingOffset; i < nThreads + startingOffset; i++) {
-                while (serverMain.getEngine().getTableTokenIfExists("test" + i) == null) {
-                    // intentionally empty
-                }
-            }
 
             for (int i = 0, n = threads.size(); i < n; i++) {
                 threads.getQuick(i).join();
             }
+
             if (error.get() != null) {
                 throw new RuntimeException(error.get());
+            }
+
+            for (int i = startingOffset; i < nThreads + startingOffset; i++) {
+                while (serverMain.getEngine().getTableTokenIfExists("test" + i) == null) {
+                    // intentionally empty
+                    Os.sleep(1);
+                }
             }
         }
     }

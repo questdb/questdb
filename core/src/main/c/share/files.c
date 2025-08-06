@@ -176,7 +176,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRW
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRWOpts
-        (JNIEnv *e, jclass cl, jlong lpszName, jlong opts) {
+        (JNIEnv *e, jclass cl, jlong lpszName, jint opts) {
     umask(2);
     return open((const char *) lpszName, O_CREAT | O_RDWR | opts, 0644);
 }
