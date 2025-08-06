@@ -42,7 +42,7 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
     public void testCast() throws Exception {
         assertSql(
                 "cast\n" +
-                        "1647018030555555\n",
+                        "2022-03-11T17:00:30.555555Z\n",
                 "select cast('2022-03-11T22:00:30.555555Z'::timestamp at time zone 'EST' as string)"
         );
     }

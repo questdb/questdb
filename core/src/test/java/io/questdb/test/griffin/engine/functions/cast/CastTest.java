@@ -6641,6 +6641,31 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampNanoToStrConst() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a string)",
+                null,
+                "insert into tab select cast(cast(334l as timestamp_ns) as string) from long_sequence(10)",
+                "a\n" +
+                        "1970-01-01T00:00:00.000000334Z\n" +
+                        "1970-01-01T00:00:00.000000334Z\n" +
+                        "1970-01-01T00:00:00.000000334Z\n" +
+                        "1970-01-01T00:00:00.000000334Z\n" +
+                        "1970-01-01T00:00:00.000000334Z\n" +
+                        "1970-01-01T00:00:00.000000334Z\n" +
+                        "1970-01-01T00:00:00.000000334Z\n" +
+                        "1970-01-01T00:00:00.000000334Z\n" +
+                        "1970-01-01T00:00:00.000000334Z\n" +
+                        "1970-01-01T00:00:00.000000334Z\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testTimestampToBoolean() throws Exception {
         assertQuery(
                 "a\n",
@@ -6973,16 +6998,16 @@ public class CastTest extends AbstractCairoTest {
                 null,
                 "insert into tab select cast(cast(334l as timestamp) as string) from long_sequence(10)",
                 "a\n" +
-                        "334\n" +
-                        "334\n" +
-                        "334\n" +
-                        "334\n" +
-                        "334\n" +
-                        "334\n" +
-                        "334\n" +
-                        "334\n" +
-                        "334\n" +
-                        "334\n",
+                        "1970-01-01T00:00:00.000334Z\n" +
+                        "1970-01-01T00:00:00.000334Z\n" +
+                        "1970-01-01T00:00:00.000334Z\n" +
+                        "1970-01-01T00:00:00.000334Z\n" +
+                        "1970-01-01T00:00:00.000334Z\n" +
+                        "1970-01-01T00:00:00.000334Z\n" +
+                        "1970-01-01T00:00:00.000334Z\n" +
+                        "1970-01-01T00:00:00.000334Z\n" +
+                        "1970-01-01T00:00:00.000334Z\n" +
+                        "1970-01-01T00:00:00.000334Z\n",
                 true,
                 true,
                 false
