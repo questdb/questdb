@@ -340,7 +340,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     long fd = -1;
                     try {
                         fd = TableUtils.openRO(ff, path.$(), LOG);
-                        long lastOffset = (numRows - 1) * ColumnType.sizeOf(tableTxReader.getTimestampType());
+                        long lastOffset = (numRows - 1) * Long.BYTES; // timestamp size
                         minTimestamp = ff.readNonNegativeLong(fd, 0);
                         maxTimestamp = ff.readNonNegativeLong(fd, lastOffset);
                     } catch (CairoException e) {
