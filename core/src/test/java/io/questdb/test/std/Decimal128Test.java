@@ -1272,9 +1272,7 @@ public class Decimal128Test {
 
             Decimal128 result = new Decimal128();
 
-            Assert.assertThrows(ArithmeticException.class, () -> {
-                Decimal128.add(a, b, result);
-            });
+            Assert.assertThrows(ArithmeticException.class, () -> Decimal128.add(a, b, result));
             return;
         }
 
@@ -1357,9 +1355,6 @@ public class Decimal128Test {
     }
 
     private void testModuloAccuracy(Decimal128 a, Decimal128 b, int iteration) {
-        // Choose a reasonable result scale
-        int resultScale = Math.min(a.getScale() + 2, 6); // Limit to avoid precision issues
-
         // Test modulo accuracy with BigDecimal
         BigDecimal bigA = a.toBigDecimal();
         BigDecimal bigB = b.toBigDecimal();
@@ -1415,9 +1410,7 @@ public class Decimal128Test {
 
             Decimal128 result = new Decimal128();
 
-            Assert.assertThrows(ArithmeticException.class, () -> {
-                Decimal128.multiply(a, b, result);
-            });
+            Assert.assertThrows(ArithmeticException.class, () -> Decimal128.multiply(a, b, result));
             return;
         }
 
@@ -1469,9 +1462,7 @@ public class Decimal128Test {
 
             Decimal128 result = new Decimal128();
 
-            Assert.assertThrows(ArithmeticException.class, () -> {
-                Decimal128.subtract(a, b, result);
-            });
+            Assert.assertThrows(ArithmeticException.class, () -> Decimal128.subtract(a, b, result));
             return;
         }
 

@@ -1841,7 +1841,6 @@ public class Decimal128 implements Sinkable {
                 break;
 
             case DOWN: // Towards zero
-                increment = false;
                 break;
 
             case CEILING: // Towards +infinity
@@ -2019,31 +2018,6 @@ public class Decimal128 implements Sinkable {
                 sink.put(digits.substring(splitPoint));
             }
         }
-    }
-
-    /**
-     * Get the absolute magnitude of a 64-bit value (assumes is64BitValue() is true)
-     */
-    private long get64BitMagnitude() {
-        if (this.high == -1 && this.low < 0) {
-            return -this.low;  // Convert negative to positive magnitude
-        } else {
-            return this.low;   // Already positive
-        }
-    }
-
-    /**
-     * Check if this value fits in a 64-bit signed integer (positive or negative)
-     */
-    private boolean is64BitValue() {
-        return (this.high == 0 && this.low >= 0) || (this.high == -1 && this.low < 0);
-    }
-
-    /**
-     * Check if this value is a negative 64-bit value
-     */
-    private boolean isNegative64BitValue() {
-        return this.high == -1 && this.low < 0;
     }
 
     /**
