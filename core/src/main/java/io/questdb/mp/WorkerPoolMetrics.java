@@ -46,13 +46,12 @@ public final class WorkerPoolMetrics {
     private static final int CACHE_LINE_SIZE = 64;
     // VarHandle for volatile access to array elements
     private static final VarHandle PARKING_FLAGS_HANDLE = MethodHandles.arrayElementVarHandle(byte[].class);
-    
-    private final Object[] parkingMonitors;
-    private final int workerCount;
-    private final WorkerStats[] workerStats;
     // Byte array for parking flags - each worker gets CACHE_LINE_SIZE bytes to prevent false sharing
     // Array elements are accessed/modified atomically to ensure thread safety
     private final byte[] parkingFlags;
+    private final Object[] parkingMonitors;
+    private final int workerCount;
+    private final WorkerStats[] workerStats;
     private long lastParkingLogTime;
 
     public WorkerPoolMetrics(int workerCount) {
@@ -201,11 +200,6 @@ public final class WorkerPoolMetrics {
         // Set the first byte of this worker's cache line slot with volatile semantics
         int flagIndex = workerId * CACHE_LINE_SIZE;
         PARKING_FLAGS_HANDLE.setVolatile(parkingFlags, flagIndex, shouldPark ? (byte) 1 : (byte) 0);
-    }
-
-    public void start() {
-        // No-op since parking flags array is already initialized in constructor
-        // All array elements are initialized to 0 by default (false for parking flags)
     }
 
     /**

@@ -197,7 +197,6 @@ public class WorkerPool implements Closeable {
             // it is set up from start() to make sure it is called last
             // some other thread local cleaners are liable to access thread local Path instances
             setupPathCleaner();
-            poolMetrics.start();
 
             for (int i = 0; i < workerCount; i++) {
                 final int index = i;

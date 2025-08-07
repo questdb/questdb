@@ -96,21 +96,20 @@ public class WorkerSpinRegulator implements Closeable {
      * Parks a worker thread
      */
     private void parkWorker(WorkerPoolMetrics poolMetrics, String poolName, int activeWorkers, double currentUtilization, int parkCount) {
-        boolean parked = false;
+        int totalToParkCount = parkCount;
 
         for (int i = poolMetrics.getWorkerCount() - 1; i > -1 && parkCount > 0; i--) {
             if (!poolMetrics.isParked(i)) { // Only consider active workers
                 poolMetrics.parkWorker(i);
                 parkCount--;
                 activeWorkers--;
-                parked = true;
             }
         }
 
-        if (parked) {
+        if (totalToParkCount > parkCount) {
             if (poolMetrics.logParkingThrottled(Os.currentTimeMicros(), throttleLoggingThresholdMicros)) {
                 LOG.info().$("parked workers [pool=").$(poolName)
-                        .$(", parkedCount=").$(parkCount)
+                        .$(", parkedCount=").$(totalToParkCount - parkCount)
                         .$(", utilization=").$(currentUtilization)
                         .$(", activeWorkers=").$(activeWorkers)
                         .I$();
