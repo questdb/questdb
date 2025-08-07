@@ -1318,26 +1318,6 @@ public class Decimal128Test {
         }
     }
 
-    private void testComparisonAccuracy(Decimal128 a, Decimal128 b, int iteration) {
-        // Test compareTo with different scales
-        int decimal128Result = a.compareTo(b);
-
-        // Test reference calculation
-        double aDouble = a.toDouble();
-        double bDouble = b.toDouble();
-        int doubleResult = Double.compare(aDouble, bDouble);
-
-        // Results should have the same sign (or both be zero)
-        boolean sameSign = (decimal128Result == 0 && doubleResult == 0) ||
-                (decimal128Result > 0 && doubleResult > 0) ||
-                (decimal128Result < 0 && doubleResult < 0);
-
-        Assert.assertTrue("Comparison accuracy failed at iteration " + iteration +
-                        " (a=" + aDouble + ", b=" + bDouble +
-                        ", decimal128=" + decimal128Result + ", double=" + doubleResult + ")",
-                sameSign);
-    }
-
     private void testDivisionAccuracy(Decimal128 a, Decimal128 b, int iteration) {
         // Choose a reasonable result scale
         int resultScale = Math.min(a.getScale() + 2, 6); // Limit to avoid precision issues
