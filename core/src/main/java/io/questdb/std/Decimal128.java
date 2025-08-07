@@ -20,8 +20,6 @@ import java.math.RoundingMode;
  * This type tries to but doesn't follow IEEE 754; one of the main goals is using 128 bits to store
  * the sign and trailing significant field (T).
  * Using 1 bit for the sign, we have 127 bits for T, which gives us 38 digits of precision.
- * T valid values are in the (-10^38;10^38) interval, values outside are either invalid
- * or may be special like NaN or Inf.
  * </p>
  */
 public class Decimal128 implements Sinkable {
@@ -643,21 +641,25 @@ public class Decimal128 implements Sinkable {
         // Result scale should be the larger of the two scales
         int resultScale = Math.max(this.scale, divisor.scale);
 
-        // Save original dividend
-        Decimal128 originalDividend = new Decimal128();
-        originalDividend.copyFrom(this);
-
         // Use simple repeated subtraction for modulo: a % b = a - (a / b) * b
         // First compute integer division (a / b)
-        Decimal128 quotient = new Decimal128();
-        quotient.copyFrom(this);
-        quotient.divide(divisor, 0, RoundingMode.DOWN);
+        // We store this for later usage
+        long thisH = this.high;
+        long thisL = this.low;
+        int thisScale = this.scale;
 
-        // Now compute quotient * divisor
-        quotient.multiply(divisor);
+        this.divide(divisor, 0, RoundingMode.DOWN);
 
+        // Now compute this * divisor
+        this.multiply(divisor);
+
+        long qH = this.high;
+        long qL = this.low;
+        int qScale = this.scale;
+        // restore this as a
+        this.set(thisH, thisL, thisScale);
         // Finally compute remainder: a - (a / b) * b
-        this.subtract(quotient);
+        this.subtract(qH, qL, qScale);
 
         // Handle scale adjustment
         if (this.scale != resultScale) {
@@ -687,49 +689,7 @@ public class Decimal128 implements Sinkable {
      * @param other The Decimal128 to multiply by
      */
     public void multiply(Decimal128 other) {
-        // Result scale is sum of scales
-        int resultScale = this.scale + other.scale;
-
-        // Save the original signs before we modify anything
-        boolean thisNegative = this.isNegative();
-        boolean otherNegative = other.isNegative();
-
-        // Convert to positive values for multiplication algorithm
-        if (thisNegative) {
-            negate();
-        }
-
-        // Get absolute value of other
-        long otherHighAbs = other.high;
-        long otherLowAbs = other.low;
-        if (otherNegative) {
-            // Negate other's values
-            otherLowAbs = ~otherLowAbs + 1;
-            otherHighAbs = ~otherHighAbs;
-            if (otherLowAbs == 0) {
-                otherHighAbs += 1;
-            }
-        }
-
-        if (otherHighAbs == 0 && otherLowAbs >= 0) {
-            multiplyBy64Bit(otherLowAbs);
-        } else {
-            multiplyBy128Bit(otherHighAbs, otherLowAbs);
-        }
-
-        // Handle sign - use the saved original signs
-        boolean negative = (thisNegative != otherNegative);
-        if (negative) {
-            // Negate result
-            this.low = ~this.low + 1;
-            long newHigh = ~this.high;
-            if (this.low == 0) {
-                newHigh += 1;
-            }
-            this.high = newHigh;
-        }
-
-        this.scale = resultScale;
+        multiply(other.high, other.low, other.scale);
     }
 
     /**
@@ -808,6 +768,7 @@ public class Decimal128 implements Sinkable {
         this.high = high;
         this.low = low;
         this.scale = scale;
+        updateCompact();
     }
 
     /**
@@ -861,10 +822,18 @@ public class Decimal128 implements Sinkable {
      * @param other The Decimal128 to subtract
      */
     public void subtract(Decimal128 other) {
-        // Negate other and perform addition
-        long bH = other.high;
-        long bL = other.low;
+        subtract(other.high, other.low, other.scale);
+    }
 
+    /**
+     * Subtract another Decimal128 from this one (in-place)
+     *
+     * @param bH     the high 64 bits of the other Decimal128
+     * @param bL     the low 64 bits of the other Decimal128
+     * @param bScale the number of decimal places of the other Decimal128
+     */
+    public void subtract(long bH, long bL, int bScale) {
+        // Negate other and perform addition
         if (bH != 0 || bL != 0) {
             long oldLow = bL;
 
@@ -877,7 +846,7 @@ public class Decimal128 implements Sinkable {
                 bH += 1;
             }
 
-            add(this, this.high, this.low, this.scale, bH, bL, other.scale);
+            add(this, this.high, this.low, this.scale, bH, bL, bScale);
         }
     }
 
@@ -2045,6 +2014,57 @@ public class Decimal128 implements Sinkable {
                 appendLongToSink(fractionalPart, sink);
             }
         }
+    }
+
+    /**
+     * Multiply this Decimal128 by another (in-place)
+     *
+     * @param bH     the high 64 bits of the other Decimal128
+     * @param bL     the low 64 bits of the other Decimal128
+     * @param bScale the number of decimal places of the other Decimal128
+     */
+    private void multiply(long bH, long bL, int bScale) {
+        // Result scale is sum of scales
+        int resultScale = this.scale + bScale;
+
+        // Save the original signs before we modify anything
+        boolean thisNegative = this.isNegative();
+        boolean bNegative = bH < 0;
+
+        // Convert to positive values for multiplication algorithm
+        if (thisNegative) {
+            negate();
+        }
+
+        // Get absolute value of other
+        if (bNegative) {
+            // Negate other's values
+            bL = ~bL + 1;
+            bH = ~bH;
+            if (bL == 0) {
+                bH += 1;
+            }
+        }
+
+        if (bH == 0 && bL >= 0) {
+            multiplyBy64Bit(bL);
+        } else {
+            multiplyBy128Bit(bH, bL);
+        }
+
+        // Handle sign - use the saved original signs
+        boolean negative = (thisNegative != bNegative);
+        if (negative) {
+            // Negate result
+            this.low = ~this.low + 1;
+            long newHigh = ~this.high;
+            if (this.low == 0) {
+                newHigh += 1;
+            }
+            this.high = newHigh;
+        }
+
+        this.scale = resultScale;
     }
 
     /**
