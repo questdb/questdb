@@ -2,14 +2,15 @@ use crate::allocator::{AcVec, QdbAllocator};
 use crate::parquet::error::ParquetResult;
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
 use crate::parquet_read::{ColumnMeta, ParquetDecoder};
-use parquet2::metadata::{Descriptor, FileMetaData};
+use parquet2::metadata::{ColumnDescriptor, FileMetaData};
 use parquet2::read::read_metadata_with_size;
-use parquet2::schema::types::ParquetType;
 use parquet2::schema::types::PrimitiveLogicalType::{Timestamp, Uuid};
+use parquet2::schema::types::{GroupConvertedType, ParquetType};
 use parquet2::schema::types::{
     IntegerType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
-use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+use parquet2::schema::Repetition;
+use qdb_core::col_type::{encode_array_type, ColumnType, ColumnTypeTag};
 use std::io::{Read, Seek};
 
 /// Extract the questdb-specific metadata from the parquet file metadata.
@@ -51,20 +52,15 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         assert_eq!(accumulated_size, metadata.num_rows);
 
         for (index, column) in metadata.schema_descr.columns().iter().enumerate() {
+            // Arrays have column name and id stored in the base group type.
+            // Primitive type fields have the same primitive type as the base type.
+            // That's why we're using the base type.
+
             // Some types are not supported, this will skip them.
             if let Some(column_type) =
-                Self::descriptor_to_column_type(&column.descriptor, index, qdb_meta.as_ref())
+                Self::descriptor_to_column_type(&column, index, qdb_meta.as_ref())
             {
-                // arrays have column name and id stored in the root group type
-                let base_field = match &column.base_type {
-                    ParquetType::PrimitiveType(primitive_type) => &primitive_type.field_info,
-                    ParquetType::GroupType {
-                        field_info,
-                        logical_type: _,
-                        converted_type: _,
-                        fields: _,
-                    } => &field_info,
-                };
+                let base_field = column.base_type.get_field_info();
                 let name_str = &base_field.name;
                 let mut name = AcVec::with_capacity_in(name_str.len() * 2, allocator.clone())?;
                 name.extend(name_str.encode_utf16())?;
@@ -99,25 +95,25 @@ impl<R: Read + Seek> ParquetDecoder<R> {
 
     fn extract_column_type_from_qdb_meta(
         qdb_meta: Option<&QdbMeta>,
-        column_id: usize,
+        column_index: usize,
     ) -> Option<ColumnType> {
-        let col_meta = qdb_meta?.schema.get(column_id)?;
+        let col_meta = qdb_meta?.schema.get(column_index)?;
         Some(col_meta.column_type)
     }
 
     fn descriptor_to_column_type(
-        des: &Descriptor,
-        column_id: usize,
+        column: &ColumnDescriptor,
+        column_index: usize,
         qdb_meta: Option<&QdbMeta>,
     ) -> Option<ColumnType> {
-        if let Some(col_type) = Self::extract_column_type_from_qdb_meta(qdb_meta, column_id) {
+        if let Some(col_type) = Self::extract_column_type_from_qdb_meta(qdb_meta, column_index) {
             return Some(col_type);
         }
 
-        let column_type_tag = match (
-            des.primitive_type.physical_type,
-            des.primitive_type.logical_type,
-            des.primitive_type.converted_type,
+        match (
+            column.descriptor.primitive_type.physical_type,
+            column.descriptor.primitive_type.logical_type,
+            column.descriptor.primitive_type.converted_type,
         ) {
             (
                 PhysicalType::Int64,
@@ -127,7 +123,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 })
                 | Some(Timestamp { unit: TimeUnit::Nanoseconds, is_adjusted_to_utc: _ }),
                 _,
-            ) => Some(ColumnTypeTag::Timestamp),
+            ) => Some(ColumnType::new(ColumnTypeTag::Timestamp, 0)),
             (
                 PhysicalType::Int64,
                 Some(Timestamp {
@@ -135,56 +131,118 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                     is_adjusted_to_utc: _,
                 }),
                 _,
-            ) => Some(ColumnTypeTag::Date),
-            (PhysicalType::Int64, None, _) => Some(ColumnTypeTag::Long),
+            ) => Some(ColumnType::new(ColumnTypeTag::Date, 0)),
+            (PhysicalType::Int64, None, _) => Some(ColumnType::new(ColumnTypeTag::Long, 0)),
             (PhysicalType::Int64, Some(PrimitiveLogicalType::Integer(IntegerType::Int64)), _) => {
-                Some(ColumnTypeTag::Long)
+                Some(ColumnType::new(ColumnTypeTag::Long, 0))
             }
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int32)), _) => {
-                Some(ColumnTypeTag::Int)
+                Some(ColumnType::new(ColumnTypeTag::Int, 0))
             }
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Decimal(_, _)), _)
             | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Decimal(_, _))) => {
-                Some(ColumnTypeTag::Double)
+                Some(ColumnType::new(ColumnTypeTag::Double, 0))
             }
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16)), _) => {
-                Some(ColumnTypeTag::Short)
+                Some(ColumnType::new(ColumnTypeTag::Short, 0))
             }
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::UInt16)), _) => {
-                Some(ColumnTypeTag::Int)
+                Some(ColumnType::new(ColumnTypeTag::Int, 0))
             }
             (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int16)) => {
-                Some(ColumnTypeTag::Short)
+                Some(ColumnType::new(ColumnTypeTag::Short, 0))
             }
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int8)), _)
             | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int8)) => {
-                Some(ColumnTypeTag::Byte)
+                Some(ColumnType::new(ColumnTypeTag::Byte, 0))
             }
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Date), _)
             | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Date)) => {
-                Some(ColumnTypeTag::Date)
+                Some(ColumnType::new(ColumnTypeTag::Date, 0))
             }
             (PhysicalType::Int32, None, _)
             | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int32)) => {
-                Some(ColumnTypeTag::Int)
+                Some(ColumnType::new(ColumnTypeTag::Int, 0))
             }
-            (PhysicalType::Boolean, None, _) => Some(ColumnTypeTag::Boolean),
-            (PhysicalType::Double, None, _) => Some(ColumnTypeTag::Double),
-            (PhysicalType::Float, None, _) => Some(ColumnTypeTag::Float),
-            (PhysicalType::FixedLenByteArray(16), Some(Uuid), _) => Some(ColumnTypeTag::Uuid),
-            (PhysicalType::FixedLenByteArray(16), None, None) => Some(ColumnTypeTag::Long128),
+            (PhysicalType::Boolean, None, _) => Some(ColumnType::new(ColumnTypeTag::Boolean, 0)),
+            (PhysicalType::Double, None, _) => match array_column_type(&column.base_type) {
+                Some(array_type) => Some(array_type),
+                None => Some(ColumnType::new(ColumnTypeTag::Double, 0)),
+            },
+            (PhysicalType::Float, None, _) => Some(ColumnType::new(ColumnTypeTag::Float, 0)),
+            (PhysicalType::FixedLenByteArray(16), Some(Uuid), _) => {
+                Some(ColumnType::new(ColumnTypeTag::Uuid, 0))
+            }
+            (PhysicalType::FixedLenByteArray(16), None, None) => {
+                Some(ColumnType::new(ColumnTypeTag::Long128, 0))
+            }
             (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String), _) => {
-                Some(ColumnTypeTag::Varchar)
+                Some(ColumnType::new(ColumnTypeTag::Varchar, 0))
             }
-            (PhysicalType::FixedLenByteArray(32), None, _) => Some(ColumnTypeTag::Long256),
+            (PhysicalType::FixedLenByteArray(32), None, _) => {
+                Some(ColumnType::new(ColumnTypeTag::Long256, 0))
+            }
             (PhysicalType::ByteArray, None, Some(PrimitiveConvertedType::Utf8)) => {
-                Some(ColumnTypeTag::Varchar)
+                Some(ColumnType::new(ColumnTypeTag::Varchar, 0))
             }
-            (PhysicalType::ByteArray, None, _) => Some(ColumnTypeTag::Binary),
-            (PhysicalType::Int96, None, None) => Some(ColumnTypeTag::Timestamp),
+            (PhysicalType::ByteArray, None, _) => Some(ColumnType::new(ColumnTypeTag::Binary, 0)),
+            (PhysicalType::Int96, None, None) => Some(ColumnType::new(ColumnTypeTag::Timestamp, 0)),
             (_, _, _) => None,
-        };
-        column_type_tag.map(|tag| ColumnType::new(tag, 0))
+        }
+    }
+}
+
+// The expected layout is described here:
+// https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists
+// Yet, some software derives from the above layout, so the actual check can't be strict.
+// Known to work with DuckDB's list of doubles.
+fn array_column_type(base_type: &ParquetType) -> Option<ColumnType> {
+    let mut cur_type;
+    // First check the root field.
+    match base_type {
+        ParquetType::GroupType {
+            field_info: _,
+            logical_type: _,
+            converted_type,
+            fields,
+        } => {
+            if *converted_type != Some(GroupConvertedType::List) || fields.len() != 1 {
+                return None;
+            }
+            cur_type = &fields[0];
+        }
+        ParquetType::PrimitiveType(_) => {
+            return None;
+        }
+    };
+
+    // Next, count repeated LIST sub-types.
+    let mut dim = 0;
+    loop {
+        match cur_type {
+            ParquetType::PrimitiveType(_) => {
+                break;
+            }
+            ParquetType::GroupType {
+                field_info,
+                logical_type: _,
+                converted_type: _,
+                fields,
+            } => {
+                if fields.len() != 1 {
+                    return None;
+                }
+                if field_info.repetition == Repetition::Repeated {
+                    dim += 1;
+                }
+                cur_type = &fields[0];
+            }
+        }
+    }
+
+    match encode_array_type(ColumnTypeTag::Double, dim) {
+        Ok(column_type) => Some(column_type),
+        Err(_) => None,
     }
 }
 

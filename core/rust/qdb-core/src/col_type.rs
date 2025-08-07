@@ -320,6 +320,25 @@ impl<'de> Deserialize<'de> for ColumnType {
     }
 }
 
+pub fn encode_array_type(elem_type: ColumnTypeTag, dim: i32) -> CoreResult<ColumnType> {
+    if dim < 1 || dim > ARRAY_NDIMS_LIMIT {
+        return Err(fmt_err!(
+            InvalidType,
+            "invalid array dimensionality {dim}",
+        ));
+    }
+    if elem_type != ColumnTypeTag::Double {
+        return Err(fmt_err!(
+            InvalidType,
+            "unsupported array element type {}",
+            elem_type.name()
+        ));
+    }
+    let extra = ((dim -1)  & ARRAY_NDIMS_FIELD_MASK) << (ARRAY_NDIMS_FIELD_POS - ARRAY_ELEMTYPE_FIELD_POS)
+        | ((elem_type as i32) & ARRAY_ELEMTYPE_FIELD_MASK);
+    Ok(ColumnType::new(ColumnTypeTag::Array, extra))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,5 +423,20 @@ mod tests {
         let dim = ColumnType::new(ColumnTypeTag::Array, 138).array_element_type();
         assert!(dim.is_ok());
         assert_eq!(dim.unwrap(), ColumnTypeTag::Double);
+    }
+
+    #[test]
+    fn test_encode_array_type() {
+        let typ = encode_array_type(ColumnTypeTag::Double, 11);
+        assert!(typ.is_ok());
+        let typ = typ.unwrap();
+
+        let elem_typ = typ.array_element_type();
+        assert!(elem_typ.is_ok());
+        assert_eq!(elem_typ.unwrap(), ColumnTypeTag::Double);
+        
+        let dim = typ.array_dimensionality();
+        assert!(dim.is_ok());
+        assert_eq!(dim.unwrap(), 11);
     }
 }
