@@ -76,8 +76,20 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             assertSql(
                     "column\n" +
                             "true\n",
+                    "select interval_start(today()) = date_trunc('day', now()::timestamp_ns) from long_sequence(1)"
+            );
+            assertSql(
+                    "column\n" +
+                            "true\n",
                     "select interval_end(today()) = dateadd('d', 1, date_trunc('day', now()))-1 from long_sequence(1)\n"
             );
+            sqlExecutionContext.setIntervalFunctionType(ColumnType.INTERVAL_TIMESTAMP_NANO);
+            assertSql(
+                    "column\n" +
+                            "true\n",
+                    "select interval_end(today()) = dateadd('d', 1, date_trunc('day', now()::timestamp_ns))-1 from long_sequence(1)\n"
+            );
+            sqlExecutionContext.setIntervalFunctionType(ColumnType.INTERVAL_TIMESTAMP_MICRO);
         });
     }
 

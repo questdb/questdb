@@ -826,10 +826,10 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             long value = args0.getTimestamp(rec);
             if (value != Numbers.LONG_NULL) {
-                timestampDriver.from(value, args0.getType());
+                timestampDriver.from(value, arg0Type);
                 return value;
             }
-            return timestampDriver.from(args1.getTimestamp(rec), args1.getType());
+            return timestampDriver.from(args1.getTimestamp(rec), arg1Type);
         }
     }
 
