@@ -76,6 +76,7 @@ import org.junit.Test;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.ArrayList;
 import java.util.List;
 
 public class ParquetTest extends AbstractTest {
@@ -119,6 +120,18 @@ public class ParquetTest extends AbstractTest {
     public void testAllTypesColTopNextPartition_rawArrayEncoding() throws Exception {
         // column tops added to the next partition
         testPartitionDataConsistency("x", PartitionBy.DAY, true);
+    }
+
+    private static void assertArray(ArrayView expected, Object actual) {
+        if (expected.isNull()) {
+            Assert.assertNull(actual);
+            return;
+        }
+        ArrayList<?> actualList = (ArrayList<?>) actual;
+        for (int i = 0, n = actualList.size(); i < n; i++) {
+            GenericRecord record = (GenericRecord) actualList.get(i);
+            Assert.assertEquals(expected.getDouble(i), (Double) record.get("element"), 0.0000001);
+        }
     }
 
     private static void assertBinary(BinarySequence expected, Object actual) {
@@ -556,7 +569,11 @@ public class ParquetTest extends AbstractTest {
                 assertNullableString(tableReaderRecord.getStrA(14), nextParquetRecord.get("a_string"));
                 assertBinary(tableReaderRecord.getBin(15), nextParquetRecord.get("a_bin"));
                 assertVarchar(tableReaderRecord.getVarcharA(16), nextParquetRecord.get("a_varchar"));
-                assertRawArray(tableReaderRecord.getArray(17, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1)), nextParquetRecord.get("an_array"));
+                if (rawArrayEncoding) {
+                    assertRawArray(tableReaderRecord.getArray(17, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1)), nextParquetRecord.get("an_array"));
+                } else {
+                    assertArray(tableReaderRecord.getArray(17, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1)), nextParquetRecord.get("an_array"));
+                }
                 assertPrimitiveValue(tableReaderRecord.getIPv4(18), nextParquetRecord.get("a_ip"), Numbers.IPv4_NULL);
 
                 long uuidLo = tableReaderRecord.getLong128Lo(19);
@@ -592,6 +609,8 @@ public class ParquetTest extends AbstractTest {
                 assertVarchar(tableReaderRecord.getVarcharA(40), nextParquetRecord.get("a_varchar_top"));
                 if (rawArrayEncoding) {
                     assertRawArray(tableReaderRecord.getArray(41, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1)), nextParquetRecord.get("an_array_top"));
+                } else {
+                    assertArray(tableReaderRecord.getArray(41, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1)), nextParquetRecord.get("an_array_top"));
                 }
                 assertPrimitiveValue(tableReaderRecord.getIPv4(42), nextParquetRecord.get("a_ip_top"), Numbers.IPv4_NULL);
                 assertUuid(sink, tableReaderRecord.getLong128Lo(43), tableReaderRecord.getLong128Hi(43), nextParquetRecord.get("a_uuid_top"));
@@ -659,7 +678,11 @@ public class ParquetTest extends AbstractTest {
             assertSchemaNullable(columns.get(38), "a_string_top", PrimitiveType.PrimitiveTypeName.BINARY);
             assertSchemaNullable(columns.get(39), "a_bin_top", PrimitiveType.PrimitiveTypeName.BINARY);
             assertSchemaNullable(columns.get(40), "a_varchar_top", PrimitiveType.PrimitiveTypeName.BINARY);
-            assertSchemaNullable(columns.get(41), "an_array_top", PrimitiveType.PrimitiveTypeName.BINARY);
+            if (rawArrayEncoding) {
+                assertSchemaNullable(columns.get(41), "an_array_top", PrimitiveType.PrimitiveTypeName.BINARY);
+            } else {
+                assertSchemaArray(columns.get(41), "an_array_top");
+            }
             assertSchemaNullable(columns.get(42), "a_ip_top", PrimitiveType.PrimitiveTypeName.INT32);
             assertSchemaNullable(columns.get(43), "a_uuid_top", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
             assertSchemaNullable(columns.get(44), "a_long128_top", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);

@@ -1349,8 +1349,19 @@ fn append_array<T: DataPageSlicer>(
         // first, calculate and write shape
         let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
         calculate_array_shape(&mut shape, max_rep_level, rep_levels);
+        let mut num_elements: usize = 1;
         for i in 0..max_rep_level as usize {
-            data_mem.extend_from_slice(&shape[i].to_le_bytes())?;
+            let dim = shape[i];
+            num_elements *= dim as usize;
+            data_mem.extend_from_slice(&dim.to_le_bytes())?;
+        }
+        if num_elements != def_levels.len() {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "incomplete array structure: expected {} elements, present {}",
+                num_elements,
+                def_levels.len(),
+            ));
         }
         // add an optional padding
         if max_rep_level % 2 != 0 {
