@@ -702,7 +702,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (failReloadNameRegistry.get() && Utf8s.endsWithAscii(name, "tables.d.0")) {
                     return -1;
                 }

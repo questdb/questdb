@@ -1253,6 +1253,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isParallelTopKEnabled() {
+            return sqlExecutionContext.isParallelTopKEnabled();
+        }
+
+        @Override
         public boolean isTimestampRequired() {
             return sqlExecutionContext.isTimestampRequired();
         }
@@ -1335,6 +1340,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled) {
             sqlExecutionContext.setParallelReadParquetEnabled(parallelReadParquetEnabled);
+        }
+
+        @Override
+        public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
+            sqlExecutionContext.setParallelTopKEnabled(parallelTopKEnabled);
         }
 
         @Override

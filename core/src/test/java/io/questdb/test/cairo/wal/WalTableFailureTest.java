@@ -212,7 +212,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             int counter = 0;
 
             @Override
-            public long openRW(LPSZ name, long mode) {
+            public long openRW(LPSZ name, int mode) {
                 if (Utf8s.endsWithAscii(name, "2022-02-25" + Files.SEPARATOR + "x.d.1") && counter++ < 2) {
                     return -1;
                 }
@@ -940,7 +940,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
         FilesFacade ffOverride = new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "new_column.d") && fail.get()) {
                     return -1;
                 }
@@ -984,7 +984,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
         FilesFacade ffOverride = new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "new_column.d.1") && fail.get()) {
                     return -1;
                 }
@@ -1138,7 +1138,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             int counter = 0;
 
             @Override
-            public long openRW(LPSZ name, long mode) {
+            public long openRW(LPSZ name, int mode) {
                 if (Utf8s.containsAscii(name, "b.d.") && counter++ == 0) {
                     return -1;
                 }
@@ -1311,7 +1311,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             private int attempt = 0;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
@@ -1371,7 +1371,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         String query = "alter table " + tableName + " ADD COLUMN sym5 SYMBOL CAPACITY 1024";
         runCheckTableSuspended(tableName, query, new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "sym5.c")) {
                     return -1;
                 }
@@ -1506,7 +1506,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             private int attempt = 0;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "x.d.") && attempt++ < 2) {
                     return -1;
                 }
@@ -1565,7 +1565,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             private int attempt = 0;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
@@ -1600,7 +1600,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             private int attempt = 0;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
@@ -1710,7 +1710,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             private int attempt = 0;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
@@ -1813,7 +1813,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, "1" + Files.SEPARATOR + failToRollFile)) {
                     fd = super.openRW(name, opts);
                     return fd;
@@ -1960,7 +1960,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }

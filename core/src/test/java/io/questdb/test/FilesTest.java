@@ -268,6 +268,15 @@ public class FilesTest {
     }
 
     @Test
+    public void testDeatch() throws Exception {
+        assertMemoryLeak(() -> {
+            int fdFake = 123;
+            long fd = Files.createUniqueFd(fdFake);
+            Files.detach(fd);
+        });
+    }
+
+    @Test
     public void testDeleteDir() throws Exception {
         Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
@@ -470,6 +479,21 @@ public class FilesTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testFdCache() {
+        for (int index = 0; index < 128; index++) {
+            int NON_CACHED = (2 << 30);
+            long fd = Numbers.encodeLowHighInts(index | NON_CACHED, 3342);
+            int fdKind = (Numbers.decodeLowInt(fd) >>> 30) & 3;
+            Assert.assertTrue(fdKind > 1);
+
+            int RO_MASK = 0;
+            fd = Numbers.encodeLowHighInts(index | RO_MASK, 78234);
+            fdKind = (Numbers.decodeLowInt(fd) >>> 30) & 3;
+            Assert.assertEquals(0, fdKind);
+        }
     }
 
     @Test
@@ -765,6 +789,33 @@ public class FilesTest {
                 Assert.assertTrue(fd < 0);
             } finally {
                 Files.close(fd);
+            }
+        });
+    }
+
+    @Test
+    public void testRemapTo0Len() throws Exception {
+        // Emulates the syscall sequence from TxnScoreboard's initialization and close.
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+
+                long fdrw = Files.openRW(path.$());
+                long fdro = Files.openRO(path.$());
+
+                if (Files.allocate(fdrw, 1024)) {
+                    long addr1 = Files.mmap(fdro, 0, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                    long addr2 = Files.mmap(fdro, 0, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+
+                    addr1 = Files.mremap(fdro, addr1, 0, 64, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+
+                    Files.munmap(addr1, 64, MemoryTag.MMAP_DEFAULT);
+                    Files.munmap(addr2, 0, MemoryTag.MMAP_DEFAULT);
+                }
+
+                Files.close(fdrw);
+                Files.close(fdro);
             }
         });
     }

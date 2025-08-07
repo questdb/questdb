@@ -675,4 +675,64 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             insertRowWithReplaceRange("2022-02-21,2022-02-21T01", "2022-02-21", "2022-02-27", tableToken, false, false, "rg", "expected", true, generateNoRowsCommit);
         });
     }
+
+    @Test
+    public void testReplaceRangeWithColumnAddedInMiddleOfPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            final int partitionRowCount = 500;
+
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            // Insert 1000 rows to fill one partition
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T01:00', 86 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(" + partitionRowCount + ")");
+            drainWalQueue();
+
+            // Add both fixed size (int) and variable size (string) columns after the partition is full
+            // This sets column_top = 1000 for both columns
+            execute("alter table rg add column c4 int");
+            execute("alter table rg add column c5 string");
+            drainWalQueue();
+
+            // Now perform a replace operation on ALL 1000 rows (the entire area where column data doesn't exist)
+            // This should trigger the column top fix for both fixed and variable size columns
+            Utf8StringSink sink = new Utf8StringSink();
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                // Add one row with new column values for the replace operation
+                long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T09");
+                TableWriter.Row row = ww.newRow(ts);
+                row.putInt(0, 999);
+                row.putLong(2, 9999);
+                row.putStr(3, "replaced");
+                sink.clear();
+                sink.put("replaced_varchar");
+                row.putVarchar(4, sink);
+                row.putSym(5, "replaced_sym");
+                row.putInt(6, 42); // c4 - fixed size column
+                row.putStr(7, "replaced_string"); // c5 - variable size column
+                row.append();
+
+                // Replace the entire partition range
+                long rangeStart = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T00");
+                long rangeEnd = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T10");
+                ww.commitWithParams(rangeStart, rangeEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+            drainWalQueue();
+
+            // Verify the row content
+            assertSql("id\tts\ty\ts\tv\tm\tc4\tc5\n" +
+                            "999\t2022-02-24T09:00:00.000000Z\t9999\treplaced\treplaced_varchar\treplaced_sym\t42\treplaced_string\n" +
+                            "378\t2022-02-24T10:00:22.000000Z\t189\t378\tNUZ[\tc\tnull\t\n" +
+                            "379\t2022-02-24T10:01:48.000000Z\t189\t379\t@xbR>i@s\ta\tnull\t\n" +
+                            "380\t2022-02-24T10:03:14.000000Z\t190\t380\t;WS\tc\tnull\t\n" +
+                            "381\t2022-02-24T10:04:40.000000Z\t190\t381\tV1IF \t\tnull\t\n" +
+                            "382\t2022-02-24T10:06:06.000000Z\t191\t382\t14wddTh&))\tb\tnull\t\n" +
+                            "383\t2022-02-24T10:07:32.000000Z\t191\t383\t#<Y达\u197F亙ጾ燇Ȉc\ta\tnull\t\n" +
+                            "384\t2022-02-24T10:08:58.000000Z\t192\t384\t\uDB9E\uDD3D\uF29Ec+ɫwՊ毷걭\ta\tnull\t\n" +
+                            "385\t2022-02-24T10:10:24.000000Z\t192\t385\tsoMv* !Em>\ta\tnull\t\n" +
+                            "386\t2022-02-24T10:11:50.000000Z\t193\t386\t@1oq.w%V\tb\tnull\t\n",
+                    "select * from rg limit 10");
+        });
+    }
 }

@@ -79,7 +79,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
     };
     private static final FilesFacade ffOpenFailure = new TestFilesFacadeImpl() {
         @Override
-        public long openRW(LPSZ name, long opts) {
+        public long openRW(LPSZ name, int opts) {
             if ((Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d") && Utf8s.containsAscii(name, "1970-01-06") && counter.decrementAndGet() == 0) && failNextAllocOrOpen.get()) {
                 failNextAllocOrOpen.set(false);
                 return -1;
@@ -156,7 +156,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 long fd = super.openRW(name, opts);
                 if (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;

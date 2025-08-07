@@ -58,10 +58,10 @@ import java.util.function.LongSupplier;
 
 public interface CairoConfiguration {
 
-    long O_ASYNC = 0x40;
-    long O_DIRECT = 0x4000;
-    long O_NONE = 0;
-    long O_SYNC = 0x80;
+    int O_ASYNC = 0x40;
+    int O_DIRECT = 0x4000;
+    int O_NONE = 0;
+    int O_SYNC = 0x80;
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
     boolean attachPartitionCopy();
@@ -215,6 +215,8 @@ public interface CairoConfiguration {
     FactoryProvider getFactoryProvider();
 
     int getFileOperationRetryCount();
+
+    boolean getFileDescriptorCacheEnabled();
 
     @NotNull
     FilesFacade getFilesFacade();
@@ -667,7 +669,7 @@ public interface CairoConfiguration {
 
     long getWriterCommandQueueSlotSize();
 
-    long getWriterFileOpenOpts();
+    int getWriterFileOpenOpts();
 
     int getWriterTickRowsCountMod();
 
@@ -720,6 +722,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelGroupByEnabled();
 
     boolean isSqlParallelReadParquetEnabled();
+
+    boolean isSqlParallelTopKEnabled();
 
     boolean isTableTypeConversionEnabled();
 

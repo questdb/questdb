@@ -204,7 +204,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         }
     }
 
-    public static void o3PartitionMerge(
+    public static void mergeVarColumn(
             Path pathToNewPartition,
             int pplen,
             CharSequence columnName,
@@ -2675,7 +2675,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
         if (ColumnType.isVarSize(columnType)) {
             // index files are opened as normal
-            o3PartitionMerge(
+            mergeVarColumn(
                     pathToNewPartition,
                     pplen,
                     columnName,
@@ -2864,7 +2864,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 throw e;
             }
 
-            o3PartitionMerge(
+            mergeVarColumn(
                     pathToNewPartition,
                     pplen,
                     columnName,

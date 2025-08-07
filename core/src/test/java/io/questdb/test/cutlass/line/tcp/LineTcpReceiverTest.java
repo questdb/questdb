@@ -391,7 +391,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private int count = 1;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRWNoCache(LPSZ name, int opts) {
                 if (
                         Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
                                 && Utf8s.containsAscii(name, weather)
@@ -399,7 +399,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 ) {
                     dropWeatherTable();
                 }
-                return super.openRW(name, opts);
+                return super.openRWNoCache(name, opts);
             }
         };
 
@@ -754,7 +754,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private final AtomicInteger count = new AtomicInteger(1);
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRWNoCache(LPSZ name, int opts) {
                 if (
                         Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
                                 && count.decrementAndGet() == 0
@@ -762,7 +762,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     mayDrainWalQueue();
                     renameTable(weather, meteorology);
                 }
-                return super.openRW(name, opts);
+                return super.openRWNoCache(name, opts);
             }
         };
 
@@ -810,7 +810,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private int count = 1;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRWNoCache(LPSZ name, int opts) {
                 if (
                         Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
                                 && Utf8s.containsAscii(name, weather)
@@ -818,7 +818,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 ) {
                     renameTable(weather, meteorology);
                 }
-                return super.openRW(name, opts);
+                return super.openRWNoCache(name, opts);
             }
         };
 
