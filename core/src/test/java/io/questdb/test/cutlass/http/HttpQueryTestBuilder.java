@@ -44,6 +44,7 @@ import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
+import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.text.CopyImportRequestJob;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.QueryFutureUpdateListener;
@@ -180,9 +181,14 @@ public class HttpQueryTestBuilder {
                 }
 
                 if (cairoConfiguration.getSqlCopyInputRoot() != null) {
-                    CopyImportRequestJob copyRequestJob = new CopyImportRequestJob(engine, workerCount);
-                    workerPool.assign(copyRequestJob);
-                    workerPool.freeOnExit(copyRequestJob);
+                    CopyImportRequestJob copyImportRequestJob = new CopyImportRequestJob(engine, workerCount);
+                    workerPool.assign(copyImportRequestJob);
+                    workerPool.freeOnExit(copyImportRequestJob);
+                    final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(  // todo: swap to export root
+                            engine
+                    );
+                    workerPool.assign(copyExportRequestJob);
+                    workerPool.freeOnExit(copyExportRequestJob);
                 }
 
                 httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));

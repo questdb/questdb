@@ -209,6 +209,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 sendConfirmation(context.getChunkedResponse());
                 readyForNextRequest(context);
             }
+        } catch (ExportInProgressException e) {
+            throw e;
         } catch (SqlException | ImplicitCastException e) {
             syntaxError(context.getChunkedResponse(), state, e);
             readyForNextRequest(context);
@@ -387,7 +389,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
     private void doResumeSend(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, ExportInProgressException {
         ExportQueryProcessorState state = LV.get(context);
 
         if (state == null) {
@@ -497,9 +499,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             } catch (DataUnavailableException e) {
                 response.resetToBookmark();
                 throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
-            } catch (ExportInProgressException e) {
-                response.resetToBookmark();
-                throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
             } catch (NoSpaceLeftInResponseBufferException ignored) {
                 if (response.resetToBookmark()) {
                     response.sendChunk(false);
@@ -535,7 +534,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     }
 
     private void handleParquetExport(HttpConnectionContext context)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         ExportQueryProcessorState state = LV.get(context);
 
         try {
@@ -589,6 +588,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     sendParquetFile(context.getChunkedResponse(), exportPath, state);
                     break;
             }
+        } catch (ExportInProgressException e) {
+            throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         } catch (Exception e) {
             internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e, state);
         } finally {

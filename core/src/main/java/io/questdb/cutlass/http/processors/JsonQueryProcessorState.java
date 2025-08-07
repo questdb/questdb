@@ -75,16 +75,16 @@ import static io.questdb.cutlass.http.HttpConstants.*;
 
 public class JsonQueryProcessorState implements Mutable, Closeable {
     public static final String HIDDEN = "hidden";
-    static final int QUERY_METADATA = 2;
-    static final int QUERY_METADATA_SUFFIX = 3;
-    static final int QUERY_PREFIX = 1;
-    static final int QUERY_RECORD = 5;
-    static final int QUERY_RECORD_PREFIX = 9;
-    static final int QUERY_RECORD_START = 4;
-    static final int QUERY_RECORD_SUFFIX = 6;
-    static final int QUERY_SEND_RECORDS_LOOP = 8;
-    static final int QUERY_SETUP_FIRST_RECORD = 0;
-    static final int QUERY_SUFFIX = 7;
+    static final int QUERY_SETUP_FIRST_RECORD = 0; // 0
+    static final int QUERY_PREFIX = QUERY_SETUP_FIRST_RECORD + 1; // 1
+    static final int QUERY_METADATA = QUERY_PREFIX + 1; //2
+    static final int QUERY_METADATA_SUFFIX = QUERY_METADATA + 1; // 3
+    static final int QUERY_RECORD_START = QUERY_METADATA_SUFFIX + 1; // 4
+    static final int QUERY_RECORD = QUERY_RECORD_START + 1; // 5
+    static final int QUERY_RECORD_SUFFIX = QUERY_RECORD + 1; // 6
+    static final int QUERY_SUFFIX = QUERY_RECORD_SUFFIX + 1; // 7
+    static final int QUERY_SEND_RECORDS_LOOP = QUERY_SUFFIX + 1; // 8
+    static final int QUERY_RECORD_PREFIX = QUERY_SEND_RECORDS_LOOP + 1; // 9
     private static final byte DEFAULT_API_VERSION = 1;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
     private final HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
