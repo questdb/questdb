@@ -35,6 +35,9 @@
 #include "net.h"
 #include <netdb.h>
 #include "sysutil.h"
+#ifndef __APPLE__
+#include <sys/un.h>
+#endif
 
 jint handleEintrInConnect(jint fd, int result);
 
