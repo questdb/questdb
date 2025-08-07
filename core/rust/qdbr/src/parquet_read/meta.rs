@@ -4,6 +4,7 @@ use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
 use crate::parquet_read::{ColumnMeta, ParquetDecoder};
 use parquet2::metadata::{Descriptor, FileMetaData};
 use parquet2::read::read_metadata_with_size;
+use parquet2::schema::types::ParquetType;
 use parquet2::schema::types::PrimitiveLogicalType::{Timestamp, Uuid};
 use parquet2::schema::types::{
     IntegerType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
@@ -49,18 +50,28 @@ impl<R: Read + Seek> ParquetDecoder<R> {
 
         assert_eq!(accumulated_size, metadata.num_rows);
 
-        for (column_id, f) in metadata.schema_descr.columns().iter().enumerate() {
+        for (index, column) in metadata.schema_descr.columns().iter().enumerate() {
             // Some types are not supported, this will skip them.
             if let Some(column_type) =
-                Self::descriptor_to_column_type(&f.descriptor, column_id, qdb_meta.as_ref())
+                Self::descriptor_to_column_type(&column.descriptor, index, qdb_meta.as_ref())
             {
-                let name_str = &f.descriptor.primitive_type.field_info.name;
+                // arrays have column name and id stored in the root group type
+                let base_field = match &column.base_type {
+                    ParquetType::PrimitiveType(primitive_type) => &primitive_type.field_info,
+                    ParquetType::GroupType {
+                        field_info,
+                        logical_type: _,
+                        converted_type: _,
+                        fields: _,
+                    } => &field_info,
+                };
+                let name_str = &base_field.name;
                 let mut name = AcVec::with_capacity_in(name_str.len() * 2, allocator.clone())?;
                 name.extend(name_str.encode_utf16())?;
 
                 columns.push(ColumnMeta {
                     column_type,
-                    id: column_id as i32,
+                    id: base_field.id.unwrap_or(-1) as i32,
                     name_size: name.len() as i32,
                     name_ptr: name.as_ptr(),
                     name_vec: name,
@@ -68,7 +79,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             }
         }
 
-        // TODO: add some validation
+        // TODO(eugenels): add some validation
         Ok(Self {
             allocator,
             col_count: columns.len() as u32,
