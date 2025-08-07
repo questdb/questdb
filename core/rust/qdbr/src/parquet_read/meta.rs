@@ -71,7 +71,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
 
                 columns.push(ColumnMeta {
                     column_type,
-                    id: base_field.id.unwrap_or(-1) as i32,
+                    id: base_field.id.unwrap_or(index as i32),
                     name_size: name.len() as i32,
                     name_ptr: name.as_ptr(),
                     name_vec: name,
