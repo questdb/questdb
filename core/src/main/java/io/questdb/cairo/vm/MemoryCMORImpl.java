@@ -111,12 +111,12 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts) {
         ofOffset(ff, name, 0L, size, memoryTag, opts);
     }
 
     @Override
-    public void ofOffset(FilesFacade ff, long fd, boolean keepFdOpen, LPSZ name, long lo, long hi, int memoryTag, long opts) {
+    public void ofOffset(FilesFacade ff, long fd, boolean keepFdOpen, LPSZ name, long lo, long hi, int memoryTag, int opts) {
         this.memoryTag = memoryTag;
         if (fd > -1) {
             close();
