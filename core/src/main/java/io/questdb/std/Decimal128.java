@@ -10,25 +10,27 @@ import java.math.BigInteger;
 import java.math.RoundingMode;
 
 /**
- * Decimal160 - A mutable 160-bit decimal number implementation
+ * Decimal128 - A mutable decimal number implementation.
  * <p>
  * This class represents decimal numbers with a fixed scale (number of decimal places)
- * using 160-bit integer arithmetic for precise calculations. All operations are
+ * using 128-bit integer arithmetic for precise calculations. All operations are
  * performed in-place to eliminate object allocation and improve performance.
+ * </p>
  * <p>
  * This type tries to but doesn't follow IEEE 754; one of the main goals is using 128 bits to store
  * the sign and trailing significant field (T).
  * Using 1 bit for the sign, we have 127 bits for T, which gives us 38 digits of precision.
  * T valid values are in the (-10^38;10^38) interval, values outside are either invalid
  * or may be special like NaN or Inf.
+ * </p>
  */
-public class Decimal160 implements Sinkable {
+public class Decimal128 implements Sinkable {
     /**
      * Maximum allowed scale (number of decimal places)
      */
     public static final int MAX_SCALE = 38;
-    public static final Decimal160 MAX_VALUE = new Decimal160(Long.MAX_VALUE, Long.MIN_VALUE, 0);
-    public static final Decimal160 MIN_VALUE = new Decimal160(Long.MIN_VALUE, Long.MIN_VALUE, 0);
+    public static final Decimal128 MAX_VALUE = new Decimal128(Long.MAX_VALUE, Long.MIN_VALUE, 0);
+    public static final Decimal128 MIN_VALUE = new Decimal128(Long.MIN_VALUE, Long.MIN_VALUE, 0);
     static final long LONG_MASK = 0xffffffffL;
     private static final long B = (long) 1 << Integer.SIZE;
     private static final long INFLATED = Long.MIN_VALUE;
@@ -54,7 +56,7 @@ public class Decimal160 implements Sinkable {
             1000000000000000000L   // 18 / 10^18
     };
     // Cache for common small values
-    private static final Decimal160[] ZERO_THROUGH_TEN = new Decimal160[11];
+    private static final Decimal128[] ZERO_THROUGH_TEN = new Decimal128[11];
     private transient long compact;  // Compact representation for values fitting in a signed long
     private long high;  // High 64 bits
     private long low;   // Low 64 bits
@@ -63,7 +65,7 @@ public class Decimal160 implements Sinkable {
     /**
      * Default constructor - creates zero with scale 0
      */
-    public Decimal160() {
+    public Decimal128() {
         this.high = 0;
         this.low = 0;
         this.scale = 0;
@@ -78,7 +80,7 @@ public class Decimal160 implements Sinkable {
      * @param scale the number of decimal places
      * @throws IllegalArgumentException if scale is invalid
      */
-    public Decimal160(long high, long low, int scale) {
+    public Decimal128(long high, long low, int scale) {
         validateScale(scale);
         this.high = high;
         this.low = low;
@@ -89,9 +91,9 @@ public class Decimal160 implements Sinkable {
     /**
      * Copy constructor for cached values.
      *
-     * @param other the Decimal160 to copy from
+     * @param other the Decimal128 to copy from
      */
-    private Decimal160(Decimal160 other) {
+    private Decimal128(Decimal128 other) {
         this.high = other.high;
         this.low = other.low;
         this.scale = other.scale;
@@ -99,19 +101,19 @@ public class Decimal160 implements Sinkable {
     }
 
     /**
-     * Add two Decimal160 numbers and store the result in sink
+     * Add two Decimal128 numbers and store the result in sink
      *
      * @param a    First operand
      * @param b    Second operand
      * @param sink Destination for the result
      */
-    public static void add(Decimal160 a, Decimal160 b, Decimal160 sink) {
+    public static void add(Decimal128 a, Decimal128 b, Decimal128 sink) {
         sink.copyFrom(a);
         sink.add(b);
     }
 
     /**
-     * Divide two Decimal160 numbers and store the result in sink (a / b -> sink)
+     * Divide two Decimal128 numbers and store the result in sink (a / b -> sink)
      * Uses optimal precision calculation up to MAX_SCALE
      *
      * @param a            First operand (dividend)
@@ -120,7 +122,7 @@ public class Decimal160 implements Sinkable {
      * @param scale        Result scale
      * @param roundingMode Rounding Mode used to round the result
      */
-    public static void divide(Decimal160 a, Decimal160 b, Decimal160 sink, int scale, RoundingMode roundingMode) {
+    public static void divide(Decimal128 a, Decimal128 b, Decimal128 sink, int scale, RoundingMode roundingMode) {
         sink.copyFrom(a);
         sink.divide(b, scale, roundingMode);
     }
@@ -128,12 +130,12 @@ public class Decimal160 implements Sinkable {
     /**
      * Performs a division using Knuth 4.3.1D algorithm, storing the quotient in dividend.
      *
-     * @param dividend     Decimal160 that will be divided.
+     * @param dividend     Decimal128 that will be divided.
      * @param divisorHigh  High 64-bit part of the divisor.
      * @param divisorLow   Low 64-bit part of the divisor.
      * @param roundingMode How the quotient will be rounded if a remainder is present.
      */
-    public static void divideKnuth(Decimal160 dividend, long divisorHigh, long divisorLow, boolean negResult, RoundingMode roundingMode) {
+    public static void divideKnuth(Decimal128 dividend, long divisorHigh, long divisorLow, boolean negResult, RoundingMode roundingMode) {
         long dividendHigh = dividend.high;
         long dividendLow = dividend.low;
 
@@ -157,13 +159,13 @@ public class Decimal160 implements Sinkable {
     }
 
     /**
-     * Create a Decimal160 from a BigDecimal value.
+     * Create a Decimal128 from a BigDecimal value.
      *
      * @param value the BigDecimal value to convert
-     * @return a new Decimal160 representing the BigDecimal value
+     * @return a new Decimal128 representing the BigDecimal value
      * @throws IllegalArgumentException if scale is invalid
      */
-    public static Decimal160 fromBigDecimal(BigDecimal value) {
+    public static Decimal128 fromBigDecimal(BigDecimal value) {
         int scale = value.scale();
         long hi;
         long lo;
@@ -177,18 +179,18 @@ public class Decimal160 implements Sinkable {
         lo = bi.longValue();
         hi = bi.shiftRight(64).longValue();
         validateScale(scale);
-        return new Decimal160(hi, lo, scale);
+        return new Decimal128(hi, lo, scale);
     }
 
     /**
-     * Create a Decimal160 from a double value.
+     * Create a Decimal128 from a double value.
      *
      * @param value the double value to convert
      * @param scale the number of decimal places
-     * @return a new Decimal160 representing the double value
+     * @return a new Decimal128 representing the double value
      * @throws IllegalArgumentException if scale is invalid
      */
-    public static Decimal160 fromDouble(double value, int scale) {
+    public static Decimal128 fromDouble(double value, int scale) {
         validateScale(scale);
         long scaleFactor = scale <= 18 ? LONG_TEN_POWERS_TABLE[scale] : calculatePowerOf10(scale);
         long scaledValue = Math.round(value * scaleFactor);
@@ -196,88 +198,88 @@ public class Decimal160 implements Sinkable {
     }
 
     /**
-     * Create a Decimal160 from a long value.
+     * Create a Decimal128 from a long value.
      *
      * @param value the long value to convert
      * @param scale the number of decimal places
-     * @return a new Decimal160 representing the long value
+     * @return a new Decimal128 representing the long value
      * @throws IllegalArgumentException if scale is invalid
      */
-    public static Decimal160 fromLong(long value, int scale) {
+    public static Decimal128 fromLong(long value, int scale) {
         validateScale(scale);
 
         // Use cached values for common small values with scale 0
         if (scale == 0 && value >= 0 && value <= 10) {
-            return new Decimal160(ZERO_THROUGH_TEN[(int) value]);
+            return new Decimal128(ZERO_THROUGH_TEN[(int) value]);
         }
 
         long h = value < 0 ? -1L : 0L;
-        return new Decimal160(h, value, scale);
+        return new Decimal128(h, value, scale);
     }
 
     /**
-     * Calculate modulo of two Decimal160 numbers and store the result in sink (a % b -> sink)
+     * Calculate modulo of two Decimal128 numbers and store the result in sink (a % b -> sink)
      *
      * @param a    First operand (dividend)
      * @param b    Second operand (divisor)
      * @param sink Destination for the result
      */
-    public static void modulo(Decimal160 a, Decimal160 b, Decimal160 sink) {
+    public static void modulo(Decimal128 a, Decimal128 b, Decimal128 sink) {
         sink.copyFrom(a);
         sink.modulo(b);
     }
 
     /**
-     * Multiply two Decimal160 numbers and store the result in sink
+     * Multiply two Decimal128 numbers and store the result in sink
      *
      * @param a    First operand
      * @param b    Second operand
      * @param sink Destination for the result
      */
-    public static void multiply(Decimal160 a, Decimal160 b, Decimal160 sink) {
+    public static void multiply(Decimal128 a, Decimal128 b, Decimal128 sink) {
         sink.copyFrom(a);
         sink.multiply(b);
     }
 
     /**
-     * Negate a Decimal160 number and store the result in sink
+     * Negate a Decimal128 number and store the result in sink
      *
      * @param a    Input operand to negate
      * @param sink Destination for the result
      */
-    public static void negate(Decimal160 a, Decimal160 sink) {
+    public static void negate(Decimal128 a, Decimal128 sink) {
         sink.copyFrom(a);
         sink.negate();
     }
 
     /**
-     * Subtract two Decimal160 numbers and store the result in sink (a - b -> sink)
+     * Subtract two Decimal128 numbers and store the result in sink (a - b -> sink)
      *
      * @param a    First operand (minuend)
      * @param b    Second operand (subtrahend)
      * @param sink Destination for the result
      */
-    public static void subtract(Decimal160 a, Decimal160 b, Decimal160 sink) {
+    public static void subtract(Decimal128 a, Decimal128 b, Decimal128 sink) {
         sink.copyFrom(a);
         sink.subtract(b);
     }
 
     /**
-     * Add another Decimal160 to this one (in-place)
+     * Add another Decimal128 to this one (in-place)
      *
-     * @param other The Decimal160 to add
+     * @param other The Decimal128 to add
      */
-    public void add(Decimal160 other) {
+    public void add(Decimal128 other) {
         add(this, this.high, this.low, this.scale, other.high, other.low, other.scale);
     }
 
     /**
-     * Compare this to another Decimal160 (handles different scales).
+     * Compare this to another Decimal128 (handles different scales).
      *
-     * @param other the Decimal160 to compare with
+     * @param other the Decimal128 to compare with
      * @return -1 if this decimal is less than other, 0 if equal, 1 if greater than other
      */
-    public int compareTo(Decimal160 other) {
+    public int compareTo(Decimal128 other) {
         if (this.scale == other.scale) {
             // Same scale - direct comparison
             if (this.high != other.high) {
@@ -385,9 +387,9 @@ public class Decimal160 implements Sinkable {
     }
 
     /**
-     * Copy values from another Decimal160
+     * Copy values from another Decimal128
      */
-    public void copyFrom(Decimal160 source) {
+    public void copyFrom(Decimal128 source) {
         this.high = source.high;
         this.low = source.low;
         this.scale = source.scale;
@@ -396,18 +398,18 @@ public class Decimal160 implements Sinkable {
 
 
     /**
-     * Divide this Decimal160 by another (in-place) with optimal precision
+     * Divide this Decimal128 by another (in-place) with optimal precision
      *
-     * @param divisor      The Decimal160 to divide by
+     * @param divisor      The Decimal128 to divide by
      * @param scale        The decimal place
      * @param roundingMode The Rounding mode to use if the remainder is non-zero
      */
-    public void divide(Decimal160 divisor, int scale, RoundingMode roundingMode) {
+    public void divide(Decimal128 divisor, int scale, RoundingMode roundingMode) {
         divide(divisor.high, divisor.low, divisor.scale, scale, roundingMode);
     }
 
     /**
-     * Divide this Decimal160 by another (in-place) with optimal precision
+     * Divide this Decimal128 by another (in-place) with optimal precision
      *
      * @param scale        The decimal place
      * @param roundingMode The Rounding mode to use if the remainder is non-zero
@@ -465,15 +467,15 @@ public class Decimal160 implements Sinkable {
 
     @Override
     public boolean equals(Object obj) {
-        if (!(obj instanceof Decimal160)) return false;
-        Decimal160 other = (Decimal160) obj;
+        if (!(obj instanceof Decimal128)) return false;
+        Decimal128 other = (Decimal128) obj;
         return this.high == other.high &&
                 this.low == other.low &&
                 this.scale == other.scale;
     }
 
     /**
-     * Gets the high 64 bits of the 160-bit decimal value.
+     * Gets the high 64 bits of the 128-bit decimal value.
      *
      * @return the high 64 bits of the decimal value
      */
@@ -482,7 +484,7 @@ public class Decimal160 implements Sinkable {
     }
 
     /**
-     * Gets the low 64 bits of the 160-bit decimal value.
+     * Gets the low 64 bits of the 128-bit decimal value.
      *
      * @return the low 64 bits of the decimal value
      */
@@ -529,7 +531,7 @@ public class Decimal160 implements Sinkable {
      * @param divisor the divisor
      * @throws ArithmeticException if divisor is zero
      */
-    public void modulo(Decimal160 divisor) {
+    public void modulo(Decimal128 divisor) {
         if (divisor.isZero()) {
             throw new ArithmeticException("Division by zero");
         }
@@ -538,12 +540,12 @@ public class Decimal160 implements Sinkable {
         int resultScale = Math.max(this.scale, divisor.scale);
 
         // Save original dividend
-        Decimal160 originalDividend = new Decimal160();
+        Decimal128 originalDividend = new Decimal128();
         originalDividend.copyFrom(this);
 
         // Use simple repeated subtraction for modulo: a % b = a - (a / b) * b
         // First compute integer division (a / b)
-        Decimal160 quotient = new Decimal160();
+        Decimal128 quotient = new Decimal128();
         quotient.copyFrom(this);
         quotient.divide(divisor, 0, RoundingMode.DOWN);
 
@@ -569,11 +571,11 @@ public class Decimal160 implements Sinkable {
     }
 
     /**
-     * Multiply this Decimal160 by another (in-place)
+     * Multiply this Decimal128 by another (in-place)
      *
-     * @param other The Decimal160 to multiply by
+     * @param other The Decimal128 to multiply by
      */
-    public void multiply(Decimal160 other) {
+    public void multiply(Decimal128 other) {
         // Result scale is sum of scales
         int resultScale = this.scale + other.scale;
 
@@ -598,7 +600,7 @@ public class Decimal160 implements Sinkable {
             }
         }
 
-        // Perform multiplication using the algorithm from Decimal160
+        // Perform multiplication using the algorithm from Decimal128
         // This is complex but avoids allocations
         long a3 = this.high >>> 32;
         long a2 = this.high & 0xFFFFFFFFL;
@@ -686,7 +688,7 @@ public class Decimal160 implements Sinkable {
     }
 
     /**
-     * Round this Decimal160 to the specified scale using the given rounding mode.
+     * Round this Decimal128 to the specified scale using the given rounding mode.
      * This method performs in-place rounding without requiring a divisor.
      *
      * @param targetScale  the desired scale (number of decimal places)
@@ -778,11 +780,11 @@ public class Decimal160 implements Sinkable {
     }
 
     /**
-     * Subtract another Decimal160 from this one (in-place)
+     * Subtract another Decimal128 from this one (in-place)
      *
-     * @param other The Decimal160 to subtract
+     * @param other The Decimal128 to subtract
      */
-    public void subtract(Decimal160 other) {
+    public void subtract(Decimal128 other) {
         // Negate other and perform addition
         long bH = other.high;
         long bL = other.low;
@@ -806,7 +808,7 @@ public class Decimal160 implements Sinkable {
     /**
      * Convert to BigDecimal with full precision
      *
-     * @return BigDecimal representation of this Decimal160
+     * @return BigDecimal representation of this Decimal128
      */
     public java.math.BigDecimal toBigDecimal() {
         StringSink sink = new StringSink();
@@ -817,7 +819,7 @@ public class Decimal160 implements Sinkable {
     /**
      * Convert to double (may lose precision).
      *
-     * @return double representation of this Decimal160
+     * @return double representation of this Decimal128
      */
     public double toDouble() {
         // Calculate the divisor (10^scale)
@@ -882,7 +884,7 @@ public class Decimal160 implements Sinkable {
     /**
      * Returns a string representation of this decimal value.
      *
-     * @return string representation of this Decimal160
+     * @return string representation of this Decimal128
      */
     @Override
     public String toString() {
@@ -895,7 +897,7 @@ public class Decimal160 implements Sinkable {
     /**
      * Generic function to make a 128-bit addition.
      *
-     * @param result Decimal160 that will store the result of the operation
+     * @param result Decimal128 that will store the result of the operation
      * @param aH     High 64-bit part of the first operand.
      * @param aL     Low 64-bit part of the first operand.
      * @param aScale Scale of the first operand.
@@ -903,7 +905,7 @@ public class Decimal160 implements Sinkable {
      * @param bL     Low 64-bit part of the second operand.
      * @param bScale Scale of the second operand.
      */
-    private static void add(Decimal160 result, long aH, long aL, int aScale, long bH, long bL, int bScale) {
+    private static void add(Decimal128 result, long aH, long aL, int aScale, long bH, long bL, int bScale) {
         result.scale = aScale;
         if (aScale < bScale) {
             // We need to rescale a to the same scale as b
@@ -1059,18 +1061,18 @@ public class Decimal160 implements Sinkable {
      * Perform an unsigned division of dividend in-place using Knuth 4.3.1D algorithm for 2 128-bit numbers.
      * Note that dividends must have the same scale.
      *
-     * @param result       Decimal160 that will store the rounded result
+     * @param result       Decimal128 that will store the rounded result
      * @param dividendHigh 64-bit high part of the dividend
      * @param dividendLow  64-bit low part of the dividend
      * @param divisorHigh  64-bit high part of the divisor
      * @param divisorLow   64-bit low part of the divisor
      * @param roundingMode Rounding mode that will be used to round the result
      */
-    private static void divideKnuth128x128(Decimal160 result, long dividendHH, long dividendHigh, long dividendLow, long divisorHigh, long divisorLow, boolean isNegative, RoundingMode roundingMode) {
+    private static void divideKnuth128x128(Decimal128 result, long dividendHH, long dividendHigh, long dividendLow, long divisorHigh, long divisorLow, boolean isNegative, RoundingMode roundingMode) {
         // Check for overflow - if dividendHH has upper bits set, the result would overflow 128 bits
-        // We can only handle at most 160 bits (32 bits in u4)
+        // We can only handle at most 128 bits (32 bits in u4)
         if ((dividendHH >>> 32) != 0) {
-            throw new ArithmeticException("Division overflow: intermediate result exceeds 160-bit precision");
+            throw new ArithmeticException("Division overflow: intermediate result exceeds 128-bit precision");
         }
 
         int v3 = (int) (divisorHigh >>> 32);
@@ -1144,14 +1146,14 @@ public class Decimal160 implements Sinkable {
      * a 96-bit number.
      * Note that dividends must have the same scale.
      *
-     * @param result       Decimal160 that will store the rounded result
+     * @param result       Decimal128 that will store the rounded result
      * @param dividendHigh 64-bit high part of the dividend
      * @param dividendLow  64-bit low part of the dividend
      * @param divisorHigh  64-bit high part of the divisor
      * @param divisorLow   64-bit low part of the divisor
      * @param roundingMode Rounding mode that will be used to round the result
      */
-    private static void divideKnuth128x96(Decimal160 result, long dividendHH, long dividendHigh, long dividendLow, long divisorHigh, long divisorLow, boolean isNegative, RoundingMode roundingMode) {
+    private static void divideKnuth128x96(Decimal128 result, long dividendHH, long dividendHigh, long dividendLow, long divisorHigh, long divisorLow, boolean isNegative, RoundingMode roundingMode) {
         int v2 = (int) (divisorHigh & LONG_MASK);
         int v1 = (int) (divisorLow >>> 32);
         int v0 = (int) divisorLow;
@@ -1255,13 +1257,13 @@ public class Decimal160 implements Sinkable {
      * a 64-bit number.
      * Note that dividends must have the same scale.
      *
-     * @param result       Decimal160 that will store the rounded result
+     * @param result       Decimal128 that will store the rounded result
      * @param dividendHigh 64-bit high part of the dividend
      * @param dividendLow  64-bit low part of the dividend
      * @param divisor      64-bit divisor
      * @param roundingMode Rounding mode that will be used to round the result
      */
-    private static void divideKnuth128xLong(Decimal160 result, long dividendHH, long dividendHigh, long dividendLow, long divisor, boolean isNegative, RoundingMode roundingMode) {
+    private static void divideKnuth128xLong(Decimal128 result, long dividendHH, long dividendHigh, long dividendLow, long divisor, boolean isNegative, RoundingMode roundingMode) {
         int v1 = (int) (divisor >>> 32);
         int v0 = (int) divisor;
 
@@ -1383,14 +1385,14 @@ public class Decimal160 implements Sinkable {
      * Perform an unsigned division of dividend in-place using Knuth 4.3.1D algorithm for 2 96-bit numbers.
      * Note that dividends must have the same scale.
      *
-     * @param result       Decimal160 that will store the rounded result
+     * @param result       Decimal128 that will store the rounded result
      * @param dividendHigh 64-bit high part of the dividend
      * @param dividendLow  64-bit low part of the dividend
      * @param divisorHigh  64-bit high part of the divisor
      * @param divisorLow   64-bit low part of the divisor
      * @param roundingMode Rounding mode that will be used to round the result
      */
-    private static void divideKnuth96x96(Decimal160 result, long dividendHigh, long dividendLow, long divisorHigh, long divisorLow, boolean isNegative, RoundingMode roundingMode) {
+    private static void divideKnuth96x96(Decimal128 result, long dividendHigh, long dividendLow, long divisorHigh, long divisorLow, boolean isNegative, RoundingMode roundingMode) {
         int v2 = (int) (divisorHigh & LONG_MASK);
         int v1 = (int) (divisorLow >>> 32);
         int v0 = (int) divisorLow;
@@ -1453,13 +1455,13 @@ public class Decimal160 implements Sinkable {
      * a 64-bit number.
      * Note that dividends must have the same scale.
      *
-     * @param result       Decimal160 that will store the rounded result
+     * @param result       Decimal128 that will store the rounded result
      * @param dividendHigh 64-bit high part of the dividend
      * @param dividendLow  64-bit low part of the dividend
      * @param divisor      64-bit divisor
      * @param roundingMode Rounding mode that will be used to round the result
      */
-    private static void divideKnuth96xLong(Decimal160 result, long dividendHigh, long dividendLow, long divisor, boolean isNegative, RoundingMode roundingMode) {
+    private static void divideKnuth96xLong(Decimal128 result, long dividendHigh, long dividendLow, long divisor, boolean isNegative, RoundingMode roundingMode) {
         int v1 = (int) ((divisor >>> 32) & LONG_MASK);
         int v0 = (int) divisor;
 
@@ -1546,12 +1548,12 @@ public class Decimal160 implements Sinkable {
      * Perform an unsigned division of dividend in-place using Knuth 4.3.1D algorithm for 2 64-bit numbers.
      * Note that dividends must have the same scale.
      *
-     * @param result       Decimal160 that will store the rounded result
+     * @param result       Decimal128 that will store the rounded result
      * @param dividend     64-bit dividend
      * @param divisor      64-bit divisor
      * @param roundingMode Rounding mode that will be used to round the result
      */
-    private static void divideKnuthLongxLong(Decimal160 result, long dividend, long divisor, boolean isNegative, RoundingMode roundingMode) {
+    private static void divideKnuthLongxLong(Decimal128 result, long dividend, long divisor, boolean isNegative, RoundingMode roundingMode) {
         long q = Long.divideUnsigned(dividend, divisor);
         long r = Long.remainderUnsigned(dividend, divisor);
 
@@ -1562,7 +1564,7 @@ public class Decimal160 implements Sinkable {
         endKnuth(result, 0, r, 0, divisor, oddQuot, roundingMode, isNegative);
     }
 
-    private static void divideKnuthXx128(Decimal160 result, long dividendHigh, long dividendLow, long divisorHigh, long divisorLow, boolean isNegative, RoundingMode roundingMode) {
+    private static void divideKnuthXx128(Decimal128 result, long dividendHigh, long dividendLow, long divisorHigh, long divisorLow, boolean isNegative, RoundingMode roundingMode) {
         if ((dividendHigh >>> 32) != 0) {
             // Step D1: Normalize (common to every division)
             final int shift = Integer.numberOfLeadingZeros((int) (divisorHigh >>> 32));
@@ -1583,7 +1585,7 @@ public class Decimal160 implements Sinkable {
         }
     }
 
-    private static void divideKnuthXx96(Decimal160 result, long dividendHigh, long dividendLow, long divisorHigh, long divisorLow, boolean isNegative, RoundingMode roundingMode) {
+    private static void divideKnuthXx96(Decimal128 result, long dividendHigh, long dividendLow, long divisorHigh, long divisorLow, boolean isNegative, RoundingMode roundingMode) {
         if (dividendHigh != 0) {
             boolean is128 = (dividendHigh >>> 32) != 0;
             // Step D1: Normalize (common to every division)
@@ -1609,7 +1611,7 @@ public class Decimal160 implements Sinkable {
         }
     }
 
-    private static void divideKnuthXxLong(Decimal160 result, long dividendHigh, long dividendLow, long divisor, boolean isNegative, RoundingMode roundingMode) {
+    private static void divideKnuthXxLong(Decimal128 result, long dividendHigh, long dividendLow, long divisor, boolean isNegative, RoundingMode roundingMode) {
         if (dividendHigh != 0) {
             boolean is128 = (dividendHigh >>> 32) != 0;
 
@@ -1642,14 +1644,14 @@ public class Decimal160 implements Sinkable {
     /**
      * Divide any 128-bit numbers by a 32-bit one using Knuth 4.3.1 exercise 16.
      *
-     * @param result       Decimal160 where the result will be written
+     * @param result       Decimal128 where the result will be written
      * @param dividendHigh 64-bit high part of the dividend
      * @param dividendLow  64-bit low part of the dividend
      * @param divisor      32-bit divisor
      * @param isNegative   whether the result should be negative
      * @param roundingMode rounding mode used if there is a remainder
      */
-    private static void divideKnuthXxWord(Decimal160 result, long dividendHigh, long dividendLow, long divisor, boolean isNegative, RoundingMode roundingMode) {
+    private static void divideKnuthXxWord(Decimal128 result, long dividendHigh, long dividendLow, long divisor, boolean isNegative, RoundingMode roundingMode) {
         int divisorInt = (int) divisor;
         if (divisor == 0) {
             throw new ArithmeticException("Division by zero");
@@ -1721,7 +1723,7 @@ public class Decimal160 implements Sinkable {
         endKnuth(result, 0, r, 0, divisor, oddQuot, roundingMode, isNegative);
     }
 
-    private static void endKnuth(Decimal160 result, long remainderHigh, long remainderLow, long divisorHigh, long divisorLow, boolean oddQuot, RoundingMode roundingMode, boolean isNegative) {
+    private static void endKnuth(Decimal128 result, long remainderHigh, long remainderLow, long divisorHigh, long divisorLow, boolean oddQuot, RoundingMode roundingMode, boolean isNegative) {
         if (remainderHigh == 0 && remainderLow == 0) {
             if (isNegative) {
                 result.negate();
@@ -2092,7 +2094,7 @@ public class Decimal160 implements Sinkable {
     }
 
     /**
-     * Rescale this Decimal160 in place
+     * Rescale this Decimal128 in place
      *
      * @param newScale The new scale (must be >= current scale)
      */
@@ -2192,7 +2194,7 @@ public class Decimal160 implements Sinkable {
 
     static {
         for (int i = 0; i <= 10; i++) {
-            ZERO_THROUGH_TEN[i] = new Decimal160(0, i, 0);
+            ZERO_THROUGH_TEN[i] = new Decimal128(0, i, 0);
         }
     }
 }

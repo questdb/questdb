@@ -24,8 +24,18 @@
 
 package org.questdb;
 
-import io.questdb.std.Decimal160;
-import org.openjdk.jmh.annotations.*;
+import io.questdb.std.Decimal128;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Fork;
+import org.openjdk.jmh.annotations.Measurement;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Param;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -42,77 +52,29 @@ import java.util.concurrent.TimeUnit;
 @Measurement(iterations = 5, time = 1)
 @Fork(1)
 @State(Scope.Benchmark)
-public class Decimal160DivideBenchmark {
-
-    // Test data for different scenarios
-    @Param({"SIMPLE", "LARGE_DIVIDEND", "LARGE_DIVISOR", "HIGH_PRECISION", "POWER_OF_10"})
-    private String scenario;
-
-    // Decimal160 instances
-    private Decimal160 decimal160Dividend;
-    private Decimal160 decimal160Divisor;
-    private Decimal160 decimal160Result;
+public class Decimal128DivideBenchmark {
 
     // BigDecimal instances
     private BigDecimal bigDecimalDividend;
     private BigDecimal bigDecimalDivisor;
+    // Decimal128 instances
+    private Decimal128 decimal128Dividend;
+    private Decimal128 decimal128Divisor;
+    private Decimal128 decimal128Result;
     private MathContext mathContext;
+    // Test data for different scenarios
+    @Param({"SIMPLE", "LARGE_DIVIDEND", "LARGE_DIVISOR", "HIGH_PRECISION", "POWER_OF_10"})
+    private String scenario;
 
-    @Setup
-    public void setup() {
-        // Initialize result containers
-        decimal160Result = new Decimal160();
-        mathContext = new MathContext(16, RoundingMode.HALF_UP);
+    public static void main(String[] args) throws RunnerException {
+        Options opt = new OptionsBuilder()
+                .include(Decimal128DivideBenchmark.class.getSimpleName())
+                .warmupIterations(5)
+                .measurementIterations(10)
+                .forks(1)
+                .build();
 
-        // Setup test data based on scenario
-        switch (scenario) {
-            case "SIMPLE":
-                // Simple division: 123.456 / 7.89
-                decimal160Dividend = Decimal160.fromDouble(123.456, 3);
-                decimal160Divisor = Decimal160.fromDouble(7.89, 2);
-                bigDecimalDividend = new BigDecimal("123.456");
-                bigDecimalDivisor = new BigDecimal("7.89");
-                break;
-
-            case "LARGE_DIVIDEND":
-                // Large dividend: 987654321.123456789 / 123.456
-                decimal160Dividend = Decimal160.fromDouble(987654321.123456789, 9);
-                decimal160Divisor = Decimal160.fromDouble(123.456, 3);
-                bigDecimalDividend = new BigDecimal("987654321.123456789");
-                bigDecimalDivisor = new BigDecimal("123.456");
-                break;
-
-            case "LARGE_DIVISOR":
-                // Large divisor: 123.456 / 987654321.123456789
-                decimal160Dividend = Decimal160.fromDouble(123.456, 3);
-                decimal160Divisor = Decimal160.fromDouble(987654321.123456789, 9);
-                bigDecimalDividend = new BigDecimal("123.456");
-                bigDecimalDivisor = new BigDecimal("987654321.123456789");
-                break;
-
-            case "HIGH_PRECISION":
-                // High precision: PI / E with many decimal places
-                decimal160Dividend = Decimal160.fromDouble(3.141592653589793, 15);
-                decimal160Divisor = Decimal160.fromDouble(2.718281828459045, 15);
-                bigDecimalDividend = new BigDecimal("3.141592653589793");
-                bigDecimalDivisor = new BigDecimal("2.718281828459045");
-                break;
-
-            case "POWER_OF_10":
-                // Division by power of 10: 123456.789 / 100
-                decimal160Dividend = Decimal160.fromDouble(123456.789, 3);
-                decimal160Divisor = Decimal160.fromDouble(100.0, 0);
-                bigDecimalDividend = new BigDecimal("123456.789");
-                bigDecimalDivisor = new BigDecimal("100");
-                break;
-        }
-    }
-
-    @Benchmark
-    public Decimal160 decimal160Divide() {
-        decimal160Result.copyFrom(decimal160Dividend);
-        decimal160Result.divide(decimal160Divisor, 6, RoundingMode.HALF_UP);
-        return decimal160Result;
+        new Runner(opt).run();
     }
 
     @Benchmark
@@ -125,25 +87,71 @@ public class Decimal160DivideBenchmark {
         return bigDecimalDividend.divide(bigDecimalDivisor, mathContext);
     }
 
-    // Benchmark that tests 128-bit by 64-bit division specifically
     @Benchmark
-    public void decimal160Divide128By64() {
-        // This scenario uses a 128-bit dividend divided by a 64-bit divisor
-        Decimal160 largeDividend = new Decimal160();
-        largeDividend.set(123456789L, 987654321098765432L, 6);
-        
-        decimal160Result.copyFrom(largeDividend);
-        decimal160Result.divide(decimal160Divisor, 6, RoundingMode.HALF_UP);
+    public Decimal128 decimal128Divide() {
+        decimal128Result.copyFrom(decimal128Dividend);
+        decimal128Result.divide(decimal128Divisor, 6, RoundingMode.HALF_UP);
+        return decimal128Result;
     }
 
-    public static void main(String[] args) throws RunnerException {
-        Options opt = new OptionsBuilder()
-                .include(Decimal160DivideBenchmark.class.getSimpleName())
-                .warmupIterations(5)
-                .measurementIterations(10)
-                .forks(1)
-                .build();
+    // Benchmark that tests 128-bit by 64-bit division specifically
+    @Benchmark
+    public void decimal128Divide128By64() {
+        // This scenario uses a 128-bit dividend divided by a 64-bit divisor
+        Decimal128 largeDividend = new Decimal128();
+        largeDividend.set(123456789L, 987654321098765432L, 6);
 
-        new Runner(opt).run();
+        decimal128Result.copyFrom(largeDividend);
+        decimal128Result.divide(decimal128Divisor, 6, RoundingMode.HALF_UP);
+    }
+
+    @Setup
+    public void setup() {
+        // Initialize result containers
+        decimal128Result = new Decimal128();
+        mathContext = new MathContext(16, RoundingMode.HALF_UP);
+
+        // Setup test data based on scenario
+        switch (scenario) {
+            case "SIMPLE":
+                // Simple division: 123.456 / 7.89
+                decimal128Dividend = Decimal128.fromDouble(123.456, 3);
+                decimal128Divisor = Decimal128.fromDouble(7.89, 2);
+                bigDecimalDividend = new BigDecimal("123.456");
+                bigDecimalDivisor = new BigDecimal("7.89");
+                break;
+
+            case "LARGE_DIVIDEND":
+                // Large dividend: 987654321.123456789 / 123.456
+                decimal128Dividend = Decimal128.fromDouble(987654321.123456789, 9);
+                decimal128Divisor = Decimal128.fromDouble(123.456, 3);
+                bigDecimalDividend = new BigDecimal("987654321.123456789");
+                bigDecimalDivisor = new BigDecimal("123.456");
+                break;
+
+            case "LARGE_DIVISOR":
+                // Large divisor: 123.456 / 987654321.123456789
+                decimal128Dividend = Decimal128.fromDouble(123.456, 3);
+                decimal128Divisor = Decimal128.fromDouble(987654321.123456789, 9);
+                bigDecimalDividend = new BigDecimal("123.456");
+                bigDecimalDivisor = new BigDecimal("987654321.123456789");
+                break;
+
+            case "HIGH_PRECISION":
+                // High precision: PI / E with many decimal places
+                decimal128Dividend = Decimal128.fromDouble(3.141592653589793, 15);
+                decimal128Divisor = Decimal128.fromDouble(2.718281828459045, 15);
+                bigDecimalDividend = new BigDecimal("3.141592653589793");
+                bigDecimalDivisor = new BigDecimal("2.718281828459045");
+                break;
+
+            case "POWER_OF_10":
+                // Division by power of 10: 123456.789 / 100
+                decimal128Dividend = Decimal128.fromDouble(123456.789, 3);
+                decimal128Divisor = Decimal128.fromDouble(100.0, 0);
+                bigDecimalDividend = new BigDecimal("123456.789");
+                bigDecimalDivisor = new BigDecimal("100");
+                break;
+        }
     }
 }
