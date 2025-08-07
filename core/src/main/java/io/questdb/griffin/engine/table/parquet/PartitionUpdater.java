@@ -53,7 +53,7 @@ public class PartitionUpdater implements QuietCloseable {
 
     public void of(
             @Transient LPSZ srcPath,
-            long fileOpenOpts,
+            int fileOpenOpts,
             long fileSize,
             int timestampIndex,
             long compressionCodec,

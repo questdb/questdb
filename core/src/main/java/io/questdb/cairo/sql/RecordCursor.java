@@ -62,7 +62,7 @@ import java.io.Closeable;
  * Many operations may throw {@link DataUnavailableException} when accessing
  * partitions stored in cold storage or when data is temporarily unavailable.
  */
-public interface RecordCursor extends Closeable, SymbolTableSource {
+public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTableSource {
 
     /**
      * Static utility method to calculate the total size of records in a cursor.
@@ -315,30 +315,12 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      *
      * // Assert that resetting the cursor did not discard its state
      * Assert.assertEquals("Cursor precomputed state should not change on toTop()", stateBefore, stateAfter);
-     * }
      * }</pre>
      *
      * @return A long value representing the cursor's pre-computed state. This is not
      * a memory size in bytes, but a stable value used to detect state changes.
      */
     long preComputedStateSize();
-
-    /**
-     * Positions the cursor at a specific record identified by its row ID.
-     * <p>
-     * This method provides random access to records within the cursor's result set.
-     * The row ID must have been previously obtained from a Record instance during
-     * a previous iteration or operation.
-     * <p>
-     * After successful positioning, the provided record object will be updated
-     * to reflect the data at the specified row ID.
-     *
-     * @param record  the record object to position and update with the target row's data
-     * @param atRowId the row ID of the desired record, previously obtained from a Record instance
-     * @throws IllegalArgumentException      if the row ID is invalid or not found
-     * @throws UnsupportedOperationException if random access is not supported by this cursor
-     */
-    void recordAt(Record record, long atRowId);
 
     /**
      * Returns the total number of records available in this cursor.

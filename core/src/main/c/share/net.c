@@ -36,6 +36,8 @@
 #include <netdb.h>
 #include "sysutil.h"
 
+jint handleEintrInConnect(jint fd, int result);
+
 int set_int_sockopt(int fd, int level, int opt, int value) {
     return setsockopt(fd, level, opt, &value, sizeof(value));
 }
@@ -45,19 +47,19 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setKeepAlive0
     if (set_int_sockopt(fd, SOL_SOCKET, SO_KEEPALIVE, 1) < 0) {
         return -1;
     }
-    #if defined(__linux__) || defined(__FreeBSD__)
-        if (set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, idle_sec) < 0) {
-            return -1;
-        }
-        if (set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, idle_sec) < 0) {
-            return -1;
-        }
-    #endif
-    #ifdef __APPLE__
-        if (set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, idle_sec) < 0) {
-            return -1;
-        }
-    #endif
+#if defined(__linux__) || defined(__FreeBSD__)
+    if (set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, idle_sec) < 0) {
+        return -1;
+    }
+    if (set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, idle_sec) < 0) {
+        return -1;
+    }
+#endif
+#ifdef __APPLE__
+    if (set_int_sockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, idle_sec) < 0) {
+        return -1;
+    }
+#endif
     return fd;
 }
 
@@ -237,19 +239,85 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureLinger
     return setsockopt((int) fd, SOL_SOCKET, SO_LINGER, &sl, sizeof(sl));
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_network_Net_connect
-        (JNIEnv *e, jclass cl, jint fd, jlong sockAddr) {
-    jboolean retry = 0;
-    int result;
-    do {
-        result = connect((int) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
-        retry |= result == -1 && errno == EINTR;
-    } while (result == -1 && errno == EINTR);
+JNIEXPORT jint handleEintrInConnect(jint fd, int result) {
+    if (result == -1 && errno == EINTR) {
+        // Connection was interrupted but continues in background
+        // Wait for it to complete using select()
+        fd_set writefds, exceptfds;
+        struct timeval timeout;
 
-    if (retry && errno == EISCONN) {
-        return 0;
+        FD_ZERO(&writefds);
+        FD_ZERO(&exceptfds);
+        FD_SET(fd, &writefds);
+        FD_SET(fd, &exceptfds);
+
+        // Set a reasonable timeout (e.g., 30 seconds)
+        timeout.tv_sec = 30;
+        timeout.tv_usec = 0;
+
+        int select_result = select(fd + 1, NULL, &writefds, &exceptfds, &timeout);
+
+        if (select_result > 0) {
+            if (FD_ISSET(fd, &exceptfds)) {
+                // Exception occurred
+                int error = 0;
+                socklen_t len = sizeof(error);
+                if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error != 0) {
+                    errno = error;
+                }
+                return -1;
+            } else if (FD_ISSET(fd, &writefds)) {
+                // Socket is writable, check for connection error
+                int error = 0;
+                socklen_t len = sizeof(error);
+                if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &len) == 0) {
+                    if (error == 0) {
+                        return 0; // Success
+                    } else {
+                        errno = error;
+                        return -1;
+                    }
+                }
+                return -1;
+            }
+        } else if (select_result == 0) {
+            // Timeout
+            errno = ETIMEDOUT;
+            return -1;
+        } else {
+            // select() failed
+            return -1;
+        }
     }
+
     return result;
+}
+
+jint JNICALL Java_io_questdb_network_Net_connect
+        (JNIEnv *e, jclass cl, jint fd, jlong sockAddr) {
+    int result;
+
+    struct sockaddr *addr = (struct sockaddr *) sockAddr;
+    socklen_t addrlen;
+
+    switch (addr->sa_family) {
+        case AF_INET:
+            addrlen = sizeof(struct sockaddr_in);
+            break;
+        case AF_INET6:
+            addrlen = sizeof(struct sockaddr_in6);
+            break;
+#ifndef __APPLE__
+            case AF_UNIX:
+                addrlen = sizeof(struct sockaddr_un);
+                break;
+#endif
+        default:
+            return -2;
+    }
+
+    result = connect((int) fd, (const struct sockaddr *) sockAddr, addrlen);
+    return handleEintrInConnect(fd, result);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setSndBuf
@@ -363,7 +431,10 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getPeerPort
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_connectAddrInfo
         (JNIEnv *e, jclass cl, jint fd, jlong lpAddrInfo) {
     struct addrinfo *addr = (struct addrinfo *) lpAddrInfo;
-    return connect((int) fd, addr->ai_addr, (int) addr->ai_addrlen);
+    int result;
+
+    result = connect((int) fd, addr->ai_addr, (int) addr->ai_addrlen);
+    return handleEintrInConnect(fd, result);
 }
 
 JNIEXPORT void JNICALL Java_io_questdb_network_Net_freeAddrInfo0
@@ -383,7 +454,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_getAddrInfo0
     struct addrinfo *addr = NULL;
 
     char _port[13];
-    snprintf(_port,  sizeof(_port)/sizeof(_port[0]), "%d", port);
+    snprintf(_port, sizeof(_port) / sizeof(_port[0]), "%d", port);
     int gai_err_code = getaddrinfo((const char *) host, (const char *) &_port, &hints, &addr);
 
     if (gai_err_code == 0) {
@@ -399,7 +470,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_resolvePort
     socklen_t resolved_addr_len = sizeof(resolved_addr);
     if (getsockname(
             fd,
-            (struct sockaddr *)&resolved_addr,
+            (struct sockaddr *) &resolved_addr,
             &resolved_addr_len) == -1)
         return -1;
     return ntohs(resolved_addr.sin_port);

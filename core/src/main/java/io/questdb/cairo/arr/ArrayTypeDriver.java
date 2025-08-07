@@ -318,7 +318,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             LPSZ fileName,
             long dataAppendPageSize,
             int memoryTag,
-            long opts,
+            int opts,
             int madviseOpts
     ) {
         auxMem.of(
@@ -346,7 +346,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             long rowLo,
             long rowHi,
             int memoryTag,
-            long opts
+            int opts
     ) {
         auxMem.ofOffset(
                 ff,
@@ -370,7 +370,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             long rowLo,
             long rowHi,
             int memoryTag,
-            long opts
+            int opts
     ) {
         long lo = rowLo > 0 ? readDataOffset(auxMem, ARRAY_AUX_WIDTH_BYTES * rowLo) : 0;
         long hi = rowHi > 0 ? calcDataOffsetEnd(auxMem, ARRAY_AUX_WIDTH_BYTES * (rowHi - 1)) : 0;
