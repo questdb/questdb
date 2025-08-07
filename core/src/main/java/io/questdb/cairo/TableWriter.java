@@ -3741,7 +3741,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             );
             return 1;
         }
-        return walTxnDetails.calculateInsertTransactionBlock(seqTxn, pressureControl, getWalMaxLagRows());
+        return walTxnDetails.calculateInsertTransactionBlock(seqTxn, pressureControl, getWalMaxLagRows(), txWriter.getMaxTimestamp());
     }
 
     private boolean canSquashOverwritePartitionTail(int partitionIndex) {

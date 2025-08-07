@@ -55,7 +55,9 @@ public class WorkerSpinRegulator implements Closeable {
     public void close() {
         started = false;
         try {
-            regulatorThread.join();
+            if (regulatorThread != null) {
+                regulatorThread.join();
+            }
         } catch (InterruptedException e) {
             LOG.error().$("Error while stopping WorkerSpinRegulator: ").$(e.getMessage()).I$();
         }
@@ -94,11 +96,13 @@ public class WorkerSpinRegulator implements Closeable {
      *
      * @return true if a worker was parked, false otherwise
      */
-    private boolean parkLastWorker(WorkerPoolMetrics poolMetrics, String poolName) {
+    private boolean parkWorker(WorkerPoolMetrics poolMetrics, String poolName, int activeWorkers, double currentUtilization) {
         for (int i = poolMetrics.getWorkerCount() - 1; i > -1; i--) {
             if (!poolMetrics.isParked(i)) { // Only consider active workers
                 poolMetrics.parkWorker(i);
                 LOG.info().$("parked worker [pool=").$(poolName)
+                        .$(", utilization=").$(currentUtilization)
+                        .$(", activeWorkers=").$(activeWorkers - 1)
                         .$(", workerId=").$(i).I$();
                 return true;
             }
@@ -121,28 +125,24 @@ public class WorkerSpinRegulator implements Closeable {
 
         // Calculate utilization deviation from target
         double utilizationDelta = currentUtilization - targetUtilization;
-        boolean madeAdjustment = false;
 
         // Decision logic with hysteresis
-        if (utilizationDelta < -utilizationTolerance && activeWorkers > minActiveWorkers) {
-            // Utilization too low - park a worker to increase load on remaining workers
-            madeAdjustment = parkLastWorker(poolMetrics, poolName);
-        } else if (activeWorkers < totalWorkers &&
-                (
-                        utilizationDelta > utilizationTolerance || (
-                                activeWorkers == poolMetrics.getBlockedWorkerCount(Os.currentTimeMicros(), blockedWorkerTimeoutMicros)
-                        )
-                )
-        ) {
+        boolean allBlocked = activeWorkers == poolMetrics.getBlockedWorkerCount(Os.currentTimeMicros(), 20_000);
+        if (activeWorkers < totalWorkers && (utilizationDelta > utilizationTolerance || allBlocked)) {
             // Utilization too high or all the running workers are blocked in long tasks.
             // Unpark a worker.
-            madeAdjustment = unparkWorker(poolMetrics, poolName);
-        }
-
-        if (madeAdjustment) {
-            LOG.info().$("WorkerPool adjusted [pool=").$(poolName)
-                    .$(", utilization=").$(currentUtilization)
-                    .$(", active=").$(poolMetrics.getActiveWorkerCount()).I$();
+            unparkWorker(poolMetrics, poolName, activeWorkers, currentUtilization);
+        } else if (utilizationDelta < -utilizationTolerance && activeWorkers > minActiveWorkers) {
+            // Utilization too low - park a worker to increase load on remaining workers
+            if (parkWorker(poolMetrics, poolName, activeWorkers, currentUtilization)) {
+                if (currentUtilization < 1.0) {
+                    activeWorkers--;
+                    // Park more than 1 worker if utilization is way too low
+                    while (activeWorkers > minActiveWorkers && parkWorker(poolMetrics, poolName, activeWorkers, currentUtilization)) {
+                        activeWorkers--;
+                    }
+                }
+            }
         }
     }
 
@@ -151,13 +151,16 @@ public class WorkerSpinRegulator implements Closeable {
      *
      * @return true if a worker was unparked, false otherwise
      */
-    private boolean unparkWorker(WorkerPoolMetrics poolMetrics, String poolName) {
+    private boolean unparkWorker(WorkerPoolMetrics poolMetrics, String poolName, int workerCount, double currentUtilization) {
         // Find first parked worker (simple strategy)
         for (int i = 0, n = poolMetrics.getWorkerCount(); i < n; i++) {
             if (poolMetrics.isParked(i)) {
                 poolMetrics.unparkWorker(i);
-                LOG.info().$("Unparked worker [pool=").$(poolName)
-                        .$(", workerId=").$(i).I$();
+                LOG.info().$("unparked worker [pool=").$(poolName)
+                        .$(", workerId=")
+                        .$(", utilization=").$(currentUtilization)
+                        .$(", workerCount=").$(workerCount + 1)
+                        .$(i).I$();
                 return true;
             }
         }

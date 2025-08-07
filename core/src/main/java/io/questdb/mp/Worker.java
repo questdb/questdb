@@ -238,10 +238,6 @@ public class Worker extends Thread {
     private void parkWorker() {
         Object monitor = poolMetrics.getParkingMonitor(workerId);
 
-        if (log != null) {
-            log.info().$("Worker parking [pool=").$(poolName).$(", workerId=").$(workerId).I$();
-        }
-
         while (poolMetrics.isParked(workerId) && lifecycle.get() == Lifecycle.RUNNING) {
             synchronized (monitor) {
                 // Double-check the condition while holding the monitor lock
@@ -255,10 +251,6 @@ public class Worker extends Thread {
                     }
                 }
             }
-        }
-
-        if (log != null) {
-            log.info().$("worker unparked [pool=").$(poolName).$(", workerId=").$(workerId).I$();
         }
     }
 

@@ -223,7 +223,7 @@ public class WalTxnDetails implements QuietCloseable {
      * @param maxBlockRecordCount - maximum number of transactions in the block
      * @return - the number of transactions to apply in one go, e.g. the block size
      */
-    public int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl, long maxBlockRecordCount) {
+    public int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl, long maxBlockRecordCount, long tableMaxTimestamp) {
         int blockSize = 1;
         long lastSeqTxn = getLastSeqTxn();
         long totalRowCount = getSegmentRowHi(seqTxn) - getSegmentRowLo(seqTxn);
@@ -231,13 +231,13 @@ public class WalTxnDetails implements QuietCloseable {
 
         long lastWalSegment = getWalSegment(seqTxn);
         boolean allInOrder = getTxnInOrder(seqTxn);
-        long minTs = Long.MAX_VALUE;
-        long maxTs = Long.MIN_VALUE;
+        long minTs = getMinTimestamp(seqTxn);
+        long maxTs = getMaxTimestamp(seqTxn);
 
         if (getCommitToTimestamp(seqTxn) != FORCE_FULL_COMMIT && getDedupMode(seqTxn) != WAL_DEDUP_MODE_REPLACE_RANGE) {
             for (long nextTxn = seqTxn + 1; nextTxn <= lastSeqTxn; nextTxn++) {
                 long currentWalSegment = getWalSegment(nextTxn);
-                if (allInOrder) {
+                if (allInOrder && minTs >= tableMaxTimestamp) {
                     if (currentWalSegment != lastWalSegment) {
                         if (totalRowCount >= maxBlockRecordCount / 10) {
                             // Big enough chunk of all in order data in same segment
@@ -267,13 +267,15 @@ public class WalTxnDetails implements QuietCloseable {
         // Find reasonable block size that will not cause O3
         // Here we are trying to find the block size that is in the row count range of [maxBlockRecordCount / 2; maxBlockRecordCount]
         // And the commit to timestamp includes the last transaction in the block
-        // This is very basic heuristic and needs some read time testing to come with a more robust solution
-        long lastTxn = seqTxn + blockSize - 1;
-        if (blockSize > 1 && getCommitToTimestamp(lastTxn) != FORCE_FULL_COMMIT) {
-            while (blockSize > 1 && getCommitToTimestamp(lastTxn) < getMaxTimestamp(lastTxn) && totalRowCount > maxBlockRecordCount / 2) {
-                blockSize--;
-                lastTxn--;
-                totalRowCount -= getSegmentRowHi(lastTxn) - getSegmentRowLo(lastTxn);
+        // This is very basic heuristic and needs some real time testing to come with a more robust solution
+        if (minTs >= tableMaxTimestamp) {
+            long lastTxn = seqTxn + blockSize - 1;
+            if (blockSize > 1 && getCommitToTimestamp(lastTxn) != FORCE_FULL_COMMIT) {
+                while (blockSize > 1 && getCommitToTimestamp(lastTxn) < getMaxTimestamp(lastTxn) && totalRowCount > maxBlockRecordCount / 2) {
+                    blockSize--;
+                    lastTxn--;
+                    totalRowCount -= getSegmentRowHi(lastTxn) - getSegmentRowLo(lastTxn);
+                }
             }
         }
 
