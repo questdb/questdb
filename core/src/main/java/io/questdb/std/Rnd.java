@@ -153,6 +153,44 @@ public class Rnd {
         return result;
     }
 
+    public void nextDecimal64(Decimal64 sink) {
+        // Generate random scale between 0 and MAX_SCALE
+        int scale = nextInt(Decimal64.MAX_SCALE + 1);
+
+        // Generate random value - mix of small, medium and large values
+        Decimal64 value;
+        int valueType = nextInt(4);
+
+        switch (valueType) {
+            case 0: // Small values (-1000 to 1000)
+                value = new Decimal64(nextLong() % 2000 - 1000, scale);
+                break;
+            case 1: // Medium values (up to int range)
+                value = new Decimal64(nextInt(), scale);
+                break;
+            case 2: // Large positive values (limited to avoid overflow in operations)
+                value = new Decimal64(nextLong() / 1000, scale);
+                break;
+            default: // Large negative values (limited to avoid overflow in operations)
+                value = new Decimal64(-(nextLong() / 1000), scale);
+                break;
+        }
+
+        sink.copyFrom(value);
+    }
+
+    /**
+     * Generate a random Decimal64 and return a new instance.
+     * This method generates a mix of small, medium, and large values with random scales.
+     *
+     * @return A new Decimal64 instance with random values
+     */
+    public Decimal64 nextDecimal64() {
+        Decimal64 result = new Decimal64();
+        nextDecimal64(result);
+        return result;
+    }
+
     public double nextDouble() {
         return (((long) (nextIntForDouble(26)) << 27) + nextIntForDouble(27)) * DOUBLE_UNIT;
     }
