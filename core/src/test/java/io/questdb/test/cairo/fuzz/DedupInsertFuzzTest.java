@@ -109,7 +109,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 generateInsertsTransactions(
                         transactions,
                         1,
-                        parseFloorPartialTimestamp("2020-02-24T04:30"),
+                        MicrosTimestampDriver.floor("2020-02-24T04:30"),
                         initialDelta,
                         initialCount,
                         1 + rnd.nextInt(1),
