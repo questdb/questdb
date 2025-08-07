@@ -872,7 +872,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (httpMinServerEnabled) {
                 // Set HTTP Min server worker pool configuration directly  
                 initWorkerPoolConfiguration(properties, env, httpMinServerConfiguration,
-                        "HTTP_MIN_WORKER", 1, false, 10, 100, 100, 50,
+                        "HTTP_MIN_WORKER", 1, 10, 2, 100, 50,
                         sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
                         sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
 
@@ -918,7 +918,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             final int forceRecvFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE, Integer.MAX_VALUE);
             // Set HTTP server worker pool configuration directly
             initWorkerPoolConfiguration(properties, env, httpServerConfiguration,
-                    "HTTP_WORKER", 0, false, 10, 7_000, 10_000, 10,
+                    "HTTP_WORKER", 0,
                     sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
                     sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
 
@@ -1208,7 +1208,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
                 // Set PG Wire worker pool configuration directly
                 initWorkerPoolConfiguration(properties, env, pgWireConfiguration,
-                        "PG_WORKER", 0, false, 10, 7_000, 10_000, 10,
+                        "PG_WORKER", 0,
                         sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
                         sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
                 this.pgDaemonPool = getBoolean(properties, env, PropertyKey.PG_DAEMON_POOL, true);
@@ -1231,7 +1231,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             // Set WAL Apply worker pool configuration directly
             initWorkerPoolConfiguration(properties, env, walApplyPoolConfiguration,
-                    "WAL_APPLY_WORKER", 0, false, 1000, 7_000, 10_000, 10,
+                    "WAL_APPLY_WORKER", 0,
                     sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
                     sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
 
@@ -1241,7 +1241,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewRefreshOomRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 200);
             // Set Mat View Refresh worker pool configuration directly
             initWorkerPoolConfiguration(properties, env, matViewRefreshPoolConfiguration,
-                    "MAT_VIEW_REFRESH_WORKER", 0, false, 1000, 7_000, 10_000, 10,
+                    "MAT_VIEW_REFRESH_WORKER", 0,
                     sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
                     sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
 
@@ -1521,13 +1521,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpWriterQueueCapacity = getQueueCapacity(properties, env, PropertyKey.LINE_TCP_WRITER_QUEUE_CAPACITY, 128);
                 // Set Line TCP Writer worker pool configuration directly
                 initWorkerPoolConfiguration(properties, env, lineTcpWriterWorkerPoolConfiguration,
-                        "LINE_TCP_WRITER_WORKER", 0, false, 10, 7_000, 10_000, 10,
+                        "LINE_TCP_WRITER_WORKER", 0,
                         sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
                         sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
                 this.symbolCacheWaitBeforeReload = getMicros(properties, env, PropertyKey.LINE_TCP_SYMBOL_CACHE_WAIT_BEFORE_RELOAD, 500_000);
                 // Set Line TCP IO worker pool configuration directly
                 initWorkerPoolConfiguration(properties, env, lineTcpIOWorkerPoolConfiguration,
-                        "LINE_TCP_IO_WORKER", 0, false, 10, 7_000, 10_000, 10,
+                        "LINE_TCP_IO_WORKER", 0,
                         sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
                         sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
                 this.lineTcpMaintenanceInterval = getMillis(properties, env, PropertyKey.LINE_TCP_MAINTENANCE_JOB_INTERVAL, 1000);
@@ -1887,77 +1887,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         return httpContextWebConsole;
     }
 
-    private void initWorkerPoolConfiguration(
-            Properties properties,
-            Map<String, String> env,
-            PropWorkerPoolConfiguration poolConfiguration,
-            String enumPrefix,
-            int defaultWorkerCount,
-            boolean defaultHaltOnError,
-            long defaultYieldThreshold,
-            long defaultNapThreshold,
-            long defaultSleepThreshold,
-            long defaultSleepTimeout,
-            double sharedTargetUtilization,
-            double sharedUtilizationTolerance,
-            int sharedMinActiveWorkers,
-            long sharedEvaluationInterval
-    ) throws ServerConfigurationException {
-        // Try to find PropertyKey enum values by constructing the expected names
-        try {
-            PropertyKey workerCountProp = PropertyKey.valueOf(enumPrefix + "_COUNT");
-            PropertyKey affinityProp = PropertyKey.valueOf(enumPrefix + "_AFFINITY");
-            PropertyKey haltOnErrorProp = getHaltOnErrorProperty(enumPrefix);
-            PropertyKey yieldThresholdProp = safeValueOf(enumPrefix + "_YIELD_THRESHOLD");  
-            PropertyKey napThresholdProp = safeValueOf(enumPrefix + "_NAP_THRESHOLD");
-            PropertyKey sleepThresholdProp = safeValueOf(enumPrefix + "_SLEEP_THRESHOLD");
-            PropertyKey sleepTimeoutProp = safeValueOf(enumPrefix + "_SLEEP_TIMEOUT");
-            PropertyKey targetUtilizationProp = safeValueOf(enumPrefix + "_TARGET_UTILIZATION");
-            PropertyKey utilizationToleranceProp = safeValueOf(enumPrefix + "_UTILIZATION_TOLERANCE");
-            PropertyKey minActiveWorkersProp = safeValueOf(enumPrefix + "_MIN_ACTIVE_WORKERS");
-            PropertyKey evaluationIntervalProp = safeValueOf(enumPrefix + "_EVALUATION_INTERVAL");
-
-            poolConfiguration.workerCount = getInt(properties, env, workerCountProp, defaultWorkerCount);
-            poolConfiguration.workerAffinity = getAffinity(properties, env, affinityProp, poolConfiguration.workerCount);
-            poolConfiguration.haltOnError = haltOnErrorProp != null ? getBoolean(properties, env, haltOnErrorProp, defaultHaltOnError) : defaultHaltOnError;
-            poolConfiguration.yieldThreshold = yieldThresholdProp != null ? getLong(properties, env, yieldThresholdProp, defaultYieldThreshold) : defaultYieldThreshold;
-            poolConfiguration.napThreshold = napThresholdProp != null ? getLong(properties, env, napThresholdProp, defaultNapThreshold) : defaultNapThreshold;
-            poolConfiguration.sleepThreshold = sleepThresholdProp != null ? getLong(properties, env, sleepThresholdProp, defaultSleepThreshold) : defaultSleepThreshold;
-            poolConfiguration.sleepTimeout = sleepTimeoutProp != null ? getMillis(properties, env, sleepTimeoutProp, defaultSleepTimeout) : defaultSleepTimeout;
-            poolConfiguration.targetUtilization = targetUtilizationProp != null ? getDouble(properties, env, targetUtilizationProp, String.valueOf(sharedTargetUtilization)) : sharedTargetUtilization;
-            poolConfiguration.utilizationTolerance = utilizationToleranceProp != null ? getDouble(properties, env, utilizationToleranceProp, String.valueOf(sharedUtilizationTolerance)) : sharedUtilizationTolerance;
-            poolConfiguration.minActiveWorkers = minActiveWorkersProp != null ? getInt(properties, env, minActiveWorkersProp, sharedMinActiveWorkers) : sharedMinActiveWorkers;
-            poolConfiguration.evaluationInterval = evaluationIntervalProp != null ? getMillis(properties, env, evaluationIntervalProp, sharedEvaluationInterval) : sharedEvaluationInterval;
-            poolConfiguration.metrics = this.metrics;
-            
-            // Initialize affinity array with -1 if property wasn't found
-        } catch (IllegalArgumentException e) {
-            throw new ServerConfigurationException("Missing PropertyKey for worker pool: " + enumPrefix);
-        }
-    }
-    
-    private PropertyKey safeValueOf(String enumName) {
-        try {
-            return PropertyKey.valueOf(enumName);
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
-    }
-
-    private PropertyKey getHaltOnErrorProperty(String enumPrefix) {
-        // Handle special cases where halt.on.error property names don't follow standard pattern
-        switch (enumPrefix) {
-            case "PG_WORKER":
-                return safeValueOf("PG_HALT_ON_ERROR");
-            case "LINE_TCP_WRITER_WORKER":
-                return safeValueOf("LINE_TCP_WRITER_HALT_ON_ERROR");
-            case "LINE_TCP_IO_WORKER":
-                return safeValueOf("LINE_TCP_IO_HALT_ON_ERROR");
-            default:
-                return safeValueOf(enumPrefix + "_HALT_ON_ERROR");
-        }
-    }
-
     private int configureSharedThreadPool(
             Properties properties,
             Map<String, String> env,
@@ -1997,9 +1926,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         return poolConfiguration.workerCount;
     }
 
-    private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
+    private int[] getAffinity(@Nullable Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
         final int[] result = new int[workerCount];
-        String value = getString(properties, env, key, null);
+        String value = properties != null ? getString(properties, env, key, null) : null;
         if (value == null) {
             Arrays.fill(result, -1);
         } else {
@@ -2037,6 +1966,20 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         return CommitMode.NOSYNC;
+    }
+
+    private PropertyKey getHaltOnErrorProperty(String enumPrefix) {
+        // Handle special cases where halt.on.error property names don't follow standard pattern
+        switch (enumPrefix) {
+            case "PG_WORKER":
+                return safeValueOf("PG_HALT_ON_ERROR");
+            case "LINE_TCP_WRITER_WORKER":
+                return safeValueOf("LINE_TCP_WRITER_HALT_ON_ERROR");
+            case "LINE_TCP_IO_WORKER":
+                return safeValueOf("LINE_TCP_IO_HALT_ON_ERROR");
+            default:
+                return safeValueOf(enumPrefix + "_HALT_ON_ERROR");
+        }
     }
 
     private LineTimestampAdapter getLineTimestampAdaptor(Properties properties, Map<String, String> env, ConfigPropertyKey propNm) {
@@ -2107,6 +2050,82 @@ public class PropServerConfiguration implements ServerConfiguration {
         return sink.toString();
     }
 
+    private void initWorkerPoolConfiguration(
+            Properties properties,
+            Map<String, String> env,
+            PropWorkerPoolConfiguration poolConfiguration,
+            String enumPrefix,
+            int defaultWorkerCount,
+            long defaultYieldThreshold,
+            long defaultNapThreshold,
+            long defaultSleepThreshold,
+            long defaultSleepTimeout,
+            double sharedTargetUtilization,
+            double sharedUtilizationTolerance,
+            int sharedMinActiveWorkers,
+            long sharedEvaluationInterval
+    ) throws ServerConfigurationException {
+        // Try to find PropertyKey enum values by constructing the expected names
+        try {
+            PropertyKey workerCountProp = safeValueOf(enumPrefix + "_COUNT");
+            PropertyKey affinityProp = safeValueOf(enumPrefix + "_AFFINITY");
+            PropertyKey haltOnErrorProp = getHaltOnErrorProperty(enumPrefix);
+            PropertyKey yieldThresholdProp = safeValueOf(enumPrefix + "_YIELD_THRESHOLD");
+            PropertyKey napThresholdProp = safeValueOf(enumPrefix + "_NAP_THRESHOLD");
+            PropertyKey sleepThresholdProp = safeValueOf(enumPrefix + "_SLEEP_THRESHOLD");
+            PropertyKey sleepTimeoutProp = safeValueOf(enumPrefix + "_SLEEP_TIMEOUT");
+            PropertyKey targetUtilizationProp = safeValueOf(enumPrefix + "_TARGET_UTILIZATION");
+            PropertyKey utilizationToleranceProp = safeValueOf(enumPrefix + "_UTILIZATION_TOLERANCE");
+            PropertyKey minActiveWorkersProp = safeValueOf(enumPrefix + "_MIN_ACTIVE_WORKERS");
+            PropertyKey evaluationIntervalProp = safeValueOf(enumPrefix + "_EVALUATION_INTERVAL");
+
+            poolConfiguration.workerCount = workerCountProp != null ? getInt(properties, env, workerCountProp, defaultWorkerCount) : defaultWorkerCount;
+            poolConfiguration.workerAffinity = getAffinity(properties, env, affinityProp, poolConfiguration.workerCount);
+            poolConfiguration.yieldThreshold = yieldThresholdProp != null ? getLong(properties, env, yieldThresholdProp, defaultYieldThreshold) : defaultYieldThreshold;
+            poolConfiguration.haltOnError = getBoolean(properties, env, haltOnErrorProp, false);
+            poolConfiguration.napThreshold = napThresholdProp != null ? getLong(properties, env, napThresholdProp, defaultNapThreshold) : defaultNapThreshold;
+            poolConfiguration.sleepThreshold = sleepThresholdProp != null ? getLong(properties, env, sleepThresholdProp, defaultSleepThreshold) : defaultSleepThreshold;
+            poolConfiguration.sleepTimeout = sleepTimeoutProp != null ? getMillis(properties, env, sleepTimeoutProp, defaultSleepTimeout) : defaultSleepTimeout;
+            poolConfiguration.targetUtilization = targetUtilizationProp != null ? getDouble(properties, env, targetUtilizationProp, String.valueOf(sharedTargetUtilization)) : sharedTargetUtilization;
+            poolConfiguration.utilizationTolerance = utilizationToleranceProp != null ? getDouble(properties, env, utilizationToleranceProp, String.valueOf(sharedUtilizationTolerance)) : sharedUtilizationTolerance;
+            poolConfiguration.minActiveWorkers = minActiveWorkersProp != null ? getInt(properties, env, minActiveWorkersProp, sharedMinActiveWorkers) : sharedMinActiveWorkers;
+            poolConfiguration.evaluationInterval = evaluationIntervalProp != null ? getMillis(properties, env, evaluationIntervalProp, sharedEvaluationInterval) : sharedEvaluationInterval;
+            poolConfiguration.metrics = this.metrics;
+
+            // Initialize affinity array with -1 if property wasn't found
+        } catch (IllegalArgumentException e) {
+            throw new ServerConfigurationException("Missing PropertyKey for worker pool: " + enumPrefix);
+        }
+    }
+
+    private void initWorkerPoolConfiguration(
+            Properties properties,
+            Map<String, String> env,
+            PropWorkerPoolConfiguration poolConfiguration,
+            String enumPrefix,
+            int defaultWorkerCount,
+            double sharedTargetUtilization,
+            double sharedUtilizationTolerance,
+            int sharedMinActiveWorkers,
+            long sharedEvaluationInterval
+    ) throws ServerConfigurationException {
+        initWorkerPoolConfiguration(
+                properties,
+                env,
+                poolConfiguration,
+                enumPrefix,
+                defaultWorkerCount,
+                10, // default yield threshold
+                7_000, // default nap threshold
+                10_000, // default sleep threshold
+                10, // default sleep timeout
+                sharedTargetUtilization,
+                sharedUtilizationTolerance,
+                sharedMinActiveWorkers,
+                sharedEvaluationInterval
+        );
+    }
+
     private boolean pathEquals(String p1, String p2) {
         try {
             if (p1 == null || p2 == null) {
@@ -2119,6 +2138,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             log.info().$("Can't validate configuration property [key=").$(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath())
                     .$(", value=").$(p2).$("]");
             return false;
+        }
+    }
+
+    private PropertyKey safeValueOf(String enumName) {
+        try {
+            return PropertyKey.valueOf(enumName);
+        } catch (IllegalArgumentException e) {
+            return null;
         }
     }
 

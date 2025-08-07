@@ -89,8 +89,7 @@ public class WorkerPool implements Closeable {
         assert this.workerAffinity.length == workerCount;
         this.workerJobs = new ObjList<>(workerCount);
         this.threadLocalCleaners = new ObjList<>(workerCount);
-        this.poolMetrics = new WorkerPoolMetrics(workerCount, sleepMs);
-        this.freeOnExit.add(this.poolMetrics);
+        this.poolMetrics = new WorkerPoolMetrics(workerCount);
         for (int i = 0; i < workerCount; i++) {
             workerJobs.add(new ObjHashSet<>());
             threadLocalCleaners.add(new ObjList<>());
@@ -171,7 +170,6 @@ public class WorkerPool implements Closeable {
                 halted.await();
             }
             workers.clear(); // Worker is not closable
-            poolMetrics.close();
             Misc.freeObjListAndClear(freeOnExit);
         }
     }

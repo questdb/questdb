@@ -50,11 +50,11 @@ public class Worker extends Thread {
     private final Metrics metrics;
     private final long napThreshold;
     private final OnHaltAction onHaltAction;
+    private final WorkerPoolMetrics poolMetrics;
     private final String poolName;
     private final Job.RunStatus runStatus = () -> lifecycle.get() == Lifecycle.HALTED;
     private final long sleepMs;
     private final long sleepThreshold;
-    private final WorkerPoolMetrics poolMetrics;
     private final int workerId;
     private final long yieldThreshold;
 
@@ -183,19 +183,19 @@ public class Worker extends Thread {
 
                     // Record iteration stats
                     poolMetrics.recordIteration(workerId, usefulJobs > 0);
-                    
+
                     if (runAsap) {
                         ticker = 0;
                         continue;
                     }
-                    
+
                     // Check if this worker should park
                     if (poolMetrics.isParked(workerId)) {
                         parkWorker();
                         ticker = 0; // Reset ticker after parking
                         continue;
                     }
-                    
+
                     if (++ticker < 0) {
                         ticker = sleepThreshold + 1; // overflow
                     }
@@ -229,15 +229,6 @@ public class Worker extends Thread {
         }
     }
 
-    private void stdErrCritical(Throwable e) {
-        System.err.println(criticalErrorLine);
-        e.printStackTrace(System.err);
-    }
-
-    long getJobStartMicros() {
-        return jobStartMicros.get();
-    }
-    
     /**
      * Parks this worker thread by waiting on its individual monitor until unparked.
      * The worker will repeatedly check the parking flag and wait if it should remain parked.
@@ -246,7 +237,7 @@ public class Worker extends Thread {
      */
     private void parkWorker() {
         Object monitor = poolMetrics.getParkingMonitor(workerId);
-        
+
         if (log != null) {
             log.info().$("Worker parking [pool=").$(poolName).$(", workerId=").$(workerId).I$();
         }
@@ -265,10 +256,19 @@ public class Worker extends Thread {
                 }
             }
         }
-        
+
         if (log != null) {
             log.info().$("worker unparked [pool=").$(poolName).$(", workerId=").$(workerId).I$();
         }
+    }
+
+    private void stdErrCritical(Throwable e) {
+        System.err.println(criticalErrorLine);
+        e.printStackTrace(System.err);
+    }
+
+    long getJobStartMicros() {
+        return jobStartMicros.get();
     }
 
     private enum Lifecycle {

@@ -24,10 +24,10 @@
 
 package io.questdb.mp;
 
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
-import io.questdb.std.QuietCloseable;
-import io.questdb.std.Unsafe;
+
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 
 /**
  * High-performance metrics collection for worker pools that avoids false sharing.
@@ -40,44 +40,38 @@ import io.questdb.std.Unsafe;
  * <p>
  * False sharing is prevented by ensuring each worker's data occupies a full cache line (64 bytes).
  */
-public final class WorkerPoolMetrics implements QuietCloseable {
+public final class WorkerPoolMetrics {
 
-    // Cache line size for most modern CPUs
+    // Cache line size for most modern CPUs - used for padding to avoid false sharing
     private static final int CACHE_LINE_SIZE = 64;
-    private static final int PARKING_FLAG_OFFSET = 8; // boolean (1 byte)
-    // Offsets within each worker slot
-    // Size of each worker's metrics slot (padded to cache line)
-    private static final int WORKER_SLOT_SIZE = CACHE_LINE_SIZE;
+    // VarHandle for volatile access to array elements
+    private static final VarHandle PARKING_FLAGS_HANDLE = MethodHandles.arrayElementVarHandle(byte[].class);
+    
     private final Object[] parkingMonitors;
-    private final long poolSleepMicro;
     private final int workerCount;
     private final WorkerStats[] workerStats;
-    private long baseAddress;
+    // Byte array for parking flags - each worker gets CACHE_LINE_SIZE bytes to prevent false sharing
+    // Array elements are accessed/modified atomically to ensure thread safety
+    private final byte[] parkingFlags;
 
-    public WorkerPoolMetrics(int workerCount, long poolSleepMs) {
+    public WorkerPoolMetrics(int workerCount) {
         this.workerCount = workerCount;
 
         // Create individual monitor objects for each worker
         this.parkingMonitors = new Object[workerCount];
-        this.poolSleepMicro = poolSleepMs * 1000;
         for (int i = 0; i < workerCount; i++) {
             parkingMonitors[i] = new Object();
         }
+
+        // Initialize worker stats
         workerStats = new WorkerStats[workerCount];
         for (int i = 0; i < workerCount; i++) {
             workerStats[i] = new WorkerStats();
         }
-    }
 
-    /**
-     * Free the allocated native memory. Must be called to prevent memory leaks.
-     */
-    @Override
-    public void close() {
-        if (baseAddress != 0) {
-            Unsafe.free(baseAddress, (long) workerCount * WORKER_SLOT_SIZE, MemoryTag.NATIVE_DEFAULT);
-            baseAddress = 0;
-        }
+        // Allocate parking flags array with cache line padding to prevent false sharing
+        // Each worker gets CACHE_LINE_SIZE bytes, but only the first byte is used for the flag
+        this.parkingFlags = new byte[workerCount * CACHE_LINE_SIZE];
     }
 
     /**
@@ -87,6 +81,18 @@ public final class WorkerPoolMetrics implements QuietCloseable {
      */
     public int getActiveWorkerCount() {
         return workerCount - getParkedWorkerCount();
+    }
+
+    public int getBlockedWorkerCount(long nowMicros, long blockedThresholdMicros) {
+        int count = 0;
+        for (int i = 0; i < workerCount; i++) {
+            if (!isParked(i)) {
+                if (workerStats[i].isBlocked(nowMicros, blockedThresholdMicros)) {
+                    count++;
+                }
+            }
+        }
+        return count;
     }
 
     /**
@@ -99,15 +105,16 @@ public final class WorkerPoolMetrics implements QuietCloseable {
             return 0.0;
         }
 
-        long nowMicro = Os.currentTimeMicros();
+        int activeWorkerCount = 0;
         double sum = 0.0;
         for (int i = 0; i < workerCount; i++) {
             if (isParked(i)) {
                 continue; // Skip parked workers
             }
-            sum += workerStats[i].getUtilizationPercentage(nowMicro, poolSleepMicro); // Assuming poolSleepMs is 1000ms
+            sum += workerStats[i].getUtilizationPercentage();
+            activeWorkerCount++;
         }
-        return sum / workerCount;
+        return sum / activeWorkerCount;
     }
 
     /**
@@ -147,6 +154,19 @@ public final class WorkerPoolMetrics implements QuietCloseable {
     }
 
     /**
+     * Gets the parking flag for a specific worker.
+     *
+     * @param workerId the worker ID (0-based index)
+     * @return true if worker should park, false otherwise
+     */
+    public boolean isParked(int workerId) {
+        assert workerId >= 0 && workerId < workerCount;
+        // Access the first byte of this worker's cache line slot with volatile semantics
+        int flagIndex = workerId * CACHE_LINE_SIZE;
+        return ((byte) PARKING_FLAGS_HANDLE.getVolatile(parkingFlags, flagIndex)) != 0;
+    }
+
+    /**
      * Parks a specific worker by setting its parking flag and notifying any management thread.
      * The worker should check its parking flag and wait on its individual monitor.
      *
@@ -161,19 +181,6 @@ public final class WorkerPoolMetrics implements QuietCloseable {
         workerStats[workerId].recordIteration(useful);
     }
 
-//    /**
-//     * Records the utilization percentage for a specific worker.
-//     * This method is designed to be called frequently from worker threads with minimal overhead.
-//     *
-//     * @param workerId              the worker ID (0-based index)
-//     * @param utilizationPercentage utilization value (0.0 to 100.0)
-//     */
-//    public void recordUtilization(int workerId, double utilizationPercentage) {
-//        assert workerId >= 0 && workerId < workerCount;
-//        long slotAddress = baseAddress + ((long) workerId * WORKER_SLOT_SIZE);
-//        Unsafe.getUnsafe().putDouble(slotAddress + UTILIZATION_OFFSET, utilizationPercentage);
-//    }
-
     /**
      * Sets the parking flag for a specific worker, indicating it should park on the monitor.
      *
@@ -182,34 +189,14 @@ public final class WorkerPoolMetrics implements QuietCloseable {
      */
     public void setParkingFlag(int workerId, boolean shouldPark) {
         assert workerId >= 0 && workerId < workerCount;
-        long slotAddress = baseAddress + ((long) workerId * WORKER_SLOT_SIZE);
-        Unsafe.getUnsafe().putByte(slotAddress + PARKING_FLAG_OFFSET, shouldPark ? (byte) 1 : (byte) 0);
-    }
-
-    /**
-     * Gets the parking flag for a specific worker.
-     *
-     * @param workerId the worker ID (0-based index)
-     * @return true if worker should park, false otherwise
-     */
-    public boolean isParked(int workerId) {
-        assert workerId >= 0 && workerId < workerCount;
-        long slotAddress = baseAddress + ((long) workerId * WORKER_SLOT_SIZE);
-        return Unsafe.getUnsafe().getByte(slotAddress + PARKING_FLAG_OFFSET) != 0;
+        // Set the first byte of this worker's cache line slot with volatile semantics
+        int flagIndex = workerId * CACHE_LINE_SIZE;
+        PARKING_FLAGS_HANDLE.setVolatile(parkingFlags, flagIndex, shouldPark ? (byte) 1 : (byte) 0);
     }
 
     public void start() {
-        if (baseAddress != 0) {
-            // Already started
-            return;
-        }
-
-        // Allocate memory: workerCount * WORKER_SLOT_SIZE
-        long totalSize = (long) workerCount * WORKER_SLOT_SIZE;
-        this.baseAddress = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
-
-        // Initialize all values to zero
-        Unsafe.getUnsafe().setMemory(baseAddress, totalSize, (byte) 0);
+        // No-op since parking flags array is already initialized in constructor
+        // All array elements are initialized to 0 by default (false for parking flags)
     }
 
     /**
@@ -234,12 +221,7 @@ public final class WorkerPoolMetrics implements QuietCloseable {
         private boolean windowFull = false;
         private int windowIndex = 0;
 
-        private double getUtilizationPercentage(long nowMicro, long poolSleepMicro) {
-            if (nowMicro - lastUpdatedMiroTs > 2 * poolSleepMicro) {
-                // If no updates in the last poolSleepMs, assume 100% utilization
-                return 100.0;
-            }
-
+        private double getUtilizationPercentage() {
             long total = totalIterations;
             if (total == 0) {
                 return 0.0;
@@ -260,6 +242,10 @@ public final class WorkerPoolMetrics implements QuietCloseable {
             }
 
             return (double) usefulIterations / total * 100.0;
+        }
+
+        private boolean isBlocked(long nowMicro, long blockedThreshold) {
+            return nowMicro - lastUpdatedMiroTs > blockedThreshold;
         }
 
         private void recordIteration(boolean wasUseful) {

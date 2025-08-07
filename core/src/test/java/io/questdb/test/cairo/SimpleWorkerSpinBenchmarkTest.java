@@ -82,8 +82,8 @@ public class SimpleWorkerSpinBenchmarkTest {
         });
     }
 
-    private double runBenchmark(int workerCount, String testName, int workPerSecond) throws Exception {
-        LOG.info().$("Running benchmark with ").$(testName).$();
+    private double runBenchmark(int workerCount, String workersDescr, int workPerSecond) throws Exception {
+        LOG.info().$("Running benchmark with ").$(workersDescr).$(", target: ").$(workPerSecond).$(" work/sec").$();
 
         // Create worker pool configuration
         WorkerPoolConfiguration config = new WorkerPoolConfiguration() {
@@ -134,7 +134,7 @@ public class SimpleWorkerSpinBenchmarkTest {
             workerSpinRegulator.start();
 
             try {
-                LOG.info().$("Running ").$(testName).$(" for 10 seconds...").$();
+                LOG.info().$("Running ").$(workersDescr).$(" for 10 seconds...").$();
 
                 Thread.sleep(10000);
 
