@@ -81,12 +81,12 @@ public final class WhereClauseParser implements Mutable {
     private final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
     private final CharSequenceHashSet tempK = new CharSequenceHashSet();
     private final IntList tempKeyExcludedValuePos = new IntList();
-    //expression node types (literal, bind var, etc.) of excluded keys used  when comparing values and generating functions 
+    //expression node types (literal, bind var, etc.) of excluded keys used  when comparing values and generating functions
     private final IntList tempKeyExcludedValueType = new IntList();
-    //assumption: either tempKeyExcludedValues or tempKeyValues has to be empty, otherwise sql code generator will produce wrong factory  
+    //assumption: either tempKeyExcludedValues or tempKeyValues has to be empty, otherwise sql code generator will produce wrong factory
     private final CharSequenceHashSet tempKeyExcludedValues = new CharSequenceHashSet();
     private final IntList tempKeyValuePos = new IntList();
-    //expression node types (literal, bind var, etc.) of tempKeys used  when comparing values 
+    //expression node types (literal, bind var, etc.) of tempKeys used  when comparing values
     private final IntList tempKeyValueType = new IntList();
     private final CharSequenceHashSet tempKeyValues = new CharSequenceHashSet();
     private final CharSequenceHashSet tempKeys = new CharSequenceHashSet();
@@ -95,6 +95,7 @@ public final class WhereClauseParser implements Mutable {
     private final IntList tempPos = new IntList();
     private final IntList tempT = new IntList();
     private final IntList tempType = new IntList();
+    private final ObjList<Function> tmpFunctions = new ObjList<>();
     private boolean allKeyExcludedValuesAreKnown = true;
     private boolean allKeyValuesAreKnown = true;
     private boolean isConstFunction;
@@ -114,6 +115,7 @@ public final class WhereClauseParser implements Mutable {
         this.tempK.clear();
         this.tempP.clear();
         this.tempT.clear();
+        this.tmpFunctions.clear();
         clearKeys();
         clearExcludedKeys();
         this.csPool.clear();
@@ -738,65 +740,48 @@ public final class WhereClauseParser implements Mutable {
                 // NOT IN can be translated in any case as series of subtractions
                 if (!model.hasIntervalFilters() || isNegated) {
                     int n = in.args.size() - 1;
-                    Function timestampFunc = null;
-                    boolean moreThanOneTimestampFunc = false;
-                    for (int i = 0; i < n; i++) {
-                        ExpressionNode inListItem = in.args.getQuick(i);
-                        if (inListItem.type != ExpressionNode.CONSTANT) {
-                            if (inListItem.type != ExpressionNode.FUNCTION) {
-                                Misc.free(timestampFunc);
-                                return false;
-                            }
-                            final Function func = functionParser.parseFunction(inListItem, metadata, executionContext);
-                            if (!func.isConstant() || !checkFunctionCanBeStrInterval(executionContext, func)) {
-                                Misc.free(func);
-                                Misc.free(timestampFunc);
-                                return false;
-                            }
-                            if (timestampFunc != null) {
-                                Misc.free(func);
-                                moreThanOneTimestampFunc = true;
-                            } else {
-                                timestampFunc = func;
-                            }
-                        }
-                    }
-
-                    // If there is more than one ts function, we parse them once again,
-                    // so timestampFunc won't be used.
-                    if (moreThanOneTimestampFunc) {
-                        timestampFunc = Misc.free(timestampFunc);
-                    }
-
-                    for (int i = 0; i < n; i++) {
-                        ExpressionNode inListItem = in.args.getQuick(i);
-                        long ts;
-                        if (inListItem.type == ExpressionNode.CONSTANT) {
-                            ts = parseTokenAsTimestamp(timestampDriver, inListItem);
-                        } else {
-                            final Function func = moreThanOneTimestampFunc ? functionParser.parseFunction(inListItem, metadata, executionContext) : timestampFunc;
-                            try {
-                                ts = getTimestampFromConstFunction(executionContext, timestampDriver, func, inListItem.position, false);
-                                if (moreThanOneTimestampFunc) {
-                                    Misc.free(func);
+                    tmpFunctions.clear();
+                    try {
+                        for (int i = 0; i < n; i++) {
+                            ExpressionNode inListItem = in.args.getQuick(i);
+                            if (inListItem.type != ExpressionNode.CONSTANT) {
+                                if (inListItem.type != ExpressionNode.FUNCTION) {
+                                    return false;
                                 }
-                            } catch (Throwable th) {
-                                Misc.free(func);
-                                throw th;
+                                final Function func = functionParser.parseFunction(inListItem, metadata, executionContext);
+                                tmpFunctions.add(func);
+                                if (!func.isConstant() || !(checkFunctionCanBeStrInterval(executionContext, func) || checkFunctionCanBeTimestamp(metadata, executionContext, func))) {
+                                    return false;
+                                }
                             }
                         }
-                        if (!isNegated) {
-                            if (i == 0) {
-                                model.intersectIntervals(ts, ts);
+
+                        int nonConstCountFuncIndex = 0;
+
+                        for (int i = 0; i < n; i++) {
+                            ExpressionNode inListItem = in.args.getQuick(i);
+                            long ts;
+                            if (inListItem.type == ExpressionNode.CONSTANT) {
+                                ts = parseTokenAsTimestamp(timestampDriver, inListItem);
                             } else {
-                                model.unionIntervals(ts, ts);
+                                final Function func = tmpFunctions.getQuick(nonConstCountFuncIndex++);
+                                ts = getTimestampFromConstFunction(executionContext, timestampDriver, func, inListItem.position, false);
                             }
-                        } else {
-                            model.subtractIntervals(ts, ts);
+                            if (!isNegated) {
+                                if (i == 0) {
+                                    model.intersectIntervals(ts, ts);
+                                } else {
+                                    model.unionIntervals(ts, ts);
+                                }
+                            } else {
+                                model.subtractIntervals(ts, ts);
+                            }
                         }
+                    } finally {
+                        Misc.freeObjListAndClear(tmpFunctions);
                     }
+
                     in.intrinsicValue = IntrinsicModel.TRUE;
-                    Misc.free(timestampFunc);
                     return true;
                 }
             }
@@ -1639,10 +1624,14 @@ public final class WhereClauseParser implements Mutable {
         return ColumnType.isInterval(function.getType());
     }
 
-    private boolean checkFunctionCanBeStrInterval(SqlExecutionContext executionContext, Function function) throws SqlException {
+    private boolean checkFunctionCanBeStrInterval(SqlExecutionContext executionContext, Function function) {
         int type = function.getType();
         if (ColumnType.isUndefined(type)) {
-            function.assignType(ColumnType.STRING, executionContext.getBindVariableService());
+            try {
+                function.assignType(ColumnType.STRING, executionContext.getBindVariableService());
+            } catch (Throwable e) {
+                return false;
+            }
             return true;
         }
         return ColumnType.isString(type) || ColumnType.isVarchar(type);
@@ -1659,6 +1648,24 @@ public final class WhereClauseParser implements Mutable {
             function.assignType(timestampType, executionContext.getBindVariableService());
         } else if (!canCastToTimestamp(function.getType())) {
             throw SqlException.invalidDate(functionPosition);
+        }
+    }
+
+    private boolean checkFunctionCanBeTimestamp(
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext,
+            Function function
+    ) {
+        if (ColumnType.isUndefined(function.getType())) {
+            try {
+                int timestampType = metadata.getColumnType(metadata.getTimestampIndex());
+                function.assignType(timestampType, executionContext.getBindVariableService());
+            } catch (Throwable ignored) {
+                return false;
+            }
+            return true;
+        } else {
+            return canCastToTimestamp(function.getType());
         }
     }
 

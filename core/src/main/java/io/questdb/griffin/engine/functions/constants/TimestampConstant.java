@@ -56,6 +56,6 @@ public class TimestampConstant extends TimestampFunction implements ConstantFunc
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val(value);
+        sink.valISODate(timestampDriver, value);
     }
 }

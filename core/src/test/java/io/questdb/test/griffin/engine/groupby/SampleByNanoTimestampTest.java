@@ -12248,8 +12248,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                0,
-                "not enough values"
+                101,
+                "insufficient fill values for SAMPLE BY FILL"
         );
     }
 

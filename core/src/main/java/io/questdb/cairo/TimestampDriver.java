@@ -58,6 +58,7 @@ public interface TimestampDriver {
 
     void append(CharSink<?> sink, long timestamp);
 
+
     default void appendMem(CharSequence value, MemoryA mem) {
         try {
             mem.putLong(parseFloorLiteral(value));
