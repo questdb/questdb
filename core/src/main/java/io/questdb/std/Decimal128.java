@@ -34,27 +34,6 @@ public class Decimal128 implements Sinkable {
     static final long LONG_MASK = 0xffffffffL;
     private static final long B = (long) 1 << Integer.SIZE;
     private static final long INFLATED = Long.MIN_VALUE;
-    private static final long[] LONG_TEN_POWERS_TABLE = {
-            1L,                     // 0 / 10^0
-            10L,                    // 1 / 10^1
-            100L,                   // 2 / 10^2
-            1000L,                  // 3 / 10^3
-            10000L,                 // 4 / 10^4
-            100000L,                // 5 / 10^5
-            1000000L,               // 6 / 10^6
-            10000000L,              // 7 / 10^7
-            100000000L,             // 8 / 10^8
-            1000000000L,            // 9 / 10^9
-            10000000000L,          // 10 / 10^10
-            100000000000L,         // 11 / 10^11
-            1000000000000L,        // 12 / 10^12
-            10000000000000L,       // 13 / 10^13
-            100000000000000L,      // 14 / 10^14
-            1000000000000000L,     // 15 / 10^15
-            10000000000000000L,    // 16 / 10^16
-            100000000000000000L,   // 17 / 10^17
-            1000000000000000000L   // 18 / 10^18
-    };
     private static final long[] TEN_POWERS_TABLE_HIGH = { // High 64-bit part of the ten powers table from 10^20 to 10^38
             5L, // 10^20
             54L, // 10^21
@@ -309,7 +288,7 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Create a Decimal128 from a double value.
+     * Create a Decimal128 from a double value, using HALF_UP when rounding is needed.
      *
      * @param value the double value to convert
      * @param scale the number of decimal places
@@ -318,9 +297,8 @@ public class Decimal128 implements Sinkable {
      */
     public static Decimal128 fromDouble(double value, int scale) {
         validateScale(scale);
-        long scaleFactor = scale <= 18 ? LONG_TEN_POWERS_TABLE[scale] : calculatePowerOf10(scale);
-        long scaledValue = Math.round(value * scaleFactor);
-        return fromLong(scaledValue, scale);
+        BigDecimal bd = new BigDecimal(value).setScale(scale, RoundingMode.HALF_UP);
+        return fromBigDecimal(bd);
     }
 
     /**
@@ -1057,19 +1035,6 @@ public class Decimal128 implements Sinkable {
             value %= divisor;
             divisor /= 10;
         }
-    }
-
-    private static long calculatePowerOf10(int n) {
-        if (n <= 18) {
-            return LONG_TEN_POWERS_TABLE[n];
-        }
-        long result = 1;
-        while (n >= 18) {
-            result *= LONG_TEN_POWERS_TABLE[18];
-            n -= 18;
-        }
-        result *= LONG_TEN_POWERS_TABLE[n];
-        return result;
     }
 
     /**
