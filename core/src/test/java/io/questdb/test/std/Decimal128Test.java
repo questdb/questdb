@@ -1257,12 +1257,6 @@ public class Decimal128Test {
         Assert.assertEquals(5.0, accumulator.toDouble(), 0.01);
     }
 
-    private boolean fitsInLongRange(Decimal128 decimal) {
-        // Check if the decimal can be represented as a long without overflow
-        // This is a conservative check to avoid overflow in reference calculations
-        return decimal.getHigh() == 0 || (decimal.getHigh() == -1 && decimal.getLow() < 0);
-    }
-
     private void testAdditionAccuracy(Decimal128 a, Decimal128 b, int iteration) {
         // Test addition accuracy with BigDecimal
         BigDecimal bigA = a.toBigDecimal();
