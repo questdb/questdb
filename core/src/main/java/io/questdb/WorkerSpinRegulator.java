@@ -35,9 +35,10 @@ import java.io.Closeable;
 
 public class WorkerSpinRegulator implements Closeable {
     private static final Log LOG = LogFactory.getLog(WorkerSpinRegulator.class);
+    private static final int throttleLoggingThresholdMicros = 5_000_000;
     private final ObjList<WorkerPool> workerPoolObjList = new ObjList<>();
-    private long evaluateTimeout = Long.MAX_VALUE;
     private long blockedWorkerTimeoutMicros = 100 * 1000; // 100 ms
+    private long evaluateTimeout = Long.MAX_VALUE;
     private Thread regulatorThread;
     private volatile boolean started;
 
@@ -92,23 +93,29 @@ public class WorkerSpinRegulator implements Closeable {
     }
 
     /**
-     * Parks the worker with the lowest utilization to encourage load concentration.
-     *
-     * @return true if a worker was parked, false otherwise
+     * Parks a worker thread
      */
-    private boolean parkWorker(WorkerPoolMetrics poolMetrics, String poolName, int activeWorkers, double currentUtilization) {
-        for (int i = poolMetrics.getWorkerCount() - 1; i > -1; i--) {
+    private void parkWorker(WorkerPoolMetrics poolMetrics, String poolName, int activeWorkers, double currentUtilization, int parkCount) {
+        boolean parked = false;
+
+        for (int i = poolMetrics.getWorkerCount() - 1; i > -1 && parkCount > 0; i--) {
             if (!poolMetrics.isParked(i)) { // Only consider active workers
                 poolMetrics.parkWorker(i);
-                LOG.info().$("parked worker [pool=").$(poolName)
-                        .$(", utilization=").$(currentUtilization)
-                        .$(", activeWorkers=").$(activeWorkers - 1)
-                        .$(", workerId=").$(i).I$();
-                return true;
+                parkCount--;
+                activeWorkers--;
+                parked = true;
             }
         }
 
-        return false;
+        if (parked) {
+            if (poolMetrics.logParkingThrottled(Os.currentTimeMicros(), throttleLoggingThresholdMicros)) {
+                LOG.info().$("parked workers [pool=").$(poolName)
+                        .$(", parkedCount=").$(parkCount)
+                        .$(", utilization=").$(currentUtilization)
+                        .$(", activeWorkers=").$(activeWorkers)
+                        .I$();
+            }
+        }
     }
 
     private void resize(WorkerPool workerPool) {
@@ -127,44 +134,38 @@ public class WorkerSpinRegulator implements Closeable {
         double utilizationDelta = currentUtilization - targetUtilization;
 
         // Decision logic with hysteresis
-        boolean allBlocked = activeWorkers == poolMetrics.getBlockedWorkerCount(Os.currentTimeMicros(), 20_000);
-        if (activeWorkers < totalWorkers && (utilizationDelta > utilizationTolerance || allBlocked)) {
+        int blockedWorkerCount = poolMetrics.getBlockedWorkerCount(Os.currentTimeMicros(), blockedWorkerTimeoutMicros);
+        if (activeWorkers < totalWorkers && (utilizationDelta > utilizationTolerance || activeWorkers == blockedWorkerCount)) {
             // Utilization too high or all the running workers are blocked in long tasks.
             // Unpark a worker.
             unparkWorker(poolMetrics, poolName, activeWorkers, currentUtilization);
         } else if (utilizationDelta < -utilizationTolerance && activeWorkers > minActiveWorkers) {
+            int minWorkers = Math.max(blockedWorkerCount + 1, minActiveWorkers);
             // Utilization too low - park a worker to increase load on remaining workers
-            if (parkWorker(poolMetrics, poolName, activeWorkers, currentUtilization)) {
-                if (currentUtilization < 1.0) {
-                    activeWorkers--;
-                    // Park more than 1 worker if utilization is way too low
-                    while (activeWorkers > minActiveWorkers && parkWorker(poolMetrics, poolName, activeWorkers, currentUtilization)) {
-                        activeWorkers--;
-                    }
-                }
-            }
+            int parkWorkers = currentUtilization < 1.0 ? activeWorkers - minWorkers : 1;
+            parkWorker(poolMetrics, poolName, activeWorkers, currentUtilization, parkWorkers);
         }
     }
 
     /**
      * Unparks a randomly selected parked worker to distribute load.
-     *
-     * @return true if a worker was unparked, false otherwise
      */
-    private boolean unparkWorker(WorkerPoolMetrics poolMetrics, String poolName, int workerCount, double currentUtilization) {
+    private void unparkWorker(WorkerPoolMetrics poolMetrics, String poolName, int workerCount, double currentUtilization) {
         // Find first parked worker (simple strategy)
         for (int i = 0, n = poolMetrics.getWorkerCount(); i < n; i++) {
             if (poolMetrics.isParked(i)) {
                 poolMetrics.unparkWorker(i);
-                LOG.info().$("unparked worker [pool=").$(poolName)
-                        .$(", workerId=")
-                        .$(", utilization=").$(currentUtilization)
-                        .$(", workerCount=").$(workerCount + 1)
-                        .$(i).I$();
-                return true;
+
+                if (poolMetrics.logParkingThrottled(Os.currentTimeMicros(), throttleLoggingThresholdMicros)) {
+                    LOG.info().$("unparked worker [pool=").$(poolName)
+                            .$(", workerId=").$(i)
+                            .$(", utilization=").$(currentUtilization)
+                            .$(", workerCount=").$(workerCount + 1)
+                            .I$();
+                }
+                return;
             }
         }
-        return false;
     }
 
 }

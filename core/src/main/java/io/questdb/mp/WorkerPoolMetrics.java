@@ -53,6 +53,7 @@ public final class WorkerPoolMetrics {
     // Byte array for parking flags - each worker gets CACHE_LINE_SIZE bytes to prevent false sharing
     // Array elements are accessed/modified atomically to ensure thread safety
     private final byte[] parkingFlags;
+    private long lastParkingLogTime;
 
     public WorkerPoolMetrics(int workerCount) {
         this.workerCount = workerCount;
@@ -164,6 +165,14 @@ public final class WorkerPoolMetrics {
         // Access the first byte of this worker's cache line slot with volatile semantics
         int flagIndex = workerId * CACHE_LINE_SIZE;
         return ((byte) PARKING_FLAGS_HANDLE.getVolatile(parkingFlags, flagIndex)) != 0;
+    }
+
+    public boolean logParkingThrottled(long currentTimeMicros, int throttleThresholdMicros) {
+        if (lastParkingLogTime < currentTimeMicros - throttleThresholdMicros) {
+            lastParkingLogTime = currentTimeMicros;
+            return true; // Allow logging
+        }
+        return false;
     }
 
     /**

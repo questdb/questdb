@@ -144,7 +144,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10, configuration.getNetworkWorkerPoolConfiguration().getSleepTimeout());
 
         Assert.assertEquals(10, configuration.getHttpMinServerConfiguration().getYieldThreshold());
-        Assert.assertEquals(100, configuration.getHttpMinServerConfiguration().getNapThreshold());
+        Assert.assertEquals(20, configuration.getHttpMinServerConfiguration().getNapThreshold());
         Assert.assertEquals(100, configuration.getHttpMinServerConfiguration().getSleepThreshold());
         Assert.assertEquals(50, configuration.getHttpMinServerConfiguration().getSleepTimeout());
         Assert.assertEquals(1, configuration.getHttpMinServerConfiguration().getWorkerCount());
@@ -487,7 +487,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10, configuration.getWalApplyPoolConfiguration().getSleepTimeout());
         Assert.assertEquals(7_000, configuration.getWalApplyPoolConfiguration().getNapThreshold());
         Assert.assertEquals(10_000, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
-        Assert.assertEquals(1000, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
+        Assert.assertEquals(10, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(200, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
         Assert.assertEquals(4, configuration.getCairoConfiguration().getO3LagCalculationWindowsSize());
         Assert.assertEquals(200_000, configuration.getCairoConfiguration().getWalSegmentRolloverRowCount());
@@ -510,7 +510,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10, configuration.getMatViewRefreshPoolConfiguration().getSleepTimeout());
         Assert.assertEquals(7_000, configuration.getMatViewRefreshPoolConfiguration().getNapThreshold());
         Assert.assertEquals(10_000, configuration.getMatViewRefreshPoolConfiguration().getSleepThreshold());
-        Assert.assertEquals(1000, configuration.getMatViewRefreshPoolConfiguration().getYieldThreshold());
+        Assert.assertEquals(10, configuration.getMatViewRefreshPoolConfiguration().getYieldThreshold());
         Assert.assertFalse(configuration.getCairoConfiguration().useWithinLatestByOptimisation());
     }
 

@@ -872,7 +872,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (httpMinServerEnabled) {
                 // Set HTTP Min server worker pool configuration directly  
                 initWorkerPoolConfiguration(properties, env, httpMinServerConfiguration,
-                        "HTTP_MIN_WORKER", 1, 10, 2, 100, 50,
+                        "HTTP_MIN_WORKER", 1, 10, 20, 100, 50,
                         sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
                         sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
 
