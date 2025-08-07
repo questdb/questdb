@@ -471,7 +471,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean walApplyEnabled;
     private final int walApplyLookAheadTransactionCount;
     private final PropWorkerPoolConfiguration walApplyPoolConfiguration = new PropWorkerPoolConfiguration("wal-apply");
-    private final long walApplySleepTimeout;
     private final long walApplyTableTimeQuota;
     private final boolean walEnabledDefault;
     private final long walMaxLagSize;
@@ -864,10 +863,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             ff.close(tableIndexFd);
 
             // Read shared worker defaults early so they can be used as defaults for all worker pools
-            double sharedWorkerTargetUtilization = getDouble(properties, env, PropertyKey.SHARED_WORKER_TARGET_UTILIZATION, "0.8");
-            double sharedWorkerUtilizationTolerance = getDouble(properties, env, PropertyKey.SHARED_WORKER_UTILIZATION_TOLERANCE, "0.1");
+            double sharedWorkerTargetUtilization = getDouble(properties, env, PropertyKey.SHARED_WORKER_TARGET_UTILIZATION, "60.0");
+            double sharedWorkerUtilizationTolerance = getDouble(properties, env, PropertyKey.SHARED_WORKER_UTILIZATION_TOLERANCE, "5.0");
             int sharedWorkerMinActiveWorkers = getInt(properties, env, PropertyKey.SHARED_WORKER_MIN_ACTIVE_WORKERS, 1);
-            long sharedWorkerEvaluationInterval = getMillis(properties, env, PropertyKey.SHARED_WORKER_EVALUATION_INTERVAL, 5000);
+            long sharedWorkerEvaluationInterval = getMillis(properties, env, PropertyKey.SHARED_WORKER_EVALUATION_INTERVAL, 100L);
 
             this.httpMinServerEnabled = getBoolean(properties, env, PropertyKey.HTTP_MIN_ENABLED, true);
             if (httpMinServerEnabled) {
@@ -1235,7 +1234,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                     "WAL_APPLY_WORKER", 0, false, 1000, 7_000, 10_000, 10,
                     sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
                     sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
-            this.walApplySleepTimeout = walApplyPoolConfiguration.sleepTimeout;
 
             // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);

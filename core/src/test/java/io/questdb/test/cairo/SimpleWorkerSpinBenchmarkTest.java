@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.WorkerSpinRegulator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
@@ -97,7 +98,7 @@ public class SimpleWorkerSpinBenchmarkTest {
             }
         };
 
-        try (WorkerPool workerPool = new WorkerPool(config)) {
+        try (WorkerPool workerPool = new WorkerPool(config); WorkerSpinRegulator workerSpinRegulator = new WorkerSpinRegulator()) {
 
             // Create work coordinator to ensure consistent total work
             WorkCoordinator workCoordinator = new WorkCoordinator(Integer.MAX_VALUE, workPerSecond);
@@ -127,7 +128,10 @@ public class SimpleWorkerSpinBenchmarkTest {
 
             // Start worker pool
             long startTime = System.currentTimeMillis();
+
+            workerSpinRegulator.addWorkerPool(workerPool);
             workerPool.start(LOG);
+            workerSpinRegulator.start();
 
             try {
                 LOG.info().$("Running ").$(testName).$(" for 10 seconds...").$();

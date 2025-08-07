@@ -40,10 +40,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class WorkerPool implements Closeable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final boolean daemons;
+    private final long evaluateInterval;
     private final ObjList<Closeable> freeOnExit = new ObjList<>();
     private final boolean haltOnError;
     private final SOCountDownLatch halted;
     private final Metrics metrics;
+    private final int minActiveWorkers;
     private final long napThreshold;
     private final String poolName;
     private final int priority;
@@ -52,12 +54,14 @@ public class WorkerPool implements Closeable {
     private final long sleepThreshold;
     private final SOCountDownLatch started = new SOCountDownLatch(1);
     private final ObjList<ObjList<Closeable>> threadLocalCleaners;
+    private final double utilizationTolerance;
     private final int[] workerAffinity;
     private final int workerCount;
     private final ObjList<ObjHashSet<Job>> workerJobs;
     private final ObjList<Worker> workers = new ObjList<>();
     private final WorkerPoolMetrics poolMetrics;
     private final long yieldThreshold;
+    private final double targetUtilization;
 
     public WorkerPool(WorkerPoolConfiguration configuration) {
         this.workerCount = configuration.getWorkerCount();
@@ -77,26 +81,20 @@ public class WorkerPool implements Closeable {
         this.sleepMs = configuration.getSleepTimeout();
         this.metrics = configuration.getMetrics();
         this.priority = configuration.workerPoolPriority();
+        this.evaluateInterval = configuration.getEvaluationInterval();
+        this.targetUtilization = configuration.getTargetUtilization();
+        this.utilizationTolerance = configuration.getUtilizationTolerance();
+        this.minActiveWorkers = configuration.getMinActiveWorkers();
 
         assert this.workerAffinity.length == workerCount;
         this.workerJobs = new ObjList<>(workerCount);
         this.threadLocalCleaners = new ObjList<>(workerCount);
-        this.poolMetrics = new WorkerPoolMetrics(workerCount);
+        this.poolMetrics = new WorkerPoolMetrics(workerCount, sleepMs);
         this.freeOnExit.add(this.poolMetrics);
         for (int i = 0; i < workerCount; i++) {
             workerJobs.add(new ObjHashSet<>());
             threadLocalCleaners.add(new ObjList<>());
         }
-
-        WorkerPoolManagerJob managerJob = new WorkerPoolManagerJob(
-                this.getPoolMetrics(),
-                poolName,
-                configuration.getTargetUtilization(),
-                configuration.getUtilizationTolerance(),
-                configuration.getEvaluationInterval(),
-                configuration.getMinActiveWorkers()
-        );
-        assign(managerJob);
     }
 
     /**
@@ -135,8 +133,24 @@ public class WorkerPool implements Closeable {
         freeOnExit.add(closeable);
     }
 
+    public long getEvaluateInterval() {
+        return evaluateInterval;
+    }
+
+    public int getMinActiveWorkers() {
+        return minActiveWorkers;
+    }
+
     public String getPoolName() {
         return poolName;
+    }
+
+    public double getTargetUtilization() {
+        return targetUtilization;
+    }
+
+    public double getUtilizationTolerance() {
+        return utilizationTolerance;
     }
 
     public int getWorkerCount() {
