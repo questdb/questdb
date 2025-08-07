@@ -55,6 +55,132 @@ public class Decimal128 implements Sinkable {
             100000000000000000L,   // 17 / 10^17
             1000000000000000000L   // 18 / 10^18
     };
+    private static final long[] TEN_POWERS_TABLE_HIGH = { // High 64-bit part of the ten powers table from 10^20 to 10^38
+            5L, // 10^20
+            54L, // 10^21
+            542L, // 10^22
+            5421L, // 10^23
+            54210L, // 10^24
+            542101L, // 10^25
+            5421010L, // 10^26
+            54210108L, // 10^27
+            542101086L, // 10^28
+            5421010862L, // 10^29
+            54210108624L, // 10^30
+            542101086242L, // 10^31
+            5421010862427L, // 10^32
+            54210108624275L, // 10^33
+            542101086242752L, // 10^34
+            5421010862427522L, // 10^35
+            54210108624275221L, // 10^36
+            542101086242752217L, // 10^37
+            5421010862427522170L, // 10^38
+    };
+    private static final long[] TEN_POWERS_TABLE_LOW = { // Low 64-bit part of the ten powers table from 10^0 to 10^38
+            1L, // 10^0
+            10L, // 10^1
+            100L, // 10^2
+            1000L, // 10^3
+            10000L, // 10^4
+            100000L, // 10^5
+            1000000L, // 10^6
+            10000000L, // 10^7
+            100000000L, // 10^8
+            1000000000L, // 10^9
+            10000000000L, // 10^10
+            100000000000L, // 10^11
+            1000000000000L, // 10^12
+            10000000000000L, // 10^13
+            100000000000000L, // 10^14
+            1000000000000000L, // 10^15
+            10000000000000000L, // 10^16
+            100000000000000000L, // 10^17
+            1000000000000000000L, // 10^18
+            -8446744073709551616L, // 10^19
+            7766279631452241920L, // 10^20
+            3875820019684212736L, // 10^21
+            1864712049423024128L, // 10^22
+            200376420520689664L, // 10^23
+            2003764205206896640L, // 10^24
+            1590897978359414784L, // 10^25
+            -2537764290115403776L, // 10^26
+            -6930898827444486144L, // 10^27
+            4477988020393345024L, // 10^28
+            7886392056514347008L, // 10^29
+            5076944270305263616L, // 10^30
+            -4570789518076018688L, // 10^31
+            -8814407033341083648L, // 10^32
+            4089650035136921600L, // 10^33
+            4003012203950112768L, // 10^34
+            3136633892082024448L, // 10^35
+            -5527149226598858752L, // 10^36
+            68739955140067328L, // 10^37
+            687399551400673280L, // 10^38
+    };
+    // High 64-bit part of the maximum value that 10^x can multiply without overflowing
+    private static final long[] TEN_POWERS_TABLE_THRESHOLD_HIGH = {
+            9223372036854775807L, // 10^0
+            922337203685477580L, // 10^1
+            92233720368547758L, // 10^2
+            9223372036854775L, // 10^3
+            922337203685477L, // 10^4
+            92233720368547L, // 10^5
+            9223372036854L, // 10^6
+            922337203685L, // 10^7
+            92233720368L, // 10^8
+            9223372036L, // 10^9
+            922337203L, // 10^10
+            92233720L, // 10^11
+            9223372L, // 10^12
+            922337L, // 10^13
+            92233L, // 10^14
+            9223L, // 10^15
+            922L, // 10^16
+            92L, // 10^17
+            9L, // 10^18
+    };
+    // Low 64-bit part of the maximum value that 10^x can multiply without overflowing
+    private static final long[] TEN_POWERS_TABLE_THRESHOLD_LOW = {
+            -9223372036854775808L, // 10^0
+            -4611686018427387904L, // 10^1
+            1383505805528216371L, // 10^2
+            -3550998234189088687L, // 10^3
+            -7733797452902729516L, // 10^4
+            -4462728560032183275L, // 10^5
+            -4135621670745128651L, // 10^6
+            8809809869780262942L, // 10^7
+            -8342391049876749514L, // 10^8
+            -2678913512358630113L, // 10^9
+            -5801914573348728497L, // 10^10
+            6798506172148947796L, // 10^11
+            679850617214894779L, // 10^12
+            3757333876463399801L, // 10^13
+            -5158289834466525505L, // 10^14
+            6862868646037168095L, // 10^15
+            6220310086716582294L, // 10^16
+            4311379823413568552L, // 10^17
+            4120486797083267178L, // 10^18
+            -1432625727662628444L, // 10^19
+            1701411834604692317L, // 10^20
+            170141183460469231L, // 10^21
+            17014118346046923L, // 10^22
+            1701411834604692L, // 10^23
+            170141183460469L, // 10^24
+            17014118346046L, // 10^25
+            1701411834604L, // 10^26
+            170141183460L, // 10^27
+            17014118346L, // 10^28
+            1701411834L, // 10^29
+            170141183L, // 10^30
+            17014118L, // 10^31
+            1701411L, // 10^32
+            170141L, // 10^33
+            17014L, // 10^34
+            1701L, // 10^35
+            170L, // 10^36
+            17L, // 10^37
+            1L, // 10^38
+    };
     // Cache for common small values
     private static final Decimal128[] ZERO_THROUGH_TEN = new Decimal128[11];
     private transient long compact;  // Compact representation for values fitting in a signed long
@@ -559,7 +685,14 @@ public class Decimal128 implements Sinkable {
         if (this.scale != resultScale) {
             if (this.scale < resultScale) {
                 int scaleUp = resultScale - this.scale;
+                boolean isNegative = isNegative();
+                if (isNegative) {
+                    negate();
+                }
                 multiplyByPowerOf10InPlace(scaleUp);
+                if (isNegative) {
+                    negate();
+                }
             } else {
                 int scaleDown = this.scale - resultScale;
                 for (int i = 0; i < scaleDown; i++) {
@@ -600,56 +733,11 @@ public class Decimal128 implements Sinkable {
             }
         }
 
-        // Perform multiplication using the algorithm from Decimal128
-        // This is complex but avoids allocations
-        long a3 = this.high >>> 32;
-        long a2 = this.high & 0xFFFFFFFFL;
-        long a1 = this.low >>> 32;
-        long a0 = this.low & 0xFFFFFFFFL;
-
-        long b3 = otherHighAbs >>> 32;
-        long b2 = otherHighAbs & 0xFFFFFFFFL;
-        long b1 = otherLowAbs >>> 32;
-        long b0 = otherLowAbs & 0xFFFFFFFFL;
-
-        // Compute all partial products
-        long p00 = a0 * b0;
-        long p01 = a0 * b1;
-        long p02 = a0 * b2;
-        long p03 = a0 * b3;
-        long p10 = a1 * b0;
-        long p11 = a1 * b1;
-        long p12 = a1 * b2;
-        long p13 = a1 * b3;
-        long p20 = a2 * b0;
-        long p21 = a2 * b1;
-        long p22 = a2 * b2;
-        long p23 = a2 * b3;
-        long p30 = a3 * b0;
-        long p31 = a3 * b1;
-        long p32 = a3 * b2;
-        long p33 = a3 * b3;
-
-        // Gather results into 128-bit result
-        long r0 = (p00 & LONG_MASK);
-        long r1 = (p00 >>> 32) + (p01 & LONG_MASK) + (p10 & LONG_MASK);
-        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
-                (p02 & LONG_MASK) + (p11 & LONG_MASK) + (p20 & LONG_MASK);
-        long r3 = (r2 >>> 32) + (p02 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
-                (p03 & LONG_MASK) + (p12 & LONG_MASK) + (p21 & LONG_MASK) + (p30 & LONG_MASK);
-        long r4 = (r3 >>> 32) + (p03 >>> 32) + (p12 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
-                (p13 & LONG_MASK) + (p22 & LONG_MASK) + (p31 & LONG_MASK);
-        long r5 = (r4 >>> 32) + (p13 >>> 32) + (p22 >>> 32) + (p31 >>> 32) +
-                (p23 & LONG_MASK) + (p32 & LONG_MASK);
-        long r6 = (r5 >>> 32) + (p23 >>> 32) + (p32 >>> 32) +
-                (p33 & LONG_MASK);
-
-        if ((r3 >>> 31) != 0 || r4 != 0 || r5 != 0 || r6 != 0) {
-            throw new ArithmeticException("Overflow, not enough precision to accommodate for scale");
+        if (otherHighAbs == 0 && otherLowAbs >= 0) {
+            multiplyBy64Bit(otherLowAbs);
+        } else {
+            multiplyBy128Bit(otherHighAbs, otherLowAbs);
         }
-
-        this.low = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
-        this.high = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
 
         // Handle sign - use the saved original signs
         boolean negative = (thisNegative != otherNegative);
@@ -710,11 +798,21 @@ public class Decimal128 implements Sinkable {
             return;
         }
 
+
         if (this.scale < targetScale) {
+            boolean isNegative = isNegative();
+            if (isNegative) {
+                negate();
+            }
+
             // Need to increase scale (add trailing zeros)
             int scaleIncrease = targetScale - this.scale;
             multiplyByPowerOf10InPlace(scaleIncrease);
             this.scale = targetScale;
+
+            if (isNegative) {
+                negate();
+            }
             return;
         }
 
@@ -2011,6 +2109,102 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
+     * Multiply this unsigned 128-bit value by an unsigned 128-bit value in place
+     */
+    private void multiplyBy128Bit(long multiplierHigh, long multiplierLow) {
+        // Perform multiplication using the algorithm from Decimal128
+        // This is complex but avoids allocations
+        long a3 = this.high >>> 32;
+        long a2 = this.high & 0xFFFFFFFFL;
+        long a1 = this.low >>> 32;
+        long a0 = this.low & 0xFFFFFFFFL;
+
+        long b3 = multiplierHigh >>> 32;
+        long b2 = multiplierHigh & 0xFFFFFFFFL;
+        long b1 = multiplierLow >>> 32;
+        long b0 = multiplierLow & 0xFFFFFFFFL;
+
+        // Compute all partial products
+        long p00 = a0 * b0;
+        long p01 = a0 * b1;
+        long p02 = a0 * b2;
+        long p03 = a0 * b3;
+        long p10 = a1 * b0;
+        long p11 = a1 * b1;
+        long p12 = a1 * b2;
+        long p13 = a1 * b3;
+        long p20 = a2 * b0;
+        long p21 = a2 * b1;
+        long p22 = a2 * b2;
+        long p23 = a2 * b3;
+        long p30 = a3 * b0;
+        long p31 = a3 * b1;
+        long p32 = a3 * b2;
+        long p33 = a3 * b3;
+
+        // Gather results into 128-bit result
+        long r0 = (p00 & LONG_MASK);
+        long r1 = (p00 >>> 32) + (p01 & LONG_MASK) + (p10 & LONG_MASK);
+        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
+                (p02 & LONG_MASK) + (p11 & LONG_MASK) + (p20 & LONG_MASK);
+        long r3 = (r2 >>> 32) + (p02 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
+                (p03 & LONG_MASK) + (p12 & LONG_MASK) + (p21 & LONG_MASK) + (p30 & LONG_MASK);
+        long r4 = (r3 >>> 32) + (p03 >>> 32) + (p12 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
+                (p13 & LONG_MASK) + (p22 & LONG_MASK) + (p31 & LONG_MASK);
+        long r5 = (r4 >>> 32) + (p13 >>> 32) + (p22 >>> 32) + (p31 >>> 32) +
+                (p23 & LONG_MASK) + (p32 & LONG_MASK);
+        long r6 = (r5 >>> 32) + (p23 >>> 32) + (p32 >>> 32) +
+                (p33 & LONG_MASK);
+
+        if ((r3 >>> 31) != 0 || r4 != 0 || r5 != 0 || r6 != 0) {
+            throw new ArithmeticException("Overflow, not enough precision to accommodate for scale");
+        }
+
+        this.low = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.high = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+    }
+
+    /**
+     * Multiply this unsigned 128-bit value by an unsigned 128-bit value in place without checking for overflow
+     */
+    private void multiplyBy128BitUnchecked(long multiplierHigh, long multiplierLow) {
+        // Perform multiplication using the algorithm from Decimal128
+        // This is complex but avoids allocations
+        long a3 = this.high >>> 32;
+        long a2 = this.high & 0xFFFFFFFFL;
+        long a1 = this.low >>> 32;
+        long a0 = this.low & 0xFFFFFFFFL;
+
+        long b3 = multiplierHigh >>> 32;
+        long b2 = multiplierHigh & 0xFFFFFFFFL;
+        long b1 = multiplierLow >>> 32;
+        long b0 = multiplierLow & 0xFFFFFFFFL;
+
+        // Compute all partial products
+        long p00 = a0 * b0;
+        long p01 = a0 * b1;
+        long p02 = a0 * b2;
+        long p03 = a0 * b3;
+        long p10 = a1 * b0;
+        long p11 = a1 * b1;
+        long p12 = a1 * b2;
+        long p20 = a2 * b0;
+        long p21 = a2 * b1;
+        long p30 = a3 * b0;
+
+        // Gather results into 128-bit result
+        long r0 = (p00 & LONG_MASK);
+        long r1 = (p00 >>> 32) + (p01 & LONG_MASK) + (p10 & LONG_MASK);
+        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
+                (p02 & LONG_MASK) + (p11 & LONG_MASK) + (p20 & LONG_MASK);
+        long r3 = (r2 >>> 32) + (p02 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
+                (p03 & LONG_MASK) + (p12 & LONG_MASK) + (p21 & LONG_MASK) + (p30 & LONG_MASK);
+
+        this.low = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.high = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+    }
+
+    /**
      * Multiply this unsigned 128-bit value by an unsigned 64-bit value in place
      */
     private void multiplyBy64Bit(long multiplier) {
@@ -2051,18 +2245,52 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Multiply this by 10^n in place
+     * Multiply this unsigned 128-bit value by an unsigned 64-bit value in place without checking for overflow
+     */
+    private void multiplyBy64BitUnchecked(long multiplier) {
+        // Perform 128-bit × 64-bit multiplication
+        // Result is at most 192 bits, but we keep only the lower 128 bits
+
+        // Split multiplier into two 32-bit parts
+        long m1 = multiplier >>> 32;
+        long m0 = multiplier & 0xFFFFFFFFL;
+
+        // Split this into four 32-bit parts
+        long a3 = high >>> 32;
+        long a2 = high & 0xFFFFFFFFL;
+        long a1 = low >>> 32;
+        long a0 = low & 0xFFFFFFFFL;
+
+        // Compute partial products
+        long p0 = a0 * m0;
+        long p1 = a0 * m1 + a1 * m0;
+        long p2 = a1 * m1 + a2 * m0;
+        long p3 = a2 * m1 + a3 * m0;
+
+        // Accumulate results
+        long r0 = p0 & 0xFFFFFFFFL;
+        long r1 = (p0 >>> 32) + (p1 & 0xFFFFFFFFL);
+        long r2 = (r1 >>> 32) + (p1 >>> 32) + (p2 & 0xFFFFFFFFL);
+        long r3 = (r2 >>> 32) + (p2 >>> 32) + (p3 & 0xFFFFFFFFL);
+
+        this.low = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.high = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+    }
+
+    /**
+     * Multiply this (unsigned) by 10^n in place
      */
     private void multiplyByPowerOf10InPlace(int n) {
-        if (n == 0) {
+        if (n <= 0 || (high == 0 && low == 0)) {
             return;
         }
-
-        final int max = LONG_TEN_POWERS_TABLE.length;
+        if (n > 38) {
+            throw new ArithmeticException("Overflow");
+        }
 
         // For small powers, use lookup table
-        if (n < max) {
-            long multiplier = LONG_TEN_POWERS_TABLE[n];
+        if (n < 18) {
+            long multiplier = TEN_POWERS_TABLE_LOW[n];
             // Special case: if high is 0, use simple 64-bit multiplication
             if (this.high == 0 && this.low >= 0) {
                 // Check if result will overflow 64 bits
@@ -2072,23 +2300,24 @@ public class Decimal128 implements Sinkable {
                     return;
                 }
             }
-
-            // Full 128-bit multiplication by 64-bit value
-            multiplyBy64Bit(multiplier);
-            updateCompact();
-            return;
         }
 
-        // For larger powers, break down into smaller chunks
-        // First multiply by largest power that fits in 64 bits (10^18)
-        while (n >= max) {
-            multiplyBy64Bit(LONG_TEN_POWERS_TABLE[max - 1]);  // multiply by 10^18
-            n -= (max - 1);  // subtract 18, not 19
+        // For larger powers, break down into smaller chunks, first check the threshold to ensure that we won't overflow
+        // and then apply either a fast multiplyBy64 or multiplyBy128 depending on high/low.
+        // The bound checks for these tables already happens at the beginning of the method.
+        final long thresholdH = n >= TEN_POWERS_TABLE_THRESHOLD_HIGH.length ? 0 : TEN_POWERS_TABLE_THRESHOLD_HIGH[n];
+        final long thresholdL = TEN_POWERS_TABLE_THRESHOLD_LOW[n];
+
+        if (high > thresholdH || (high == thresholdH && unsignedLongCompare(low, thresholdL))) {
+            throw new ArithmeticException("Overflow");
         }
 
-        // Multiply by remaining power
-        if (n > 0) {
-            multiplyBy64Bit(LONG_TEN_POWERS_TABLE[n]);
+        final long multiplierHigh = n >= 20 ? TEN_POWERS_TABLE_HIGH[n - 20] : 0L;
+        final long multiplierLow = TEN_POWERS_TABLE_LOW[n];
+        if (multiplierHigh == 0L && multiplierLow >= 0L) {
+            multiplyBy64BitUnchecked(multiplierLow);
+        } else {
+            multiplyBy128BitUnchecked(multiplierHigh, multiplierLow);
         }
         updateCompact();
     }
