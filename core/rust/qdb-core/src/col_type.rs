@@ -321,7 +321,7 @@ impl<'de> Deserialize<'de> for ColumnType {
 }
 
 pub fn encode_array_type(elem_type: ColumnTypeTag, dim: i32) -> CoreResult<ColumnType> {
-    if dim < 1 || dim > ARRAY_NDIMS_LIMIT {
+    if !(1..=ARRAY_NDIMS_LIMIT).contains(&dim) {
         return Err(fmt_err!(
             InvalidType,
             "invalid array dimensionality {dim}",
