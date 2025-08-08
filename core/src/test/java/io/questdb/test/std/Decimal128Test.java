@@ -25,6 +25,7 @@
 package io.questdb.test.std;
 
 import io.questdb.std.Decimal128;
+import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -85,7 +86,7 @@ public class Decimal128Test {
                 int actual = a.compareTo(b);
                 int expected = bdA.compareTo(bdB);
                 Assert.assertEquals("iteration: " + i + " expected:<" + expected + "> but was:<" + actual + ">", expected, actual);
-            } catch (ArithmeticException ignore) {
+            } catch (NumericException ignore) {
             }
         }
     }
@@ -206,7 +207,7 @@ public class Decimal128Test {
         Assert.assertEquals(result.toBigDecimal(), bdA.divide(bdB, tgtScale, RoundingMode.HALF_UP));
     }
 
-    @Test(expected = ArithmeticException.class)
+    @Test(expected = NumericException.class)
     public void testDivisionByZero() {
         Decimal128 a = Decimal128.fromDouble(100.0, 2);
         Decimal128 zero = Decimal128.fromDouble(0.0, 2);
@@ -391,7 +392,7 @@ public class Decimal128Test {
         Assert.assertEquals(0xFFFFFFFFFFFFFFFEL, a.getLow());
     }
 
-    @Test(expected = ArithmeticException.class)
+    @Test(expected = NumericException.class)
     public void testModuloByZero() {
         Decimal128 a = Decimal128.fromDouble(100.0, 2);
         Decimal128 zero = Decimal128.fromDouble(0.0, 2);
@@ -488,6 +489,33 @@ public class Decimal128Test {
 
         c.multiply(d);
         Assert.assertEquals(21.0, c.toDouble(), 0.01);
+    }
+
+    @Test
+    public void testNumericExceptionDivisionByZero() {
+        BigDecimal a = new BigDecimal("1e30");
+        BigDecimal b = new BigDecimal("0");
+        try {
+            Decimal128 da = Decimal128.fromBigDecimal(a);
+            Decimal128 db = Decimal128.fromBigDecimal(b);
+            da.divide(db, 0, RoundingMode.HALF_UP);
+            Assert.fail("Expected NumericException");
+        } catch (NumericException e) {
+            Assert.assertTrue(e.getMessage().contains("Division by zero"));
+        }
+    }
+
+    @Test
+    public void testNumericExceptionOverflow() {
+        BigDecimal a = new BigDecimal("1e30");
+        try {
+            Decimal128 da = Decimal128.fromBigDecimal(a);
+            Decimal128 db = Decimal128.fromBigDecimal(a);
+            da.multiply(db);
+            Assert.fail("Expected NumericException");
+        } catch (NumericException e) {
+            Assert.assertTrue(e.getMessage().contains("Overflow"));
+        }
     }
 
     @Test
@@ -642,20 +670,20 @@ public class Decimal128Test {
                 // Verify the scale is set correctly
                 Assert.assertEquals("Scale should match target scale", targetScale, testDecimal.getScale());
 
-            } catch (ArithmeticException e) {
-                // BigDecimal might throw ArithmeticException in some cases
+            } catch (NumericException e) {
+                // BigDecimal might throw NumericException in some cases
                 // In such cases, our implementation should either handle it gracefully
                 // or throw the same exception
                 boolean decimal128Threw = false;
                 try {
                     testDecimal.round(targetScale, roundingMode);
-                } catch (ArithmeticException e2) {
+                } catch (NumericException e2) {
                     decimal128Threw = true;
                 }
 
                 if (!decimal128Threw) {
                     String errorMsg = String.format(
-                            "BigDecimal threw ArithmeticException but Decimal128 didn't at iteration %d:\n" +
+                            "BigDecimal threw NumericException but Decimal128 didn't at iteration %d:\n" +
                                     "Original: %s (scale=%d)\n" +
                                     "Target scale: %d, Mode: %s\n" +
                                     "BigDecimal error: %s",
@@ -1272,7 +1300,7 @@ public class Decimal128Test {
 
             Decimal128 result = new Decimal128();
 
-            Assert.assertThrows(ArithmeticException.class, () -> Decimal128.add(a, b, result));
+            Assert.assertThrows(NumericException.class, () -> Decimal128.add(a, b, result));
             return;
         }
 
@@ -1299,7 +1327,7 @@ public class Decimal128Test {
                 BigDecimal difference = expected.subtract(actual).abs();
                 Assert.fail("iteration: " + iteration + " expected:<" + expected + "> but was:<" + result + "> (difference: " + difference + ")");
             }
-        } catch (ArithmeticException e) {
+        } catch (NumericException e) {
             // Skip this test case if overflow occurs during scaling
             if (e.getMessage().contains("overflow") || e.getMessage().contains("Overflow")) {
                 // This is expected for cases where intermediate calculations would exceed 128-bit capacity
@@ -1343,7 +1371,7 @@ public class Decimal128Test {
                 BigDecimal difference = expected.subtract(actual).abs();
                 Assert.fail("iteration: " + iteration + " expected:<" + expected + "> but was:<" + result + "> (difference: " + difference + ")");
             }
-        } catch (ArithmeticException e) {
+        } catch (NumericException e) {
             // Skip this test case if overflow occurs during scaling
             if (e.getMessage().contains("overflow") || e.getMessage().contains("Overflow")) {
                 // This is expected for cases where intermediate calculations would exceed 128-bit capacity
@@ -1384,7 +1412,7 @@ public class Decimal128Test {
                 BigDecimal difference = expected.subtract(actual).abs();
                 Assert.fail("iteration: " + iteration + " expected:<" + expected + "> but was:<" + result + "> (difference: " + difference + ")");
             }
-        } catch (ArithmeticException e) {
+        } catch (NumericException e) {
             // Skip this test case if overflow occurs during scaling
             if (e.getMessage().contains("overflow") || e.getMessage().contains("Overflow")) {
                 // This is expected for cases where intermediate calculations would exceed 128-bit capacity
@@ -1410,7 +1438,7 @@ public class Decimal128Test {
 
             Decimal128 result = new Decimal128();
 
-            Assert.assertThrows(ArithmeticException.class, () -> Decimal128.multiply(a, b, result));
+            Assert.assertThrows(NumericException.class, () -> Decimal128.multiply(a, b, result));
             return;
         }
 
@@ -1436,7 +1464,7 @@ public class Decimal128Test {
                 BigDecimal difference = expected.subtract(actual).abs();
                 Assert.fail("iteration: " + iteration + " expected:<" + expected + "> but was:<" + result + "> (difference: " + difference + ")");
             }
-        } catch (ArithmeticException e) {
+        } catch (NumericException e) {
             // Skip this test case if overflow occurs during scaling
             if (e.getMessage().contains("overflow") || e.getMessage().contains("Overflow")) {
                 // This is expected for cases where intermediate calculations would exceed 128-bit capacity
@@ -1462,7 +1490,7 @@ public class Decimal128Test {
 
             Decimal128 result = new Decimal128();
 
-            Assert.assertThrows(ArithmeticException.class, () -> Decimal128.subtract(a, b, result));
+            Assert.assertThrows(NumericException.class, () -> Decimal128.subtract(a, b, result));
             return;
         }
 
@@ -1495,7 +1523,7 @@ public class Decimal128Test {
                 BigDecimal difference = expected.subtract(actual).abs();
                 Assert.fail("iteration: " + iteration + " expected:<" + expected + "> but was:<" + result + "> (difference: " + difference + ")");
             }
-        } catch (ArithmeticException e) {
+        } catch (NumericException e) {
             // Skip this test case if overflow occurs during scaling
             if (e.getMessage().contains("overflow") || e.getMessage().contains("Overflow")) {
                 // This is expected for cases where intermediate calculations would exceed 128-bit capacity

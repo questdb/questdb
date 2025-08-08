@@ -440,7 +440,7 @@ public class Decimal128 implements Sinkable {
             // Multiply by 10^scaleDiff
             for (int i = 0; i < scaleDiff; i++) {
                 if ((aH >>> 3) != 0) {
-                    throw new ArithmeticException("Overflow, not enough precision to accommodate for scale");
+                    throw NumericException.instance().put("Overflow");
                 }
 
                 // Multiply by 10: (8x + 2x)
@@ -451,7 +451,11 @@ public class Decimal128 implements Sinkable {
 
                 aL = low8 + low2;
                 long carry = hasCarry(low8, low2, aL) ? 1 : 0;
-                aH = Math.addExact(high8, Math.addExact(high2, carry));
+                try {
+                    aH = Math.addExact(high8, Math.addExact(high2, carry));
+                } catch (ArithmeticException e) {
+                    throw NumericException.instance().put("Overflow");
+                }
             }
 
             // Compare scaled this with other
@@ -466,7 +470,7 @@ public class Decimal128 implements Sinkable {
             // Multiply by 10^scaleDiff
             for (int i = 0; i < scaleDiff; i++) {
                 if ((bH >>> 3) != 0) {
-                    throw new ArithmeticException("Overflow, not enough precision to accommodate for scale");
+                    throw NumericException.instance().put("Overflow");
                 }
 
                 // Multiply by 10: (8x + 2x)
@@ -477,7 +481,11 @@ public class Decimal128 implements Sinkable {
 
                 bL = low8 + low2;
                 long carry = hasCarry(low8, low2, bL) ? 1 : 0;
-                bH = Math.addExact(high8, Math.addExact(high2, carry));
+                try {
+                    bH = Math.addExact(high8, Math.addExact(high2, carry));
+                } catch (ArithmeticException e) {
+                    throw NumericException.instance().put("Overflow");
+                }
             }
 
             // Compare this with scaled other
@@ -523,9 +531,9 @@ public class Decimal128 implements Sinkable {
 
         // Fail early if we're sure to overflow.
         if (delta > 0 && (this.scale + delta) > MAX_SCALE) {
-            throw new ArithmeticException("Overflow, not enough precision to accommodate for scale");
+            throw NumericException.instance().put("Overflow");
         } else if (delta < 0 && (divisorScale + delta) > MAX_SCALE) {
-            throw new ArithmeticException("Overflow, not enough precision to accommodate for scale");
+            throw NumericException.instance().put("Overflow");
         }
 
         final boolean negResult = (divisorHigh < 0) ^ isNegative();
@@ -631,11 +639,11 @@ public class Decimal128 implements Sinkable {
      * Calculate modulo in-place.
      *
      * @param divisor the divisor
-     * @throws ArithmeticException if divisor is zero
+     * @throws NumericException if divisor is zero
      */
     public void modulo(Decimal128 divisor) {
         if (divisor.isZero()) {
-            throw new ArithmeticException("Division by zero");
+            throw NumericException.instance().put("Division by zero");
         }
 
         // Result scale should be the larger of the two scales
@@ -720,7 +728,7 @@ public class Decimal128 implements Sinkable {
      * @param targetScale  the desired scale (number of decimal places)
      * @param roundingMode the rounding mode to use
      * @throws IllegalArgumentException if targetScale is invalid
-     * @throws ArithmeticException      if roundingMode is UNNECESSARY and rounding is required
+     * @throws NumericException      if roundingMode is UNNECESSARY and rounding is required
      */
     public void round(int targetScale, RoundingMode roundingMode) {
         validateScale(targetScale);
@@ -976,7 +984,11 @@ public class Decimal128 implements Sinkable {
         long carry = hasCarry(aL, bL, sumLow) ? 1 : 0;
 
         result.low = sumLow;
-        result.high = Math.addExact(aH, Math.addExact(bH, carry));
+        try {
+            result.high = Math.addExact(aH, Math.addExact(bH, carry));
+        } catch (ArithmeticException e) {
+            throw NumericException.instance().put("Overflow");
+        }
         result.updateCompact();
     }
 
@@ -1104,7 +1116,7 @@ public class Decimal128 implements Sinkable {
         // Check for overflow - if dividendHH has upper bits set, the result would overflow 128 bits
         // We can only handle at most 128 bits (32 bits in u4)
         if ((dividendHH >>> 32) != 0) {
-            throw new ArithmeticException("Division overflow: intermediate result exceeds 128-bit precision");
+            throw NumericException.instance().put("Overflow");
         }
 
         int v3 = (int) (divisorHigh >>> 32);
@@ -1686,7 +1698,7 @@ public class Decimal128 implements Sinkable {
     private static void divideKnuthXxWord(Decimal128 result, long dividendHigh, long dividendLow, long divisor, boolean isNegative, RoundingMode roundingMode) {
         int divisorInt = (int) divisor;
         if (divisor == 0) {
-            throw new ArithmeticException("Division by zero");
+            throw NumericException.instance().put("Division by zero");
         }
 
         if (divisor == 1) {
@@ -1769,7 +1781,7 @@ public class Decimal128 implements Sinkable {
         boolean increment = false;
         switch (roundingMode) {
             case UNNECESSARY:
-                throw new ArithmeticException("Rounding necessary");
+                throw NumericException.instance().put("Rounding necessary");
             case UP: // Away from zero
                 increment = true;
                 break;
@@ -2116,7 +2128,7 @@ public class Decimal128 implements Sinkable {
                 (p33 & LONG_MASK);
 
         if ((r3 >>> 31) != 0 || r4 != 0 || r5 != 0 || r6 != 0) {
-            throw new ArithmeticException("Overflow, not enough precision to accommodate for scale");
+            throw NumericException.instance().put("Overflow");
         }
 
         this.low = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
@@ -2196,7 +2208,7 @@ public class Decimal128 implements Sinkable {
 
         // Check for overflow: if r4 has significant bits, the result exceeds 128 bits
         if (r4 != 0 || (r3 >> 31) != 0) {
-            throw new ArithmeticException("Multiplication overflow: result exceeds 128-bit capacity");
+            throw NumericException.instance().put("Overflow");
         }
 
         this.low = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
@@ -2244,7 +2256,7 @@ public class Decimal128 implements Sinkable {
             return;
         }
         if (n > 38) {
-            throw new ArithmeticException("Overflow");
+            throw NumericException.instance().put("Overflow");
         }
 
         // For small powers, use lookup table
@@ -2268,7 +2280,7 @@ public class Decimal128 implements Sinkable {
         final long thresholdL = TEN_POWERS_TABLE_THRESHOLD_LOW[n];
 
         if (high > thresholdH || (high == thresholdH && unsignedLongCompare(low, thresholdL))) {
-            throw new ArithmeticException("Overflow");
+            throw NumericException.instance().put("Overflow");
         }
 
         final long multiplierHigh = n >= 20 ? TEN_POWERS_TABLE_HIGH[n - 20] : 0L;
