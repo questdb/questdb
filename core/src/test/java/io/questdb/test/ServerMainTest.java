@@ -560,7 +560,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "mat.view.refresh.worker.sleep.timeout\tQDB_MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.haltOnError\tQDB_MAT_VIEW_REFRESH_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.yield.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
-                                    "mat.view.refresh.worker.sleep.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
+                                    "mat.view.refresh.worker.sleep.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "net.test.connection.buffer.size\tQDB_NET_TEST_CONNECTION_BUFFER_SIZE\t64\tdefault\tfalse\tfalse\n" +
                                     "pg.binary.param.count.capacity\tQDB_PG_BINARY_PARAM_COUNT_CAPACITY\t2\tdefault\tfalse\tfalse\n" +
                                     "pg.character.store.capacity\tQDB_PG_CHARACTER_STORE_CAPACITY\t4096\tdefault\tfalse\tfalse\n" +
@@ -717,7 +717,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "shared.network.worker.evaluation.interval\tQDB_SHARED_NETWORK_WORKER_EVALUATION_INTERVAL\t100\tdefault\tfalse\tfalse\n" +
                                     "shared.query.worker.target.utilization\tQDB_SHARED_QUERY_WORKER_TARGET_UTILIZATION\t60.0\tdefault\tfalse\tfalse\n" +
                                     "shared.query.worker.utilization.tolerance\tQDB_SHARED_QUERY_WORKER_UTILIZATION_TOLERANCE\t5.0\tdefault\tfalse\tfalse\n" +
-                                    "shared.query.worker.min.active.workers\tQDB_SHARED_QUERY_WORKER_MIN_ACTIVE_WORKERS\t1\tdefault\tfalse\tfalse\n" +
+                                    "shared.query.worker.min.active.workers\tQDB_SHARED_QUERY_WORKER_MIN_ACTIVE_WORKERS\t-1\tdefault\tfalse\tfalse\n" +
                                     "shared.query.worker.evaluation.interval\tQDB_SHARED_QUERY_WORKER_EVALUATION_INTERVAL\t100\tdefault\tfalse\tfalse\n" +
                                     "shared.write.worker.target.utilization\tQDB_SHARED_WRITE_WORKER_TARGET_UTILIZATION\t60.0\tdefault\tfalse\tfalse\n" +
                                     "shared.write.worker.utilization.tolerance\tQDB_SHARED_WRITE_WORKER_UTILIZATION_TOLERANCE\t5.0\tdefault\tfalse\tfalse\n" +

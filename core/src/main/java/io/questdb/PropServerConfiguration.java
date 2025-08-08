@@ -1613,7 +1613,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     sharedWorkerSleepTimeout,
                     sharedWorkerTargetUtilization,
                     sharedWorkerUtilizationTolerance,
-                    -1,
+                    sharedWorkerMinActiveWorkers,
                     sharedWorkerEvaluationInterval
             );
 
@@ -1923,7 +1923,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         poolConfiguration.sleepTimeout = sharedWorkerSleepTimeout;
         poolConfiguration.targetUtilization = getDouble(properties, env, targetUtilizationProp, String.valueOf(sharedWorkerTargetUtilization));
         poolConfiguration.utilizationTolerance = getDouble(properties, env, utilizationToleranceProp, String.valueOf(sharedWorkerUtilizationTolerance));
-        sharedWorkerMinActiveWorkers = Math.max(1, sharedWorkerMinActiveWorkers < 0 ? poolConfiguration.workerCount / 3 : sharedWorkerMinActiveWorkers);
         poolConfiguration.minActiveWorkers = getInt(properties, env, minActiveWorkersProp, sharedWorkerMinActiveWorkers);
         poolConfiguration.evaluationInterval = getMillis(properties, env, evaluationIntervalProp, sharedWorkerEvaluationInterval);
         poolConfiguration.metrics = this.metrics;

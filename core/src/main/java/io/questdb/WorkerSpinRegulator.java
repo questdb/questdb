@@ -46,7 +46,7 @@ public class WorkerSpinRegulator implements Closeable {
         if (started) {
             throw new IllegalStateException("Cannot add worker pool after start");
         }
-        if (workerPool.getWorkerCount() > workerPool.getMinActiveWorkers()) {
+        if (workerPool.getMinActiveWorkers() > 0 && workerPool.getWorkerCount() > workerPool.getMinActiveWorkers()) {
             workerPoolObjList.add(workerPool);
             evaluateTimeout = Math.min(evaluateTimeout, workerPool.getEvaluateInterval());
         }
