@@ -32,6 +32,8 @@ public class Decimal128 implements Sinkable {
     static final long LONG_MASK = 0xffffffffL;
     private static final long B = (long) 1 << Integer.SIZE;
     private static final long INFLATED = Long.MIN_VALUE;
+    // Cache for common small values
+    private static final Decimal128[] SMALL_VALUES_CACHE = new Decimal128[101]; // Cache 0-100
     private static final long[] TEN_POWERS_TABLE_HIGH = { // High 64-bit part of the ten powers table from 10^20 to 10^38
             5L, // 10^20
             54L, // 10^21
@@ -158,8 +160,6 @@ public class Decimal128 implements Sinkable {
             17L, // 10^37
             1L, // 10^38
     };
-    // Cache for common small values
-    private static final Decimal128[] ZERO_THROUGH_TEN = new Decimal128[11];
     private transient long compact;  // Compact representation for values fitting in a signed long
     private long high;  // High 64 bits
     private long low;   // Low 64 bits
@@ -188,7 +188,7 @@ public class Decimal128 implements Sinkable {
         this.high = high;
         this.low = low;
         this.scale = scale;
-        this.compact = computeCompact(high, low);
+        this.compact = (high == 0 || (high == -1 && low < 0)) ? low : INFLATED;
     }
 
     /**
@@ -311,8 +311,8 @@ public class Decimal128 implements Sinkable {
         validateScale(scale);
 
         // Use cached values for common small values with scale 0
-        if (scale == 0 && value >= 0 && value <= 10) {
-            return new Decimal128(ZERO_THROUGH_TEN[(int) value]);
+        if (scale == 0 && value >= 0 && value <= 100) {
+            return new Decimal128(SMALL_VALUES_CACHE[(int) value]);
         }
 
         long h = value < 0 ? -1L : 0L;
@@ -437,7 +437,7 @@ public class Decimal128 implements Sinkable {
             // Scale up this to match other's scale
             int scaleDiff = other.scale - this.scale;
 
-            // Multiply by 10^scaleDiff
+            // Simple iterative scaling using multiply-by-10
             for (int i = 0; i < scaleDiff; i++) {
                 if ((aH >>> 3) != 0) {
                     throw NumericException.instance().put("Overflow");
@@ -467,7 +467,7 @@ public class Decimal128 implements Sinkable {
             // Scale up other to match this scale
             int scaleDiff = this.scale - other.scale;
 
-            // Multiply by 10^scaleDiff
+            // Simple iterative scaling using multiply-by-10
             for (int i = 0; i < scaleDiff; i++) {
                 if ((bH >>> 3) != 0) {
                     throw NumericException.instance().put("Overflow");
@@ -864,9 +864,16 @@ public class Decimal128 implements Sinkable {
      * @return BigDecimal representation of this Decimal128
      */
     public java.math.BigDecimal toBigDecimal() {
-        StringSink sink = new StringSink();
-        toSink(sink);
-        return new java.math.BigDecimal(sink.toString());
+        // Direct BigInteger construction is more efficient than string conversion
+        byte[] bytes = new byte[16];
+        // Convert to big-endian byte array
+        for (int i = 0; i < 8; i++) {
+            bytes[i] = (byte) (this.high >>> (56 - 8 * i));
+            bytes[8 + i] = (byte) (this.low >>> (56 - 8 * i));
+        }
+
+        BigInteger unscaled = new BigInteger(bytes);
+        return new BigDecimal(unscaled, this.scale);
     }
 
     /**
@@ -1051,14 +1058,6 @@ public class Decimal128 implements Sinkable {
         return Long.compareUnsigned(aLow, bLow);
     }
 
-    private static long computeCompact(long high, long low) {
-        // Check if value fits in a single long (high is either 0 or -1)
-        if (high == 0 || (high == -1 && low < 0)) {
-            return low;
-        }
-        return INFLATED;
-    }
-
     /**
      * Algorithm from MutableBigInteger::divideMagnitude to correct qhat in Knutd 4.3.1D algorithm.
      *
@@ -1093,12 +1092,25 @@ public class Decimal128 implements Sinkable {
      */
     private static int countDigits(long value) {
         if (value == 0) return 1;
-        int count = 0;
-        while (value > 0) {
-            count++;
-            value /= 10;
-        }
-        return count;
+        if (value < 10L) return 1;
+        if (value < 100L) return 2;
+        if (value < 1000L) return 3;
+        if (value < 10000L) return 4;
+        if (value < 100000L) return 5;
+        if (value < 1000000L) return 6;
+        if (value < 10000000L) return 7;
+        if (value < 100000000L) return 8;
+        if (value < 1000000000L) return 9;
+        if (value < 10000000000L) return 10;
+        if (value < 100000000000L) return 11;
+        if (value < 1000000000000L) return 12;
+        if (value < 10000000000000L) return 13;
+        if (value < 100000000000000L) return 14;
+        if (value < 1000000000000000L) return 15;
+        if (value < 10000000000000000L) return 16;
+        if (value < 100000000000000000L) return 17;
+        if (value < 1000000000000000000L) return 18;
+        return 19;
     }
 
     /**
@@ -1853,7 +1865,8 @@ public class Decimal128 implements Sinkable {
      * Validates that the scale is within allowed bounds
      */
     private static void validateScale(int scale) {
-        if (scale < 0 || scale > MAX_SCALE) {
+        // Use unsigned comparison for faster bounds check
+        if (Integer.compareUnsigned(scale, MAX_SCALE) > 0) {
             throw new IllegalArgumentException("Scale must be between 0 and " + MAX_SCALE + ", got: " + scale);
         }
     }
@@ -2355,7 +2368,7 @@ public class Decimal128 implements Sinkable {
     }
 
     private void updateCompact() {
-        this.compact = computeCompact(this.high, this.low);
+        this.compact = (this.high == 0 || (this.high == -1 && this.low < 0)) ? this.low : INFLATED;
     }
 
     static long divWord(long n, int d) {
@@ -2393,8 +2406,8 @@ public class Decimal128 implements Sinkable {
     }
 
     static {
-        for (int i = 0; i <= 10; i++) {
-            ZERO_THROUGH_TEN[i] = new Decimal128(0, i, 0);
+        for (int i = 0; i <= 100; i++) {
+            SMALL_VALUES_CACHE[i] = new Decimal128(0, i, 0);
         }
     }
 }
