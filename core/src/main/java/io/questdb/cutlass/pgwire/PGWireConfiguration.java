@@ -95,8 +95,6 @@ public interface PGWireConfiguration extends IODispatcherConfiguration, WorkerPo
 
     boolean isInsertCacheEnabled();
 
-    boolean isLegacyModeEnabled();
-
     boolean isReadOnlyUserEnabled();
 
     boolean isSelectCacheEnabled();

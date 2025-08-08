@@ -375,11 +375,6 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     }
 
     @Override
-    public boolean isLegacyModeEnabled() {
-        return getDelegate().isLegacyModeEnabled();
-    }
-
-    @Override
     public boolean isReadOnlyUserEnabled() {
         return getDelegate().isReadOnlyUserEnabled();
     }

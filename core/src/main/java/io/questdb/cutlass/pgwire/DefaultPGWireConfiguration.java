@@ -199,11 +199,6 @@ public class DefaultPGWireConfiguration extends DefaultIODispatcherConfiguration
     }
 
     @Override
-    public boolean isLegacyModeEnabled() {
-        return false;
-    }
-
-    @Override
     public boolean isReadOnlyUserEnabled() {
         return false;
     }

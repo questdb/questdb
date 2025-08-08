@@ -612,7 +612,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgInsertCacheBlockCount;
     private boolean pgInsertCacheEnabled;
     private int pgInsertCacheRowCount;
-    private boolean pgLegacyModeEnabled;
     private int pgMaxBlobSizeOnQuery;
     private int pgNamedStatementCacheCapacity;
     private int pgNamedStatementLimit;
@@ -1264,10 +1263,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgInsertCacheEnabled = getBoolean(properties, env, PropertyKey.PG_INSERT_CACHE_ENABLED, true);
                 this.pgInsertCacheBlockCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_BLOCK_COUNT, 4);
                 this.pgInsertCacheRowCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_ROW_COUNT, 4);
-                // making it harder to pick legacy mode before legacy code is removed from the codebase
-                // diehards that have this set to "true" will automatically be upgraded to the new protocol implementation.
-                // If issues still persist we want to hear about them and this provides the thank you fallback mechanism
-                this.pgLegacyModeEnabled = "!true".equals(getString(properties, env, PropertyKey.PG_LEGACY_MODE_ENABLED, "false"));
                 this.pgUpdateCacheEnabled = getBoolean(properties, env, PropertyKey.PG_UPDATE_CACHE_ENABLED, true);
                 this.pgUpdateCacheBlockCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_BLOCK_COUNT, 4);
                 this.pgUpdateCacheRowCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_ROW_COUNT, 4);
@@ -5526,11 +5521,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isInsertCacheEnabled() {
             return pgInsertCacheEnabled;
-        }
-
-        @Override
-        public boolean isLegacyModeEnabled() {
-            return pgLegacyModeEnabled;
         }
 
         @Override
