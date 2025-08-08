@@ -49,11 +49,19 @@ public abstract class WorkerPoolManager implements Target {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final CharSequenceObjHashMap<WorkerPool> dedicatedPools = new CharSequenceObjHashMap<>(4);
     private final AtomicBoolean running = new AtomicBoolean();
+    private final WorkerSpinRegulator spinRegulator;
 
     public WorkerPoolManager(ServerConfiguration config) {
         sharedPoolNetwork = new WorkerPool(config.getNetworkWorkerPoolConfiguration());
         sharedPoolQuery = config.getQueryWorkerPoolConfiguration().getWorkerCount() > 0 ? new WorkerPool(config.getQueryWorkerPoolConfiguration()) : null;
         sharedPoolWrite = new WorkerPool(config.getWriteWorkerPoolConfiguration());
+
+        spinRegulator = new WorkerSpinRegulator();
+        spinRegulator.addWorkerPool(sharedPoolNetwork);
+        spinRegulator.addWorkerPool(sharedPoolWrite);
+        if (sharedPoolQuery != null) {
+            spinRegulator.addWorkerPool(sharedPoolQuery);
+        }
 
         WorkerPool queryPool = sharedPoolQuery != null ? sharedPoolQuery : sharedPoolNetwork;
         configureWorkerPools(queryPool, sharedPoolWrite); // abstract method giving callers the chance to assign jobs
@@ -80,6 +88,8 @@ public abstract class WorkerPoolManager implements Target {
         // halt is idempotent, and start may have not been called, still
         // we want to free pool resources, so we do not check the closed
         // flag, but we ensure it is true at the end.
+        spinRegulator.halt();
+
         ObjList<CharSequence> poolNames = dedicatedPools.keys();
         for (int i = 0, limit = poolNames.size(); i < limit; i++) {
             CharSequence name = poolNames.getQuick(i);
@@ -122,6 +132,8 @@ public abstract class WorkerPoolManager implements Target {
 
                 startWorkerPool(sharedPoolLog, pool, "started dedicated pool [name=");
             }
+
+            spinRegulator.start();
         }
     }
 
@@ -161,6 +173,7 @@ public abstract class WorkerPoolManager implements Target {
         WorkerPool pool = dedicatedPools.get(poolName);
         if (pool == null) {
             pool = new WorkerPool(config);
+            spinRegulator.addWorkerPool(pool);
             dedicatedPools.put(poolName, pool);
         }
         LOG.info().$("new DEDICATED pool [name=").$(poolName)

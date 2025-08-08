@@ -302,13 +302,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getFileOperationRetryCount() {
-        return getDelegate().getFileOperationRetryCount();
+    public boolean getFileDescriptorCacheEnabled() {
+        return getDelegate().getFileDescriptorCacheEnabled();
     }
 
     @Override
-    public boolean getFileDescriptorCacheEnabled() {
-        return getDelegate().getFileDescriptorCacheEnabled();
+    public int getFileOperationRetryCount() {
+        return getDelegate().getFileOperationRetryCount();
     }
 
     @Override
@@ -414,6 +414,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public @NotNull CharSequence getLegacyCheckpointRoot() {
         return getDelegate().getLegacyCheckpointRoot();
+    }
+
+    @Override
+    public int getLineTcpWriterWorkerCount() {
+        return getDelegate().getLineTcpWriterWorkerCount();
     }
 
     @Override

@@ -27,6 +27,7 @@ package io.questdb.test.tools;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.ServerMain;
+import io.questdb.WorkerSpinRegulator;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -1433,10 +1434,12 @@ public final class TestUtils {
                 final SqlCompiler compiler = engine.getSqlCompiler();
                 final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, bindVariableService, workerCount)
         ) {
-            try {
+            try (WorkerSpinRegulator workerSpinRegulator = new WorkerSpinRegulator()) {
                 if (pool != null) {
                     setupWorkerPool(pool, engine);
                     pool.start(log);
+                    workerSpinRegulator.addWorkerPool(pool);
+                    workerSpinRegulator.start();
                 }
 
                 runnable.run(engine, compiler, sqlExecutionContext);

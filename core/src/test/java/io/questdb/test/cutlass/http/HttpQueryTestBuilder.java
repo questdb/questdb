@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.FactoryProvider;
 import io.questdb.TelemetryJob;
+import io.questdb.WorkerSpinRegulator;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SecurityContext;
@@ -39,7 +40,6 @@ import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
-import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
@@ -87,7 +87,6 @@ public class HttpQueryTestBuilder {
     private long startWriterWaitTimeout = 500;
     private boolean telemetry;
     private String temp;
-    private HttpRequestProcessorBuilder textImportProcessor;
     private int workerCount = 1;
 
     public ObjList<SqlExecutionContextImpl> getSqlExecutionContexts() {
@@ -195,11 +194,7 @@ public class HttpQueryTestBuilder {
 
                     @Override
                     public HttpRequestHandler newInstance() {
-                        return textImportProcessor != null ? textImportProcessor.create(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                workerPool.getWorkerCount()
-                        ) : new TextImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
+                        return new TextImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
                     }
                 });
 
@@ -282,12 +277,17 @@ public class HttpQueryTestBuilder {
                     }
                 });
 
+                @SuppressWarnings("resource")
+                WorkerSpinRegulator regulator = new WorkerSpinRegulator();
                 workerPool.start(LOG);
+                regulator.addWorkerPool(workerPool);
+                regulator.start();
 
                 try {
                     code.run(engine, sqlExecutionContext);
                 } finally {
                     workerPool.halt();
+                    regulator.halt();
 
                     if (telemetryJob != null) {
                         Misc.free(telemetryJob);
@@ -309,11 +309,6 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withCopyInputRoot(String copyInputRoot) {
         this.copyInputRoot = copyInputRoot;
-        return this;
-    }
-
-    public HttpQueryTestBuilder withCustomTextImportProcessor(HttpRequestProcessorBuilder textQueryProcessor) {
-        this.textImportProcessor = textQueryProcessor;
         return this;
     }
 
@@ -385,14 +380,5 @@ public class HttpQueryTestBuilder {
     @FunctionalInterface
     public interface HttpClientCode {
         void run(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws Exception;
-    }
-
-    @FunctionalInterface
-    public interface HttpRequestProcessorBuilder {
-        HttpRequestHandler create(
-                JsonQueryProcessorConfiguration configuration,
-                CairoEngine engine,
-                int workerCount
-        );
     }
 }

@@ -474,16 +474,12 @@ public class ServerMain implements Closeable {
         sharedPoolWrite.assign(matViewTimerJob);
     }
 
-    protected void setupWalApplyJob(
-            WorkerPool sharedPoolWrite,
-            CairoEngine engine,
-            int sharedQueryWorkerCount
-    ) {
-        for (int i = 0, workerCount = sharedPoolWrite.getWorkerCount(); i < workerCount; i++) {
+    protected void setupWalApplyJob(WorkerPool workerPool, CairoEngine engine, int sharedQueryWorkerCount) {
+        for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
             // create job per worker
             final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, sharedQueryWorkerCount);
-            sharedPoolWrite.assign(i, applyWal2TableJob);
-            sharedPoolWrite.freeOnExit(applyWal2TableJob);
+            workerPool.assign(i, applyWal2TableJob);
+            workerPool.freeOnExit(applyWal2TableJob);
         }
     }
 

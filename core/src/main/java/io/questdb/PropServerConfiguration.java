@@ -239,13 +239,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int httpSqlCacheRowCount;
     private final String httpUsername;
     private final WaitProcessorConfiguration httpWaitProcessorConfiguration = new PropWaitProcessorConfiguration();
-    private final int[] httpWorkerAffinity;
-    private final int httpWorkerCount;
-    private final boolean httpWorkerHaltOnError;
-    private final long httpWorkerNapThreshold;
-    private final long httpWorkerSleepThreshold;
-    private final long httpWorkerSleepTimeout;
-    private final long httpWorkerYieldThreshold;
     private final int idGenerateBatchStep;
     private final long idleCheckInterval;
     private final boolean ilpAutoCreateNewColumns;
@@ -274,9 +267,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new PropLineHttpProcessorConfiguration();
     private final String lineTcpAuthDB;
     private final boolean lineTcpEnabled;
-    private final WorkerPoolConfiguration lineTcpIOWorkerPoolConfiguration = new PropLineTcpIOWorkerPoolConfiguration();
+    private final PropWorkerPoolConfiguration lineTcpIOWorkerPoolConfiguration = new PropWorkerPoolConfiguration("ilpio");
     private final LineTcpReceiverConfiguration lineTcpReceiverConfiguration = new PropLineTcpReceiverConfiguration();
-    private final WorkerPoolConfiguration lineTcpWriterWorkerPoolConfiguration = new PropLineTcpWriterWorkerPoolConfiguration();
+    private final PropWorkerPoolConfiguration lineTcpWriterWorkerPoolConfiguration = new PropWorkerPoolConfiguration("ilpwriter");
     private final int lineUdpCommitMode;
     private final int lineUdpCommitRate;
     private final boolean lineUdpEnabled;
@@ -304,14 +297,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean matViewParallelExecutionEnabled;
     private final long matViewRefreshIntervalsUpdatePeriod;
     private final long matViewRefreshOomRetryTimeout;
-    private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewRefreshPoolConfiguration();
-    private final long matViewRefreshSleepTimeout;
-    private final int[] matViewRefreshWorkerAffinity;
-    private final int matViewRefreshWorkerCount;
-    private final boolean matViewRefreshWorkerHaltOnError;
-    private final long matViewRefreshWorkerNapThreshold;
-    private final long matViewRefreshWorkerSleepThreshold;
-    private final long matViewRefreshWorkerYieldThreshold;
+    private final PropWorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropWorkerPoolConfiguration("mat-view-refresh");
     private final int matViewRowsPerQueryEstimate;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
@@ -353,7 +339,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int partitionEncoderParquetVersion;
     private final boolean pgEnabled;
     private final PropPGWireConcurrentCacheConfiguration pgWireConcurrentCacheConfiguration = new PropPGWireConcurrentCacheConfiguration();
-    private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
+    private final PropPGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final String posthogApiKey;
     private final boolean posthogEnabled;
     private final int preferencesStringPoolCapacity;
@@ -486,15 +472,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
     private final boolean walApplyEnabled;
     private final int walApplyLookAheadTransactionCount;
-    private final WorkerPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
-    private final long walApplySleepTimeout;
+    private final PropWorkerPoolConfiguration walApplyPoolConfiguration = new PropWorkerPoolConfiguration("wal-apply");
     private final long walApplyTableTimeQuota;
-    private final int[] walApplyWorkerAffinity;
-    private final int walApplyWorkerCount;
-    private final boolean walApplyWorkerHaltOnError;
-    private final long walApplyWorkerNapThreshold;
-    private final long walApplyWorkerSleepThreshold;
-    private final long walApplyWorkerYieldThreshold;
     private final boolean walEnabledDefault;
     private final long walMaxLagSize;
     private final int walMaxLagTxnCount;
@@ -523,8 +502,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerMiscAppendPageSize;
     private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
-    protected HttpServerConfiguration httpMinServerConfiguration = new PropHttpMinServerConfiguration();
-    protected HttpFullFatServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
+    protected PropHttpMinServerConfiguration httpMinServerConfiguration = new PropHttpMinServerConfiguration();
+    protected PropHttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
     protected JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
     protected long walSegmentRolloverSize;
@@ -543,14 +522,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long httpMinNetConnectionTimeout;
     private int httpMinRecvBufferSize;
     private int httpMinSendBufferSize;
-    private int[] httpMinWorkerAffinity;
-    private int httpMinWorkerCount;
-    private boolean httpMinWorkerHaltOnError;
-    private long httpMinWorkerNapThreshold;
-    private int httpMinWorkerPoolPriority;
-    private long httpMinWorkerSleepThreshold;
-    private long httpMinWorkerSleepTimeout;
-    private long httpMinWorkerYieldThreshold;
     private int httpNetBindIPv4Address;
     private int httpNetBindPort;
     private int httpNetConnectionLimit;
@@ -567,12 +538,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineTcpConnectionPoolInitialCapacity;
     private int lineTcpDefaultPartitionBy;
     private boolean lineTcpDisconnectOnError;
-    private int[] lineTcpIOWorkerAffinity;
-    private int lineTcpIOWorkerCount;
-    private long lineTcpIOWorkerNapThreshold;
-    private boolean lineTcpIOWorkerPoolHaltOnError;
-    private long lineTcpIOWorkerSleepThreshold;
-    private long lineTcpIOWorkerYieldThreshold;
     private long lineTcpMaintenanceInterval;
     private int lineTcpMaxMeasurementSize;
     private long lineTcpMaxRecvBufferSize;
@@ -588,12 +553,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineTcpRecvBufferSize;
     private LineTcpTimestampAdapter lineTcpTimestampAdapter;
     private int lineTcpWriterQueueCapacity;
-    private int[] lineTcpWriterWorkerAffinity;
-    private int lineTcpWriterWorkerCount;
-    private long lineTcpWriterWorkerNapThreshold;
-    private boolean lineTcpWriterWorkerPoolHaltOnError;
-    private long lineTcpWriterWorkerSleepThreshold;
-    private long lineTcpWriterWorkerYieldThreshold;
     private int lineUdpBindIPV4Address;
     private int lineUdpDefaultPartitionBy;
     private int lineUdpPort;
@@ -608,7 +567,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private DateLocale pgDefaultLocale;
     private int pgForceRecvFragmentationChunkSize;
     private int pgForceSendFragmentationChunkSize;
-    private boolean pgHaltOnError;
     private int pgInsertCacheBlockCount;
     private boolean pgInsertCacheEnabled;
     private int pgInsertCacheRowCount;
@@ -642,11 +600,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean pgUpdateCacheEnabled;
     private int pgUpdateCacheRowCount;
     private String pgUsername;
-    private int[] pgWorkerAffinity;
-    private int pgWorkerCount;
-    private long pgWorkerNapThreshold;
-    private long pgWorkerSleepThreshold;
-    private long pgWorkerYieldThreshold;
     private long queryTimeout;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitBeforeReload;
@@ -911,19 +864,22 @@ public class PropServerConfiguration implements ServerConfiguration {
             ff.munmap(tableIndexMem, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
             ff.close(tableIndexFd);
 
+            // Read shared worker defaults early so they can be used as defaults for all worker pools
+            double sharedWorkerTargetUtilization = getDouble(properties, env, PropertyKey.SHARED_WORKER_TARGET_UTILIZATION, "60.0");
+            double sharedWorkerUtilizationTolerance = getDouble(properties, env, PropertyKey.SHARED_WORKER_UTILIZATION_TOLERANCE, "5.0");
+            int sharedWorkerMinActiveWorkers = getInt(properties, env, PropertyKey.SHARED_WORKER_MIN_ACTIVE_WORKERS, 1);
+            long sharedWorkerEvaluationInterval = getMillis(properties, env, PropertyKey.SHARED_WORKER_EVALUATION_INTERVAL, 100L);
+
             this.httpMinServerEnabled = getBoolean(properties, env, PropertyKey.HTTP_MIN_ENABLED, true);
             if (httpMinServerEnabled) {
-                this.httpMinWorkerHaltOnError = getBoolean(properties, env, PropertyKey.HTTP_MIN_WORKER_HALT_ON_ERROR, false);
-                this.httpMinWorkerCount = getInt(properties, env, PropertyKey.HTTP_MIN_WORKER_COUNT, 1);
+                // Set HTTP Min server worker pool configuration directly  
+                initWorkerPoolConfiguration(properties, env, httpMinServerConfiguration,
+                        "HTTP_MIN_WORKER", 1, 10, 20, 100, 50,
+                        sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
+                        sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
 
                 final int httpMinWorkerPoolPriority = getInt(properties, env, PropertyKey.HTTP_MIN_WORKER_POOL_PRIORITY, Thread.MAX_PRIORITY - 2);
-                this.httpMinWorkerPoolPriority = Math.min(Thread.MAX_PRIORITY, Math.max(Thread.MIN_PRIORITY, httpMinWorkerPoolPriority));
-
-                this.httpMinWorkerAffinity = getAffinity(properties, env, PropertyKey.HTTP_MIN_WORKER_AFFINITY, httpMinWorkerCount);
-                this.httpMinWorkerYieldThreshold = getLong(properties, env, PropertyKey.HTTP_MIN_WORKER_YIELD_THRESHOLD, 10);
-                this.httpMinWorkerNapThreshold = getLong(properties, env, PropertyKey.HTTP_MIN_WORKER_NAP_THRESHOLD, 100);
-                this.httpMinWorkerSleepThreshold = getLong(properties, env, PropertyKey.HTTP_MIN_WORKER_SLEEP_THRESHOLD, 100);
-                this.httpMinWorkerSleepTimeout = getMillis(properties, env, PropertyKey.HTTP_MIN_WORKER_SLEEP_TIMEOUT, 50);
+                httpMinServerConfiguration.workerPoolPriority = Math.min(Thread.MAX_PRIORITY, Math.max(Thread.MIN_PRIORITY, httpMinWorkerPoolPriority));
 
                 // deprecated
                 String httpMinBindTo = getString(properties, env, PropertyKey.HTTP_MIN_BIND_TO, "0.0.0.0:9003");
@@ -962,13 +918,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpServerEnabled = getBoolean(properties, env, PropertyKey.HTTP_ENABLED, true);
             final int forceSendFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE, Integer.MAX_VALUE);
             final int forceRecvFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE, Integer.MAX_VALUE);
-            this.httpWorkerCount = getInt(properties, env, PropertyKey.HTTP_WORKER_COUNT, 0);
-            this.httpWorkerAffinity = getAffinity(properties, env, PropertyKey.HTTP_WORKER_AFFINITY, httpWorkerCount);
-            this.httpWorkerHaltOnError = getBoolean(properties, env, PropertyKey.HTTP_WORKER_HALT_ON_ERROR, false);
-            this.httpWorkerYieldThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_YIELD_THRESHOLD, 10);
-            this.httpWorkerNapThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_NAP_THRESHOLD, 7_000);
-            this.httpWorkerSleepThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_SLEEP_THRESHOLD, 10_000);
-            this.httpWorkerSleepTimeout = getMillis(properties, env, PropertyKey.HTTP_WORKER_SLEEP_TIMEOUT, 10);
+            // Set HTTP server worker pool configuration directly
+            initWorkerPoolConfiguration(properties, env, httpServerConfiguration,
+                    "HTTP_WORKER", 0,
+                    sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
+                    sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
 
             this.httpSettingsReadOnly = getBoolean(properties, env, PropertyKey.HTTP_SETTINGS_READONLY, false);
 
@@ -1254,12 +1208,11 @@ public class PropServerConfiguration implements ServerConfiguration {
                 if (this.pgDefaultLocale == null) {
                     throw ServerConfigurationException.forInvalidKey(PropertyKey.PG_DATE_LOCALE.getPropertyPath(), dateLocale);
                 }
-                this.pgWorkerCount = getInt(properties, env, PropertyKey.PG_WORKER_COUNT, 0);
-                this.pgWorkerAffinity = getAffinity(properties, env, PropertyKey.PG_WORKER_AFFINITY, pgWorkerCount);
-                this.pgHaltOnError = getBoolean(properties, env, PropertyKey.PG_HALT_ON_ERROR, false);
-                this.pgWorkerYieldThreshold = getLong(properties, env, PropertyKey.PG_WORKER_YIELD_THRESHOLD, 10);
-                this.pgWorkerNapThreshold = getLong(properties, env, PropertyKey.PG_WORKER_NAP_THRESHOLD, 7_000);
-                this.pgWorkerSleepThreshold = getLong(properties, env, PropertyKey.PG_WORKER_SLEEP_THRESHOLD, 10_000);
+                // Set PG Wire worker pool configuration directly
+                initWorkerPoolConfiguration(properties, env, pgWireConfiguration,
+                        "PG_WORKER", 0,
+                        sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
+                        sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
                 this.pgDaemonPool = getBoolean(properties, env, PropertyKey.PG_DAEMON_POOL, true);
                 this.pgInsertCacheEnabled = getBoolean(properties, env, PropertyKey.PG_INSERT_CACHE_ENABLED, true);
                 this.pgInsertCacheBlockCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_BLOCK_COUNT, 4);
@@ -1278,25 +1231,21 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgPipelineCapacity = getInt(properties, env, PropertyKey.PG_PIPELINE_CAPACITY, 64);
             }
 
-            this.walApplyWorkerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, 0); // Use shared write pool by default;
-            this.walApplyWorkerAffinity = getAffinity(properties, env, PropertyKey.WAL_APPLY_WORKER_AFFINITY, walApplyWorkerCount);
-            this.walApplyWorkerHaltOnError = getBoolean(properties, env, PropertyKey.WAL_APPLY_WORKER_HALT_ON_ERROR, false);
-            this.walApplyWorkerNapThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_NAP_THRESHOLD, 7_000);
-            this.walApplyWorkerSleepThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_THRESHOLD, 10_000);
-            this.walApplySleepTimeout = getMillis(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_TIMEOUT, 10);
-            this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
+            // Set WAL Apply worker pool configuration directly
+            initWorkerPoolConfiguration(properties, env, walApplyPoolConfiguration,
+                    "WAL_APPLY_WORKER", 0,
+                    sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
+                    sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
 
             // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
             this.matViewRefreshOomRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 200);
-            this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, 0); // Use shared write pool by default
-            this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
-            this.matViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
-            this.matViewRefreshWorkerNapThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD, 7_000);
-            this.matViewRefreshWorkerSleepThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD, 10_000);
-            this.matViewRefreshSleepTimeout = getMillis(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT, 10);
-            this.matViewRefreshWorkerYieldThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
+            // Set Mat View Refresh worker pool configuration directly
+            initWorkerPoolConfiguration(properties, env, matViewRefreshPoolConfiguration,
+                    "MAT_VIEW_REFRESH_WORKER", 0,
+                    sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
+                    sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
 
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
@@ -1573,19 +1522,23 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
 
                 this.lineTcpWriterQueueCapacity = getQueueCapacity(properties, env, PropertyKey.LINE_TCP_WRITER_QUEUE_CAPACITY, 128);
-                this.lineTcpWriterWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_COUNT, 0); // Use shared write pool by default
-                this.lineTcpWriterWorkerAffinity = getAffinity(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_AFFINITY, lineTcpWriterWorkerCount);
-                this.lineTcpWriterWorkerPoolHaltOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_WRITER_HALT_ON_ERROR, false);
-                this.lineTcpWriterWorkerYieldThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_YIELD_THRESHOLD, 10);
-                this.lineTcpWriterWorkerNapThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_NAP_THRESHOLD, 7_000);
-                this.lineTcpWriterWorkerSleepThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_SLEEP_THRESHOLD, 10_000);
+                // Set Line TCP Writer worker pool configuration directly
+                initWorkerPoolConfiguration(properties, env, lineTcpWriterWorkerPoolConfiguration,
+                        "LINE_TCP_WRITER_WORKER", 0,
+                        sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
+                        -1, sharedWorkerEvaluationInterval);
+
+                // Line tcp writer pool if configured cannot park its threads
+                // Make sure parking workers is disable for it.
+                lineTcpWriterWorkerPoolConfiguration.minActiveWorkers = Math.max(1, lineTcpWriterWorkerPoolConfiguration.workerCount);
+
+
                 this.symbolCacheWaitBeforeReload = getMicros(properties, env, PropertyKey.LINE_TCP_SYMBOL_CACHE_WAIT_BEFORE_RELOAD, 500_000);
-                this.lineTcpIOWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_IO_WORKER_COUNT, 0); // Use shared IO pool by default
-                this.lineTcpIOWorkerAffinity = getAffinity(properties, env, PropertyKey.LINE_TCP_IO_WORKER_AFFINITY, lineTcpIOWorkerCount);
-                this.lineTcpIOWorkerPoolHaltOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_IO_HALT_ON_ERROR, false);
-                this.lineTcpIOWorkerYieldThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_YIELD_THRESHOLD, 10);
-                this.lineTcpIOWorkerNapThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_NAP_THRESHOLD, 7_000);
-                this.lineTcpIOWorkerSleepThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_SLEEP_THRESHOLD, 10_000);
+                // Set Line TCP IO worker pool configuration directly
+                initWorkerPoolConfiguration(properties, env, lineTcpIOWorkerPoolConfiguration,
+                        "LINE_TCP_IO_WORKER", 0,
+                        sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
+                        sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
                 this.lineTcpMaintenanceInterval = getMillis(properties, env, PropertyKey.LINE_TCP_MAINTENANCE_JOB_INTERVAL, 1000);
                 this.lineTcpCommitIntervalFraction = getDouble(properties, env, PropertyKey.LINE_TCP_COMMIT_INTERVAL_FRACTION, "0.5");
                 this.lineTcpCommitIntervalDefault = getMillis(properties, env, PropertyKey.LINE_TCP_COMMIT_INTERVAL_DEFAULT, COMMIT_INTERVAL_DEFAULT);
@@ -1653,13 +1606,21 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.networkSharedWorkerPoolConfiguration,
                     PropertyKey.SHARED_NETWORK_WORKER_COUNT,
                     PropertyKey.SHARED_NETWORK_WORKER_AFFINITY,
+                    PropertyKey.SHARED_NETWORK_WORKER_TARGET_UTILIZATION,
+                    PropertyKey.SHARED_NETWORK_WORKER_UTILIZATION_TOLERANCE,
+                    PropertyKey.SHARED_NETWORK_WORKER_MIN_ACTIVE_WORKERS,
+                    PropertyKey.SHARED_NETWORK_WORKER_EVALUATION_INTERVAL,
                     sharedWorkerCountSett,
                     Thread.NORM_PRIORITY + 1,
                     sharedWorkerHaltOnError,
                     sharedWorkerYieldThreshold,
                     sharedWorkerNapThreshold,
                     sharedWorkerSleepThreshold,
-                    sharedWorkerSleepTimeout
+                    sharedWorkerSleepTimeout,
+                    sharedWorkerTargetUtilization,
+                    sharedWorkerUtilizationTolerance,
+                    sharedWorkerMinActiveWorkers,
+                    sharedWorkerEvaluationInterval
             );
 
             int queryWorkers = configureSharedThreadPool(
@@ -1667,13 +1628,21 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.querySharedWorkerPoolConfiguration,
                     PropertyKey.SHARED_QUERY_WORKER_COUNT,
                     PropertyKey.SHARED_QUERY_WORKER_AFFINITY,
+                    PropertyKey.SHARED_QUERY_WORKER_TARGET_UTILIZATION,
+                    PropertyKey.SHARED_QUERY_WORKER_UTILIZATION_TOLERANCE,
+                    PropertyKey.SHARED_QUERY_WORKER_MIN_ACTIVE_WORKERS,
+                    PropertyKey.SHARED_QUERY_WORKER_EVALUATION_INTERVAL,
                     sharedWorkerCountSett,
                     Thread.NORM_PRIORITY,
                     sharedWorkerHaltOnError,
                     sharedWorkerYieldThreshold,
                     sharedWorkerNapThreshold,
                     sharedWorkerSleepThreshold,
-                    sharedWorkerSleepTimeout
+                    sharedWorkerSleepTimeout,
+                    sharedWorkerTargetUtilization,
+                    sharedWorkerUtilizationTolerance,
+                    -1,
+                    sharedWorkerEvaluationInterval
             );
 
             int writeWorkers = configureSharedThreadPool(
@@ -1681,29 +1650,37 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.writeSharedWorkerPoolConfiguration,
                     PropertyKey.SHARED_WRITE_WORKER_COUNT,
                     PropertyKey.SHARED_WRITE_WORKER_AFFINITY,
+                    PropertyKey.SHARED_WRITE_WORKER_TARGET_UTILIZATION,
+                    PropertyKey.SHARED_WRITE_WORKER_UTILIZATION_TOLERANCE,
+                    PropertyKey.SHARED_WRITE_WORKER_MIN_ACTIVE_WORKERS,
+                    PropertyKey.SHARED_WRITE_WORKER_EVALUATION_INTERVAL,
                     sharedWorkerCountSett,
                     Thread.NORM_PRIORITY - 1,
                     sharedWorkerHaltOnError,
                     sharedWorkerYieldThreshold,
                     sharedWorkerNapThreshold,
                     sharedWorkerSleepThreshold,
-                    sharedWorkerSleepTimeout
+                    sharedWorkerSleepTimeout,
+                    sharedWorkerTargetUtilization,
+                    sharedWorkerUtilizationTolerance,
+                    sharedWorkerMinActiveWorkers,
+                    sharedWorkerEvaluationInterval
             );
 
             // Now all worker counts are known, so we can set select cache capacity props.
             if (pgEnabled) {
                 this.pgSelectCacheEnabled = getBoolean(properties, env, PropertyKey.PG_SELECT_CACHE_ENABLED, true);
-                final int effectivePGWorkerCount = pgWorkerCount > 0 ? pgWorkerCount : networkPoolWorkerCount;
+                final int effectivePGWorkerCount = pgWireConfiguration.workerCount > 0 ? pgWireConfiguration.workerCount : networkPoolWorkerCount;
                 this.pgSelectCacheBlockCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_BLOCK_COUNT, 32);
                 this.pgSelectCacheRowCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_ROW_COUNT, Math.max(effectivePGWorkerCount, 4));
             }
-            final int effectiveHttpWorkerCount = httpWorkerCount > 0 ? httpWorkerCount : networkPoolWorkerCount;
+            final int effectiveHttpWorkerCount = httpServerConfiguration.workerCount > 0 ? httpServerConfiguration.workerCount : networkPoolWorkerCount;
             this.httpSqlCacheEnabled = getBoolean(properties, env, PropertyKey.HTTP_QUERY_CACHE_ENABLED, true);
             this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 32);
             this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, Math.max(effectiveHttpWorkerCount, 4));
             this.queryCacheEventQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY, 4));
 
-            this.sqlCompilerPoolCapacity = 2 * (httpWorkerCount + pgWorkerCount + writeWorkers + networkPoolWorkerCount);
+            this.sqlCompilerPoolCapacity = 2 * (httpServerConfiguration.workerCount + pgWireConfiguration.workerCount + writeWorkers + networkPoolWorkerCount);
 
             final int defaultReduceQueueCapacity = queryWorkers > 0 ? Math.min(2 * queryWorkers, 64) : 0;
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
@@ -1727,7 +1704,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelReadParquetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, defaultParallelSqlEnabled);
             if (!sqlParallelFilterEnabled && !sqlParallelGroupByEnabled && !sqlParallelReadParquetEnabled) {
                 // All type of parallel queries are disabled. Don't start the query thread pool
-                querySharedWorkerPoolConfiguration.sharedWorkerCount = 0;
+                querySharedWorkerPoolConfiguration.workerCount = 0;
             }
 
             this.walParallelExecutionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED, true);
@@ -1926,30 +1903,42 @@ public class PropServerConfiguration implements ServerConfiguration {
             PropWorkerPoolConfiguration poolConfiguration,
             PropertyKey workerCountProp,
             PropertyKey affinityProp,
+            PropertyKey targetUtilizationProp,
+            PropertyKey utilizationToleranceProp,
+            PropertyKey minActiveWorkersProp,
+            PropertyKey evaluationIntervalProp,
             int sharedWorkerCount,
             int priority,
             boolean sharedWorkerHaltOnError,
             long sharedWorkerYieldThreshold,
             long sharedWorkerNapThreshold,
             long sharedWorkerSleepThreshold,
-            long sharedWorkerSleepTimeout
+            long sharedWorkerSleepTimeout,
+            double sharedWorkerTargetUtilization,
+            double sharedWorkerUtilizationTolerance,
+            int sharedWorkerMinActiveWorkers,
+            long sharedWorkerEvaluationInterval
     ) throws ServerConfigurationException {
-        poolConfiguration.sharedWorkerCount = getInt(properties, env, workerCountProp, sharedWorkerCount);
-        poolConfiguration.sharedWorkerAffinity =
-                getAffinity(properties, env, affinityProp, poolConfiguration.sharedWorkerCount);
-        poolConfiguration.sharedWorkerHaltOnError = sharedWorkerHaltOnError;
-        poolConfiguration.sharedWorkerYieldThreshold = sharedWorkerYieldThreshold;
-        poolConfiguration.sharedWorkerNapThreshold = sharedWorkerNapThreshold;
-        poolConfiguration.sharedWorkerSleepThreshold = sharedWorkerSleepThreshold;
-        poolConfiguration.sharedWorkerSleepTimeout = sharedWorkerSleepTimeout;
+        poolConfiguration.workerCount = getInt(properties, env, workerCountProp, sharedWorkerCount);
+        poolConfiguration.workerAffinity =
+                getAffinity(properties, env, affinityProp, poolConfiguration.workerCount);
+        poolConfiguration.haltOnError = sharedWorkerHaltOnError;
+        poolConfiguration.yieldThreshold = sharedWorkerYieldThreshold;
+        poolConfiguration.napThreshold = sharedWorkerNapThreshold;
+        poolConfiguration.sleepThreshold = sharedWorkerSleepThreshold;
+        poolConfiguration.sleepTimeout = sharedWorkerSleepTimeout;
+        poolConfiguration.targetUtilization = getDouble(properties, env, targetUtilizationProp, String.valueOf(sharedWorkerTargetUtilization));
+        poolConfiguration.utilizationTolerance = getDouble(properties, env, utilizationToleranceProp, String.valueOf(sharedWorkerUtilizationTolerance));
+        poolConfiguration.minActiveWorkers = getInt(properties, env, minActiveWorkersProp, sharedWorkerMinActiveWorkers);
+        poolConfiguration.evaluationInterval = getMillis(properties, env, evaluationIntervalProp, sharedWorkerEvaluationInterval);
         poolConfiguration.metrics = this.metrics;
         poolConfiguration.workerPoolPriority = priority;
-        return poolConfiguration.sharedWorkerCount;
+        return poolConfiguration.workerCount;
     }
 
-    private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
+    private int[] getAffinity(@Nullable Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
         final int[] result = new int[workerCount];
-        String value = getString(properties, env, key, null);
+        String value = properties != null ? getString(properties, env, key, null) : null;
         if (value == null) {
             Arrays.fill(result, -1);
         } else {
@@ -1987,6 +1976,20 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         return CommitMode.NOSYNC;
+    }
+
+    private PropertyKey getHaltOnErrorProperty(String enumPrefix) {
+        // Handle special cases where halt.on.error property names don't follow standard pattern
+        switch (enumPrefix) {
+            case "PG_WORKER":
+                return safeValueOf("PG_HALT_ON_ERROR");
+            case "LINE_TCP_WRITER_WORKER":
+                return safeValueOf("LINE_TCP_WRITER_HALT_ON_ERROR");
+            case "LINE_TCP_IO_WORKER":
+                return safeValueOf("LINE_TCP_IO_HALT_ON_ERROR");
+            default:
+                return safeValueOf(enumPrefix + "_HALT_ON_ERROR");
+        }
     }
 
     private LineTimestampAdapter getLineTimestampAdaptor(Properties properties, Map<String, String> env, ConfigPropertyKey propNm) {
@@ -2057,6 +2060,82 @@ public class PropServerConfiguration implements ServerConfiguration {
         return sink.toString();
     }
 
+    private void initWorkerPoolConfiguration(
+            Properties properties,
+            Map<String, String> env,
+            PropWorkerPoolConfiguration poolConfiguration,
+            String enumPrefix,
+            int defaultWorkerCount,
+            long defaultYieldThreshold,
+            long defaultNapThreshold,
+            long defaultSleepThreshold,
+            long defaultSleepTimeout,
+            double sharedTargetUtilization,
+            double sharedUtilizationTolerance,
+            int sharedMinActiveWorkers,
+            long sharedEvaluationInterval
+    ) throws ServerConfigurationException {
+        // Try to find PropertyKey enum values by constructing the expected names
+        try {
+            PropertyKey workerCountProp = safeValueOf(enumPrefix + "_COUNT");
+            PropertyKey affinityProp = safeValueOf(enumPrefix + "_AFFINITY");
+            PropertyKey haltOnErrorProp = getHaltOnErrorProperty(enumPrefix);
+            PropertyKey yieldThresholdProp = safeValueOf(enumPrefix + "_YIELD_THRESHOLD");
+            PropertyKey napThresholdProp = safeValueOf(enumPrefix + "_NAP_THRESHOLD");
+            PropertyKey sleepThresholdProp = safeValueOf(enumPrefix + "_SLEEP_THRESHOLD");
+            PropertyKey sleepTimeoutProp = safeValueOf(enumPrefix + "_SLEEP_TIMEOUT");
+            PropertyKey targetUtilizationProp = safeValueOf(enumPrefix + "_TARGET_UTILIZATION");
+            PropertyKey utilizationToleranceProp = safeValueOf(enumPrefix + "_UTILIZATION_TOLERANCE");
+            PropertyKey minActiveWorkersProp = safeValueOf(enumPrefix + "_MIN_ACTIVE_WORKERS");
+            PropertyKey evaluationIntervalProp = safeValueOf(enumPrefix + "_EVALUATION_INTERVAL");
+
+            poolConfiguration.workerCount = workerCountProp != null ? getInt(properties, env, workerCountProp, defaultWorkerCount) : defaultWorkerCount;
+            poolConfiguration.workerAffinity = getAffinity(properties, env, affinityProp, poolConfiguration.workerCount);
+            poolConfiguration.yieldThreshold = yieldThresholdProp != null ? getLong(properties, env, yieldThresholdProp, defaultYieldThreshold) : defaultYieldThreshold;
+            poolConfiguration.haltOnError = getBoolean(properties, env, haltOnErrorProp, false);
+            poolConfiguration.napThreshold = napThresholdProp != null ? getLong(properties, env, napThresholdProp, defaultNapThreshold) : defaultNapThreshold;
+            poolConfiguration.sleepThreshold = sleepThresholdProp != null ? getLong(properties, env, sleepThresholdProp, defaultSleepThreshold) : defaultSleepThreshold;
+            poolConfiguration.sleepTimeout = sleepTimeoutProp != null ? getMillis(properties, env, sleepTimeoutProp, defaultSleepTimeout) : defaultSleepTimeout;
+            poolConfiguration.targetUtilization = targetUtilizationProp != null ? getDouble(properties, env, targetUtilizationProp, String.valueOf(sharedTargetUtilization)) : sharedTargetUtilization;
+            poolConfiguration.utilizationTolerance = utilizationToleranceProp != null ? getDouble(properties, env, utilizationToleranceProp, String.valueOf(sharedUtilizationTolerance)) : sharedUtilizationTolerance;
+            poolConfiguration.minActiveWorkers = minActiveWorkersProp != null ? getInt(properties, env, minActiveWorkersProp, sharedMinActiveWorkers) : sharedMinActiveWorkers;
+            poolConfiguration.evaluationInterval = evaluationIntervalProp != null ? getMillis(properties, env, evaluationIntervalProp, sharedEvaluationInterval) : sharedEvaluationInterval;
+            poolConfiguration.metrics = this.metrics;
+
+            // Initialize affinity array with -1 if property wasn't found
+        } catch (IllegalArgumentException e) {
+            throw new ServerConfigurationException("Missing PropertyKey for worker pool: " + enumPrefix);
+        }
+    }
+
+    private void initWorkerPoolConfiguration(
+            Properties properties,
+            Map<String, String> env,
+            PropWorkerPoolConfiguration poolConfiguration,
+            String enumPrefix,
+            int defaultWorkerCount,
+            double sharedTargetUtilization,
+            double sharedUtilizationTolerance,
+            int sharedMinActiveWorkers,
+            long sharedEvaluationInterval
+    ) throws ServerConfigurationException {
+        initWorkerPoolConfiguration(
+                properties,
+                env,
+                poolConfiguration,
+                enumPrefix,
+                defaultWorkerCount,
+                10, // default yield threshold
+                7_000, // default nap threshold
+                10_000, // default sleep threshold
+                10, // default sleep timeout
+                sharedTargetUtilization,
+                sharedUtilizationTolerance,
+                sharedMinActiveWorkers,
+                sharedEvaluationInterval
+        );
+    }
+
     private boolean pathEquals(String p1, String p2) {
         try {
             if (p1 == null || p2 == null) {
@@ -2069,6 +2148,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             log.info().$("Can't validate configuration property [key=").$(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath())
                     .$(", value=").$(p2).$("]");
             return false;
+        }
+    }
+
+    private PropertyKey safeValueOf(String enumName) {
+        try {
+            return PropertyKey.valueOf(enumName);
+        } catch (IllegalArgumentException e) {
+            return null;
         }
     }
 
@@ -2374,18 +2461,27 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private static class PropWorkerPoolConfiguration implements WorkerPoolConfiguration {
         private final String name;
+        public long evaluationInterval;
+        public boolean haltOnError;
         public Metrics metrics;
-        public int[] sharedWorkerAffinity;
-        public int sharedWorkerCount;
-        public boolean sharedWorkerHaltOnError;
-        public long sharedWorkerNapThreshold;
-        public long sharedWorkerSleepThreshold;
-        public long sharedWorkerSleepTimeout;
-        public long sharedWorkerYieldThreshold;
+        public int minActiveWorkers;
+        public long napThreshold;
+        public long sleepThreshold;
+        public long sleepTimeout;
+        public double targetUtilization;
+        public double utilizationTolerance;
+        public int[] workerAffinity;
+        public int workerCount;
         public int workerPoolPriority = Thread.NORM_PRIORITY;
+        public long yieldThreshold;
 
         private PropWorkerPoolConfiguration(String name) {
             this.name = name;
+        }
+
+        @Override
+        public long getEvaluationInterval() {
+            return evaluationInterval;
         }
 
         @Override
@@ -2394,8 +2490,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getMinActiveWorkers() {
+            return minActiveWorkers;
+        }
+
+        @Override
         public long getNapThreshold() {
-            return sharedWorkerNapThreshold;
+            return napThreshold;
         }
 
         @Override
@@ -2405,32 +2506,47 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public long getSleepThreshold() {
-            return sharedWorkerSleepThreshold;
+            return sleepThreshold;
         }
 
         @Override
         public long getSleepTimeout() {
-            return sharedWorkerSleepTimeout;
+            return sleepTimeout;
+        }
+
+        @Override
+        public double getTargetUtilization() {
+            return targetUtilization;
+        }
+
+        @Override
+        public double getUtilizationTolerance() {
+            return utilizationTolerance;
         }
 
         @Override
         public int[] getWorkerAffinity() {
-            return sharedWorkerAffinity;
+            return workerAffinity;
         }
 
         @Override
         public int getWorkerCount() {
-            return sharedWorkerCount;
+            return workerCount;
         }
 
         @Override
         public long getYieldThreshold() {
-            return sharedWorkerYieldThreshold;
+            return yieldThreshold;
         }
 
         @Override
         public boolean haltOnError() {
-            return sharedWorkerHaltOnError;
+            return haltOnError;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return workerCount > 0;
         }
 
         @Override
@@ -3133,6 +3249,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull CharSequence getLegacyCheckpointRoot() {
             return legacyCheckpointRoot;
+        }
+
+        @Override
+        public int getLineTcpWriterWorkerCount() {
+            return lineTcpWriterWorkerPoolConfiguration.getWorkerCount();
         }
 
         @Override
@@ -4118,7 +4239,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    public class PropHttpMinServerConfiguration implements HttpServerConfiguration {
+    public class PropHttpMinServerConfiguration extends PropWorkerPoolConfiguration implements HttpServerConfiguration {
+
+        private PropHttpMinServerConfiguration() {
+            super("minhttp");
+        }
 
         @Override
         public long getAcceptLoopTimeout() {
@@ -4186,16 +4311,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public Metrics getMetrics() {
-            return metrics;
-        }
-
-        @Override
-        public long getNapThreshold() {
-            return httpMinWorkerNapThreshold;
-        }
-
-        @Override
         public int getNetRecvBufferSize() {
             return httpMinNetConnectionRcvBuf;
         }
@@ -4208,11 +4323,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public NetworkFacade getNetworkFacade() {
             return NetworkFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public String getPoolName() {
-            return "minhttp";
         }
 
         @Override
@@ -4241,16 +4351,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getSleepThreshold() {
-            return httpMinWorkerSleepThreshold;
-        }
-
-        @Override
-        public long getSleepTimeout() {
-            return httpMinWorkerSleepTimeout;
-        }
-
-        @Override
         public int getTestConnectionBufferSize() {
             return netTestConnectionBufferSize;
         }
@@ -4263,26 +4363,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public WaitProcessorConfiguration getWaitProcessorConfiguration() {
             return httpWaitProcessorConfiguration;
-        }
-
-        @Override
-        public int[] getWorkerAffinity() {
-            return httpMinWorkerAffinity;
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return httpMinWorkerCount;
-        }
-
-        @Override
-        public long getYieldThreshold() {
-            return httpMinWorkerYieldThreshold;
-        }
-
-        @Override
-        public boolean haltOnError() {
-            return httpMinWorkerHaltOnError;
         }
 
         @Override
@@ -4304,14 +4384,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean preAllocateBuffers() {
             return true;
         }
-
-        @Override
-        public int workerPoolPriority() {
-            return httpMinWorkerPoolPriority;
-        }
     }
 
-    public class PropHttpServerConfiguration implements HttpFullFatServerConfiguration {
+    public class PropHttpServerConfiguration extends PropWorkerPoolConfiguration implements HttpFullFatServerConfiguration {
+
+        private PropHttpServerConfiguration() {
+            super("http");
+        }
 
         @Override
         public long getAcceptLoopTimeout() {
@@ -4439,16 +4518,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public Metrics getMetrics() {
-            return metrics;
-        }
-
-        @Override
-        public long getNapThreshold() {
-            return httpWorkerNapThreshold;
-        }
-
-        @Override
         public int getNetRecvBufferSize() {
             return httpNetConnectionRcvBuf;
         }
@@ -4466,11 +4535,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public String getPassword() {
             return httpPassword;
-        }
-
-        @Override
-        public String getPoolName() {
-            return "http";
         }
 
         @Override
@@ -4498,15 +4562,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             return httpSendBufferSize;
         }
 
-        @Override
-        public long getSleepThreshold() {
-            return httpWorkerSleepThreshold;
-        }
-
-        @Override
-        public long getSleepTimeout() {
-            return httpWorkerSleepTimeout;
-        }
 
         @Override
         public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
@@ -4533,25 +4588,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             return httpWaitProcessorConfiguration;
         }
 
-        @Override
-        public int[] getWorkerAffinity() {
-            return httpWorkerAffinity;
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return httpWorkerCount;
-        }
-
-        @Override
-        public long getYieldThreshold() {
-            return httpWorkerYieldThreshold;
-        }
-
-        @Override
-        public boolean haltOnError() {
-            return httpWorkerHaltOnError;
-        }
 
         @Override
         public boolean isEnabled() {
@@ -4700,48 +4736,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolConfiguration {
-
-        @Override
-        public Metrics getMetrics() {
-            return metrics;
-        }
-
-        @Override
-        public long getNapThreshold() {
-            return lineTcpIOWorkerNapThreshold;
-        }
-
-        @Override
-        public String getPoolName() {
-            return "ilpio";
-        }
-
-        @Override
-        public long getSleepThreshold() {
-            return lineTcpIOWorkerSleepThreshold;
-        }
-
-        @Override
-        public int[] getWorkerAffinity() {
-            return lineTcpIOWorkerAffinity;
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return lineTcpIOWorkerCount;
-        }
-
-        @Override
-        public long getYieldThreshold() {
-            return lineTcpIOWorkerYieldThreshold;
-        }
-
-        @Override
-        public boolean haltOnError() {
-            return lineTcpIOWorkerPoolHaltOnError;
-        }
-    }
 
     private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
 
@@ -5010,47 +5004,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropLineTcpWriterWorkerPoolConfiguration implements WorkerPoolConfiguration {
-        @Override
-        public Metrics getMetrics() {
-            return metrics;
-        }
-
-        @Override
-        public long getNapThreshold() {
-            return lineTcpWriterWorkerNapThreshold;
-        }
-
-        @Override
-        public String getPoolName() {
-            return "ilpwriter";
-        }
-
-        @Override
-        public long getSleepThreshold() {
-            return lineTcpWriterWorkerSleepThreshold;
-        }
-
-        @Override
-        public int[] getWorkerAffinity() {
-            return lineTcpWriterWorkerAffinity;
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return lineTcpWriterWorkerCount;
-        }
-
-        @Override
-        public long getYieldThreshold() {
-            return lineTcpWriterWorkerYieldThreshold;
-        }
-
-        @Override
-        public boolean haltOnError() {
-            return lineTcpWriterWorkerPoolHaltOnError;
-        }
-    }
 
     private class PropLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {
         @Override
@@ -5159,57 +5112,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropMatViewRefreshPoolConfiguration implements WorkerPoolConfiguration {
-        @Override
-        public Metrics getMetrics() {
-            return metrics;
-        }
-
-        @Override
-        public long getNapThreshold() {
-            return matViewRefreshWorkerNapThreshold;
-        }
-
-        @Override
-        public String getPoolName() {
-            return "mat-view-refresh";
-        }
-
-        @Override
-        public long getSleepThreshold() {
-            return matViewRefreshWorkerSleepThreshold;
-        }
-
-        @Override
-        public long getSleepTimeout() {
-            return matViewRefreshSleepTimeout;
-        }
-
-        @Override
-        public int[] getWorkerAffinity() {
-            return matViewRefreshWorkerAffinity;
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return matViewRefreshWorkerCount;
-        }
-
-        @Override
-        public long getYieldThreshold() {
-            return matViewRefreshWorkerYieldThreshold;
-        }
-
-        @Override
-        public boolean haltOnError() {
-            return matViewRefreshWorkerHaltOnError;
-        }
-
-        @Override
-        public boolean isEnabled() {
-            return matViewRefreshWorkerCount > 0;
-        }
-    }
 
     private class PropMetricsConfiguration implements MetricsConfiguration {
 
@@ -5246,7 +5148,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropPGWireConfiguration implements PGWireConfiguration {
+    private class PropPGWireConfiguration extends PropWorkerPoolConfiguration implements PGWireConfiguration {
+
+        private PropPGWireConfiguration() {
+            super("pgwire");
+        }
 
         @Override
         public long getAcceptLoopTimeout() {
@@ -5319,11 +5225,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public String getDispatcherLogName() {
-            return "pg-server";
-        }
-
-        @Override
         public EpollFacade getEpollFacade() {
             return EpollFacadeImpl.INSTANCE;
         }
@@ -5379,11 +5280,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public Metrics getMetrics() {
-            return metrics;
-        }
-
-        @Override
         public int getNamedStatementCacheCapacity() {
             return pgNamedStatementCacheCapacity;
         }
@@ -5398,10 +5294,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             return pgNamesStatementPoolCapacity;
         }
 
-        @Override
-        public long getNapThreshold() {
-            return pgWorkerNapThreshold;
-        }
 
         @Override
         public int getNetRecvBufferSize() {
@@ -5426,11 +5318,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPipelineCapacity() {
             return pgPipelineCapacity;
-        }
-
-        @Override
-        public String getPoolName() {
-            return "pgwire";
         }
 
         @Override
@@ -5468,10 +5355,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             return "11.3";
         }
 
-        @Override
-        public long getSleepThreshold() {
-            return pgWorkerSleepThreshold;
-        }
 
         @Override
         public int getTestConnectionBufferSize() {
@@ -5493,25 +5376,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             return pgUpdateCacheRowCount;
         }
 
-        @Override
-        public int[] getWorkerAffinity() {
-            return pgWorkerAffinity;
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return pgWorkerCount;
-        }
-
-        @Override
-        public long getYieldThreshold() {
-            return pgWorkerYieldThreshold;
-        }
-
-        @Override
-        public boolean haltOnError() {
-            return pgHaltOnError;
-        }
 
         @Override
         public boolean isDaemonPool() {
@@ -5791,57 +5655,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropWalApplyPoolConfiguration implements WorkerPoolConfiguration {
-        @Override
-        public Metrics getMetrics() {
-            return metrics;
-        }
-
-        @Override
-        public long getNapThreshold() {
-            return walApplyWorkerNapThreshold;
-        }
-
-        @Override
-        public String getPoolName() {
-            return "wal-apply";
-        }
-
-        @Override
-        public long getSleepThreshold() {
-            return walApplyWorkerSleepThreshold;
-        }
-
-        @Override
-        public long getSleepTimeout() {
-            return walApplySleepTimeout;
-        }
-
-        @Override
-        public int[] getWorkerAffinity() {
-            return walApplyWorkerAffinity;
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return walApplyWorkerCount;
-        }
-
-        @Override
-        public long getYieldThreshold() {
-            return walApplyWorkerYieldThreshold;
-        }
-
-        @Override
-        public boolean haltOnError() {
-            return walApplyWorkerHaltOnError;
-        }
-
-        @Override
-        public boolean isEnabled() {
-            return walApplyWorkerCount > 0;
-        }
-    }
 
     static {
         WRITE_FO_OPTS.put("o_direct", CairoConfiguration.O_DIRECT);

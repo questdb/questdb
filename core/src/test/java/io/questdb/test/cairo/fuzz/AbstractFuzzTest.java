@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
+import io.questdb.WorkerSpinRegulator;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
@@ -54,6 +55,11 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     public final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN = 200;
     protected final FuzzRunner fuzzer = new FuzzRunner();
     protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, node1.getMetrics());
+    protected final WorkerSpinRegulator workerSpinRegulator = new WorkerSpinRegulator();
+
+    public AbstractFuzzTest() {
+        workerSpinRegulator.addWorkerPool(sharedWorkerPool);
+    }
 
     public static int getRndO3PartitionSplit(Rnd rnd) {
         return MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN + rnd.nextInt(MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL - MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN);
@@ -103,6 +109,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         super.tearDown();
         sharedWorkerPool.halt();
         fuzzer.after();
+        workerSpinRegulator.halt();
     }
 
     private static void setZeroWalPurgeInterval() {
@@ -193,6 +200,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             try {
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
+                workerSpinRegulator.start();
 
                 int size = rnd.nextInt(16 * 1024 * 1024);
                 node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
@@ -200,6 +208,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 fuzzer.runFuzz(getTestName(), rnd);
             } finally {
                 sharedWorkerPool.halt();
+                workerSpinRegulator.halt();
             }
         });
     }
@@ -209,11 +218,13 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             try {
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
+                workerSpinRegulator.start();
 
                 setZeroWalPurgeInterval();
                 fuzzer.runFuzz(rnd, tableNameBase, tableCount, false, false);
             } finally {
                 sharedWorkerPool.halt();
+                workerSpinRegulator.halt();
             }
         });
     }

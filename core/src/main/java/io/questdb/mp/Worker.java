@@ -50,6 +50,7 @@ public class Worker extends Thread {
     private final Metrics metrics;
     private final long napThreshold;
     private final OnHaltAction onHaltAction;
+    private final WorkerPoolMetrics poolMetrics;
     private final String poolName;
     private final Job.RunStatus runStatus = () -> lifecycle.get() == Lifecycle.HALTED;
     private final long sleepMs;
@@ -70,7 +71,8 @@ public class Worker extends Thread {
             long sleepThreshold,
             long sleepMs,
             Metrics metrics,
-            @Nullable Log log
+            @Nullable Log log,
+            WorkerPoolMetrics poolMetrics
     ) {
         assert yieldThreshold > 0L;
         this.setName(poolName + '_' + workerId);
@@ -88,6 +90,7 @@ public class Worker extends Thread {
         this.sleepMs = sleepMs;
         this.metrics = metrics;
         this.log = log;
+        this.poolMetrics = poolMetrics;
     }
 
     public String getPoolName() {
@@ -144,12 +147,19 @@ public class Worker extends Thread {
                 long ticker = 0L;
                 while (lifecycle.get() == Lifecycle.RUNNING) {
                     boolean runAsap = false;
+                    int usefulJobs = 0;
+                    long iterationStart = CLOCK_MICROS.getTicks();
+
                     // measure latency of all jobs tick
-                    jobStartMicros.lazySet(CLOCK_MICROS.getTicks());
+                    jobStartMicros.lazySet(iterationStart);
                     for (int i = 0, n = jobs.size(); i < n; i++) {
                         Unsafe.getUnsafe().loadFence();
                         try {
-                            runAsap |= jobs.get(i).run(workerId, runStatus);
+                            boolean jobWasUseful = jobs.get(i).run(workerId, runStatus);
+                            runAsap |= jobWasUseful;
+                            if (jobWasUseful) {
+                                usefulJobs++;
+                            }
                         } catch (Throwable e) {
                             if (metrics.isEnabled()) {
                                 try {
@@ -171,10 +181,21 @@ public class Worker extends Thread {
                         }
                     }
 
+                    // Record iteration stats
+                    poolMetrics.recordIteration(workerId, usefulJobs > 0);
+
                     if (runAsap) {
                         ticker = 0;
                         continue;
                     }
+
+                    // Check if this worker should park
+                    if (poolMetrics.isParked(workerId)) {
+                        parkWorker();
+                        ticker = 0; // Reset ticker after parking
+                        continue;
+                    }
+
                     if (++ticker < 0) {
                         ticker = sleepThreshold + 1; // overflow
                     }
@@ -204,6 +225,37 @@ public class Worker extends Thread {
             haltLatch.countDown();
             if (log != null) {
                 log.info().$("os scheduled worker stopped [name=").$(getName()).I$();
+            }
+        }
+    }
+
+    /**
+     * Parks this worker thread by waiting on its individual monitor until unparked.
+     * The worker will repeatedly check the parking flag and wait if it should remain parked.
+     * This method is called from within the worker's main loop when poolMetrics indicates
+     * this worker should be parked.
+     */
+    private void parkWorker() {
+        // Let all jobs know that this worker is parking
+        // TCP ILP IO job has to release its resources before parking
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            jobs.get(i).park();
+        }
+
+        Object monitor = poolMetrics.getParkingMonitor(workerId);
+
+        while (poolMetrics.isParked(workerId) && lifecycle.get() == Lifecycle.RUNNING) {
+            synchronized (monitor) {
+                // Double-check the condition while holding the monitor lock
+                if (poolMetrics.isParked(workerId) && lifecycle.get() == Lifecycle.RUNNING) {
+                    try {
+                        monitor.wait(sleepMs); // Wait with timeout to periodically check conditions
+                    } catch (InterruptedException e) {
+                        // Restore interrupt status and exit parking
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
             }
         }
     }
