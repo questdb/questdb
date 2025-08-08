@@ -32,6 +32,24 @@ import org.junit.Test;
 
 public class NumericExceptionTest {
     @Test
+    public void testBasic() {
+        NumericException e = NumericException.instance();
+        e.position(5);
+        e.put("test");
+        Assert.assertEquals(5, e.getPosition());
+        Assert.assertEquals("test", e.getFlyweightMessage().toString());
+    }
+
+    @Test
+    public void testInstanceCleaned() {
+        NumericException e1 = NumericException.instance()
+                .put("Overflow");
+        Assert.assertEquals("Overflow", e1.getMessage());
+        NumericException e2 = NumericException.instance();
+        Assert.assertEquals("", e2.getMessage());
+    }
+
+    @Test
     public void testInstanceUniquePerThread() {
         NumericException e1 = NumericException.instance();
         Thread t1 = new Thread(() -> {
@@ -43,15 +61,6 @@ public class NumericExceptionTest {
         } catch (InterruptedException ignored) {
             Assert.fail("interrupted");
         }
-    }
-
-    @Test
-    public void testInstanceCleaned() {
-        NumericException e1 = NumericException.instance()
-                .put("Overflow");
-        Assert.assertEquals("Overflow", e1.getMessage());
-        NumericException e2 = NumericException.instance();
-        Assert.assertEquals("", e2.getMessage());
     }
 
     @Test
@@ -72,14 +81,5 @@ public class NumericExceptionTest {
             String r = e1.getMessage();
             Assert.assertEquals("12.0Overflow-11.0atrue\\u0000", r);
         }
-    }
-
-    @Test
-    public void testBasic() {
-        NumericException e = NumericException.instance();
-        e.position(5);
-        e.put("test");
-        Assert.assertEquals(5, e.getPosition());
-        Assert.assertEquals("test", e.getFlyweightMessage().toString());
     }
 }

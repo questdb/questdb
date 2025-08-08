@@ -55,6 +55,21 @@ public class NumericException extends RuntimeException implements Sinkable, Flyw
         return ex;
     }
 
+    @Override
+    public CharSequence getFlyweightMessage() {
+        return message;
+    }
+
+    @Override
+    public String getMessage() {
+        return message.toString();
+    }
+
+    @Override
+    public int getPosition() {
+        return messagePosition;
+    }
+
     public NumericException position(int position) {
         this.messagePosition = position;
         return this;
@@ -101,11 +116,6 @@ public class NumericException extends RuntimeException implements Sinkable, Flyw
     }
 
     @Override
-    public String getMessage() {
-        return message.toString();
-    }
-
-    @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.put(message);
     }
@@ -113,15 +123,5 @@ public class NumericException extends RuntimeException implements Sinkable, Flyw
     private void clear() {
         message.clear();
         messagePosition = 0;
-    }
-
-    @Override
-    public int getPosition() {
-        return messagePosition;
-    }
-
-    @Override
-    public CharSequence getFlyweightMessage() {
-        return message;
     }
 }
