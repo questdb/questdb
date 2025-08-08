@@ -220,7 +220,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             "Async Filter workers: 1\n" +
                             "  filter: ts::string::timestamp < cursor \n" +
                             "    VirtualRecord\n" +
-                            "      functions: [1]\n" +
+                            "      functions: [1970-01-01T00:00:00.000001Z]\n" +
                             "        long_sequence count: 1 [state-shared] [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
@@ -274,7 +274,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             "Async Filter workers: 1\n" +
                             "  filter: ts [thread-safe] < cursor \n" +
                             "    VirtualRecord\n" +
-                            "      functions: [1]\n" +
+                            "      functions: [1970-01-01T00:00:00.000001Z]\n" +
                             "        long_sequence count: 1 [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +

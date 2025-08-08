@@ -4248,7 +4248,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByAllowsPredicatePushDown() throws Exception {
         String plan = "Radix sort light\n" +
                 "  keys: [tstmp]\n" +
-                "    Filter filter: (tstmp>=1669852800000000 and 0<length(sym)*tstmp::long)\n" +
+                "    Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and 0<length(sym)*tstmp::long)\n" +
                 "        Async JIT Group By workers: 1\n" +
                 "          keys: [tstmp,sym]\n" +
                 "          values: [first(val),avg(val),last(val),max(val)]\n" +
@@ -4277,7 +4277,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "        Async Group By workers: 1\n" +
                             "          keys: [tstmp,sym,ts1]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
-                            "          filter: (ts2>=1669852800000000 and sym='B' and 0<length(sym)*ts2::long)\n" +
+                            "          filter: (ts2>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*ts2::long)\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: x\n"
@@ -4452,7 +4452,7 @@ public class SampleByTest extends AbstractCairoTest {
                 continue;
             }
 
-            String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
+            String plan = "Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
                     "    Sample By\n" +
                     (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                     "      keys: [tstmp,sym]\n" +
@@ -4469,7 +4469,7 @@ public class SampleByTest extends AbstractCairoTest {
 
         for (String fill : Arrays.asList("", "none", "null", "linear", "prev")) {
 
-            String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
+            String plan = "Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
                     "    Sample By\n" +
                     (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                     "      keys: [tstmp,sym]\n" +
@@ -4489,7 +4489,7 @@ public class SampleByTest extends AbstractCairoTest {
                 continue;
             }
 
-            String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
+            String plan = "Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
                     "    Sample By\n" +
                     (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                     "      keys: [tstmp,sym]\n" +
@@ -4557,7 +4557,7 @@ public class SampleByTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select ts, first(v) from tab sample by 30m fill(prev) align to first observation) where ts > '2022-12-01T01:10:00.000000Z'",
-                    "Filter filter: 1669857000000000<ts\n" +
+                    "Filter filter: 2022-12-01T01:10:00.000000Z<ts\n" +
                             "    Sample By\n" +
                             "      fill: prev\n" +
                             "      values: [first(v)]\n" +
