@@ -688,7 +688,7 @@ mod tests {
     fn test_1d_array_with_nulls() {
         // 1d array
         let shape = vec![4];
-        let data = vec![std::f64::NAN, 2.0, std::f64::NAN, 4.0];
+        let data = vec![f64::NAN, 2.0, f64::NAN, 4.0];
         let rep_levels: Vec<u32> = RepLevelsIterator::new(shape.as_slice(), 4).collect();
         assert_eq!(rep_levels, vec![0, 1, 1, 1]);
         let def_levels: Vec<u32> = DefLevelsIterator::new(data.as_slice(), 3).collect();
@@ -724,7 +724,7 @@ mod tests {
         // 2x2x2 array
         let shape = vec![2, 2, 2];
         // [[[1.0, null], [null, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]
-        let data = vec![1.0, std::f64::NAN, std::f64::NAN, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let data = vec![1.0, f64::NAN, f64::NAN, 4.0, 5.0, 6.0, 7.0, 8.0];
         let rep_levels: Vec<u32> = RepLevelsIterator::new(shape.as_slice(), 8).collect();
         assert_eq!(rep_levels, vec![0, 3, 2, 3, 1, 3, 2, 3]);
         let def_levels: Vec<u32> = DefLevelsIterator::new(data.as_slice(), 5).collect();
@@ -819,15 +819,15 @@ mod tests {
     }
 
     fn assert_levels_iter(
-        rep_levels: &Vec<u32>,
-        def_levels: &Vec<u32>,
+        rep_levels: &[u32],
+        def_levels: &[u32],
         expected: &Vec<(Vec<u32>, Vec<u32>)>,
     ) -> ParquetResult<()> {
         let max_rep_level = *rep_levels.iter().max().unwrap();
         let mut rep_levels_buf: Vec<u8> = vec![];
         encode_group_levels(
             &mut rep_levels_buf,
-            rep_levels.iter().map(|v| *v),
+            rep_levels.iter().copied(),
             rep_levels.len(),
             max_rep_level,
             Version::V2,
@@ -837,7 +837,7 @@ mod tests {
         let mut def_levels_buf: Vec<u8> = vec![];
         encode_group_levels(
             &mut def_levels_buf,
-            def_levels.iter().map(|v| *v),
+            def_levels.iter().copied(),
             def_levels.len(),
             max_def_level,
             Version::V2,
