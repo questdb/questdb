@@ -405,7 +405,7 @@ public interface TimestampDriver {
             } catch (NumericException ignore) {
             }
 
-            return castPGDates(value, typeFrom, getColumnType());
+            return castPGDates(value, typeFrom, this);
         }
         return Numbers.LONG_NULL;
     }
@@ -429,7 +429,7 @@ public interface TimestampDriver {
 
             // all formats are ascii
             if (value.isAscii()) {
-                return castPGDates(value.asAsciiCharSequence(), ColumnType.VARCHAR, getColumnType());
+                return castPGDates(value.asAsciiCharSequence(), ColumnType.VARCHAR, this);
             }
             throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, getColumnType());
         }

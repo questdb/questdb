@@ -82,16 +82,15 @@ public class SqlUtil {
         model.setArtificialStar(true);
     }
 
-    public static long castPGDates(CharSequence value, int fromColumnType, int toTimestampType) {
+    public static long castPGDates(CharSequence value, int fromColumnType, TimestampDriver driver) {
         final int hi = value.length();
         for (int i = 0; i < IMPLICIT_CAST_FORMATS_SIZE; i++) {
             try {
-                //
-                return IMPLICIT_CAST_FORMATS[i].parse(value, 0, hi, EN_LOCALE) * 1000L;
+                return driver.fromDate(IMPLICIT_CAST_FORMATS[i].parse(value, 0, hi, EN_LOCALE));
             } catch (NumericException ignore) {
             }
         }
-        throw ImplicitCastException.inconvertibleValue(value, fromColumnType, toTimestampType);
+        throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getColumnType());
     }
 
     public static CharSequence createExprColumnAlias(
