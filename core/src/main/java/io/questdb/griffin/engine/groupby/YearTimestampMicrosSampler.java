@@ -79,9 +79,10 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        final int y = Timestamps.getYear(value);
+        int y = Timestamps.getYear(value);
+        y = y - y % stepYears;
         return Timestamps.toMicros(
-                y - y % stepYears,
+                y,
                 CommonUtils.isLeapYear(y),
                 startDay,
                 startMonth,

@@ -1080,7 +1080,7 @@ public final class Timestamps {
      * equivalent to parsing "2008-01-01T00:00:00.000Z", except this method is faster.
      *
      * @param year the year
-     * @param leap true if give year is leap year
+     * @param leap true if given year is leap year
      * @return epoch offset in micros.
      */
     public static long yearMicros(int year, boolean leap) {

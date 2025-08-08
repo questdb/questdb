@@ -33,12 +33,27 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class YearTimestampSamplerTest {
+    private static final String FIXED_PART = "-11-16T15:00:00.000000Z\n";
 
-    public static final String FIXED_PART = "-11-16T15:00:00.000000Z\n";
+    @Test
+    public void testRound() throws NumericException {
+        testRound(1, "2023-01-01T00:00:00.000000Z", "2023-01-01T00:00:00.000000Z");
+        testRound(1, "2023-01-01T00:00:00.000001Z", "2023-01-01T00:00:00.000000Z");
+        testRound(1, "2024-08-08T12:57:07.388314Z", "2024-01-01T00:00:00.000000Z");
+
+        testRound(2, "2024-01-01T00:00:00.000000Z", "2024-01-01T00:00:00.000000Z");
+        testRound(2, "2025-08-08T12:57:07.388314Z", "2024-01-01T00:00:00.000000Z");
+        testRound(2, "2025-12-31T23:59:59.999999Z", "2024-01-01T00:00:00.000000Z");
+
+        testRound(10, "2020-01-01T00:00:00.000000Z", "2020-01-01T00:00:00.000000Z");
+        testRound(10, "2024-01-01T00:00:00.000000Z", "2020-01-01T00:00:00.000000Z");
+        testRound(10, "2025-12-31T23:59:59.999999Z", "2020-01-01T00:00:00.000000Z");
+    }
 
     @Test
     public void testSingleStep() throws NumericException {
-        testSampler(1,
+        testSampler(
+                1,
                 "2022" + FIXED_PART +
                         "2026" + FIXED_PART +
                         "2030" + FIXED_PART +
@@ -64,7 +79,8 @@ public class YearTimestampSamplerTest {
 
     @Test
     public void testTripleStep() throws NumericException {
-        testSampler(3,
+        testSampler(
+                3,
                 "2030" + FIXED_PART +
                         "2042" + FIXED_PART +
                         "2054" + FIXED_PART +
@@ -86,6 +102,13 @@ public class YearTimestampSamplerTest {
                         "2246" + FIXED_PART +
                         "2258" + FIXED_PART
         );
+    }
+
+    private void testRound(int stepYears, String timestamp, String expectedRounded) throws NumericException {
+        final YearTimestampSampler sampler = new YearTimestampSampler(stepYears);
+        sampler.setStart(0);
+        final long ts = TimestampFormatUtils.parseUTCTimestamp(timestamp);
+        Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(expectedRounded), sampler.round(ts));
     }
 
     private void testSampler(int stepSize, String expected) throws NumericException {
