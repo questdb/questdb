@@ -71,7 +71,28 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
         assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.891758Z:TIMESTAMP\n", "select dateadd('T', 5, 1587275359886758L)");
         assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.881758Z:TIMESTAMP\n", "select dateadd('T', -5, 1587275359886758L)");
         assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.886763Z:TIMESTAMP\n", "select dateadd('U', 5, 1587275359886758L)");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.886763Z:TIMESTAMP\n", "select dateadd('n', 5000, 1587275359886758L)");
         assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.886753Z:TIMESTAMP\n", "select dateadd('U', -5, 1587275359886758L)");
+
+        assertSqlWithTypes("dateadd\n2025-04-19T05:49:19.886758123Z:TIMESTAMP_NS\n", "select dateadd('y', 5, 1587275359886758123L::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n2015-04-19T05:49:19.886758123Z:TIMESTAMP_NS\n", "select dateadd('y', -5, 1587275359886758123L::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n2020-09-19T05:49:19.886758123Z:TIMESTAMP_NS\n", "select dateadd('M', 5, 1587275359886758123L::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n2019-11-19T05:49:19.886758123Z:TIMESTAMP_NS\n", "select dateadd('M', -5, 1587275359886758123L::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n2020-05-24T05:49:19.886758123Z:TIMESTAMP_NS\n", "select dateadd('w', 5, 1587275359886758123L::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n2020-03-15T05:49:19.886758123Z:TIMESTAMP_NS\n", "select dateadd('w', -5, 1587275359886758123L::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n2020-04-24T05:49:19.886758123Z:TIMESTAMP_NS\n", "select dateadd('d', 5, 1587275359886758123L::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n2020-04-14T05:49:19.886758123Z:TIMESTAMP_NS\n", "select dateadd('d', -5, 1587275359886758123L::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n2020-04-19T10:49:19.886758123Z:TIMESTAMP_NS\n", "select dateadd('h', 5, 1587275359886758123L::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n2020-04-19T00:49:19.886758123Z:TIMESTAMP_NS\n", "select dateadd('h', -5, 1587275359886758123L::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:54:19.886758123Z:TIMESTAMP_NS\n", "select dateadd('m', 5, 1587275359886758123L::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:44:19.886758123Z:TIMESTAMP_NS\n", "select dateadd('m', -5, 1587275359886758123L::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:24.886758123Z:TIMESTAMP_NS\n", "select dateadd('s', 5, 1587275359886758123L::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:14.886758123Z:TIMESTAMP_NS\n", "select dateadd('s', -5, 1587275359886758123L::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.891758123Z:TIMESTAMP_NS\n", "select dateadd('T', 5, 1587275359886758123L::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.881758123Z:TIMESTAMP_NS\n", "select dateadd('T', -5, 1587275359886758123L::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.886763123Z:TIMESTAMP_NS\n", "select dateadd('U', 5, 1587275359886758123L::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.886758100Z:TIMESTAMP_NS\n", "select dateadd('n', -23, 1587275359886758123L::timestamp_ns)");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:19.886753123Z:TIMESTAMP_NS\n", "select dateadd('U', -5, 1587275359886758123L::timestamp_ns)");
     }
 
     @Test
@@ -90,6 +111,21 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
         assertSqlWithTypes("dateadd\n2020-04-19T05:50:19.886758Z:TIMESTAMP\n:TIMESTAMP\n", "select dateadd('m', case when x = 1 then cast(x as int) else null end, 1587275359886758L) from long_sequence(2)");
         assertSqlWithTypes("dateadd\n:TIMESTAMP\n:TIMESTAMP\n", "select dateadd('s', cast(x as int), null) from long_sequence(2)");
         assertSqlWithTypes("dateadd\n2020-04-19T05:49:20.886758Z:TIMESTAMP\n:TIMESTAMP\n", "select dateadd('s', case when x = 1 then cast(x as int) else null end, 1587275359886758L) from long_sequence(2)");
+
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n:TIMESTAMP_NS\n", "select dateadd('y', cast(x as int), null::timestamp_ns) from long_sequence(2)");
+        assertSqlWithTypes("dateadd\n2021-04-19T05:49:19.886758000Z:TIMESTAMP_NS\n:TIMESTAMP_NS\n", "select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758000L::timestamp_ns) from long_sequence(2)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n:TIMESTAMP_NS\n", "select dateadd('M', cast(x as int), null::timestamp_ns) from long_sequence(2)");
+        assertSqlWithTypes("dateadd\n2020-05-19T05:49:19.886758000Z:TIMESTAMP_NS\n:TIMESTAMP_NS\n", "select dateadd('M', case when x = 1 then cast(x as int) else null end, 1587275359886758000L::timestamp_ns) from long_sequence(2)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n:TIMESTAMP_NS\n", "select dateadd('w', cast(x as int), null::timestamp_ns) from long_sequence(2)");
+        assertSqlWithTypes("dateadd\n2020-04-26T05:49:19.886758000Z:TIMESTAMP_NS\n:TIMESTAMP_NS\n", "select dateadd('w', case when x = 1 then cast(x as int) else null end, 1587275359886758000L::timestamp_ns) from long_sequence(2)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n:TIMESTAMP_NS\n", "select dateadd('d', cast(x as int), null::timestamp_ns) from long_sequence(2)");
+        assertSqlWithTypes("dateadd\n2020-04-20T05:49:19.886758000Z:TIMESTAMP_NS\n:TIMESTAMP_NS\n", "select dateadd('d', case when x = 1 then cast(x as int) else null end, 1587275359886758000L::timestamp_ns) from long_sequence(2)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n:TIMESTAMP_NS\n", "select dateadd('h', cast(x as int), null::timestamp_ns) from long_sequence(2)");
+        assertSqlWithTypes("dateadd\n2020-04-19T06:49:19.886758000Z:TIMESTAMP_NS\n:TIMESTAMP_NS\n", "select dateadd('h', case when x = 1 then cast(x as int) else null end, 1587275359886758000L::timestamp_ns) from long_sequence(2)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n:TIMESTAMP_NS\n", "select dateadd('m', cast(x as int), null::timestamp_ns) from long_sequence(2)");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:50:19.886758000Z:TIMESTAMP_NS\n:TIMESTAMP_NS\n", "select dateadd('m', case when x = 1 then cast(x as int) else null end, 1587275359886758000L::timestamp_ns) from long_sequence(2)");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n:TIMESTAMP_NS\n", "select dateadd('s', cast(x as int), null::timestamp_ns) from long_sequence(2)");
+        assertSqlWithTypes("dateadd\n2020-04-19T05:49:20.886758000Z:TIMESTAMP_NS\n:TIMESTAMP_NS\n", "select dateadd('s', case when x = 1 then cast(x as int) else null end, 1587275359886758000L::timestamp_ns) from long_sequence(2)");
 
     }
 

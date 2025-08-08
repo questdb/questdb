@@ -32,7 +32,7 @@ import io.questdb.std.Numbers;
 
 public class TimestampConstant extends TimestampFunction implements ConstantFunction {
     public static final TimestampConstant TIMESTAMP_MICRO_NULL = new TimestampConstant(Numbers.LONG_NULL, ColumnType.TIMESTAMP_MICRO);
-    public static final TimestampConstant TIMESTAMP_NANO_NULL = new TimestampConstant(Numbers.LONG_NULL, ColumnType.TIMESTAMP_MICRO);
+    public static final TimestampConstant TIMESTAMP_NANO_NULL = new TimestampConstant(Numbers.LONG_NULL, ColumnType.TIMESTAMP_NANO);
     private final long value;
 
     public TimestampConstant(long value, int columnType) {
