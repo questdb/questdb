@@ -310,7 +310,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 }
             }
         } else {
-            return timestampDriver.from(dynamicFunction.getTimestamp(null), ColumnType.getTimestampType(functionType, sqlExecutionContext.getCairoEngine().getConfiguration()));
+            return timestampDriver.from(dynamicFunction.getTimestamp(null), ColumnType.getTimestampType(functionType));
         }
     }
 

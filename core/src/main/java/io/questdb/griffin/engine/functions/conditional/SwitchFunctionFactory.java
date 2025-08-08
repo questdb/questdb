@@ -270,7 +270,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         }
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
-        return CaseCommon.getCaseFunction(configuration, position, valueType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
     }
 
     private Function getDoubleKeyedFunction(
@@ -307,7 +307,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
 
-        return CaseCommon.getCaseFunction(configuration, position, valueType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
     }
 
     private Function getElseFunction(int valueType, Function elseBranch) {
@@ -349,7 +349,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
 
-        return CaseCommon.getCaseFunction(configuration, position, valueType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
     }
 
     private Function getIfElseFunction(
@@ -406,7 +406,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(5), "too many branches");
         }
 
-        return CaseCommon.getCaseFunction(configuration, position, returnType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(position, returnType, picker, argsToPoke);
     }
 
     private Function getIntKeyedFunction(
@@ -445,7 +445,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
 
-        return CaseCommon.getCaseFunction(configuration, position, valueType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
     }
 
     private Function getLongKeyedFunction(
@@ -483,7 +483,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
 
-        return CaseCommon.getCaseFunction(configuration, position, valueType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
     }
 
     private Function getTimestampKeyedFunction(
@@ -512,7 +512,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
                     key = driver.fromDate(fun.getDate(null));
                     break;
                 default:
-                    key = driver.from(fun.getTimestamp(null), ColumnType.getTimestampType(funType, configuration));
+                    key = driver.from(fun.getTimestamp(null), ColumnType.getTimestampType(funType));
             }
 
             final int index = map.keyIndex(key);
@@ -534,7 +534,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
 
-        return CaseCommon.getCaseFunction(configuration, position, valueType, picker, argsToPoke);
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
     }
 
     @FunctionalInterface

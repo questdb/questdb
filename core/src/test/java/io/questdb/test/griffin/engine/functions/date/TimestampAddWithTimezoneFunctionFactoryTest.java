@@ -195,7 +195,7 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
                 "select dateadd('w', 1, '2024-10-21', 'Europe/Bratislava')",
                 // Updated expected plan
                 "VirtualRecord\n" +
-                        "  functions: [1730077200000000]\n" +
+                        "  functions: [2024-10-28T01:00:00.000000Z]\n" +
                         "    long_sequence count: 1\n"
         ));
     }

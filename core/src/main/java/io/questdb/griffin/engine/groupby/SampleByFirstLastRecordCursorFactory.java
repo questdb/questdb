@@ -334,7 +334,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 int sampleToFuncPos
         ) {
             super(
-                    configuration,
                     timestampSampler,
                     timestampType,
                     timezoneNameFunc,

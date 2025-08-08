@@ -71,7 +71,7 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
 
         Function symbolFunc = args.getQuick(0);
         Function timestampFunc = args.getQuick(1);
-        TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(timestampFunc.getType(), configuration));
+        TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(timestampFunc.getType()));
 
         if (symbolFunc.isConstant()) {
             CharSequence value = symbolFunc.getSymbol(null);

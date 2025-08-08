@@ -56,7 +56,7 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final CharSequence part = args.getQuick(0).getStrA(null);
         final Function arg = args.getQuick(1);
-        final TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType(), configuration));
+        final TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
 
         if (SqlKeywords.isCenturyKeyword(part)) {
             return new CenturyFunction(arg, driver);

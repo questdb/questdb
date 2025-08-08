@@ -220,7 +220,6 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         }
 
                         appendRowUpdate(
-                                sqlExecutionContext,
                                 rowPartitionIndex,
                                 affectedColumnCount,
                                 prevRow,
@@ -362,7 +361,6 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     }
 
     private void appendRowUpdate(
-            SqlExecutionContext sqlExecutionContext,
             int rowPartitionIndex,
             int affectedColumnCount,
             long prevRow,
@@ -412,7 +410,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     break;
                 case ColumnType.TIMESTAMP:
                     TimestampDriver driver = ColumnType.getTimestampDriver(toType);
-                    dstFixMem.putLong(driver.from(masterRecord.getTimestamp(i), ColumnType.getTimestampType(metadata.getColumnType(i), sqlExecutionContext.getCairoEngine().getConfiguration())));
+                    dstFixMem.putLong(driver.from(masterRecord.getTimestamp(i), ColumnType.getTimestampType(metadata.getColumnType(i))));
                     break;
                 case ColumnType.DATE:
                     dstFixMem.putLong(masterRecord.getDate(i));

@@ -54,8 +54,8 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        int leftType = ColumnType.getTimestampType(args.getQuick(0).getType(), configuration);
-        int rightType = ColumnType.getTimestampType(args.getQuick(1).getType(), configuration);
+        int leftType = ColumnType.getTimestampType(args.getQuick(0).getType());
+        int rightType = ColumnType.getTimestampType(args.getQuick(1).getType());
         if (leftType == rightType) {
             return new Func(args.getQuick(0), args.getQuick(1));
         } else if (leftType < rightType) {

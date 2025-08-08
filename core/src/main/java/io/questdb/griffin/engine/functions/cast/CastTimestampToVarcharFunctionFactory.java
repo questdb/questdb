@@ -63,7 +63,7 @@ public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
             sink.put(func.getTimestamp(null));
             return new VarcharConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0), ColumnType.getTimestampType(args.getQuick(0).getType(), configuration));
+        return new Func(args.getQuick(0), ColumnType.getTimestampType(args.getQuick(0).getType()));
     }
 
     public static class Func extends AbstractCastToVarcharFunction {

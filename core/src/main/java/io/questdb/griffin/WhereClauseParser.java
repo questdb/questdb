@@ -233,7 +233,6 @@ public final class WhereClauseParser implements Mutable {
     }
 
     private static long getTimestampFromConstFunction(
-            SqlExecutionContext executionContext,
             TimestampDriver timestampDriver,
             Function function,
             int functionPosition,
@@ -249,7 +248,7 @@ public final class WhereClauseParser implements Mutable {
                     ? Numbers.LONG_NULL
                     : parseStringAsTimestamp(timestampDriver, varchar.asAsciiCharSequence(), functionPosition, detectIntervals);
         } else {
-            return timestampDriver.from(function.getTimestamp(null), ColumnType.getTimestampType(type, executionContext.getCairoEngine().getConfiguration()));
+            return timestampDriver.from(function.getTimestamp(null), ColumnType.getTimestampType(type));
         }
     }
 
@@ -765,7 +764,7 @@ public final class WhereClauseParser implements Mutable {
                                 ts = parseTokenAsTimestamp(timestampDriver, inListItem);
                             } else {
                                 final Function func = tmpFunctions.getQuick(nonConstCountFuncIndex++);
-                                ts = getTimestampFromConstFunction(executionContext, timestampDriver, func, inListItem.position, false);
+                                ts = getTimestampFromConstFunction(timestampDriver, func, inListItem.position, false);
                             }
                             if (!isNegated) {
                                 if (i == 0) {
@@ -1365,7 +1364,7 @@ public final class WhereClauseParser implements Mutable {
             int functionPosition
     ) throws SqlException {
         if (func.isConstant()) {
-            long value = getTimestampFromConstFunction(executionContext, timestampDriver, func, functionPosition, true);
+            long value = getTimestampFromConstFunction(timestampDriver, func, functionPosition, true);
             if (value == Numbers.LONG_NULL) {
                 // make it empty set
                 model.intersectEmpty();
@@ -1417,7 +1416,7 @@ public final class WhereClauseParser implements Mutable {
             try {
                 checkFunctionCanBeTimestamp(metadata, executionContext, func, compareWithNode.position);
                 if (func.isConstant()) {
-                    lo = getTimestampFromConstFunction(executionContext, timestampDriver, func, compareWithNode.position, false);
+                    lo = getTimestampFromConstFunction(timestampDriver, func, compareWithNode.position, false);
                     if (lo == Numbers.LONG_NULL) {
                         // make it empty set
                         model.intersectEmpty();
@@ -1483,7 +1482,7 @@ public final class WhereClauseParser implements Mutable {
             try {
                 checkFunctionCanBeTimestamp(metadata, executionContext, func, compareWithNode.position);
                 if (func.isConstant()) {
-                    long hi = getTimestampFromConstFunction(executionContext, timestampDriver, func, compareWithNode.position, false);
+                    long hi = getTimestampFromConstFunction(timestampDriver, func, compareWithNode.position, false);
                     if (hi == Numbers.LONG_NULL) {
                         model.intersectEmpty();
                     } else {
@@ -1529,7 +1528,7 @@ public final class WhereClauseParser implements Mutable {
             int functionPosition
     ) throws SqlException {
         if (function.isConstant()) {
-            long value = getTimestampFromConstFunction(executionContext, timestampDriver, function, functionPosition, true);
+            long value = getTimestampFromConstFunction(timestampDriver, function, functionPosition, true);
             model.subtractIntervals(value, value);
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
@@ -2197,7 +2196,7 @@ public final class WhereClauseParser implements Mutable {
             try {
                 checkFunctionCanBeTimestamp(metadata, executionContext, func, node.position);
                 if (func.isConstant()) {
-                    long timestamp = getTimestampFromConstFunction(executionContext, timestampDriver, func, node.position, false);
+                    long timestamp = getTimestampFromConstFunction(timestampDriver, func, node.position, false);
                     model.setBetweenBoundary(timestamp);
                     Misc.free(func);
                     return true;

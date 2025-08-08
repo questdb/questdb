@@ -46,7 +46,7 @@ public class MonthOfYearFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
-        return new MonthOfYearFunction(arg, ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType(), configuration)));
+        return new MonthOfYearFunction(arg, ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType())));
     }
 
     public static final class MonthOfYearFunction extends IntFunction implements UnaryFunction {

@@ -45,7 +45,7 @@ public class DateTruncFunctionFactory implements FunctionFactory {
         final Function kindFunction = args.getQuick(0);
         CharSequence kind = kindFunction.getStrA(null);
         Function innerFunction = args.getQuick(1);
-        int timestampType = ColumnType.getTimestampType(innerFunction.getType(), configuration);
+        int timestampType = ColumnType.getTimestampType(innerFunction.getType());
         if (kind == null) {
             throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
         } else if (isTimeUnit(kind, "microsecond")) {

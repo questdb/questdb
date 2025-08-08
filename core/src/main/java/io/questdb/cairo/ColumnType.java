@@ -160,7 +160,7 @@ public final class ColumnType {
                 // cast long and timestamp to timestamp in unions instead of longs.
                 : ((isTimestamp(typeA)) && (typeB == LONG)) ? typeA
                 : ((typeA == LONG) && (isTimestamp(typeB))) ? typeB
-                : (isTimestamp(typeA) && (isTimestamp(typeB))) ? getHigherPrecisionTimestampType(typeA, typeB, null)
+                : (isTimestamp(typeA) && (isTimestamp(typeB))) ? getHigherPrecisionTimestampType(typeA, typeB)
 
                 // Varchars take priority over strings, but strings over most types.
                 : (typeA == VARCHAR || typeB == VARCHAR) ? VARCHAR
@@ -249,9 +249,9 @@ public final class ColumnType {
         return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
     }
 
-    public static int getHigherPrecisionTimestampType(int left, int right, CairoConfiguration configuration) {
-        int leftTimestampType = getTimestampType(left, configuration);
-        int rightTimestampType = getTimestampType(right, configuration);
+    public static int getHigherPrecisionTimestampType(int left, int right) {
+        int leftTimestampType = getTimestampType(left);
+        int rightTimestampType = getTimestampType(right);
         int leftPriority = getTimestampTypePriority(leftTimestampType);
         int rightPriority = getTimestampTypePriority(rightTimestampType);
         // Return the timestamp type with higher precision using explicit priority
@@ -277,32 +277,29 @@ public final class ColumnType {
     }
 
     /**
-     * Determines the (implicit) conversion rule from the other columnTypes to the Timestamp type.
+     * Determines the implicit conversion rule from the other columnTypes to the Timestamp type.
      * <p>
      * This conversion rule is consistent with the implementation of the {@link io.questdb.cairo.sql.Function#getTimestamp(Record)} of functions.
      *
-     * @param left          the input column type to convert
-     * @param configuration the Cairo configuration containing default timestamp type settings
+     * @param type the input column type to convert
      * @return the appropriate timestamp type for the input column type
      * <p>
      * Conversion rules:
      * - TIMESTAMP types: returned as-is to preserve existing precision
      * - DATE types: converted to {@link #TIMESTAMP_MICRO}
      * - String types (VARCHAR, STRING, SYMBOL): converted to {@link #TIMESTAMP_NANO} for maximum precision when parsing timestamp strings
-     * - All other types(Long, Int and so on): fall back to the configuration's default timestamp type
+     * - All other types(Long, Int and so on): converted to {@link #TIMESTAMP_MICRO}
      */
-    public static int getTimestampType(int left, CairoConfiguration configuration) {
-        switch (tagOf(left)) {
+    public static int getTimestampType(int type) {
+        switch (tagOf(type)) {
             case TIMESTAMP:
-                return left;
-            case DATE:
-                return ColumnType.TIMESTAMP_MICRO;
+                return type;
             case VARCHAR:
             case STRING:
             case SYMBOL:
                 return ColumnType.TIMESTAMP_NANO;
-            default:
-                return configuration.getDefaultTimestampType();
+            default: // Date, Long, Int etc.
+                return ColumnType.TIMESTAMP_MICRO;
         }
     }
 

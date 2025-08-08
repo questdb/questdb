@@ -66,7 +66,6 @@ public class JsonExtractFunction implements Function {
             int targetType,
             Function json,
             Function path,
-            int defaultTimestampType,
             int maxSize
     ) {
         this.targetType = targetType;
@@ -90,10 +89,7 @@ public class JsonExtractFunction implements Function {
                 stateB = null;
                 break;
         }
-        if (ColumnType.isTimestamp(targetType)) {
-            defaultTimestampType = targetType;
-        }
-        driver = ColumnType.getTimestampDriver(defaultTimestampType);
+        driver = ColumnType.getTimestampDriver(targetType);
     }
 
     @Override

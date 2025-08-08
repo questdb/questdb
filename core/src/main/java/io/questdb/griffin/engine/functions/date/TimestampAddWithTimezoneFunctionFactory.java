@@ -66,7 +66,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
         Function timestampFunc = args.getQuick(2);
         Function tzFunc = args.getQuick(3);
         int stride;
-        int timestampType = ColumnType.getTimestampType(timestampFunc.getType(), configuration);
+        int timestampType = ColumnType.getTimestampType(timestampFunc.getType());
         if (periodFunc.isConstant() && tzFunc.isConstant()) {
             // validate timezone and parse timezone into rules, that provide the offset by timestamp
             final TimeZoneRules timeZoneRules;

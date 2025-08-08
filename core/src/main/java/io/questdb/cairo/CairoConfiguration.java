@@ -199,10 +199,6 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
-    default int getDefaultTimestampType() {
-        return ColumnType.TIMESTAMP_MICRO;
-    }
-
     int getDetachedMkDirMode();
 
     default Map<String, String> getEnv() {
@@ -214,9 +210,9 @@ public interface CairoConfiguration {
     @NotNull
     FactoryProvider getFactoryProvider();
 
-    int getFileOperationRetryCount();
-
     boolean getFileDescriptorCacheEnabled();
+
+    int getFileOperationRetryCount();
 
     @NotNull
     FilesFacade getFilesFacade();

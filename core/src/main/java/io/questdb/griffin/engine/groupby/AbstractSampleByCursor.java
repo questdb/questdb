@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -62,7 +61,6 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
     protected long tzOffset;
 
     public AbstractSampleByCursor(
-            CairoConfiguration configuration,
             TimestampSampler timestampSampler,
             int timestampType,
             Function timezoneNameFunc,
@@ -84,8 +82,8 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
         this.sampleToFunc = sampleToFunc;
         this.sampleToFuncPos = sampleToFuncPos;
         this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
-        this.sampleFromFuncType = ColumnType.getTimestampType(sampleFromFunc.getType(), configuration);
-        this.sampleToFuncType = ColumnType.getTimestampType(sampleToFunc.getType(), configuration);
+        this.sampleFromFuncType = ColumnType.getTimestampType(sampleFromFunc.getType());
+        this.sampleToFuncType = ColumnType.getTimestampType(sampleToFunc.getType());
     }
 
     @Override

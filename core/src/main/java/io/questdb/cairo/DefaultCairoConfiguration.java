@@ -331,13 +331,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getFileOperationRetryCount() {
-        return 30;
+    public boolean getFileDescriptorCacheEnabled() {
+        return true;
     }
 
     @Override
-    public boolean getFileDescriptorCacheEnabled() {
-        return true;
+    public int getFileOperationRetryCount() {
+        return 30;
     }
 
     @Override

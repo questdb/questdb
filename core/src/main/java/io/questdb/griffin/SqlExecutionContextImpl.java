@@ -104,7 +104,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         parallelReadParquetEnabled = cairoConfiguration.isSqlParallelReadParquetEnabled() && sharedQueryWorkerCount > 0;
         telemetry = cairoEngine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoOp;
-        nowTimestampType = cairoConfiguration.getDefaultTimestampType();
+        // default set to micro
+        nowTimestampType = ColumnType.TIMESTAMP_MICRO;
         intervalFunctionType = IntervalUtils.getIntervalType(nowTimestampType);
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;

@@ -85,7 +85,6 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
                 parseTargetType(position, args.getQuick(2)),
                 json,
                 path,
-                configuration.getDefaultTimestampType(),
                 configuration.getStrFunctionMaxBufferLength()
         );
     }

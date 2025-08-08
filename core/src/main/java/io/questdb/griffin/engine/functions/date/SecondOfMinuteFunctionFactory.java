@@ -46,7 +46,7 @@ public class SecondOfMinuteFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
-        return new SecondOfMinuteFunc(arg, ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType(), configuration)));
+        return new SecondOfMinuteFunc(arg, ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType())));
     }
 
     public static final class SecondOfMinuteFunc extends IntFunction implements UnaryFunction {

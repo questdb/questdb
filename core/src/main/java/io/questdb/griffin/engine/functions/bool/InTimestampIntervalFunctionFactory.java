@@ -57,7 +57,7 @@ public class InTimestampIntervalFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0), args.getQuick(1), configuration);
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
     public static class Func extends NegatableBooleanFunction implements BinaryFunction {
@@ -66,10 +66,10 @@ public class InTimestampIntervalFunctionFactory implements FunctionFactory {
         private final Function right;
         private final TimestampDriver timestampDriver;
 
-        public Func(Function left, Function right, CairoConfiguration configuration) {
+        public Func(Function left, Function right) {
             this.left = left;
             this.right = right;
-            leftTimestampType = ColumnType.getTimestampType(left.getType(), configuration);
+            leftTimestampType = ColumnType.getTimestampType(left.getType());
             timestampDriver = ColumnType.getTimestampDriver(leftTimestampType);
         }
 

@@ -306,8 +306,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_HOUR_INT = 1;
@@ -530,7 +530,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         //  indicate at least one of typeA or typeB is timestamp(timestamp_ns) type
         if (result == TIMESTAMP) {
             if (ColumnType.isTimestamp(typeA) && ColumnType.isTimestamp(typeB)) {
-                return getHigherPrecisionTimestampType(typeA, typeB, null);
+                return getHigherPrecisionTimestampType(typeA, typeB);
             } else if (ColumnType.isTimestamp(typeA)) {
                 return typeA;
             } else {

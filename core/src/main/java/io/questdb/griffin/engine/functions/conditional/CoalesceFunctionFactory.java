@@ -101,7 +101,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             case DATE:
                 return argsSize == 2 ? new TwoDateCoalesceFunction(args) : new DateCoalesceFunction(args, argsSize);
             case TIMESTAMP:
-                return argsSize == 2 ? new TwoTimestampCoalesceFunction(configuration, args, returnType) : new TimestampCoalesceFunction(configuration, args, returnType);
+                return argsSize == 2 ? new TwoTimestampCoalesceFunction(args, returnType) : new TimestampCoalesceFunction(args, returnType);
             case LONG:
                 return argsSize == 2 ? new TwoLongCoalesceFunction(args) : new LongCoalesceFunction(args, argsSize);
             case LONG256:
@@ -420,14 +420,12 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
     private static class TimestampCoalesceFunction extends TimestampFunction implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
-        private final CairoConfiguration configuration;
         private final int size;
 
-        public TimestampCoalesceFunction(CairoConfiguration cairoConfiguration, ObjList<Function> args, int columnType) {
+        public TimestampCoalesceFunction(ObjList<Function> args, int columnType) {
             super(columnType);
             this.args = args;
             this.size = args.size();
-            this.configuration = cairoConfiguration;
         }
 
         @Override
@@ -441,7 +439,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 Function arg = args.getQuick(i);
                 long value = arg.getTimestamp(rec);
                 if (value != Numbers.LONG_NULL) {
-                    return timestampDriver.from(value, ColumnType.getTimestampType(arg.getType(), configuration));
+                    return timestampDriver.from(value, ColumnType.getTimestampType(arg.getType()));
                 }
             }
             return Numbers.LONG_NULL;
@@ -803,13 +801,13 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final Function args0;
         private final Function args1;
 
-        public TwoTimestampCoalesceFunction(CairoConfiguration configuration, ObjList<Function> args, int columnType) {
+        public TwoTimestampCoalesceFunction(ObjList<Function> args, int columnType) {
             super(columnType);
             assert args.size() == 2;
             this.args0 = args.getQuick(0);
             this.args1 = args.getQuick(1);
-            this.arg0Type = ColumnType.getTimestampType(args0.getType(), configuration);
-            this.arg1Type = ColumnType.getTimestampType(args1.getType(), configuration);
+            this.arg0Type = ColumnType.getTimestampType(args0.getType());
+            this.arg1Type = ColumnType.getTimestampType(args1.getType());
         }
 
         @Override

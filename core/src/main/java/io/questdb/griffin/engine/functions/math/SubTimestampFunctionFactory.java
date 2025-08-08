@@ -44,7 +44,7 @@ public class SubTimestampFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampType(args.getQuick(0).getType(), configuration));
+        return new Func(args.getQuick(0), args.getQuick(1), ColumnType.getTimestampType(args.getQuick(0).getType()));
     }
 
     public static class Func extends TimestampFunction implements BinaryFunction {

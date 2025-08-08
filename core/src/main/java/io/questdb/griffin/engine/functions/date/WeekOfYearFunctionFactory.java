@@ -51,7 +51,7 @@ public class WeekOfYearFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0), ColumnType.getTimestampType(args.getQuick(0).getType(), configuration));
+        return new Func(args.getQuick(0), ColumnType.getTimestampType(args.getQuick(0).getType()));
     }
 
     private static final class Func extends IntFunction implements UnaryFunction {

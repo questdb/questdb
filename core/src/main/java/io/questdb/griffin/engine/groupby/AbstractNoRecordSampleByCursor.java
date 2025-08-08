@@ -79,7 +79,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             Function sampleToFunc,
             int sampleToFuncPos
     ) {
-        super(configuration, timestampSampler, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleFromFuncPos, sampleToFunc, sampleToFuncPos);
+        super(timestampSampler, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleFromFuncPos, sampleToFunc, sampleToFuncPos);
         this.timestampIndex = timestampIndex;
         this.recordFunctions = recordFunctions;
         this.groupByFunctions = groupByFunctions;

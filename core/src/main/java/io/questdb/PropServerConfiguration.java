@@ -554,6 +554,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpRecvBufferSize;
     private short integerDefaultColumnType;
     private int jsonQueryConnectionCheckFrequency;
+    private int lineDefaultTimestampColumnType;
     private boolean lineLogMessageOnError;
     private long lineTcpCommitIntervalDefault;
     private double lineTcpCommitIntervalFraction;
@@ -643,7 +644,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long queryTimeout;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitBeforeReload;
-    private int timestampDefaultColumnType;
 
     public PropServerConfiguration(
             String installRoot,
@@ -1625,10 +1625,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
 
                 String timestampDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_TIMESTAMP_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.TIMESTAMP_MICRO));
-                this.timestampDefaultColumnType = ColumnType.typeOf(timestampDefaultColumnTypeName);
-                if (timestampDefaultColumnType != ColumnType.TIMESTAMP_MICRO && timestampDefaultColumnType != ColumnType.TIMESTAMP_NANO) {
-                    log.info().$("invalid default column type for timestamp ").$(timestampDefaultColumnTypeName).$(", will use TIMESTAMP").$();
-                    this.timestampDefaultColumnType = ColumnType.TIMESTAMP_MICRO;
+                this.lineDefaultTimestampColumnType = ColumnType.typeOf(timestampDefaultColumnTypeName);
+                if (!ColumnType.isTimestamp(lineDefaultTimestampColumnType)) {
+                    log.info().$("invalid default column type for timestamp ").$(timestampDefaultColumnTypeName).$(", will use TIMESTAMP_MICRO").$();
+                    this.lineDefaultTimestampColumnType = ColumnType.TIMESTAMP_MICRO;
                 }
             }
 
@@ -4649,7 +4649,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getDefaultColumnTypeForTimestamp() {
-            return timestampDefaultColumnType;
+            return lineDefaultTimestampColumnType;
         }
 
         @Override
@@ -4829,7 +4829,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getDefaultColumnTypeForTimestamp() {
-            return timestampDefaultColumnType;
+            return lineDefaultTimestampColumnType;
         }
 
         @Override

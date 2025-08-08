@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
@@ -305,11 +304,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             return fillValues.getQuick(col);
         }
 
-        private void initTimestamps(CairoConfiguration configuration, Function fromFunc, Function toFunc) {
+        private void initTimestamps(Function fromFunc, Function toFunc) {
             minTimestamp = fromFunc == timestampDriver.getTimestampConstantNull() ? Long.MAX_VALUE : timestampDriver.from(fromFunc.getTimestamp(null),
-                    ColumnType.getTimestampType(fromFunc.getType(), configuration));
+                    ColumnType.getTimestampType(fromFunc.getType()));
             maxTimestamp = toFunc == timestampDriver.getTimestampConstantNull() ? Long.MIN_VALUE : timestampDriver.from(toFunc.getTimestamp(null),
-                    ColumnType.getTimestampType(toFunc.getType(), configuration));
+                    ColumnType.getTimestampType(toFunc.getType()));
         }
 
         private void initValueFuncs(ObjList<Function> valueFuncs) {
@@ -338,7 +337,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             Function.init(fillValues, baseCursor, executionContext, null);
             fromFunc.init(baseCursor, executionContext);
             toFunc.init(baseCursor, executionContext);
-            initTimestamps(executionContext.getCairoEngine().getConfiguration(), fromFunc, toFunc);
+            initTimestamps(fromFunc, toFunc);
             if (presentTimestamps == null) {
                 long capacity = 8;
                 try {

@@ -46,7 +46,7 @@ public class MicrosOfSecondFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
-        return new Func(arg, ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType(), configuration)));
+        return new Func(arg, ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType())));
     }
 
     private static final class Func extends IntFunction implements UnaryFunction {

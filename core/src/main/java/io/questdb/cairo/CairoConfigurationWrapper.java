@@ -302,13 +302,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getFileOperationRetryCount() {
-        return getDelegate().getFileOperationRetryCount();
+    public boolean getFileDescriptorCacheEnabled() {
+        return getDelegate().getFileDescriptorCacheEnabled();
     }
 
     @Override
-    public boolean getFileDescriptorCacheEnabled() {
-        return getDelegate().getFileDescriptorCacheEnabled();
+    public int getFileOperationRetryCount() {
+        return getDelegate().getFileOperationRetryCount();
     }
 
     @Override

@@ -63,9 +63,9 @@ public class IntervalFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final Function loFunc = args.getQuick(0);
         final Function hiFunc = args.getQuick(1);
-        int leftTimestampType = ColumnType.getTimestampType(loFunc.getType(), configuration);
-        int rightTimestampType = ColumnType.getTimestampType(hiFunc.getType(), configuration);
-        int timestampType = ColumnType.getHigherPrecisionTimestampType(leftTimestampType, rightTimestampType, configuration);
+        int leftTimestampType = ColumnType.getTimestampType(loFunc.getType());
+        int rightTimestampType = ColumnType.getTimestampType(hiFunc.getType());
+        int timestampType = ColumnType.getHigherPrecisionTimestampType(leftTimestampType, rightTimestampType);
         TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         int intervalType = IntervalUtils.getIntervalType(timestampType);
         if (loFunc.isConstant() && hiFunc.isConstant()) {
