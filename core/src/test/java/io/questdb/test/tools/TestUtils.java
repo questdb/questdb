@@ -2410,6 +2410,7 @@ public final class TestUtils {
 
     public static class LeakCheck implements QuietCloseable {
         private final int addrInfoCount;
+        private final long cachedFileCount;
         private final long fileCount;
         private final String fileDebugInfo;
         private final long mem;
@@ -2426,6 +2427,7 @@ public final class TestUtils {
 
             Assert.assertTrue("Initial file unsafe mem should be >= 0", mem >= 0);
             fileCount = Files.getOpenFileCount();
+            cachedFileCount = Files.getOpenCachedFileCount();
             fileDebugInfo = Files.getOpenFdDebugInfo();
             Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
 
@@ -2443,10 +2445,14 @@ public final class TestUtils {
             }
 
             Path.clearThreadLocals();
-            if (fileCount != Files.getOpenFileCount()) {
-                Assert.assertEquals(
-                        "file descriptors, expected: " + fileDebugInfo + ", actual: "
-                                + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount()
+            if (cachedFileCount != Files.getOpenCachedFileCount() || fileCount != Files.getOpenFileCount()) {
+                Assert.fail(
+                        "expected: cached file descriptors: " + cachedFileCount +
+                                ", expected OS file descriptors: " + fileCount +
+                                ", list: " + fileDebugInfo +
+                                " actual: cached file descriptors: " + Files.getOpenCachedFileCount() +
+                                ", OS file descriptors: " + Files.getOpenFileCount() +
+                                ", list: " + Files.getOpenFdDebugInfo()
                 );
             }
 

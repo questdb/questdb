@@ -301,7 +301,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         reenterParquetDecoder = null;
         reenterPageFrameRowLimit = Math.min(
                 pageFrameMaxRows,
-                Math.max(pageFrameMinRows, (hi - lo) / sharedQueryWorkerCount)
+                Math.max(pageFrameMinRows, (hi - lo) / Math.max(sharedQueryWorkerCount, 1))
         );
         return computeNativeFrame(lo, hi);
     }
