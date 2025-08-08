@@ -19,6 +19,7 @@ pub fn column_type_to_parquet_types(
     column_id: i32,
     column_name: &str,
     column_type: ColumnType,
+    designated_timestamp: bool,
     raw_array_encoding: bool,
 ) -> ParquetResult<()> {
     let name = column_name.to_string();
@@ -115,7 +116,11 @@ pub fn column_type_to_parquet_types(
             let t = ParquetType::try_from_primitive(
                 name,
                 PhysicalType::Int64,
-                Repetition::Optional,
+                if designated_timestamp {
+                    Repetition::Required
+                } else {
+                    Repetition::Optional
+                },
                 Some(PrimitiveConvertedType::TimestampMicros),
                 Some(PrimitiveLogicalType::Timestamp {
                     unit: TimeUnit::Microseconds,
@@ -350,6 +355,7 @@ pub struct Column {
     pub primary_data: &'static [u8],
     pub secondary_data: &'static [u8],
     pub symbol_offsets: &'static [u64],
+    pub designated_timestamp: bool,
 }
 
 impl Column {
@@ -366,6 +372,7 @@ impl Column {
         secondary_data_size: usize,
         symbol_offsets_ptr: *const u64,
         symbol_offsets_size: usize,
+        designated_timestamp: bool,
     ) -> ParquetResult<Self> {
         assert!(row_count > 0, "row_count == 0");
         assert!(
@@ -408,6 +415,7 @@ impl Column {
             primary_data,
             secondary_data,
             symbol_offsets,
+            designated_timestamp,
         })
     }
 }
@@ -428,6 +436,7 @@ pub fn to_parquet_schema(
             c.id,
             c.name,
             c.data_type,
+            c.designated_timestamp,
             raw_array_encoding,
         )?;
     }

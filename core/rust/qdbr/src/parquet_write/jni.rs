@@ -132,6 +132,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     col_names_len: jint,
     col_data_ptr: *const i64,
     col_data_len: jlong,
+    timestamp_index: jint,
     row_count: jlong,
 ) {
     let orig_row_group_id = row_group_id;
@@ -154,6 +155,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             col_data_ptr,
             col_data_len,
             row_count,
+            timestamp_index,
         )?;
         if let Some(row_group_id) = row_group_id {
             parquet_updater.replace_row_group(&partition, row_group_id)
@@ -210,6 +212,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             col_data_ptr,
             col_data_len,
             row_count,
+            timestamp_index,
         )?;
 
         let dest_path = unsafe {
@@ -240,10 +243,16 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             format!("Could not create parquet file for {}", dest_path.display())
         })?;
 
-        let sorting_columns = if timestamp_index != -1 {
-            Some(vec![SortingColumn::new(timestamp_index, false, false)])
-        } else {
-            None
+        let local_timestamp_index = partition.columns.iter().enumerate().find_map(|(i, c)| {
+            if c.designated_timestamp {
+                Some(i as i32)
+            } else {
+                None
+            }
+        });
+        let sorting_columns = match local_timestamp_index {
+            Some(i) => Some(vec![SortingColumn::new(i, false, false)]),
+            None => None,
         };
 
         ParquetWriter::new(&mut file)
@@ -288,6 +297,7 @@ fn create_partition_descriptor(
     col_data_ptr: *const i64,
     col_data_len: jlong,
     row_count: jlong,
+    timestamp_index: jint,
 ) -> ParquetResult<Partition> {
     let col_count = col_count as usize;
     let col_names_len = col_names_len as usize;
@@ -324,6 +334,8 @@ fn create_partition_descriptor(
         let symbol_offsets_addr = col_data[raw_idx + 7];
         let symbol_offsets_size = col_data[raw_idx + 8];
 
+        let designated_timestamp = col_id == timestamp_index;
+
         let column = Column::from_raw_data(
             col_id,
             col_name,
@@ -336,6 +348,7 @@ fn create_partition_descriptor(
             secondary_col_size as usize,
             symbol_offsets_addr as *const u64,
             symbol_offsets_size as usize,
+            designated_timestamp,
         )?;
 
         columns.push(column);

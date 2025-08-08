@@ -588,18 +588,18 @@ fn chunk_to_primitive_page(
 
     match column.data_type.tag() {
         ColumnTypeTag::Boolean => {
-            let column = column.primary_data;
+            let data = column.primary_data;
             boolean::slice_to_page(
-                &column[lower_bound..upper_bound],
+                &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
                 primitive_type,
             )
         }
         ColumnTypeTag::Byte => {
-            let column: &[i8] = unsafe { util::transmute_slice(column.primary_data) };
+            let data: &[i8] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_notnull::<i8, i32>(
-                &column[lower_bound..upper_bound],
+                &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
                 primitive_type,
@@ -607,9 +607,9 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Char => {
-            let column: &[u16] = unsafe { util::transmute_slice(column.primary_data) };
+            let data: &[u16] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_notnull::<u16, i32>(
-                &column[lower_bound..upper_bound],
+                &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
                 primitive_type,
@@ -617,9 +617,9 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Short => {
-            let column: &[i16] = unsafe { util::transmute_slice(column.primary_data) };
+            let data: &[i16] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_notnull::<i16, i32>(
-                &column[lower_bound..upper_bound],
+                &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
                 primitive_type,
@@ -627,9 +627,9 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Int => {
-            let column: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
+            let data: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<i32, i32>(
-                &column[lower_bound..upper_bound],
+                &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
                 primitive_type,
@@ -637,29 +637,49 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::IPv4 => {
-            let column: &[IPv4] = unsafe { util::transmute_slice(column.primary_data) };
+            let data: &[IPv4] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<IPv4, i32>(
-                &column[lower_bound..upper_bound],
+                &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
                 primitive_type,
                 encoding,
             )
         }
-        ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp => {
-            let column: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
+        ColumnTypeTag::Long | ColumnTypeTag::Date => {
+            let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<i64, i64>(
-                &column[lower_bound..upper_bound],
+                &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
                 primitive_type,
                 encoding,
             )
+        }
+        ColumnTypeTag::Timestamp => {
+            let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
+            if column.designated_timestamp {
+                primitive::int_slice_to_page_notnull::<i64, i64>(
+                    &data[lower_bound..upper_bound],
+                    adjusted_column_top,
+                    options,
+                    primitive_type,
+                    encoding,
+                )
+            } else {
+                primitive::int_slice_to_page_nullable::<i64, i64>(
+                    &data[lower_bound..upper_bound],
+                    adjusted_column_top,
+                    options,
+                    primitive_type,
+                    encoding,
+                )
+            }
         }
         ColumnTypeTag::GeoByte => {
-            let column: &[GeoByte] = unsafe { util::transmute_slice(column.primary_data) };
+            let data: &[GeoByte] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<GeoByte, i32>(
-                &column[lower_bound..upper_bound],
+                &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
                 primitive_type,
@@ -667,9 +687,9 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::GeoShort => {
-            let column: &[GeoShort] = unsafe { util::transmute_slice(column.primary_data) };
+            let data: &[GeoShort] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<GeoShort, i32>(
-                &column[lower_bound..upper_bound],
+                &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
                 primitive_type,
@@ -677,9 +697,9 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::GeoInt => {
-            let column: &[GeoInt] = unsafe { util::transmute_slice(column.primary_data) };
+            let data: &[GeoInt] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<GeoInt, i32>(
-                &column[lower_bound..upper_bound],
+                &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
                 primitive_type,
@@ -687,9 +707,9 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::GeoLong => {
-            let column: &[GeoLong] = unsafe { util::transmute_slice(column.primary_data) };
+            let data: &[GeoLong] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<GeoLong, i64>(
-                &column[lower_bound..upper_bound],
+                &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
                 primitive_type,
@@ -697,18 +717,18 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Float => {
-            let column: &[f32] = unsafe { util::transmute_slice(column.primary_data) };
+            let data: &[f32] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::float_slice_to_page_plain::<f32, f32>(
-                &column[lower_bound..upper_bound],
+                &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
                 primitive_type,
             )
         }
         ColumnTypeTag::Double => {
-            let column: &[f64] = unsafe { util::transmute_slice(column.primary_data) };
+            let data: &[f64] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::float_slice_to_page_plain::<f64, f64>(
-                &column[lower_bound..upper_bound],
+                &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
                 primitive_type,
@@ -764,9 +784,9 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::Long128 | ColumnTypeTag::Uuid => {
             let reversed = column.data_type.tag() == ColumnTypeTag::Uuid;
-            let column: &[[u8; 16]] = unsafe { util::transmute_slice(column.primary_data) };
+            let data: &[[u8; 16]] = unsafe { util::transmute_slice(column.primary_data) };
             fixed_len_bytes::bytes_to_page(
-                &column[lower_bound..upper_bound],
+                &data[lower_bound..upper_bound],
                 reversed,
                 adjusted_column_top,
                 options,
@@ -774,9 +794,9 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Long256 => {
-            let column: &[[u8; 32]] = unsafe { util::transmute_slice(column.primary_data) };
+            let data: &[[u8; 32]] = unsafe { util::transmute_slice(column.primary_data) };
             fixed_len_bytes::bytes_to_page(
-                &column[lower_bound..upper_bound],
+                &data[lower_bound..upper_bound],
                 false,
                 adjusted_column_top,
                 options,

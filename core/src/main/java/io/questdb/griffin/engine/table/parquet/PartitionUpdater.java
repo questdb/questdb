@@ -89,6 +89,7 @@ public class PartitionUpdater implements QuietCloseable {
     public void updateRowGroup(short rowGroupId, PartitionDescriptor descriptor) {
         final int columnCount = descriptor.getColumnCount();
         final long rowCount = descriptor.getPartitionRowCount();
+        final int timestampIndex = descriptor.getTimestampIndex();
         try {
             assert ptr != 0;
             updateRowGroup(  // throws CairoException on error
@@ -101,6 +102,7 @@ public class PartitionUpdater implements QuietCloseable {
                     descriptor.getColumnNamesLen(),
                     descriptor.getColumnDataPtr(),
                     descriptor.getColumnDataLen(),
+                    timestampIndex,
                     rowCount
             );
         } finally {
@@ -137,6 +139,7 @@ public class PartitionUpdater implements QuietCloseable {
             int columnNamesSize,
             long columnDataPtr,
             long columnDataSize,
+            int timestampIndex,
             long rowCount
     ) throws CairoException;
 
