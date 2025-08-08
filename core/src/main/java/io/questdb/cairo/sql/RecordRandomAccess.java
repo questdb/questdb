@@ -22,13 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo.sql;
 
-import io.questdb.mp.WorkerPoolConfiguration;
-
-public class DefaultWalApplyWorkerPoolConfiguration implements WorkerPoolConfiguration {
-    @Override
-    public int getWorkerCount() {
-        return 2;
-    }
+public interface RecordRandomAccess {
+    /**
+     * Positions record at given row id. The row id must have been previously obtained from Record instance.
+     *
+     * @param record  to position
+     * @param atRowId rowid of the desired record
+     */
+    void recordAt(Record record, long atRowId);
 }

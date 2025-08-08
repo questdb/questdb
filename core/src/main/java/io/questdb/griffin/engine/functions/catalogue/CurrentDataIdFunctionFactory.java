@@ -22,13 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.mv;
+package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.DataID;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.UuidConstant;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public class DefaultMatViewRefreshWorkerPoolConfiguration implements WorkerPoolConfiguration {
+public class CurrentDataIdFunctionFactory implements FunctionFactory {
     @Override
-    public int getWorkerCount() {
-        return 2;
+    public String getSignature() {
+        return "current_data_id()";
+    }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        DataID id = sqlExecutionContext.getCairoEngine().getDataID();
+        return new UuidConstant(id.getLo(), id.getHi());
     }
 }

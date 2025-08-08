@@ -26,7 +26,6 @@ package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.BuildInformation;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.SocketAuthenticator;
@@ -79,6 +78,7 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
     private final CircuitBreakerRegistry registry;
     private final String serverVersion;
     private final ResponseSink sink;
+    private byte authType = AUTH_TYPE_NONE;
     private UsernamePasswordMatcher matcher;
     private long recvBufEnd;
     private long recvBufReadPos;
@@ -119,6 +119,7 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
 
     @Override
     public void clear() {
+        authType = AUTH_TYPE_NONE;
         circuitBreaker.setSecret(-1);
         circuitBreaker.resetMaxTimeToDefault();
         circuitBreaker.unsetTimer();
@@ -143,7 +144,7 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
 
     @Override
     public byte getAuthType() {
-        return SecurityContext.AUTH_TYPE_CREDENTIALS;
+        return authType;
     }
 
     public CharSequence getPrincipal() {
@@ -292,6 +293,8 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
     private void prepareBackendKeyData(ResponseSink responseSink) {
         responseSink.put('K');
         responseSink.putInt(Integer.BYTES * 3); // length of this message
+
+        // the below 8 bytes will not match when dumping PG traffic!
         responseSink.putInt(circuitBreakerId);
         responseSink.putInt(circuitBreaker.getSecret());
     }
@@ -426,7 +429,8 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
         recvBufReadPos += 1 + Integer.BYTES; // first move beyond the msgType and msgLen
 
         long hi = PGConnectionContextModern.getUtf8StrSize(recvBufReadPos, msgLimit, "bad password length", null);
-        if (matcher.verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos)) != AUTH_TYPE_NONE) {
+        authType = verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos));
+        if (authType != AUTH_TYPE_NONE) {
             recvBufReadPos = msgLimit;
             state = State.AUTH_SUCCESS;
         } else {
@@ -515,6 +519,10 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
         return SocketAuthenticator.NEEDS_WRITE;
     }
 
+    // kept protected for enterprise
+    protected byte verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
+        return matcher.verifyPassword(username, passwordPtr, passwordLen);
+    }
 
     private enum State {
         EXPECT_INIT_MESSAGE,

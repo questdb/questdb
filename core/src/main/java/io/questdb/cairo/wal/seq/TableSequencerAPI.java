@@ -107,6 +107,7 @@ public class TableSequencerAPI implements QuietCloseable {
             } finally {
                 seq.unlockWrite();
             }
+            getSeqTxnTracker(tableToken).notifyOnDrop();
         } catch (CairoException e) {
             LOG.info().$("failed to drop wal table [table=").$(tableToken).I$();
             if (!failedCreate) {

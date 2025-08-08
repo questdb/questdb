@@ -34,11 +34,18 @@
             <outputDirectory>${runtime.name}/legal</outputDirectory>
         </file>
         <file>
-            <source>src/main/bin/${jemalloc.so}</source>
+            <source>src/main/bin/${platform.dir.name}/${jemalloc.so}</source>
             <outputDirectory>${runtime.name}/bin</outputDirectory>
         </file>
     </files>
     <fileSets>
+        <fileSet>
+            <directory>src/main/resources/io/questdb/bin/${platform.dir.name}</directory>
+            <includes>
+                <include>*.*</include>
+            </includes>
+            <outputDirectory>${runtime.name}/lib</outputDirectory>
+        </fileSet>
         <fileSet>
             <directory>src/main/bin</directory>
             <includes>

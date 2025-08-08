@@ -97,8 +97,8 @@ public class PGErrorHandlingTest extends AbstractBootstrapTest {
                                 bootstrap.getBuildInformation(),
                                 new FilesFacadeImpl() {
                                     @Override
-                                    public long openRW(LPSZ name, long opts) {
-                                        if (counter.incrementAndGet() > 76) {
+                                    public long openRW(LPSZ name, int opts) {
+                                        if (counter.incrementAndGet() > 78) {
                                             throw new RuntimeException("Test error");
                                         }
                                         return super.openRW(name, opts);

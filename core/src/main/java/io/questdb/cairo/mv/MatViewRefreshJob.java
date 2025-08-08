@@ -65,7 +65,6 @@ import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
@@ -89,11 +88,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final WalTxnRangeLoader txnRangeLoader;
     private final int workerId;
 
-    public MatViewRefreshJob(int workerId, CairoEngine engine, int workerCount, int sharedWorkerCount) {
+    public MatViewRefreshJob(int workerId, CairoEngine engine, int sharedQueryWorkerCount) {
         try {
             this.workerId = workerId;
             this.engine = engine;
-            this.refreshSqlExecutionContext = new MatViewRefreshSqlExecutionContext(engine, workerCount, sharedWorkerCount);
+            this.refreshSqlExecutionContext = new MatViewRefreshSqlExecutionContext(engine, sharedQueryWorkerCount);
             this.graph = engine.getMatViewGraph();
             this.stateStore = engine.getMatViewStateStore();
             this.configuration = engine.getConfiguration();
@@ -103,11 +102,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             close();
             throw th;
         }
-    }
-
-    @TestOnly
-    public MatViewRefreshJob(int workerId, CairoEngine engine) {
-        this(workerId, engine, 1, 1);
     }
 
     @Override
@@ -430,25 +424,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
 
         if (minTs <= maxTs) {
-            TimestampSampler timestampSampler = viewDefinition.getTimestampSampler();
-            // For small sampling intervals such as '10T' or '2s' the actual sampler is
-            // chosen as a 10x multiple of the original interval. That's to speed up
-            // iteration done by the interval iterator.
-            final long minIntervalMicros = configuration.getMatViewMinRefreshInterval();
-            long approxBucketSize = timestampSampler.getApproxBucketSize();
-            long actualInterval = viewDefinition.getSamplingInterval();
-            if (approxBucketSize < minIntervalMicros) {
-                while (approxBucketSize < minIntervalMicros) {
-                    approxBucketSize *= 10;
-                    actualInterval *= 10;
-                }
-                timestampSampler = TimestampSamplerFactory.getInstance(
-                        actualInterval,
-                        viewDefinition.getSamplingIntervalUnit(),
-                        0
-                );
-            }
-
+            final TimestampSampler timestampSampler = viewDefinition.getTimestampSampler();
             final long rowsPerBucket = estimateRowsPerBucket(baseTableReader, timestampSampler.getApproxBucketSize());
             final int rowsPerQuery = configuration.getMatViewRowsPerQueryEstimate();
             final int step = Math.max(1, (int) (rowsPerQuery / rowsPerBucket));

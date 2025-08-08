@@ -97,7 +97,7 @@ public class LogFactory implements Closeable {
     private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
     private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
     private final StringSink sink = new StringSink();
-    private final WorkerPool workerPool;
+    private final WorkerPool loggingWorkerPool;
     private boolean configured = false;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
@@ -108,7 +108,7 @@ public class LogFactory implements Closeable {
 
     private LogFactory(MicrosecondClock clock) {
         this.clock = clock;
-        workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+        loggingWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
             @Override
             public Metrics getMetrics() {
                 return Metrics.DISABLED;
@@ -235,7 +235,7 @@ public class LogFactory implements Closeable {
         for (int i = 0, n = jobs.size(); i < n; i++) {
             LogWriter job = jobs.get(i);
             job.bindProperties(this);
-            workerPool.assign(job);
+            loggingWorkerPool.assign(job);
         }
     }
 
@@ -409,9 +409,9 @@ public class LogFactory implements Closeable {
         assert !closed.get();
         if (running.compareAndSet(false, true)) {
             for (int i = 0, n = jobs.size(); i < n; i++) {
-                workerPool.assign(jobs.get(i));
+                loggingWorkerPool.assign(jobs.get(i));
             }
-            workerPool.start();
+            loggingWorkerPool.start();
         }
     }
 
@@ -710,14 +710,14 @@ public class LogFactory implements Closeable {
 
     private void haltThread() {
         if (running.compareAndSet(true, false)) {
-            workerPool.halt();
+            loggingWorkerPool.halt();
         }
     }
 
     @TestOnly
     private void pauseThread() {
         if (running.compareAndSet(true, false)) {
-            workerPool.pause();
+            loggingWorkerPool.pause();
         }
     }
 

@@ -660,6 +660,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
+    private static int estimateIndexValueBlockSizeFromReader(SqlExecutionContext executionContext, TableToken matViewToken, int columnIndex) {
+        final int indexValueBlockSize;
+        try (TableReader reader = executionContext.getReader(matViewToken)) {
+            int symbolCount = reader.getSymbolMapReader(columnIndex).getSymbolCount();
+            // we are looking to estimate how many rowids we will need to store for each
+            // symbol per partition. To do that wee are assuming the following formula:
+            // max(2, table_row_count / table_partition_count / symbol_count / 4)
+            // here:
+            // 2 being the minimum number of row IDs per symbol
+            // div by 4 - we are looking to have 4 chained block for an average symbol to make sure we
+            // do not create overly-sparse index for symbols with row count below average.
+            long v = Math.max(2, reader.size() / reader.getPartitionCount() / symbolCount / 4);
+            if ((int) v != v) {
+                // overflow, assign sensible default (large)
+                indexValueBlockSize = 50_000_000;
+            } else {
+                indexValueBlockSize = (int) v;
+            }
+        }
+        return indexValueBlockSize;
+    }
+
     private static boolean isIPv4UpdateCast(int from, int to) {
         return (from == ColumnType.STRING && to == ColumnType.IPv4)
                 || (from == ColumnType.IPv4 && to == ColumnType.STRING)
@@ -982,13 +1004,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         expectKeyword(lexer, "capacity");
 
-        CharSequence tok = expectToken(lexer, "symbol capacity");
+        CharSequence tok = expectToken(lexer, "numeric capacity");
 
         final boolean negative;
         final int errorPos = lexer.lastTokenPosition();
         if (Chars.equals(tok, '-')) {
             negative = true;
-            tok = expectToken(lexer, "symbol capacity");
+            tok = expectToken(lexer, "numeric capacity");
         } else {
             negative = false;
         }
@@ -1602,7 +1624,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view does not exist");
         }
 
-        try (TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(matViewToken)) {
+        try (TableRecordMetadata tableMetadata = engine.getTableMetadata(matViewToken)) {
             tok = expectToken(lexer, "'alter' or 'resume' or 'suspend'");
             if (isAlterKeyword(tok)) {
                 expectKeyword(lexer, "column");
@@ -1615,16 +1637,85 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             .put("' does not exist in materialized view '").put(matViewToken.getTableName()).put('\'');
                 }
 
-                expectKeyword(lexer, "symbol");
-                alterTableChangeSymbolCapacity(
-                        securityContext,
-                        matViewNamePosition,
-                        matViewToken,
-                        columnNamePosition,
-                        columnName,
-                        tableMetadata,
-                        columnIndex
-                );
+                tok = expectToken(lexer, "'symbol capacity', 'add index' or 'drop index'");
+                if (SqlKeywords.isSymbolKeyword(tok)) {
+                    alterTableChangeSymbolCapacity(
+                            securityContext,
+                            matViewNamePosition,
+                            matViewToken,
+                            columnNamePosition,
+                            columnName,
+                            tableMetadata,
+                            columnIndex
+                    );
+                } else if (SqlKeywords.isAddKeyword(tok)) {
+                    expectKeyword(lexer, "index");
+
+                    if (tableMetadata.isColumnIndexed(columnIndex)) {
+                        throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
+                                .put("' already indexed");
+                    }
+                    int columnType = tableMetadata.getColumnType(columnIndex);
+                    if (columnType != ColumnType.SYMBOL) {
+                        throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
+                                .put("' is of type '").put(ColumnType.nameOf(columnType)).put("'. Index supports column type 'SYMBOL' only.");
+                    }
+
+                    final int indexValueBlockSize;
+                    final boolean sizeInferred;
+
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok == null) {
+                        indexValueBlockSize = estimateIndexValueBlockSizeFromReader(executionContext, matViewToken, columnIndex);
+                        sizeInferred = true;
+                    } else {
+                        if (!SqlKeywords.isCapacityKeyword(tok)) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'capacity' keyword expected");
+                        }
+                        tok = expectToken(lexer, "index capacity value");
+                        try {
+                            indexValueBlockSize = Numbers.parseInt(tok);
+                            sizeInferred = false;
+                        } catch (NumericException e) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "index capacity value must be numeric");
+                        }
+                    }
+
+                    LOG.info().$("adding mat view index [viewName=").$(matViewToken)
+                            .$(", column=").$safe(columnName)
+                            .$(", indexValueBlockSize=").$(indexValueBlockSize)
+                            .$(", sizeInferred=").$(sizeInferred)
+                            .I$();
+
+                    alterTableColumnAddIndex(
+                            securityContext,
+                            matViewNamePosition,
+                            matViewToken,
+                            columnNamePosition,
+                            columnName,
+                            tableMetadata,
+                            indexValueBlockSize
+                    );
+                } else if (SqlKeywords.isDropKeyword(tok)) {
+                    expectKeyword(lexer, "index");
+
+                    if (!tableMetadata.isColumnIndexed(columnIndex)) {
+                        throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
+                                .put("' is not indexed");
+                    }
+
+                    alterTableColumnDropIndex(
+                            securityContext,
+                            matViewNamePosition,
+                            matViewToken,
+                            columnNamePosition,
+                            columnName,
+                            tableMetadata
+                    );
+
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'symbol capacity', 'add index' or 'drop index' expected");
+                }
             } else if (isSetKeyword(tok)) {
                 tok = expectToken(lexer, "'ttl' or 'refresh'");
                 if (isTtlKeyword(tok)) {
@@ -1732,7 +1823,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 } catch (NumericException e) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                                 }
-                                tok = expectToken(lexer, "'time zone'");
+                                tok = maybeExpectToken(lexer, "'time zone'", false);
 
                                 if (isTimeKeyword(tok)) {
                                     expectKeyword(lexer, "zone");
@@ -2862,6 +2953,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         tok = SqlUtil.fetchNext(lexer);
+        boolean hasIfExists = false;
+        if (tok != null && isIfKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || !isExistsKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("EXISTS table-name");
+            }
+            hasIfExists = true;
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
         if (tok != null && isOnlyKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
         }
@@ -2880,15 +2981,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (Chars.isQuoted(tok)) {
                     tok = unquote(tok);
                 }
-                final TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
-                checkMatViewModification(tableToken);
-                executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
-                try {
-                    tableWriters.add(engine.getTableWriterAPI(tableToken, "truncateTables"));
-                } catch (CairoException e) {
-                    LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).I$();
-                    throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
+
+                final TableToken tableToken = executionContext.getTableTokenIfExists(tok);
+                if (tableToken == null && !hasIfExists) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "table does not exist [table=").put(tok).put(']');
                 }
+                if (tableToken != null) {
+                    checkMatViewModification(tableToken);
+                    executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
+                    try {
+                        tableWriters.add(engine.getTableWriterAPI(tableToken, "truncateTables"));
+                    } catch (CairoException e) {
+                        LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).I$();
+                        throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
+                    }
+                }
+
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null || Chars.equals(tok, ';') || isKeepKeyword(tok)) {
                     break;
@@ -2953,10 +3061,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 queryRegistry.unregister(queryId, executionContext);
             }
         } finally {
-            for (int i = 0, n = tableWriters.size(); i < n; i++) {
-                tableWriters.getQuick(i).close();
-            }
-            tableWriters.clear();
+            Misc.freeObjListAndClear(tableWriters);
         }
         compiledQuery.ofTruncate();
     }
@@ -3949,16 +4054,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     protected static CharSequence expectToken(GenericLexer lexer, CharSequence expected) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
+
         if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put(expected).put(" expected");
+        }
+
+        if (Chars.equals(tok, ';')) {
+            throw SqlException.position(lexer.lastTokenPosition()).put(expected).put(" expected");
         }
         return tok;
     }
 
     protected static CharSequence maybeExpectToken(GenericLexer lexer, CharSequence expected, boolean expect) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (expect && tok == null) {
-            throw SqlException.position(lexer.getPosition()).put(expected).put(" expected");
+        if (expect) {
+            if (tok == null) {
+                throw SqlException.position(lexer.getPosition()).put(expected).put(" expected");
+            }
+
+            if (Chars.equals(tok, ';')) {
+                throw SqlException.position(lexer.lastTokenPosition()).put(expected).put(" expected");
+            }
         }
         return tok;
     }

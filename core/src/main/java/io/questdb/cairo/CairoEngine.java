@@ -146,6 +146,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final DatabaseCheckpointAgent checkpointAgent;
     private final CopyContext copyContext;
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
+    private final DataID dataID;
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
     private final MatViewGraph matViewGraph;
@@ -209,6 +210,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.matViewTimerQueue = createMatViewTimerQueue();
             this.matViewGraph = new MatViewGraph();
             this.frameFactory = new FrameFactory(configuration);
+            this.dataID = DataID.open(configuration);
 
             settingsStore = new SettingsStore(configuration);
             settingsStore.init();
@@ -661,6 +663,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return copyContext;
     }
 
+    public DataID getDataID() {
+        return dataID;
+    }
+
     public @NotNull DdlListener getDdlListener(TableToken tableToken) {
         return tableFlagResolver.isSystem(tableToken.getTableName()) ? DefaultDdlListener.INSTANCE : ddlListener;
     }
@@ -930,7 +936,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return getTableStatus(Path.getThreadLocal(configuration.getDbRoot()), tableName);
     }
 
-    public TableToken getTableTokenByDirName(String dirName) {
+    public TableToken getTableTokenByDirName(CharSequence dirName) {
         return tableNameRegistry.getTableTokenByDirName(dirName);
     }
 
@@ -1821,7 +1827,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     protected SqlExecutionContext createRootExecutionContext() {
-        return new SqlExecutionContextImpl(this, 1).with(AllowAllSecurityContext.INSTANCE);
+        return new SqlExecutionContextImpl(this, 0).with(AllowAllSecurityContext.INSTANCE);
     }
 
     protected @NotNull <T extends AbstractTelemetryTask> Telemetry<T> createTelemetry(

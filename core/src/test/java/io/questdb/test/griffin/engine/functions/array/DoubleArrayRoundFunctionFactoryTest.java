@@ -40,7 +40,6 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
                 "select round(array[14.7778], -18)");
     }
 
-    /*Bounds*/
     @Test
     public void testLargePosScale() throws SqlException {
         assertSqlWithTypes("round\n" +

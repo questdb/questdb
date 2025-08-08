@@ -397,6 +397,11 @@ public class Utf8sTest {
             Assert.assertFalse(Utf8s.isAscii(sink.ptr(), sink.size()));
             sink.clear();
             sink.put("12345678ы87654321");
+            Assert.assertTrue(Utf8s.isAscii(sink.longAt(0)));
+            for (int i = 1; i < 10; i++) {
+                Assert.assertFalse(Utf8s.isAscii(sink.longAt(i)));
+            }
+            Assert.assertTrue(Utf8s.isAscii(sink.longAt(10)));
             Assert.assertFalse(Utf8s.isAscii(sink));
             Assert.assertFalse(Utf8s.isAscii(sink.ptr(), sink.size()));
         }
