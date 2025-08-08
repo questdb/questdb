@@ -77,6 +77,7 @@ public class TimestampFloorFromFunctionFactory implements FunctionFactory {
             case 's':
             case 'T':
             case 'U':
+            case 'n':
                 return new TimestampFloorOffsetFunction(timestampFunc, unit, stride, from, timestampType);
             case 0:
                 throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");

@@ -717,7 +717,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 return CEIL_SS;
             case 'T':
                 return CEIL_MS;
-            case 'n':
+            case 'U':
                 return CEIL_MR;
             default:
                 return null;

@@ -59,6 +59,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
             case 'm':
             case 's':
             case 'T':
+            case 'U':
                 return new TimestampCeilFunction(args.getQuick(1), c, ColumnType.getTimestampType(args.getQuick(1).getType()));
             case 0:
                 throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
