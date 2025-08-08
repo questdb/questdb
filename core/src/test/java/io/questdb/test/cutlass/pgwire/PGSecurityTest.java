@@ -240,26 +240,6 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
-    public void testDisallowsBackupDatabase() throws Exception {
-        assertMemoryLeak(() -> {
-            configureForBackups();
-            execute("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day");
-            execute("insert into src values (now(), 'foo')");
-            assertQueryDisallowed("backup database");
-        });
-    }
-
-    @Test
-    public void testDisallowsBackupTable() throws Exception {
-        assertMemoryLeak(() -> {
-            configureForBackups();
-            execute("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day");
-            execute("insert into src values (now(), 'foo')");
-            assertQueryDisallowed("backup table src");
-        });
-    }
-
-    @Test
     @Ignore("This is failing, but repair is nop so that's ok")
     public void testDisallowsRepairTable() throws Exception {
         assertMemoryLeak(() -> {

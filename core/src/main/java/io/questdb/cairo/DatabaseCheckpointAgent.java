@@ -32,6 +32,7 @@ import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -39,7 +40,6 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SimpleWaitingLock;
@@ -172,7 +172,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
     }
 
-    private void checkpointCreate(SqlExecutionContext executionContext, CharSequence checkpointRoot) throws SqlException {
+    private void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, CharSequence checkpointRoot) throws SqlException {
         try {
             final long startedAt = microClock.getTicks();
             if (!startedAtTimestamp.compareAndSet(Numbers.LONG_NULL, startedAt)) {
@@ -199,7 +199,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 if (walPurgeJobRunLock != null) {
                     final long timeout = configuration.getCircuitBreakerConfiguration().getQueryTimeout();
                     while (!walPurgeJobRunLock.tryLock(timeout, TimeUnit.MICROSECONDS)) {
-                        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                     }
                 }
 
@@ -288,7 +288,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         reader = engine.getReaderWithRepair(tableToken);
                                     } catch (EntryLockedException e) {
                                         LOG.info().$("waiting for locked table [table=").$(tableToken).I$();
-                                        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                                         continue;
                                     } catch (CairoException e) {
                                         if (engine.isTableDropped(tableToken)) {
@@ -298,7 +298,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         throw e;
                                     } catch (TableReferenceOutOfDateException e) {
                                         LOG.info().$("retrying, table reference is out of date [table=").$(tableToken).I$();
-                                        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                                         continue;
                                     }
 
@@ -365,7 +365,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                             throw CairoException.critical(ff.errno()).put("Could not sync");
                         }
 
-                        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                         LOG.info().$("checkpoint created").$();
                     }
                 } catch (Throwable e) {
@@ -521,7 +521,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
     }
 
-    void checkpointCreate(SqlExecutionContext executionContext, boolean isLegacy) throws SqlException {
+    void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, boolean isLegacy) throws SqlException {
         // Windows doesn't support sync() system call.
         if (Os.isWindows()) {
             if (isLegacy) {
@@ -545,7 +545,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 ff.rmdir(path);
             }
         }
-        checkpointCreate(executionContext, checkpointRoot);
+        checkpointCreate(circuitBreaker, checkpointRoot);
     }
 
     void checkpointRelease() throws SqlException {
