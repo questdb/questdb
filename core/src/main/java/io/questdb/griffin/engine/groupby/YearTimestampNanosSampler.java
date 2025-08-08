@@ -81,9 +81,10 @@ public class YearTimestampNanosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        final int y = Nanos.getYear(value);
+        int y = Nanos.getYear(value);
+        y = y - y % stepYears;
         return Nanos.toNanos(
-                y - y % stepYears,
+                y,
                 CommonUtils.isLeapYear(y),
                 startDay,
                 startMonth,
