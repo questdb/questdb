@@ -7079,7 +7079,7 @@ nodejs code:
                 }
 
                 // Pretend that the copy was cancelled and try to cancel it one more time.
-                engine.getCopyContext().clear();
+                engine.getCopyImportContext().clear();
 
                 try (
                         PreparedStatement cancelStatement = connection.prepareStatement("copy '" + copyID + "' cancel");

@@ -35,7 +35,8 @@ import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
-import io.questdb.cutlass.text.CopyContext;
+import io.questdb.cutlass.text.CopyExportContext;
+import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -61,7 +62,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private int compressionCodec;
     private int compressionLevel;
-    private CopyContext copyContext;
+    private CopyExportContext copyContext;
     private int dataPageSize;
     private StringSink exportIdSink = new StringSink();
     private String fileName;
@@ -80,7 +81,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
     public CopyExportFactory(
             MessageBus messageBus,
-            CopyContext copyContext,
+            CopyExportContext copyContext,
             CopyModel model,
             SecurityContext securityContext
     ) throws SqlException {
@@ -90,7 +91,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
     public CopyExportFactory(
             MessageBus messageBus,
-            CopyContext copyContext,
+            CopyExportContext copyContext,
             CopyModel model,
             SecurityContext securityContext,
             @Nullable SuspendEvent suspendEvent
@@ -107,7 +108,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         final AtomicBooleanCircuitBreaker circuitBreaker = copyContext.getCircuitBreaker();
 
         long activeCopyID = copyContext.getActiveExportID();
-        if (activeCopyID == CopyContext.INACTIVE_COPY_ID) {
+        if (activeCopyID == CopyImportContext.INACTIVE_COPY_ID) {
             long processingCursor = copyRequestPubSeq.next();
             if (processingCursor > -1) {
                 final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
@@ -144,20 +145,20 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
                 circuitBreaker.reset();
                 copyRequestPubSeq.done(processingCursor);
-                
+
                 cursor.toTop();
                 return cursor;
             } else {
                 throw SqlException.$(0, "Unable to process the export request. Another export request may be in progress.");
             }
+        } else {
+            exportIdSink.clear();
+            Numbers.appendHex(exportIdSink, activeCopyID, true);
+            throw SqlException.$(0, "Another export request is in progress. ")
+                    .put("[activeExportId=")
+                    .put(exportIdSink)
+                    .put(']');
         }
-
-        exportIdSink.clear();
-        Numbers.appendHex(exportIdSink, activeCopyID, true);
-        throw SqlException.$(0, "Another export request is in progress. ")
-                .put("[activeExportId=")
-                .put(exportIdSink)
-                .put(']');
     }
 
     @Override
@@ -171,14 +172,15 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     }
 
     private void of(MessageBus messageBus,
-                    CopyContext copyContext,
+                    CopyExportContext copyImportContext,
                     CopyModel model,
                     SecurityContext securityContext) throws SqlException {
         this.messageBus = messageBus;
-        this.copyContext = copyContext;
+        this.copyContext = copyImportContext;
 
         if (model.getTableName() != null) {
-            this.tableName = model.getTableName().toString();
+            this.tableName = GenericLexer.unquote(model.getTableName()).toString();
+            
         } else {
             assert model.getSelectText() != null;
         }

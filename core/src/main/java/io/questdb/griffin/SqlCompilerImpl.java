@@ -2236,7 +2236,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(0, "copy cancel ID format is invalid: '").put(cancelCopyIDStr).put('\'');
         }
         return new CopyCancelFactory(
-                engine.getCopyContext(),
+                engine.getCopyImportContext(),
                 cancelCopyID,
                 cancelCopyIDStr,
                 query()
@@ -2268,7 +2268,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         return new CopyImportFactory(
                 messageBus,
-                engine.getCopyContext(),
+                engine.getCopyImportContext(),
                 Chars.toString(tableName),
                 Chars.toString(fileName),
                 model
@@ -2287,7 +2287,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         return new CopyExportFactory(
                 messageBus,
-                engine.getCopyContext(),
+                engine.getCopyExportContext(),
                 model,
                 securityContext
         );

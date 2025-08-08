@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExecutionModel;
@@ -902,7 +903,9 @@ public class SqlParser {
                                 // todo: parse human readable size
                                 throw new UnsupportedOperationException();
                             case CopyModel.COPY_OPTION_COMPRESSION_CODEC:
-                                model.setCompressionCodec(expectInt(lexer));
+                                ExpressionNode codecExpr = expectLiteral(lexer);
+                                int codec = ParquetCompression.getCompressionCodec(codecExpr.token);
+                                model.setCompressionCodec(codec);
                                 break;
                             case CopyModel.COPY_OPTION_COMPRESSION_LEVEL:
                                 model.setCompressionLevel(expectInt(lexer));

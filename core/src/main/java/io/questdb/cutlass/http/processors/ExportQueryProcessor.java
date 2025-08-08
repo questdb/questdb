@@ -553,7 +553,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 // Create a temporary table for the query result and initiate parquet export
                 CopyExportFactory factory = new CopyExportFactory(
                         engine.getMessageBus(),
-                        engine.getCopyContext(),
+                        engine.getCopyExportContext(),
                         model,
                         context.getSecurityContext(),
                         state.suspendEvent
@@ -586,6 +586,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         sendException(context.getChunkedResponse(), 0, "exported parquet files not found [id=" + state.copyID + ']', state);
                     }
                     sendParquetFile(context.getChunkedResponse(), exportPath, state);
+//                    sendDone(context.getChunkedResponse(), state);
                     break;
             }
         } catch (ExportInProgressException e) {

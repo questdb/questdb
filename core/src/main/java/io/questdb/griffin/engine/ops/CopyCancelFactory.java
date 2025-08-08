@@ -32,7 +32,7 @@ import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.text.CopyContext;
+import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -49,13 +49,13 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory baseFactory;
     private final long cancelCopyID;
     private final String cancelCopyIDStr;
-    private final CopyContext copyContext;
+    private final CopyImportContext copyContext;
     private final CopyCancelRecord record = new CopyCancelRecord();
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
     private CharSequence status;
 
     public CopyCancelFactory(
-            CopyContext copyContext,
+            CopyImportContext copyContext,
             long cancelCopyID,
             String cancelCopyIDStr,
             RecordCursorFactory baseFactory
@@ -72,7 +72,7 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
         final AtomicBooleanCircuitBreaker circuitBreaker = copyContext.getCircuitBreaker();
         final long activeCopyID = copyContext.getActiveImportID();
 
-        if (activeCopyID == cancelCopyID && cancelCopyID != CopyContext.INACTIVE_COPY_ID) {
+        if (activeCopyID == cancelCopyID && cancelCopyID != CopyImportContext.INACTIVE_COPY_ID) {
             copyContext.getImportOriginatorSecurityContext().authorizeCopyCancel(executionContext.getSecurityContext());
             circuitBreaker.cancel();
             // Cancelled active import, probably :)

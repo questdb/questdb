@@ -29,7 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.cutlass.text.CopyContext;
+import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -54,7 +54,7 @@ import static io.questdb.cutlass.text.CopyImportTask.getStatusName;
 public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(CopyExportRequestJob.class);
     private final MicrosecondClock clock;
-    private final CopyContext copyContext;
+    private final CopyImportContext copyContext;
     private final CairoEngine engine;
     private final int logRetentionDays;
     private final RingQueue<CopyExportRequestTask> requestQueue;
@@ -101,7 +101,7 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
             }
 
             this.writer = engine.getWalWriter(statusTableToken);
-            this.copyContext = engine.getCopyContext();
+            this.copyContext = engine.getCopyImportContext();
             this.engine = engine;
         } catch (Throwable t) {
             close();
@@ -186,7 +186,7 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                 if (Chars.startsWith(task.getTableName(), "copy.")) {
                     updateStatus(CopyExportRequestTask.PHASE_DROPPING_TEMP_TABLE, CopyExportRequestTask.STATUS_STARTED, task.getTableName(), Long.MIN_VALUE);
                     try {
-                        engine.execute("DROP TABLE IF EXISTS '" + task.getTableName() + "';");
+                        engine.execute("DROP TABLE IF EXISTS '" + task.getTableName() + "';"); // todo: allocation
                     } catch (SqlException e) {
                         updateStatus(CopyExportRequestTask.PHASE_DROPPING_TEMP_TABLE, CopyExportRequestTask.STATUS_FAILED, e.getMessage(), Long.MIN_VALUE);
                     }

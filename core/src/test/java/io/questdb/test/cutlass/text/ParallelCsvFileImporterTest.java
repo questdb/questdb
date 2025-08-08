@@ -2572,7 +2572,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 1, 0, TestFilesFacadeImpl.INSTANCE, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
                     try {
                         executeCopy(compiler, sqlExecutionContext);
-                        engine.getCopyContext().clear();
+                        engine.getCopyImportContext().clear();
                         executeCopy(compiler, sqlExecutionContext);
                         Assert.fail();
                     } catch (Exception e) {

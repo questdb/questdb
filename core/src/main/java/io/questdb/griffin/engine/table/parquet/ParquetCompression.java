@@ -24,7 +24,10 @@
 
 package io.questdb.griffin.engine.table.parquet;
 
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+
 public class ParquetCompression {
+    private static final LowerCaseCharSequenceIntHashMap compressionCodecNames = new LowerCaseCharSequenceIntHashMap();
     public static int COMPRESSION_BROTLI = 4;
     public static int COMPRESSION_GZIP = 2;
     public static int COMPRESSION_LZ4 = 5;
@@ -34,7 +37,22 @@ public class ParquetCompression {
     public static int COMPRESSION_UNCOMPRESSED = 0;
     public static int COMPRESSION_ZSTD = 6;
 
+    public static int getCompressionCodec(CharSequence name) {
+        return compressionCodecNames.get(name);
+    }
+
     public static long packCompressionCodecLevel(int compression, long level) {
         return (level << 32) | compression;
+    }
+
+    static {
+        compressionCodecNames.put("uncompressed", COMPRESSION_UNCOMPRESSED);
+        compressionCodecNames.put("zstd", COMPRESSION_ZSTD);
+        compressionCodecNames.put("lz4", COMPRESSION_LZ4);
+        compressionCodecNames.put("gzip", COMPRESSION_GZIP);
+        compressionCodecNames.put("lz4_raw", COMPRESSION_LZ4_RAW);
+        compressionCodecNames.put("lzo", COMPRESSION_LZO);
+        compressionCodecNames.put("snappy", COMPRESSION_SNAPPY);
+        compressionCodecNames.put("brotli", COMPRESSION_BROTLI);
     }
 }

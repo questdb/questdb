@@ -93,6 +93,7 @@ public class SerialParquetExporter implements Closeable {
         tableToken = cairoEngine.getTableTokenIfExists(tableName);
 
         if (tableToken == null) {
+            // check quoted
             throw CairoException.tableDoesNotExist(tableName);
         }
 
@@ -154,7 +155,6 @@ public class SerialParquetExporter implements Closeable {
                     }
                 }
             }
-
         }
 
         statusReporter.report(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, CopyExportRequestTask.STATUS_FINISHED, null, Long.MIN_VALUE);

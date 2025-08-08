@@ -24,11 +24,10 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.Bootstrap;
-import io.questdb.ServerMain;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.BootstrapTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -43,22 +42,9 @@ public class ExpParquetExportTest extends BootstrapTest {
         testHttpClient = new TestHttpClient();
     }
 
+
     @Test
     public void testBasicExport() throws Exception {
-        Bootstrap bootstrap = new Bootstrap(
-                getServerMainArgs()
-        );
-        TestUtils.assertMemoryLeak(() -> {
-            try (ServerMain serverMain = new ServerMain(bootstrap)) {
-                serverMain.start();
-
-                new SendAndReceiveRequestBuilder().execute("GET /exp?query=tables()&format=parquet HTTP/1.1\r\n\r\n", "abc");
-            }
-        });
-    }
-
-    @Test
-    public void testBasicExport2() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withWorkerCount(2)
@@ -71,13 +57,15 @@ public class ExpParquetExportTest extends BootstrapTest {
                             "FROM long_sequence(5)" +
                             ")", sqlExecutionContext);
 
-                    CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
-                    params.put("query", "SELECT * FROM basic_parquet_test");
-                    params.put("fmt", "parquet");
-                    params.put("filename", "basic_test");
-
-
-                    new SendAndReceiveRequestBuilder().execute("GET /exp?query=select+*+from+basic_parquet_test&format=parquet HTTP/1.1\r\n\r\n", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+                    new SendAndReceiveRequestBuilder()
+                            .execute("GET /exp?query=select+*+from+basic_parquet_test&format=parquet HTTP/1.1\r\n\r\n",
+                                    "HTTP/1.1 200 OK\n" +
+                                            "Server: questDB/1.0\n" +
+                                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\n" +
+                                            "Transfer-Encoding: chunked\n" +
+                                            "Content-Type: application/vnd.apache.parquet\n" +
+                                            "Content-Disposition: attachment; filename=\"questdb-query-0.parquet\"\n" +
+                                            "Keep-Alive: timeout=5, max=10000\n");
                 });
     }
 
@@ -132,7 +120,7 @@ public class ExpParquetExportTest extends BootstrapTest {
 
                     CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
                     params.put("query", "SELECT * FROM csv_export_test");
-                    params.put("fmt", "csv");
+                    params.put("format", "csv");
                     testHttpClient.assertGet("/exp", expectedCsv, params, null, null);
                 });
     }
@@ -177,7 +165,7 @@ public class ExpParquetExportTest extends BootstrapTest {
                     // Test with invalid format parameter (should return error)
                     CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
                     params.put("query", "SELECT * FROM invalid_format_test");
-                    params.put("fmt", "invalid");
+                    params.put("format", "invalid");
 
                     // Invalid format should be rejected and return error
                     try {
@@ -189,39 +177,6 @@ public class ExpParquetExportTest extends BootstrapTest {
                         org.junit.Assert.assertTrue("Should contain format error",
                                 e.getMessage().contains("unrecognised") ||
                                         e.getMessage().contains("format"));
-                    }
-                });
-    }
-
-    @Test
-    public void testExpParquetExportFormatParameter() throws Exception {
-        // This test verifies that the fmt=parquet parameter initiates parquet export
-        new HttpQueryTestBuilder()
-                .withTempFolder(root)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .run((engine, sqlExecutionContext) -> {
-                    // Create test table
-                    engine.execute("CREATE TABLE format_param_test AS (" +
-                            "SELECT x FROM long_sequence(3)" +
-                            ")", sqlExecutionContext);
-
-                    // Test parquet export with format parameter
-                    CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
-                    params.put("query", "SELECT * FROM format_param_test");
-                    params.put("fmt", "parquet");
-                    params.put("filename", "test_export");
-
-                    // Expected in test environment due to export complexity
-                    // The important thing is that the format parameter is processed
-                    try {
-                        testHttpClient.assertGetRegexp("/exp", ".*",
-                                "SELECT * FROM format_param_test",
-                                null, null, "200|400|500", params, null);
-                    } catch (Exception e) {
-                        // Expected in test environment due to export complexity
-                        // The important thing is that the format parameter is processed
                     }
                 });
     }
@@ -253,40 +208,15 @@ public class ExpParquetExportTest extends BootstrapTest {
     }
 
     @Test
-    public void testParquetExportDiskSpaceError() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(root)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .run((engine, sqlExecutionContext) -> {
-                    engine.execute("CREATE TABLE disk_space_parquet_test AS (" +
-                            "SELECT x, 'large_text_data_' || x as large_text FROM long_sequence(1000)" +
-                            ")", sqlExecutionContext);
-
-                    CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
-                    params.put("query", "SELECT * FROM disk_space_parquet_test");
-                    params.put("fmt", "parquet");
-                    params.put("filename", "disk_test_export");
-
-                    // Test disk space handling - should gracefully handle disk full scenarios
-                    try {
-                        testHttpClient.assertGetRegexp("/exp", ".*",
-                                "SELECT * FROM disk_space_parquet_test",
-                                null, null, "200|400|500|507", params, null);
-                    } catch (Exception e) {
-                        // Test disk space handling - should gracefully handle disk full scenarios
-                    }
-                });
-    }
-
-    @Test
     public void testParquetExportFailedStatus() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
+                .withFilesFacade(new TestFilesFacadeImpl() {
+
+                })
                 .run((engine, sqlExecutionContext) -> {
                     engine.execute("CREATE TABLE problem_parquet_export AS (" +
                             "SELECT x, cast(null as string) as nullable_col FROM long_sequence(5)" +

@@ -56,7 +56,7 @@ import static io.questdb.cutlass.text.CopyImportTask.getStatusName;
 public class CopyImportRequestJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(CopyImportRequestJob.class);
     private final MicrosecondClock clock;
-    private final CopyContext copyContext;
+    private final CopyImportContext copyImportContext;
     private final CairoEngine engine;
     private final int logRetentionDays;
     private final LongList partitionsToRemove = new LongList();
@@ -108,7 +108,7 @@ public class CopyImportRequestJob extends SynchronizedJob implements Closeable {
 
             this.writer = engine.getWriter(statusTableToken, "QuestDB system");
             this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
-            this.copyContext = engine.getCopyContext();
+            this.copyImportContext = engine.getCopyImportContext();
             this.path = new Path();
             this.engine = engine;
             enforceLogRetention();
@@ -242,7 +242,7 @@ public class CopyImportRequestJob extends SynchronizedJob implements Closeable {
                             task.getTimestampColumnName(),
                             task.getTimestampFormat(),
                             task.isHeaderFlag(),
-                            copyContext.getCircuitBreaker(),
+                            copyImportContext.getCircuitBreaker(),
                             task.getAtomicity()
                     );
                     parallelImporter.setStatusReporter(updateStatusRef);
@@ -256,7 +256,7 @@ public class CopyImportRequestJob extends SynchronizedJob implements Closeable {
                             task.getTimestampColumnName(),
                             task.getTimestampFormat(),
                             task.isHeaderFlag(),
-                            copyContext.getCircuitBreaker(),
+                            copyImportContext.getCircuitBreaker(),
                             task.getAtomicity()
                     );
                     serialImporter.setStatusReporter(updateStatusRef);
@@ -273,7 +273,7 @@ public class CopyImportRequestJob extends SynchronizedJob implements Closeable {
                 );
             } finally {
                 requestSubSeq.done(cursor);
-                copyContext.clear();
+                copyImportContext.clear();
             }
             enforceLogRetention();
             return true;
