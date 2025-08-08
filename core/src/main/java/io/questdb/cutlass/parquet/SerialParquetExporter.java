@@ -111,47 +111,53 @@ public class SerialParquetExporter implements Closeable {
             final int partitionCount = reader.getPartitionCount();
             final int partitionBy = reader.getPartitionedBy();
 
-            try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor(ff)) {
+            if (partitionCount == 0) {
+                // empty table
+                statusReporter.report(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, CopyExportRequestTask.STATUS_FAILED, "empty table", Long.MIN_VALUE);
+            } else {
 
-                for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor(ff)) {
 
-                    if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
-                        // todo: copy the file directly
-                        continue;
-                    }
+                    for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
 
-                    reader.openPartition(partitionIndex);
+                        if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
+                            // todo: copy the file directly
+                            continue;
+                        }
 
-                    final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
+                        reader.openPartition(partitionIndex);
 
-                    PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
+                        final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
 
-                    toParquet.trimTo(0).concat(inputRoot).concat(fileName);
+                        PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
 
-                    PartitionBy.getPartitionDirFormatMethod(partitionBy)
-                            .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, toParquet.slash());
+                        toParquet.trimTo(0).concat(inputRoot).concat(fileName);
 
-                    toParquet.put(".parquet");
+                        PartitionBy.getPartitionDirFormatMethod(partitionBy)
+                                .format(partitionTimestamp, DateFormatUtils.EN_LOCALE, null, toParquet.slash());
 
-                    statusReporter.report(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, CopyExportRequestTask.STATUS_PENDING, toParquet.toString(), Long.MIN_VALUE);
+                        toParquet.put(".parquet");
 
-                    try {
-                        createDirsOrFail(ff, toParquet, configuration.getMkDirMode());
+                        statusReporter.report(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, CopyExportRequestTask.STATUS_PENDING, toParquet.toString(), Long.MIN_VALUE);
 
-                        PartitionEncoder.encodeWithOptions(
-                                partitionDescriptor,
-                                toParquet,
-                                ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
-                                statisticsEnabled,
-                                rowGroupSize,
-                                dataPageSize,
-                                parquetVersion
-                        );
+                        try {
+                            createDirsOrFail(ff, toParquet, configuration.getMkDirMode());
 
-                        long parquetFileLength = ff.length(toParquet.$());
-                    } catch (CairoException e) {
-                        statusReporter.report(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, CopyExportRequestTask.STATUS_FAILED, toParquet.toString(), e.getErrno());
-                        throw CopyExportException.instance(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, e.getFlyweightMessage(), e.getErrno());
+                            PartitionEncoder.encodeWithOptions(
+                                    partitionDescriptor,
+                                    toParquet,
+                                    ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                                    statisticsEnabled,
+                                    rowGroupSize,
+                                    dataPageSize,
+                                    parquetVersion
+                            );
+
+                            long parquetFileLength = ff.length(toParquet.$());
+                        } catch (CairoException e) {
+                            statusReporter.report(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, CopyExportRequestTask.STATUS_FAILED, toParquet.toString(), e.getErrno());
+                            throw CopyExportException.instance(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, e.getFlyweightMessage(), e.getErrno());
+                        }
                     }
                 }
             }

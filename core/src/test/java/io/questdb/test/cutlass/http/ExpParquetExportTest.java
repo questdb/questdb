@@ -25,6 +25,10 @@
 package io.questdb.test.cutlass.http;
 
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.BootstrapTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -215,11 +219,27 @@ public class ExpParquetExportTest extends BootstrapTest {
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
                 .withFilesFacade(new TestFilesFacadeImpl() {
+                    @Override
+                    public long openCleanRW(LPSZ name, long size) {
+                        if (Utf8s.contains(name, new Utf8String("copy."))) {
+                            return -1;
+                        } else {
+                            return super.openCleanRW(name, size);
+                        }
+                    }
 
+                    @Override
+                    public long openRW(LPSZ name, long opts) {
+                        if (Utf8s.contains(name, new Utf8String("copy."))) {
+                            return -1;
+                        } else {
+                            return super.openRW(name, opts);
+                        }
+                    }
                 })
                 .run((engine, sqlExecutionContext) -> {
                     engine.execute("CREATE TABLE problem_parquet_export AS (" +
-                            "SELECT x, cast(null as string) as nullable_col FROM long_sequence(5)" +
+                            "SELECT x::timestamp as ts, cast(null as string) as nullable_col, 5 as i, 1.2 as f, true as b FROM long_sequence(5)" +
                             ")", sqlExecutionContext);
 
                     CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
@@ -227,13 +247,39 @@ public class ExpParquetExportTest extends BootstrapTest {
                     params.put("fmt", "parquet");
                     params.put("filename", "problem_export");
 
-                    try {
-                        testHttpClient.assertGetRegexp("/exp", ".*",
-                                "SELECT * FROM problem_parquet_export",
-                                null, null, "200|400|500", params, null);
-                    } catch (Exception e) {
-                        // Test should handle various failure modes gracefully
-                    }
+                    new SendAndReceiveRequestBuilder()
+                            .execute("GET /exp?query=select+*+from+problem_parquet_export&format=parquet HTTP/1.1\r\n\r\n",
+                                    "HTTP/1.1 400 Bad request\n" +
+                                            "Server: questDB/1.0\n" +
+                                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\n" +
+                                            "Transfer-Encoding: chunked\n" +
+                                            "Content-Type: application/json; charset=utf-8\n" +
+                                            "Keep-Alive: timeout=5, max=10000\n" +
+                                            "\n" +
+                                            "82\n" +
+                                            "{\"query\":\"select * from problem_parquet_export\",\"error\":\"[-1] table busy [reason=missing or owned by other process]\",\"position\":0}\n" +
+                                            "00\n" +
+                                            "\n");
+
+                    // Verify that the export failure is logged in sys.copy_export_log
+                    TestUtils.assertEventually(() -> {
+                        try {
+                            String logQuery = "SELECT status, error FROM sys.copy_export_log ORDER BY ts DESC LIMIT 1";
+                            StringSink sink = new StringSink();
+                            TestUtils.printSql(engine, sqlExecutionContext, logQuery, sink);
+                            String logOutput = sink.toString();
+
+                            // Check if the log contains failed status and file-related error
+                            org.junit.Assert.assertTrue("Log should contain failed status",
+                                    logOutput.contains("failed"));
+                            org.junit.Assert.assertTrue("Log should contain file operation error",
+                                    logOutput.contains("could not open") ||
+                                            logOutput.contains("file") ||
+                                            logOutput.contains("Failed to"));
+                        } catch (Exception ex) {
+                            throw new AssertionError("Failed to verify copy export log", ex);
+                        }
+                    });
                 });
     }
 
