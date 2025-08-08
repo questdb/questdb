@@ -254,6 +254,9 @@ public final class Timestamps {
     }
 
     public static long floorDD(long micros, int stride, long offset) {
+        if (offset == 0) {
+            return floorDD(micros, stride);
+        }
         if (micros < offset) {
             return offset;
         }
@@ -300,6 +303,9 @@ public final class Timestamps {
     }
 
     public static long floorHH(long micros, int stride, long offset) {
+        if (offset == 0) {
+            return floorHH(micros, stride);
+        }
         if (micros < offset) {
             return offset;
         }
@@ -322,6 +328,9 @@ public final class Timestamps {
     }
 
     public static long floorMC(long micros, int stride, long offset) {
+        if (offset == 0) {
+            return floorMC(micros, stride);
+        }
         if (micros < offset) {
             return offset;
         }
@@ -337,6 +346,9 @@ public final class Timestamps {
     }
 
     public static long floorMI(long micros, int stride, long offset) {
+        if (offset == 0) {
+            return floorMI(micros, stride);
+        }
         if (micros < offset) {
             return offset;
         }
@@ -355,6 +367,9 @@ public final class Timestamps {
     }
 
     public static long floorMM(long micros, int stride, long offset) {
+        if (offset == 0) {
+            return floorMM(micros, stride);
+        }
         if (micros < offset) {
             return offset;
         }
@@ -373,6 +388,9 @@ public final class Timestamps {
     }
 
     public static long floorMS(long micros, int stride, long offset) {
+        if (offset == 0) {
+            return floorMS(micros, stride);
+        }
         if (micros < offset) {
             return offset;
         }
@@ -413,6 +431,9 @@ public final class Timestamps {
     }
 
     public static long floorNS(long micros, int stride, long offset) {
+        if (offset == 0) {
+            return floorNS(micros, stride);
+        }
         if (micros < offset) {
             return offset;
         }
@@ -447,6 +468,9 @@ public final class Timestamps {
     }
 
     public static long floorSS(long micros, int stride, long offset) {
+        if (offset == 0) {
+            return floorSS(micros, stride);
+        }
         if (micros < offset) {
             return offset;
         }
@@ -503,6 +527,9 @@ public final class Timestamps {
     }
 
     public static long floorYYYY(long micros, int stride, long offset) {
+        if (offset == 0) {
+            return floorYYYY(micros, stride);
+        }
         if (micros < offset) {
             return offset;
         }
