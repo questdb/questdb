@@ -25,6 +25,7 @@
 package io.questdb.test.std;
 
 import io.questdb.std.Decimal64;
+import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -120,7 +121,7 @@ public class Decimal64Test {
                 int actual = a.compareTo(b);
                 int expected = bdA.compareTo(bdB);
                 Assert.assertEquals("iteration: " + i + " expected:<" + expected + "> but was:<" + actual + ">", expected, actual);
-            } catch (ArithmeticException ignore) {
+            } catch (NumericException ignore) {
                 // Overflow is acceptable during scaling operations
             }
         }
@@ -204,15 +205,15 @@ public class Decimal64Test {
 
         try {
             dividend.divide(zero, 2, RoundingMode.HALF_UP);
-            Assert.fail("Should have thrown ArithmeticException");
-        } catch (ArithmeticException e) {
+            Assert.fail("Should have thrown NumericException");
+        } catch (NumericException e) {
             Assert.assertTrue(e.getMessage().contains("Division by zero"));
         }
 
         try {
             dividend.modulo(zero);
-            Assert.fail("Should have thrown ArithmeticException");
-        } catch (ArithmeticException e) {
+            Assert.fail("Should have thrown NumericException");
+        } catch (NumericException e) {
             Assert.assertTrue(e.getMessage().contains("Division by zero"));
         }
     }
@@ -399,8 +400,8 @@ public class Decimal64Test {
 
         try {
             max.add(one);
-            Assert.fail("Should have thrown ArithmeticException");
-        } catch (ArithmeticException e) {
+            Assert.fail("Should have thrown NumericException");
+        } catch (NumericException e) {
             // Expected overflow
         }
 
@@ -410,8 +411,8 @@ public class Decimal64Test {
 
         try {
             large.multiply(two);
-            Assert.fail("Should have thrown ArithmeticException");
-        } catch (ArithmeticException e) {
+            Assert.fail("Should have thrown NumericException");
+        } catch (NumericException e) {
             // Expected overflow
         }
     }
@@ -529,7 +530,7 @@ public class Decimal64Test {
             // We must be overflowing, check that we are throwing an error as expected
             Decimal64 result = new Decimal64();
 
-            Assert.assertThrows(ArithmeticException.class, () -> Decimal64.add(a, b, result));
+            Assert.assertThrows(NumericException.class, () -> Decimal64.add(a, b, result));
             return;
         }
 
@@ -556,7 +557,7 @@ public class Decimal64Test {
                 BigDecimal difference = expected.subtract(actual).abs();
                 Assert.fail("iteration: " + iteration + " expected:<" + expected + "> but was:<" + result + "> (difference: " + difference + ")");
             }
-        } catch (ArithmeticException e) {
+        } catch (NumericException e) {
             // Skip this test case if overflow occurs during scaling
             if (e.getMessage().contains("overflow") || e.getMessage().contains("Overflow")) {
                 // This is expected for cases where intermediate calculations would exceed 64-bit capacity
@@ -584,7 +585,7 @@ public class Decimal64Test {
             if (expected.compareTo(min) < 0 || expected.compareTo(max) > 0) {
                 // We must be overflowing
                 Decimal64 result = new Decimal64();
-                Assert.assertThrows(ArithmeticException.class, () -> Decimal64.divide(a, b, result, resultScale, RoundingMode.HALF_UP));
+                Assert.assertThrows(NumericException.class, () -> Decimal64.divide(a, b, result, resultScale, RoundingMode.HALF_UP));
                 return;
             }
 
@@ -605,7 +606,7 @@ public class Decimal64Test {
                 BigDecimal difference = expected.subtract(actual).abs();
                 Assert.fail("iteration: " + iteration + " expected:<" + expected + "> but was:<" + result + "> (difference: " + difference + ")");
             }
-        } catch (ArithmeticException e) {
+        } catch (NumericException e) {
             if (e.getMessage().contains("overflow") || e.getMessage().contains("Overflow") ||
                     e.getMessage().contains("Scale adjustment too large")) {
                 return;
@@ -628,7 +629,7 @@ public class Decimal64Test {
             if (expected.compareTo(min) < 0 || expected.compareTo(max) > 0) {
                 // We must be overflowing
                 Decimal64 result = new Decimal64();
-                Assert.assertThrows(ArithmeticException.class, () -> Decimal64.modulo(a, b, result));
+                Assert.assertThrows(NumericException.class, () -> Decimal64.modulo(a, b, result));
                 return;
             }
 
@@ -649,7 +650,7 @@ public class Decimal64Test {
                 BigDecimal difference = expected.subtract(actual).abs();
                 Assert.fail("iteration: " + iteration + " expected:<" + expected + "> but was:<" + result + "> (difference: " + difference + ")");
             }
-        } catch (ArithmeticException e) {
+        } catch (NumericException e) {
             if (e.getMessage().contains("overflow") || e.getMessage().contains("Overflow")) {
                 return;
             }
@@ -670,7 +671,7 @@ public class Decimal64Test {
         if (expected.compareTo(min) < 0 || expected.compareTo(max) > 0) {
             // We must be overflowing
             Decimal64 result = new Decimal64();
-            Assert.assertThrows(ArithmeticException.class, () -> Decimal64.multiply(a, b, result));
+            Assert.assertThrows(NumericException.class, () -> Decimal64.multiply(a, b, result));
             return;
         }
 
@@ -692,7 +693,7 @@ public class Decimal64Test {
                 BigDecimal difference = expected.subtract(actual).abs();
                 Assert.fail("iteration: " + iteration + " expected:<" + expected + "> but was:<" + result + "> (difference: " + difference + ")");
             }
-        } catch (ArithmeticException e) {
+        } catch (NumericException e) {
             if (e.getMessage().contains("overflow") || e.getMessage().contains("Overflow")) {
                 return;
             }
@@ -713,7 +714,7 @@ public class Decimal64Test {
         if (expected.compareTo(min) < 0 || expected.compareTo(max) > 0) {
             // We must be overflowing
             Decimal64 result = new Decimal64();
-            Assert.assertThrows(ArithmeticException.class, () -> Decimal64.subtract(a, b, result));
+            Assert.assertThrows(NumericException.class, () -> Decimal64.subtract(a, b, result));
             return;
         }
 
@@ -735,7 +736,7 @@ public class Decimal64Test {
                 BigDecimal difference = expected.subtract(actual).abs();
                 Assert.fail("iteration: " + iteration + " expected:<" + expected + "> but was:<" + result + "> (difference: " + difference + ")");
             }
-        } catch (ArithmeticException e) {
+        } catch (NumericException e) {
             if (e.getMessage().contains("overflow") || e.getMessage().contains("Overflow")) {
                 return;
             }

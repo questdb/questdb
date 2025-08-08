@@ -32,8 +32,6 @@ public class Decimal128 implements Sinkable {
     static final long LONG_MASK = 0xffffffffL;
     private static final long B = (long) 1 << Integer.SIZE;
     private static final long INFLATED = Long.MIN_VALUE;
-    // Cache for common small values
-    private static final Decimal128[] SMALL_VALUES_CACHE = new Decimal128[101]; // Cache 0-100
     private static final long[] TEN_POWERS_TABLE_HIGH = { // High 64-bit part of the ten powers table from 10^20 to 10^38
             5L, // 10^20
             54L, // 10^21
@@ -309,12 +307,6 @@ public class Decimal128 implements Sinkable {
      */
     public static Decimal128 fromLong(long value, int scale) {
         validateScale(scale);
-
-        // Use cached values for common small values with scale 0
-        if (scale == 0 && value >= 0 && value <= 100) {
-            return new Decimal128(SMALL_VALUES_CACHE[(int) value]);
-        }
-
         long h = value < 0 ? -1L : 0L;
         return new Decimal128(h, value, scale);
     }
@@ -2403,11 +2395,5 @@ public class Decimal128 implements Sinkable {
         // We can check against either a or b - both work
         // Using a for consistency, b parameter kept for clarity
         return Long.compareUnsigned(sum, a) < 0;
-    }
-
-    static {
-        for (int i = 0; i <= 100; i++) {
-            SMALL_VALUES_CACHE[i] = new Decimal128(0, i, 0);
-        }
     }
 }

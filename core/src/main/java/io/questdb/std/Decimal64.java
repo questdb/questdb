@@ -30,7 +30,7 @@ public class Decimal64 implements Sinkable {
     public static final Decimal64 MIN_VALUE = new Decimal64(Long.MIN_VALUE, 0);
     public static final Decimal64 ONE = new Decimal64(1, 0);
     public static final Decimal64 ZERO = new Decimal64(0, 0);
-    // Maximum values that can be multiplied by 10^n without overflow
+    // Maximum values that 10^n can multiply without overflow
     private static final long[] MAX_SAFE_MULTIPLY = {
             Long.MAX_VALUE,
             Long.MAX_VALUE / 10L,
@@ -52,7 +52,6 @@ public class Decimal64 implements Sinkable {
             Long.MAX_VALUE / 100000000000000000L,
             Long.MAX_VALUE / 1000000000000000000L,
     };
-    private static final Decimal64[] SMALL_VALUES_CACHE = new Decimal64[101]; // Cache 0-100
     // Power of 10 lookup table for 64-bit arithmetic (10^0 to 10^18)
     private static final long[] TEN_POWERS_TABLE = {
             1L,                     // 10^0
@@ -75,8 +74,6 @@ public class Decimal64 implements Sinkable {
             100000000000000000L,    // 10^17
             1000000000000000000L,   // 10^18
     };
-    // Cache for common small values
-    private static final Decimal64[] ZERO_THROUGH_TEN = new Decimal64[11];
     private int scale;   // Number of decimal places
     private long value;  // The decimal value as an unscaled long
 
@@ -157,16 +154,6 @@ public class Decimal64 implements Sinkable {
      */
     public static Decimal64 fromLong(long value, int scale) {
         validateScale(scale);
-
-        // Use cached values for common small values with scale 0
-        if (scale == 0 && value >= 0) {
-            if (value <= 10) {
-                return new Decimal64(ZERO_THROUGH_TEN[(int) value]);
-            } else if (value <= 100) {
-                return new Decimal64(SMALL_VALUES_CACHE[(int) value]);
-            }
-        }
-
         return new Decimal64(value, scale);
     }
 
@@ -206,18 +193,22 @@ public class Decimal64 implements Sinkable {
      * Add another Decimal64 to this one (in-place)
      */
     public void add(Decimal64 other) {
-        if (this.scale == other.scale) {
-            // Same scale - direct addition
-            this.value = Math.addExact(this.value, other.value);
-        } else if (this.scale < other.scale) {
-            // Scale up this to match other's scale
-            int scaleDiff = other.scale - this.scale;
-            this.value = Math.addExact(scaleUp(this.value, scaleDiff), other.value);
-            this.scale = other.scale;
-        } else {
-            // Scale up other to match this scale
-            int scaleDiff = this.scale - other.scale;
-            this.value = Math.addExact(this.value, scaleUp(other.value, scaleDiff));
+        try {
+            if (this.scale == other.scale) {
+                // Same scale - direct addition
+                this.value = Math.addExact(this.value, other.value);
+            } else if (this.scale < other.scale) {
+                // Scale up this to match other's scale
+                int scaleDiff = other.scale - this.scale;
+                this.value = Math.addExact(scaleUp(this.value, scaleDiff), other.value);
+                this.scale = other.scale;
+            } else {
+                // Scale up other to match this scale
+                int scaleDiff = this.scale - other.scale;
+                this.value = Math.addExact(this.value, scaleUp(other.value, scaleDiff));
+            }
+        } catch (ArithmeticException e) {
+            throw NumericException.instance().put("Overflow in decimal addition");
         }
     }
 
@@ -258,7 +249,7 @@ public class Decimal64 implements Sinkable {
      */
     public void divide(Decimal64 other, int resultScale, RoundingMode roundingMode) {
         if (other.value == 0) {
-            throw new ArithmeticException("Division by zero");
+            throw NumericException.instance().put("Division by zero");
         }
 
         validateScale(resultScale);
@@ -281,33 +272,10 @@ public class Decimal64 implements Sinkable {
 
         // Scale up the dividend if needed
         if (scaleAdjustment > 0) {
-            if (scaleAdjustment >= TEN_POWERS_TABLE.length) {
-                throw new ArithmeticException("Scale adjustment too large: " + scaleAdjustment);
-            }
-
-            long multiplier = TEN_POWERS_TABLE[scaleAdjustment];
-
-            // Check for overflow before multiplication
-            if (dividend > MAX_SAFE_MULTIPLY[scaleAdjustment]) {
-                throw new ArithmeticException("Overflow in division scaling");
-            }
-
-            dividend = dividend * multiplier;
+            dividend = scaleUpPositive(dividend, scaleAdjustment);
         } else if (scaleAdjustment < 0) {
             // Scale down the dividend (equivalent to scaling up the divisor)
-            int absAdjustment = -scaleAdjustment;
-            if (absAdjustment >= TEN_POWERS_TABLE.length) {
-                throw new ArithmeticException("Scale adjustment too large: " + absAdjustment);
-            }
-
-            long multiplier = TEN_POWERS_TABLE[absAdjustment];
-
-            // Check for overflow before multiplication  
-            if (divisor > MAX_SAFE_MULTIPLY[absAdjustment]) {
-                throw new ArithmeticException("Overflow in division scaling");
-            }
-
-            divisor = divisor * multiplier;
+            divisor = scaleUpPositive(divisor, -scaleAdjustment);
         }
 
         // Perform the division using Knuth algorithm for 64-bit values
@@ -368,26 +336,36 @@ public class Decimal64 implements Sinkable {
      */
     public void modulo(Decimal64 other) {
         if (other.value == 0) {
-            throw new ArithmeticException("Division by zero");
+            throw NumericException.instance().put("Division by zero");
         }
 
-        // Convert to same scale for modulo operation
-        if (this.scale != other.scale) {
-            alignScales(this, other);
+        long dividend = this.value;
+        long divisor = other.value;
+
+        // Convert to the same scale for modulo operation
+        if (this.scale < other.scale) {
+            dividend = scaleUp(dividend, other.scale - this.scale);
+        } else if (this.scale > other.scale) {
+            divisor = scaleUp(divisor, this.scale - other.scale);
         }
 
-        this.value = this.value % other.value;
+        this.value = dividend % divisor;
+        this.scale = Math.max(this.scale, other.scale);
     }
 
     /**
      * Multiply this by another Decimal64 (in-place)
      */
     public void multiply(Decimal64 other) {
-        this.value = Math.multiplyExact(this.value, other.value);
+        try {
+            this.value = Math.multiplyExact(this.value, other.value);
+        } catch (ArithmeticException ignored) {
+            throw NumericException.instance().put("Overflow in decimal multiplication");
+        }
         this.scale += other.scale;
 
         if (this.scale > MAX_SCALE) {
-            throw new ArithmeticException("Scale overflow: result scale would exceed " + MAX_SCALE);
+            throw NumericException.instance().put("Overflow in decimal multiplication scaling");
         }
     }
 
@@ -395,25 +373,33 @@ public class Decimal64 implements Sinkable {
      * Negate this decimal (in-place)
      */
     public void negate() {
-        this.value = Math.negateExact(this.value);
+        try {
+            this.value = Math.negateExact(this.value);
+        } catch (ArithmeticException ignored) {
+            throw NumericException.instance().put("Overflow in decimal negation");
+        }
     }
 
     /**
      * Subtract another Decimal64 from this one (in-place)
      */
     public void subtract(Decimal64 other) {
-        if (this.scale == other.scale) {
-            // Same scale - direct subtraction
-            this.value = Math.subtractExact(this.value, other.value);
-        } else if (this.scale < other.scale) {
-            // Scale up this to match other's scale
-            int scaleDiff = other.scale - this.scale;
-            this.value = Math.subtractExact(scaleUp(this.value, scaleDiff), other.value);
-            this.scale = other.scale;
-        } else {
-            // Scale up other to match this scale
-            int scaleDiff = this.scale - other.scale;
-            this.value = Math.subtractExact(this.value, scaleUp(other.value, scaleDiff));
+        try {
+            if (this.scale == other.scale) {
+                // Same scale - direct subtraction
+                this.value = Math.subtractExact(this.value, other.value);
+            } else if (this.scale < other.scale) {
+                // Scale up this to match other's scale
+                int scaleDiff = other.scale - this.scale;
+                this.value = Math.subtractExact(scaleUp(this.value, scaleDiff), other.value);
+                this.scale = other.scale;
+            } else {
+                // Scale up other to match this scale
+                int scaleDiff = this.scale - other.scale;
+                this.value = Math.subtractExact(this.value, scaleUp(other.value, scaleDiff));
+            }
+        } catch (ArithmeticException ignored) {
+            throw NumericException.instance().put("Overflow in decimal subtraction");
         }
     }
 
@@ -446,20 +432,6 @@ public class Decimal64 implements Sinkable {
 
     // Helper methods
 
-    private static void alignScales(Decimal64 a, Decimal64 b) {
-        if (a.scale == b.scale) return;
-
-        if (a.scale < b.scale) {
-            int scaleDiff = b.scale - a.scale;
-            a.value = scaleUp(a.value, scaleDiff);
-            a.scale = b.scale;
-        } else {
-            int scaleDiff = a.scale - b.scale;
-            b.value = scaleUp(b.value, scaleDiff);
-            b.scale = a.scale;
-        }
-    }
-
     /**
      * Compare remainder with half of divisor
      * Returns: negative if remainder < divisor/2, 0 if equal, positive if remainder > divisor/2
@@ -482,8 +454,8 @@ public class Decimal64 implements Sinkable {
      * Adapted from Decimal128's divideKnuthLongxLong method
      */
     private static long divideKnuthLong(long dividend, long divisor, RoundingMode roundingMode) {
-        long quotient = Long.divideUnsigned(dividend, divisor);
-        long remainder = Long.remainderUnsigned(dividend, divisor);
+        long quotient = dividend / divisor;
+        long remainder = dividend % divisor;
 
         // Apply rounding if there's a remainder
         if (remainder != 0) {
@@ -501,20 +473,35 @@ public class Decimal64 implements Sinkable {
     private static long scaleUp(long value, int scaleDiff) {
         if (scaleDiff == 0) return value;
         if (scaleDiff >= TEN_POWERS_TABLE.length) {
-            throw new ArithmeticException("Scale difference too large: " + scaleDiff);
+            throw NumericException.instance().put("Overflow in decimal scaling");
         }
 
         long multiplier = TEN_POWERS_TABLE[scaleDiff];
 
         // Check for overflow
         if (value > 0 && value > MAX_SAFE_MULTIPLY[scaleDiff]) {
-            throw new ArithmeticException("Overflow in scaling operation");
+            throw NumericException.instance().put("Overflow in decimal scaling");
         }
         if (value < 0 && value < -MAX_SAFE_MULTIPLY[scaleDiff]) {
-            throw new ArithmeticException("Overflow in scaling operation");
+            throw NumericException.instance().put("Overflow in decimal scaling");
         }
 
-        return Math.multiplyExact(value, multiplier);
+        return value * multiplier;
+    }
+
+    private static long scaleUpPositive(long value, int scaleDiff) {
+        if (scaleDiff >= TEN_POWERS_TABLE.length) {
+            throw NumericException.instance().put("Overflow in decimal scaling");
+        }
+
+        long multiplier = TEN_POWERS_TABLE[scaleDiff];
+
+        // Check for overflow
+        if (value > 0 && value > MAX_SAFE_MULTIPLY[scaleDiff]) {
+            throw NumericException.instance().put("Overflow while scaling decimal");
+        }
+
+        return value * multiplier;
     }
 
     /**
@@ -524,7 +511,7 @@ public class Decimal64 implements Sinkable {
     private static boolean shouldRoundUp(long remainder, long divisor, boolean oddQuotient, RoundingMode roundingMode) {
         switch (roundingMode) {
             case UNNECESSARY:
-                throw new ArithmeticException("Rounding necessary");
+                throw NumericException.instance().put("Rounding necessary");
             case UP: // Away from zero
                 return true;
             case DOWN: // Towards zero
@@ -543,8 +530,6 @@ public class Decimal64 implements Sinkable {
                             return true;
                         case HALF_EVEN:
                             return oddQuotient;
-                        case HALF_DOWN:
-                            return false;
                         default:
                             return false;
                     }
@@ -557,15 +542,6 @@ public class Decimal64 implements Sinkable {
     private static void validateScale(int scale) {
         if (Integer.compareUnsigned(scale, MAX_SCALE) > 0) {
             throw new IllegalArgumentException("Scale must be between 0 and " + MAX_SCALE + ", got: " + scale);
-        }
-    }
-
-    static {
-        for (int i = 0; i <= 10; i++) {
-            ZERO_THROUGH_TEN[i] = new Decimal64(i, 0);
-        }
-        for (int i = 0; i <= 100; i++) {
-            SMALL_VALUES_CACHE[i] = new Decimal64(i, 0);
         }
     }
 }
