@@ -346,7 +346,8 @@ public class ParquetTest extends AbstractTest {
                     Assert.assertEquals(2, schema.getColumns().size());
 
                     assertSchemaArray(columns.get(0), "arr");
-                    assertSchemaNullable(columns.get(1), "ts", PrimitiveType.PrimitiveTypeName.INT64);
+                    // designated ts is non-nullable
+                    assertSchemaNonNullable(columns.get(1), "ts", PrimitiveType.PrimitiveTypeName.INT64);
 
                     long rowCount = 0;
                     List<BlockMetaData> rowGroups = metadata.getBlocks();
@@ -531,8 +532,7 @@ public class ParquetTest extends AbstractTest {
                 final RecordCursorFactory factory = engine.select(
                         "select * from " +
                                 tableToken.getTableName() +
-                                " where designated_ts in '" + partition + "'"
-                        ,
+                                " where designated_ts in '" + partition + "'",
                         executionContext
                 );
                 final RecordCursor cursor = factory.getCursor(executionContext)
@@ -659,7 +659,8 @@ public class ParquetTest extends AbstractTest {
             assertSchemaNullable(columns.get(21), "a_long128", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
             assertSchemaNullable(columns.get(22), "a_date", PrimitiveType.PrimitiveTypeName.INT64);
             assertSchemaNullable(columns.get(23), "a_ts", PrimitiveType.PrimitiveTypeName.INT64);
-            assertSchemaNullable(columns.get(24), "designated_ts", PrimitiveType.PrimitiveTypeName.INT64);
+            // designated ts is non-nullable
+            assertSchemaNonNullable(columns.get(24), "designated_ts", PrimitiveType.PrimitiveTypeName.INT64);
 
             assertSchemaNonNullable(columns.get(25), "a_boolean_top", PrimitiveType.PrimitiveTypeName.BOOLEAN);
             assertSchemaNonNullable(columns.get(26), "a_byte_top", PrimitiveType.PrimitiveTypeName.INT32);
