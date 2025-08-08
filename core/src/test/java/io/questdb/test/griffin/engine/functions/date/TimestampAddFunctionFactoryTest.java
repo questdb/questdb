@@ -31,7 +31,7 @@ import org.junit.Test;
 
 public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
-    public static char[] units = {'y', 'M', 'w', 'd', 'h', 'm', 's', 'T', 'U'};
+    public static char[] units = {'y', 'M', 'w', 'd', 'h', 'm', 's', 'T', 'U', 'n'};
 
     @Test
     public void testNullStride() throws Exception {

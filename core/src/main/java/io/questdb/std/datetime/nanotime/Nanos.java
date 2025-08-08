@@ -136,6 +136,8 @@ public final class Nanos {
                 return Nanos.addMonths(nanos, period);
             case 'y':
                 return Nanos.addYears(nanos, period);
+            case 'n':
+                return Nanos.addNanos(nanos, period);
             default:
                 return Numbers.LONG_NULL;
         }

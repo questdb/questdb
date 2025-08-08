@@ -143,6 +143,8 @@ public final class Timestamps {
                 return Timestamps.addMonths(lo, period);
             case 'y':
                 return Timestamps.addYears(lo, period);
+            case 'n':
+                return Timestamps.addNanos(lo, period);
             default:
                 return Numbers.LONG_NULL;
         }

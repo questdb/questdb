@@ -105,7 +105,7 @@ public class YearTimestampSamplerTest {
     }
 
     private void testRound(int stepYears, String timestamp, String expectedRounded) throws NumericException {
-        final YearTimestampSampler sampler = new YearTimestampSampler(stepYears);
+        final YearTimestampMicrosSampler sampler = new YearTimestampMicrosSampler(stepYears);
         sampler.setStart(0);
         final long ts = TimestampFormatUtils.parseUTCTimestamp(timestamp);
         Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(expectedRounded), sampler.round(ts));
