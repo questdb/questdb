@@ -693,7 +693,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.min.worker.evaluation.interval\tQDB_HTTP_MIN_WORKER_EVALUATION_INTERVAL\t100\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.target.utilization\tQDB_LINE_TCP_WRITER_WORKER_TARGET_UTILIZATION\t60.0\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.utilization.tolerance\tQDB_LINE_TCP_WRITER_WORKER_UTILIZATION_TOLERANCE\t5.0\tdefault\tfalse\tfalse\n" +
-                                    "line.tcp.writer.worker.min.active.workers\tQDB_LINE_TCP_WRITER_WORKER_MIN_ACTIVE_WORKERS\t1\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.writer.worker.min.active.workers\tQDB_LINE_TCP_WRITER_WORKER_MIN_ACTIVE_WORKERS\t-1\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.evaluation.interval\tQDB_LINE_TCP_WRITER_WORKER_EVALUATION_INTERVAL\t100\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.io.worker.target.utilization\tQDB_LINE_TCP_IO_WORKER_TARGET_UTILIZATION\t60.0\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.io.worker.utilization.tolerance\tQDB_LINE_TCP_IO_WORKER_UTILIZATION_TOLERANCE\t5.0\tdefault\tfalse\tfalse\n" +

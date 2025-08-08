@@ -236,6 +236,12 @@ public class Worker extends Thread {
      * this worker should be parked.
      */
     private void parkWorker() {
+        // Let all jobs know that this worker is parking
+        // TCP ILP IO job has to release its resources before parking
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            jobs.get(i).park();
+        }
+
         Object monitor = poolMetrics.getParkingMonitor(workerId);
 
         while (poolMetrics.isParked(workerId) && lifecycle.get() == Lifecycle.RUNNING) {

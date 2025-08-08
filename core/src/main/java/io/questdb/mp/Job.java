@@ -39,14 +39,11 @@ public interface Job {
         }
     }
 
-    /**
-     * Runs and returns true if it should be rescheduled ASAP.
-     *
-     * @param workerId  worker id
-     * @param runStatus set to 1 when job is running, 2 when it is halting
-     * @return true if job should be rescheduled ASAP
-     */
-    boolean run(int workerId, @NotNull RunStatus runStatus);
+    default void park() {
+        // Default implementation does nothing.
+        // This method can be overridden by implementations that need to perform
+        // specific actions when the job is parked.
+    }
 
     /**
      * Runs and returns true if it should be rescheduled ASAP.
@@ -57,6 +54,15 @@ public interface Job {
     default boolean run(int workerId) {
         return run(workerId, RUNNING_STATUS);
     }
+
+    /**
+     * Runs and returns true if it should be rescheduled ASAP.
+     *
+     * @param workerId  worker id
+     * @param runStatus set to 1 when job is running, 2 when it is halting
+     * @return true if job should be rescheduled ASAP
+     */
+    boolean run(int workerId, @NotNull RunStatus runStatus);
 
     interface RunStatus {
         boolean isTerminating();

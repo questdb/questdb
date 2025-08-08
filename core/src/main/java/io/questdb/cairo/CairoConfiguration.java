@@ -210,9 +210,9 @@ public interface CairoConfiguration {
     @NotNull
     FactoryProvider getFactoryProvider();
 
-    int getFileOperationRetryCount();
-
     boolean getFileDescriptorCacheEnabled();
+
+    int getFileOperationRetryCount();
 
     @NotNull
     FilesFacade getFilesFacade();
@@ -266,6 +266,8 @@ public interface CairoConfiguration {
 
     @NotNull
     CharSequence getLegacyCheckpointRoot(); // same as root/../snapshot
+
+    int getLineTcpWriterWorkerCount();
 
     boolean getLogLevelVerbose();
 

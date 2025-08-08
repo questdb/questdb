@@ -1526,7 +1526,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                 initWorkerPoolConfiguration(properties, env, lineTcpWriterWorkerPoolConfiguration,
                         "LINE_TCP_WRITER_WORKER", 0,
                         sharedWorkerTargetUtilization, sharedWorkerUtilizationTolerance,
-                        sharedWorkerMinActiveWorkers, sharedWorkerEvaluationInterval);
+                        -1, sharedWorkerEvaluationInterval);
+
+                // Line tcp writer pool if configured cannot park its threads
+                // Make sure parking workers is disable for it.
+                lineTcpWriterWorkerPoolConfiguration.minActiveWorkers = Math.max(1, lineTcpWriterWorkerPoolConfiguration.workerCount);
+
+
                 this.symbolCacheWaitBeforeReload = getMicros(properties, env, PropertyKey.LINE_TCP_SYMBOL_CACHE_WAIT_BEFORE_RELOAD, 500_000);
                 // Set Line TCP IO worker pool configuration directly
                 initWorkerPoolConfiguration(properties, env, lineTcpIOWorkerPoolConfiguration,
@@ -3243,6 +3249,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull CharSequence getLegacyCheckpointRoot() {
             return legacyCheckpointRoot;
+        }
+
+        @Override
+        public int getLineTcpWriterWorkerCount() {
+            return lineTcpWriterWorkerPoolConfiguration.getWorkerCount();
         }
 
         @Override

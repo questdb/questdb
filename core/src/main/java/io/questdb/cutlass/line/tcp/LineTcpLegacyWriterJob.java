@@ -71,6 +71,11 @@ class LineTcpLegacyWriterJob implements Job, Closeable {
     }
 
     @Override
+    public void park() {
+        LOG.critical().$("invalid configuration resuled in park() call for line tcp worker job, some tables may stuck in table busy state [workerId=").$(workerId).I$();
+    }
+
+    @Override
     public void close() {
         LOG.info().$("line protocol writer closing [workerId=").$(workerId).I$();
         // Finish all jobs in the queue before stopping

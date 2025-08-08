@@ -121,19 +121,25 @@ public class LineTcpMeasurementScheduler implements Closeable {
             // in worker threads.
             tableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
             idleTableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
-            loadByWriterThread = new long[writerWorkerPool.getWorkerCount()];
+
+            // In case writer job is not on a dedicated thread pool
+            // Use 1 thread only to being able to park the worker threads with
+            // WorkerSpinRegulator
+            int writerJobCount = Math.max(1, engine.getConfiguration().getLineTcpWriterWorkerCount());
+
+            loadByWriterThread = new long[writerJobCount];
             autoCreateNewTables = lineConfiguration.getAutoCreateNewTables();
             autoCreateNewColumns = lineConfiguration.getAutoCreateNewColumns();
             int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
             int queueSize = lineConfiguration.getWriterQueueCapacity();
             long commitInterval = configuration.getCommitInterval();
-            int nWriterThreads = writerWorkerPool.getWorkerCount();
-            pubSeq = new MPSequence[nWriterThreads];
+
+            pubSeq = new MPSequence[writerJobCount];
             //noinspection unchecked
-            queue = new RingQueue[nWriterThreads];
+            queue = new RingQueue[writerJobCount];
             //noinspection unchecked
-            assignedTables = new ObjList[nWriterThreads];
-            for (int i = 0; i < nWriterThreads; i++) {
+            assignedTables = new ObjList[writerJobCount];
+            for (int i = 0; i < writerJobCount; i++) {
                 MPSequence ps = new MPSequence(queueSize);
                 pubSeq[i] = ps;
 

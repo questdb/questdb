@@ -106,6 +106,14 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     }
 
     @Override
+    public void park() {
+        // Release all the TUDs.
+        // The job will not spin anymore, and nothing will trigger commits
+        // and Writer release.
+        scheduler.doMaintenance(tableUpdateDetailsUtf8, workerId, Long.MAX_VALUE);
+    }
+
+    @Override
     public void releaseWalTableDetails() {
         scheduler.releaseWalTableDetails(tableUpdateDetailsUtf8);
     }
