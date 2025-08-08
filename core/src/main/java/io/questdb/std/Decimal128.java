@@ -701,16 +701,9 @@ public class Decimal128 implements Sinkable {
             return;
         }
 
-        long oldLow = this.low;
-
         // Two's complement: invert all bits and add 1
         this.low = ~this.low + 1;
-        this.high = ~this.high;
-
-        // Check for carry from low
-        if (this.low == 0 && oldLow != 0) {
-            this.high += 1;
-        }
+        this.high = ~this.high + (this.low == 0 ? 1 : 0);
     }
 
     /**
