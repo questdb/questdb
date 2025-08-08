@@ -377,6 +377,7 @@ mod tests {
                 0,
                 null(),
                 0,
+                false,
             )
             .unwrap(),
         )

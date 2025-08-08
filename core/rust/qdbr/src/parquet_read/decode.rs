@@ -1462,7 +1462,7 @@ mod tests {
     use bytes::Bytes;
     use parquet::file::reader::Length;
     use parquet2::write::Version;
-    use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+    use qdb_core::col_type::{encode_array_type, ColumnType, ColumnTypeTag};
     use rand::Rng;
     use std::fs::File;
     use std::io::{Cursor, Write};
@@ -1668,15 +1668,16 @@ mod tests {
         expected_buffs.push((symbol_buffs, ColumnTypeTag::Varchar.into_type()));
 
         let array_buffers = create_col_data_buff_array(row_count, 3);
+        let array_type = encode_array_type(ColumnTypeTag::Double, 1).unwrap();
         columns.push(create_var_column(
             columns.len() as i32,
             row_count,
             "array_col",
             array_buffers.data_vec.as_ref(),
             array_buffers.aux_vec.as_ref().unwrap(),
-            ColumnTypeTag::Array.into_type(),
+            array_type,
         ));
-        expected_buffs.push((array_buffers, ColumnTypeTag::Array.into_type()));
+        expected_buffs.push((array_buffers, array_type));
 
         assert_columns(
             row_count,
@@ -1882,6 +1883,7 @@ mod tests {
         let partition = Partition { table: "test_table".to_string(), columns };
         ParquetWriter::new(&mut buf)
             .with_statistics(true)
+            .with_raw_array_encoding(true)
             .with_row_group_size(Some(row_group_size))
             .with_data_page_size(Some(data_page_size))
             .with_version(version)
@@ -2205,6 +2207,7 @@ mod tests {
             0,
             null(),
             0,
+            false,
         )
         .unwrap()
     }
@@ -2229,6 +2232,7 @@ mod tests {
             aux_data.len(),
             null(),
             0,
+            false,
         )
         .unwrap()
     }
@@ -2254,6 +2258,7 @@ mod tests {
             chars_data.len(),
             offsets.as_ptr(),
             offsets.len(),
+            false,
         )
         .unwrap()
     }
