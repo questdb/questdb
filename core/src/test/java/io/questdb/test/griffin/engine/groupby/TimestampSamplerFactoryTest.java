@@ -24,6 +24,8 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
@@ -38,6 +40,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class TimestampSamplerFactoryTest {
+    private static final TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
     private static final char[] units = {'U', 's', 'm', 'h', 'd'};
 
     @Test
@@ -54,7 +57,7 @@ public class TimestampSamplerFactoryTest {
     @Test
     public void testLongQualifier() {
         try {
-            TimestampSamplerFactory.getInstance("1sa", 130);
+            TimestampSamplerFactory.getInstance(driver, "1sa", 130);
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(131, e.getPosition());
@@ -213,14 +216,14 @@ public class TimestampSamplerFactoryTest {
             sink.put(bucketSize);
         }
         sink.put(units);
-        TimestampSampler sampler = TimestampSamplerFactory.getInstance(sink, 120);
+        TimestampSampler sampler = TimestampSamplerFactory.getInstance(driver, sink, 120);
         Assert.assertNotNull(sampler);
         return sampler;
     }
 
     private void assertFailure(int expectedPosition, CharSequence expectedMessage, CharSequence sampleBy, int position) {
         try {
-            TimestampSamplerFactory.getInstance(sampleBy, position);
+            TimestampSamplerFactory.getInstance(driver, sampleBy, position);
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(expectedPosition, e.getPosition());

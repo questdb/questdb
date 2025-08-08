@@ -36,7 +36,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.WeakMutableObjectPool;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -50,7 +50,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class QueryRegistry {
 
     private static final Log LOG = LogFactory.getLog(QueryRegistry.class);
-    private final MicrosecondClock clock;
+    private final Clock clock;
     private final AtomicLong idSeq = new AtomicLong();
     private final ConcurrentLongHashMap<Entry> registry = new ConcurrentLongHashMap<>();
     private final ThreadLocal<WeakMutableObjectPool<Entry>> tlQueryPool;

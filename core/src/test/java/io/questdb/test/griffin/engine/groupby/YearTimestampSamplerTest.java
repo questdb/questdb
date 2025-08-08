@@ -24,7 +24,7 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.griffin.engine.groupby.YearTimestampSampler;
+import io.questdb.griffin.engine.groupby.YearTimestampMicrosSampler;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
@@ -105,7 +105,7 @@ public class YearTimestampSamplerTest {
     }
 
     private void testRound(int stepYears, String timestamp, String expectedRounded) throws NumericException {
-        final YearTimestampSampler sampler = new YearTimestampSampler(stepYears);
+        final YearTimestampMicrosSampler sampler = new YearTimestampMicrosSampler(stepYears);
         sampler.setStart(0);
         final long ts = TimestampFormatUtils.parseUTCTimestamp(timestamp);
         Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(expectedRounded), sampler.round(ts));
@@ -113,7 +113,7 @@ public class YearTimestampSamplerTest {
 
     private void testSampler(int stepSize, String expected) throws NumericException {
         StringSink sink = new StringSink();
-        YearTimestampSampler sampler = new YearTimestampSampler(4);
+        YearTimestampMicrosSampler sampler = new YearTimestampMicrosSampler(4);
         long timestamp = TimestampFormatUtils.parseUTCTimestamp("2018-11-16T15:00:00.000000Z");
         sampler.setStart(timestamp);
         for (int i = 0; i < 20; i++) {

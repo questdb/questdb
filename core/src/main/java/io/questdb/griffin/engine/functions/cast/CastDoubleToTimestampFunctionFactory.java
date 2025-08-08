@@ -41,12 +41,12 @@ public class CastDoubleToTimestampFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CastDoubleToTimestampFunction(args.getQuick(0));
+        return new CastDoubleToTimestampFunction(args.getQuick(0), args.getQuick(1).getType());
     }
 
     public static class CastDoubleToTimestampFunction extends AbstractCastToTimestampFunction {
-        public CastDoubleToTimestampFunction(Function arg) {
-            super(arg);
+        public CastDoubleToTimestampFunction(Function arg, int timestampType) {
+            super(arg, timestampType);
         }
 
         @Override

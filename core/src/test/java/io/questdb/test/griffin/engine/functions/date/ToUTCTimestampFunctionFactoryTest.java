@@ -24,13 +24,33 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
+    private final String timestampType;
+
+    public ToUTCTimestampFunctionFactoryTest(int timestampType) {
+        this.timestampType = ColumnType.nameOf(timestampType);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+        });
+    }
 
     @Test
     public void testAreaName() throws Exception {
@@ -138,6 +158,7 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidConstantTimeZone() throws Exception {
+        Assume.assumeTrue(timestampType.equals(TIMESTAMP_TYPE_NAME));
         assertMemoryLeak(() -> {
             try {
                 assertExceptionNoLeakCheck("select to_utc(0, 'UUU')");
@@ -150,6 +171,7 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNullConstantTimeZone() throws Exception {
+        Assume.assumeTrue(timestampType.equals(TIMESTAMP_TYPE_NAME));
         assertMemoryLeak(() -> {
             try {
                 assertExceptionNoLeakCheck("select to_utc(0, null)");
@@ -194,9 +216,9 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarTimezone() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "to_utc\n" +
-                        "2020-03-12T23:10:00.000000Z\n",
-                "select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select '-07:40' zone)"
+                replaceTimestampSuffix("to_utc\n" +
+                        "2020-03-12T23:10:00.000000Z\n", timestampType),
+                "select to_utc(cast('2020-03-12T15:30:00.000000Z' as " + timestampType + "), zone) from (select '-07:40' zone)"
         ));
     }
 
@@ -215,6 +237,8 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
             String timestamp,
             String timeZone
     ) throws SqlException {
+        expected = replaceTimestampSuffix(expected, timestampType);
+        timestamp = replaceTimestampSuffix(timestamp, timestampType);
         assertSql(
                 expected,
                 "select to_utc('" +

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.griffin.SqlCompiler;
@@ -160,6 +161,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
 
     public void setTimer(@Nullable String timeZone, long start, int interval, char unit) {
         this.timerTimeZone = timeZone;
+        // timerStart always use microSecond precision.
         this.timerStart = start;
         this.timerInterval = interval;
         this.timerUnit = unit;
@@ -183,7 +185,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
             }
             if (periodLength == 0) {
                 sink.putAscii(" start '");
-                sink.putISODate(timerStart);
+                sink.putISODate(ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_MICRO), timerStart);
                 if (timerTimeZone != null) {
                     sink.putAscii("' time zone '");
                     sink.put(timerTimeZone);

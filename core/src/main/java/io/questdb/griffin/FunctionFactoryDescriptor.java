@@ -223,6 +223,10 @@ public class FunctionFactoryDescriptor {
         return signatureBuilder.toString();
     }
 
+    public static int toType(int typeWithFlags) {
+        return typeWithFlags & TYPE_MASK;
+    }
+
     public static short toTypeTag(int typeWithFlags) {
         return (short) (typeWithFlags & TYPE_MASK);
     }

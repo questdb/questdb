@@ -104,8 +104,6 @@ import io.questdb.std.Uuid;
 import io.questdb.std.Vect;
 import io.questdb.std.WeakMutableObjectPool;
 import io.questdb.std.WeakSelfReturningObjectPool;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StdoutSink;
@@ -117,6 +115,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 import static io.questdb.cutlass.pgwire.PGOids.*;
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
 /**
@@ -697,7 +696,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     public void setTimestampBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         ensureValueLength(index, Long.BYTES, valueLen);
-        bindVariableService.setTimestamp(index, getLongUnsafe(address) + Numbers.JULIAN_EPOCH_OFFSET_USEC);
+        bindVariableService.setTimestampWithType(index, ColumnType.TIMESTAMP_MICRO, getLongUnsafe(address) + Numbers.JULIAN_EPOCH_OFFSET_USEC);
     }
 
     private static void bindParameterFormats(long lo, long msgLimit, short parameterFormatCount, IntList bindVariableTypes) throws BadProtocolException {
@@ -795,7 +794,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final long longValue = record.getDate(columnIndex);
         if (longValue != Numbers.LONG_NULL) {
             final long a = responseUtf8Sink.skip();
-            PG_DATE_MILLI_TIME_Z_PRINT_FORMAT.format(longValue, DateFormatUtils.EN_LOCALE, null, responseUtf8Sink);
+            PG_DATE_MILLI_TIME_Z_PRINT_FORMAT.format(longValue, EN_LOCALE, null, responseUtf8Sink);
             responseUtf8Sink.putLenEx(a);
         } else {
             responseUtf8Sink.setNullValue();
@@ -889,13 +888,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void appendInterval(Record record, int columnIndex) {
+    private void appendInterval(Record record, int columnIndex, int intervalType) {
         final Interval interval = record.getInterval(columnIndex);
         if (Interval.NULL.equals(interval)) {
             responseUtf8Sink.setNullValue();
         } else {
             final long a = responseUtf8Sink.skip();
-            interval.toSink(responseUtf8Sink);
+            interval.toSink(responseUtf8Sink, intervalType);
             responseUtf8Sink.putLenEx(a);
         }
     }
@@ -937,9 +936,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final long offset = responseUtf8Sink.skip();
         responseUtf8Sink.putNetworkShort((short) columnCount);
         for (int i = 0; i < columnCount; i++) {
-            final int type = activeSelectColumnTypes.getQuick(2 * i);
-            final short columnBinaryFlag = getColumnBinaryFlag(type);
-            final int typeTag = ColumnType.tagOf(type);
+            final int columnType = activeSelectColumnTypes.getQuick(2 * i);
+            final short columnBinaryFlag = getColumnBinaryFlag(columnType);
+            final int typeTag = ColumnType.tagOf(columnType);
 
             final int tagWithFlag = toColumnBinaryType(columnBinaryFlag, typeTag);
             switch (tagWithFlag) {
@@ -989,7 +988,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     appendDateColumnBin(record, i);
                     break;
                 case BINARY_TYPE_TIMESTAMP:
-                    appendTimestampColumnBin(record, i);
+                    appendTimestampColumnBin(record, i, columnType);
                     break;
                 case BINARY_TYPE_BYTE:
                     appendByteColumnBin(record, i);
@@ -1001,7 +1000,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     appendFloatColumn(record, i);
                     break;
                 case ColumnType.TIMESTAMP:
-                    appendTimestampColumn(record, i);
+                    appendTimestampColumn(record, i, columnType);
                     break;
                 case ColumnType.DATE:
                     appendDateColumn(record, i);
@@ -1049,7 +1048,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 case BINARY_TYPE_INTERVAL:
                     // While Postgres has native INTERVAL type,
                     // for now we output intervals as strings.
-                    appendInterval(record, i);
+                    appendInterval(record, i, columnType);
                     break;
                 default:
                     assert false;
@@ -1105,26 +1104,26 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void appendTimestampColumn(Record record, int i) {
-        long a;
-        long longValue = record.getTimestamp(i);
-        if (longValue == Numbers.LONG_NULL) {
+    private void appendTimestampColumn(Record record, int columnIndex, int timestampType) {
+        long offset;
+        long timestamp = record.getTimestamp(columnIndex);
+        if (timestamp == Numbers.LONG_NULL) {
             responseUtf8Sink.setNullValue();
         } else {
-            a = responseUtf8Sink.skip();
-            TimestampFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, DateFormatUtils.EN_LOCALE, null, responseUtf8Sink);
-            responseUtf8Sink.putLenEx(a);
+            offset = responseUtf8Sink.skip();
+            ColumnType.getTimestampDriver(timestampType).appendPGWireText(responseUtf8Sink, timestamp);
+            responseUtf8Sink.putLenEx(offset);
         }
     }
 
-    private void appendTimestampColumnBin(Record record, int columnIndex) {
+    private void appendTimestampColumnBin(Record record, int columnIndex, int timestampType) {
         final long longValue = record.getTimestamp(columnIndex);
         if (longValue == Numbers.LONG_NULL) {
             responseUtf8Sink.setNullValue();
         } else {
             responseUtf8Sink.putNetworkInt(Long.BYTES);
             // PG epoch starts at 2000 rather than 1970
-            responseUtf8Sink.putNetworkLong(longValue - Numbers.JULIAN_EPOCH_OFFSET_USEC);
+            responseUtf8Sink.putNetworkLong(ColumnType.getTimestampDriver(timestampType).toMicros(longValue) - Numbers.JULIAN_EPOCH_OFFSET_USEC);
         }
     }
 
@@ -1209,7 +1208,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         bindVariableService.define(j, ColumnType.LONG, 0);
                         break;
                     case X_B_PG_TIMESTAMP:
-                        bindVariableService.define(j, ColumnType.TIMESTAMP, 0);
+                        bindVariableService.define(j, ColumnType.TIMESTAMP_MICRO, 0);
                         break;
                     case X_B_PG_INT2:
                         bindVariableService.define(j, ColumnType.SHORT, 0);

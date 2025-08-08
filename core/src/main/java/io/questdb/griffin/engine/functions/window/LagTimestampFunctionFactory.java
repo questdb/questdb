@@ -64,7 +64,7 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
                 configuration,
                 sqlExecutionContext,
                 (defaultValue) -> {
-                    if (!ColumnType.isAssignableFrom(defaultValue.getType(), ColumnType.TIMESTAMP)) {
+                    if (!ColumnType.isAssignableFrom(defaultValue.getType(), args.getQuick(0).getType())) {
                         throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to timestamp");
                     }
                 },
@@ -103,6 +103,11 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public int getType() {
+            return arg.getType();
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), lagValue);
@@ -127,6 +132,11 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             return lagValue;
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         @Override
@@ -167,6 +177,11 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             return value;
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         @Override

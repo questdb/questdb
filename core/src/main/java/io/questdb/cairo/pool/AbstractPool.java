@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;

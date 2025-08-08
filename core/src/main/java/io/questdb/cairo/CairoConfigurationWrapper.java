@@ -37,8 +37,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -302,13 +302,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getFileOperationRetryCount() {
-        return getDelegate().getFileOperationRetryCount();
+    public boolean getFileDescriptorCacheEnabled() {
+        return getDelegate().getFileDescriptorCacheEnabled();
     }
 
     @Override
-    public boolean getFileDescriptorCacheEnabled() {
-        return getDelegate().getFileDescriptorCacheEnabled();
+    public int getFileOperationRetryCount() {
+        return getDelegate().getFileOperationRetryCount();
     }
 
     @Override

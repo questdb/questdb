@@ -156,6 +156,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
             }
             try {
                 MatViewDefinition.readFrom(
+                        executionContext.getCairoEngine(),
                         viewDefinition,
                         reader,
                         path,
@@ -205,7 +206,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
                 }
                 if (viewDefinition.getPeriodLength() == 0) {
                     sink.putAscii(" START '");
-                    sink.putISODate(viewDefinition.getTimerStart());
+                    sink.putISODate(viewDefinition.getBaseTableTimestampDriver(), viewDefinition.getTimerStart());
                     if (viewDefinition.getTimerTimeZone() != null) {
                         sink.putAscii("' TIME ZONE '");
                         sink.put(viewDefinition.getTimerTimeZone());

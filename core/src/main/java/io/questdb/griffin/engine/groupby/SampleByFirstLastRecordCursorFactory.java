@@ -126,6 +126,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             cursor = new SampleByFirstLastRecordCursor(
                     configuration,
                     timestampSampler,
+                    metadata.getColumnType(timestampIndex),
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,
@@ -322,6 +323,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         public SampleByFirstLastRecordCursor(
                 CairoConfiguration configuration,
                 TimestampSampler timestampSampler,
+                int timestampType,
                 Function timezoneNameFunc,
                 int timezoneNameFuncPos,
                 Function offsetFunc,
@@ -333,6 +335,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         ) {
             super(
                     timestampSampler,
+                    timestampType,
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,

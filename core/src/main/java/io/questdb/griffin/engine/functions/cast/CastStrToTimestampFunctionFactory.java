@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -43,19 +42,18 @@ public class CastStrToTimestampFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+        return new Func(args.getQuick(0), args.getQuick(1).getType());
     }
 
     public static class Func extends AbstractCastToTimestampFunction {
-        public Func(Function arg) {
-            super(arg);
+        public Func(Function arg, int timestampType) {
+            super(arg, timestampType);
         }
 
         @Override
         public long getTimestamp(Record rec) {
-            final CharSequence value = arg.getStrA(rec);
             try {
-                return value == null ? Numbers.LONG_NULL : IntervalUtils.parseFloorPartialTimestamp(value);
+                return timestampDriver.parseFloorLiteral(arg.getStrA(rec));
             } catch (NumericException e) {
                 return Numbers.LONG_NULL;
             }

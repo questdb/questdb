@@ -62,7 +62,7 @@ public class PgLocksFunctionFactory extends AbstractEmptyCatalogueFunctionFactor
         metadata.add(new TableColumnMetadata("mode", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("granted", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("fastpath", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("waitstart", ColumnType.TIMESTAMP));
+        metadata.add(new TableColumnMetadata("waitstart", ColumnType.TIMESTAMP_MICRO));
         METADATA = metadata;
     }
 }

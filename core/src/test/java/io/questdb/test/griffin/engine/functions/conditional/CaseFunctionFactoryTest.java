@@ -1217,11 +1217,11 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testKeyedFunctionVarArgumentNumeric() throws Exception {
         assertMemoryLeak(() -> {
-            String[] types = {"INT", "LONG", "SHORT", "STRING", "TIMESTAMP", "BOOLEAN"};
+            String[] types = {"INT", "LONG", "SHORT", "STRING", "TIMESTAMP", "BOOLEAN", "TIMESTAMP_NS"};
 
             for (String type : types) {
                 execute("create table tt as (" +
-                        "select cast(x as TIMESTAMP) as ts, cast(x as " + type + ") as x from long_sequence(10)" +
+                        "select cast(x as TIMESTAMP_NS) as ts, cast(x as " + type + ") as x from long_sequence(10)" +
                         ") timestamp(ts)");
 
                 // this is a bit confusing. for booleans, every value x != 0 will evaluate to 1
@@ -1740,25 +1740,25 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     public void testTimestamp() throws Exception {
         assertQuery(
                 "x\tcase\n" +
-                        "-920\t1970-01-01T00:00:00.000000Z\n" +
-                        "118\t1970-01-01T00:00:00.000103Z\n" +
+                        "-920\t1970-01-01T00:00:00.000000000Z\n" +
+                        "118\t1970-01-01T00:00:00.000103000Z\n" +
                         "833\t\n" +
-                        "-771\t1970-01-01T00:00:00.000030Z\n" +
+                        "-771\t1970-01-01T00:00:00.000030000Z\n" +
                         "701\t\n" +
-                        "-339\t1970-01-01T00:00:00.000050Z\n" +
+                        "-339\t1970-01-01T00:00:00.000050000Z\n" +
                         "242\t\n" +
                         "671\t\n" +
                         "706\t\n" +
-                        "-48\t1970-01-01T00:00:00.000090Z\n" +
-                        "-516\t1970-01-01T00:00:00.000100Z\n" +
-                        "-972\t1970-01-01T00:00:00.000110Z\n" +
-                        "-714\t1970-01-01T00:00:00.000120Z\n" +
-                        "-703\t1970-01-01T00:00:00.000130Z\n" +
+                        "-48\t1970-01-01T00:00:00.000090000Z\n" +
+                        "-516\t1970-01-01T00:00:00.000100000Z\n" +
+                        "-972\t1970-01-01T00:00:00.000110000Z\n" +
+                        "-714\t1970-01-01T00:00:00.000120000Z\n" +
+                        "-703\t1970-01-01T00:00:00.000130000Z\n" +
                         "481\t\n" +
                         "512\t\n" +
-                        "116\t1970-01-01T00:00:00.001603Z\n" +
+                        "116\t1970-01-01T00:00:00.001603000Z\n" +
                         "97\t\n" +
-                        "-405\t1970-01-01T00:00:00.000180Z\n" +
+                        "-405\t1970-01-01T00:00:00.000180000Z\n" +
                         "474\t\n",
                 "select \n" +
                         "    x,\n" +
@@ -1770,7 +1770,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " timestamp_sequence(0, 10) a," +
-                        " timestamp_sequence(3, 100) b," +
+                        " timestamp_sequence(3000::timestamp_ns, 100000) b," +
                         " timestamp_sequence(6, 100) c" +
                         " from long_sequence(20)" +
                         ")",
@@ -1784,26 +1784,26 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     public void testTimestampOrElse() throws Exception {
         assertQuery(
                 "x\tcase\n" +
-                        "-920\t1970-01-01T00:00:00.000000Z\n" +
-                        "118\t1970-01-01T00:00:00.000103Z\n" +
-                        "833\t1970-01-01T00:00:00.000206Z\n" +
-                        "-771\t1970-01-01T00:00:00.000030Z\n" +
-                        "701\t1970-01-01T00:00:00.000406Z\n" +
-                        "-339\t1970-01-01T00:00:00.000050Z\n" +
-                        "242\t1970-01-01T00:00:00.000606Z\n" +
-                        "671\t1970-01-01T00:00:00.000706Z\n" +
-                        "706\t1970-01-01T00:00:00.000806Z\n" +
-                        "-48\t1970-01-01T00:00:00.000090Z\n" +
-                        "-516\t1970-01-01T00:00:00.000100Z\n" +
-                        "-972\t1970-01-01T00:00:00.000110Z\n" +
-                        "-714\t1970-01-01T00:00:00.000120Z\n" +
-                        "-703\t1970-01-01T00:00:00.000130Z\n" +
-                        "481\t1970-01-01T00:00:00.001406Z\n" +
-                        "512\t1970-01-01T00:00:00.001506Z\n" +
-                        "116\t1970-01-01T00:00:00.001603Z\n" +
-                        "97\t1970-01-01T00:00:00.001706Z\n" +
-                        "-405\t1970-01-01T00:00:00.000180Z\n" +
-                        "474\t1970-01-01T00:00:00.001906Z\n",
+                        "-920\t1970-01-01T00:00:00.000000000Z\n" +
+                        "118\t1970-01-01T00:00:00.000103000Z\n" +
+                        "833\t1970-01-01T00:00:00.000206000Z\n" +
+                        "-771\t1970-01-01T00:00:00.000030000Z\n" +
+                        "701\t1970-01-01T00:00:00.000406000Z\n" +
+                        "-339\t1970-01-01T00:00:00.000050000Z\n" +
+                        "242\t1970-01-01T00:00:00.000606000Z\n" +
+                        "671\t1970-01-01T00:00:00.000706000Z\n" +
+                        "706\t1970-01-01T00:00:00.000806000Z\n" +
+                        "-48\t1970-01-01T00:00:00.000090000Z\n" +
+                        "-516\t1970-01-01T00:00:00.000100000Z\n" +
+                        "-972\t1970-01-01T00:00:00.000110000Z\n" +
+                        "-714\t1970-01-01T00:00:00.000120000Z\n" +
+                        "-703\t1970-01-01T00:00:00.000130000Z\n" +
+                        "481\t1970-01-01T00:00:00.001406000Z\n" +
+                        "512\t1970-01-01T00:00:00.001506000Z\n" +
+                        "116\t1970-01-01T00:00:00.001603000Z\n" +
+                        "97\t1970-01-01T00:00:00.001706000Z\n" +
+                        "-405\t1970-01-01T00:00:00.000180000Z\n" +
+                        "474\t1970-01-01T00:00:00.001906000Z\n",
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1814,9 +1814,9 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "from tanc",
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
-                        " timestamp_sequence(0, 10) a," +
+                        " timestamp_sequence(0::timestamp_ns, 10000) a," +
                         " timestamp_sequence(3, 100) b," +
-                        " timestamp_sequence(6, 100) c" +
+                        " timestamp_sequence(6000::timestamp_ns, 100000) c" +
                         " from long_sequence(20)" +
                         ")",
                 null,

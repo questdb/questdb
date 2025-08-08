@@ -3445,7 +3445,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(query, "Sort\n" +
                     "  keys: [ts]\n" +
                     "    Fill Range\n" +
-                    "      range: (null,'2018-01-31')\n" +
+                    "      range: (,'2018-01-31')\n" +
                     "      stride: '5d'\n" +
                     "      values: [null]\n" +
                     "        Async Group By workers: 1\n" +
@@ -3477,7 +3477,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(query, "Sort\n" +
                     "  keys: [ts]\n" +
                     "    Fill Range\n" +
-                    "      range: ('2017-12-20',null)\n" +
+                    "      range: ('2017-12-20',)\n" +
                     "      stride: '5d'\n" +
                     "      values: [null]\n" +
                     "        Async Group By workers: 1\n" +
@@ -3808,7 +3808,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(shouldSucceedParallel, "Sort\n" +
                     "  keys: [ts]\n" +
                     "    Fill Range\n" +
-                    "      range: ('2017-12-20',null)\n" +
+                    "      range: ('2017-12-20',)\n" +
                     "      stride: '5d'\n" +
                     "      values: [null,null]\n" +
                     "        Async Group By workers: 1\n" +
@@ -3823,7 +3823,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertPlanNoLeakCheck(shouldSucceedSequential, "Sample By\n" +
                     "  fill: null\n" +
-                    "  range: ('2017-12-20',null)\n" +
+                    "  range: ('2017-12-20',)\n" +
                     "  values: [avg(x),sum(x)]\n" +
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
@@ -4515,7 +4515,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         "            Radix sort light\n" +
                         "              keys: [ts2]\n" +
                         "                Async JIT Filter workers: 1\n" +
-                        "                  filter: ts2>=1\n" +
+                        "                  filter: ts2>=1970-01-01T00:00:00.000001Z\n" +
                         "                    PageFrame\n" +
                         "                        Row forward scan\n" +
                         "                        Frame forward scan on: cpu_ts\n"
@@ -4543,7 +4543,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         "    Radix sort light\n" +
                         "      keys: [ts2]\n" +
                         "        Async JIT Filter workers: 1\n" +
-                        "          filter: ts2>=1\n" +
+                        "          filter: ts2>=1970-01-01T00:00:00.000001Z\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: cpu_ts\n"
@@ -4637,7 +4637,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         "            Radix sort light\n" +
                         "              keys: [ts2]\n" +
                         "                Async JIT Filter workers: 1\n" +
-                        "                  filter: ts2>=1\n" +
+                        "                  filter: ts2>=1970-01-01T00:00:00.000001Z\n" +
                         "                    PageFrame\n" +
                         "                        Row forward scan\n" +
                         "                        Frame forward scan on: cpu_ts\n"

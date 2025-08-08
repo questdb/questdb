@@ -65,7 +65,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
@@ -8448,7 +8448,7 @@ nodejs code:
                     statement.executeQuery();
                 } catch (PSQLException ex) {
                     caught = true;
-                    TestUtils.assertContains(ex.getMessage(), "ERROR: inconvertible value: `b2222` [" + stringTypeName + " -> TIMESTAMP]");
+                    TestUtils.assertContains(ex.getMessage(), "ERROR: inconvertible value: `b2222` [" + stringTypeName + (legacyMode ? " -> TIMESTAMP]" : " -> TIMESTAMP_NS"));
                 }
             }
 
@@ -8487,7 +8487,7 @@ nodejs code:
                 statement.executeQuery();
             } catch (PSQLException ex) {
                 caught = true;
-                TestUtils.assertContains(ex.getMessage(), "ERROR: inconvertible value: `b2222` [" + stringTypeName + " -> TIMESTAMP]");
+                TestUtils.assertContains(ex.getMessage(), "ERROR: inconvertible value: `b2222` [" + stringTypeName + " -> TIMESTAMP_NS]");
             }
 
             if (isEnabledForWalRun()) {
@@ -10564,7 +10564,7 @@ create table tab as (
                                 Assert.fail("exception expected");
                             }
                         } catch (SQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1782]");
+                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1788]");
                         }
                     }
                 },
@@ -13099,7 +13099,7 @@ create table tab as (
                             }
                         }).start();
 
-                        MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
+                        Clock microsecondClock = engine.getConfiguration().getMicrosecondClock();
                         long startTimeMicro = microsecondClock.getTicks();
                         // Wait 1 min max for completion
                         while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0) {

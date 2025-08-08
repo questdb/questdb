@@ -42,7 +42,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;

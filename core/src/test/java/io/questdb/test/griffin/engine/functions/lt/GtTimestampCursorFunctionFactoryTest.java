@@ -227,7 +227,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             "Async Filter workers: 1\n" +
                             "  filter: ts [thread-safe] > cursor \n" +
                             "    VirtualRecord\n" +
-                            "      functions: [1773100800000000]\n" +
+                            "      functions: [2026-03-10T00:00:00.000000Z]\n" +
                             "        long_sequence count: 1 [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
@@ -293,7 +293,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             "Async Filter workers: 1\n" +
                             "  filter: ts::varchar::timestamp > cursor \n" +
                             "    VirtualRecord\n" +
-                            "      functions: [1773100800000000]\n" +
+                            "      functions: [2026-03-10T00:00:00.000000Z]\n" +
                             "        long_sequence count: 1 [state-shared] [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +

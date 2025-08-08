@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ColumnFilter;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
@@ -33,6 +34,8 @@ import io.questdb.std.Misc;
 
 public abstract class AbstractSymbolWrapOverCursor implements NoRandomAccessRecordCursor {
     protected final int masterSlaveSplit;
+    protected final long masterTimestampScale;
+    protected final long slaveTimestampScale;
     private final ColumnFilter masterTableKeyColumns;
     private final IntList slaveColumnIndex;
     private final int slaveWrappedOverMaster;
@@ -40,11 +43,22 @@ public abstract class AbstractSymbolWrapOverCursor implements NoRandomAccessReco
     protected RecordCursor slaveCursor;
 
 
-    public AbstractSymbolWrapOverCursor(int masterSlaveSplit, int slaveWrappedOverMaster, ColumnFilter masterTableKeyColumns, IntList slaveColumnIndex) {
+    public AbstractSymbolWrapOverCursor(int masterSlaveSplit,
+                                        int slaveWrappedOverMaster,
+                                        ColumnFilter masterTableKeyColumns,
+                                        IntList slaveColumnIndex,
+                                        int masterTimestampType,
+                                        int slaveTimestampType) {
         this.masterSlaveSplit = masterSlaveSplit;
         this.slaveWrappedOverMaster = slaveWrappedOverMaster;
         this.masterTableKeyColumns = masterTableKeyColumns;
         this.slaveColumnIndex = slaveColumnIndex;
+        if (masterTimestampType == slaveTimestampType) {
+            masterTimestampScale = slaveTimestampScale = 1L;
+        } else {
+            masterTimestampScale = ColumnType.getTimestampDriver(masterTimestampType).toNanosScale();
+            slaveTimestampScale = ColumnType.getTimestampDriver(slaveTimestampType).toNanosScale();
+        }
     }
 
     @Override

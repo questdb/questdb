@@ -65,7 +65,7 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
                 configuration,
                 sqlExecutionContext,
                 (defaultValue) -> {
-                    if (!ColumnType.isAssignableFrom(defaultValue.getType(), ColumnType.TIMESTAMP)) {
+                    if (!ColumnType.isAssignableFrom(defaultValue.getType(), args.getQuick(0).getType())) {
                         throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to timestamp");
                     }
                 },
@@ -78,6 +78,11 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
     static class LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable, WindowTimestampFunction {
         public LeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls) {
             super(arg, defaultValueFunc, offset, memory, ignoreNulls);
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         @Override
@@ -108,6 +113,11 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
                                          Function defaultValue,
                                          long offset) {
             super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         @Override
