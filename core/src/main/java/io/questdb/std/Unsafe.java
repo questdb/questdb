@@ -26,6 +26,9 @@ package io.questdb.std;
 
 // @formatter:off
 import io.questdb.cairo.CairoException;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+
 import org.jetbrains.annotations.Nullable;
 
 import java.lang.invoke.MethodHandles;
@@ -61,6 +64,8 @@ public final class Unsafe {
     private static final sun.misc.Unsafe UNSAFE;
     private static final AnonymousClassDefiner anonymousClassDefiner;
     private static final Method implAddExports;
+
+    private static final Log LOG=LogFactory.getLog(Unsafe.class);
 
     private Unsafe() {
     }
@@ -253,13 +258,15 @@ public final class Unsafe {
         } catch (OutOfMemoryError oom) {
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.allocateMemory() OutOfMemoryError [RSS_MEM_USED=")
-                    .put(getRssMemUsed())
+                    .put(String.format("%.2f GiB", getMemInGb(getRssMemUsed())))
+                    .put(", RSS_MEM_LIMIT=")
+                    .put(String.format("%.2f GiB", getMemInGb(getRssMemLimit())))
                     .put(", size=")
-                    .put(size)
+                    .put(String.format("%.2f GiB", getMemInGb(size)))
                     .put(", memoryTag=").put(memoryTag)
                     .put("], original message: ")
                     .put(oom.getMessage());
-            System.err.println(e.getFlyweightMessage());
+            LOG.error().$(e.getFlyweightMessage()).$();
             throw e;
         }
     }
@@ -275,15 +282,19 @@ public final class Unsafe {
         } catch (OutOfMemoryError oom) {
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.reallocateMemory() OutOfMemoryError [RSS_MEM_USED=")
-                    .put(getRssMemUsed())
+                    .put(String.format("%.2f GiB", getMemInGb(getRssMemUsed())))
+                    .put(", RSS_MEM_LIMIT=")
+                    .put(String.format("%.2f GiB", getMemInGb(getRssMemLimit())))
                     .put(", oldSize=")
-                    .put(oldSize)
+                    .put(String.format("%.2f GiB", getMemInGb(oldSize)))
                     .put(", newSize=")
-                    .put(newSize)
+                    .put(String.format("%.2f GiB", getMemInGb(newSize)))
+                    .put(", address=")
+                    .put( newSize)
                     .put(", memoryTag=").put(memoryTag)
                     .put("], original message: ")
                     .put(oom.getMessage());
-            System.err.println(e.getFlyweightMessage());
+            LOG.error().$(e.getFlyweightMessage()).$();
             throw e;
         }
     }
@@ -302,6 +313,10 @@ public final class Unsafe {
 
     public static void setRssMemLimit(long limit) {
         UNSAFE.putLongVolatile(null, RSS_MEM_LIMIT_ADDR, limit);
+    }
+
+    private static double getMemInGb(long mem){
+        return (double)mem/(1024*1024*1024);
     }
 
     private static long AccessibleObject_override_fieldOffset() {
