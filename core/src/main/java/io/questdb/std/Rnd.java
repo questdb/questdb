@@ -109,6 +109,138 @@ public class Rnd {
         }
     }
 
+    /**
+     * Generate a random Decimal128 into the provided sink.
+     * This method generates a mix of small, medium, and large values with random scales.
+     *
+     * @param sink The Decimal128 instance to populate with random values
+     */
+    public void nextDecimal128(Decimal128 sink) {
+        // Generate random scale between 0 and MAX_SCALE
+        int scale = nextInt(Decimal128.MAX_SCALE + 1);
+
+        // Generate random value - mix of small, medium and large values
+        Decimal128 value;
+        int valueType = nextInt(4);
+
+        switch (valueType) {
+            case 0: // Small values (-1000 to 1000)
+                value = new Decimal128(0, nextLong() % 2000 - 1000, scale);
+                break;
+            case 1: // Medium values (up to int range)
+                value = new Decimal128(0, nextInt(), scale);
+                break;
+            case 2: // Large positive values
+                value = new Decimal128(nextLong() & 0x7FFFFFFFL, nextLong(), scale);
+                break;
+            default: // Large negative values
+                value = new Decimal128((1L << 63) | (nextLong() & 0x7FFFFFFFL), nextLong(), scale);
+                break;
+        }
+
+        sink.copyFrom(value);
+    }
+
+    /**
+     * Generate a random Decimal128 and return a new instance.
+     * This method generates a mix of small, medium, and large values with random scales.
+     *
+     * @return A new Decimal128 instance with random values
+     */
+    public Decimal128 nextDecimal128() {
+        Decimal128 result = new Decimal128();
+        nextDecimal128(result);
+        return result;
+    }
+
+    public void nextDecimal64(Decimal64 sink) {
+        // Generate random scale between 0 and MAX_SCALE
+        int scale = nextInt(Decimal64.MAX_SCALE + 1);
+
+        // Generate random value - mix of small, medium and large values
+        Decimal64 value;
+        int valueType = nextInt(4);
+
+        switch (valueType) {
+            case 0: // Small values (-1000 to 1000)
+                value = new Decimal64(nextLong() % 2000 - 1000, scale);
+                break;
+            case 1: // Medium values (up to int range)
+                value = new Decimal64(nextInt(), scale);
+                break;
+            case 2: // Large positive values (limited to avoid overflow in operations)
+                value = new Decimal64(nextLong() / 1000, scale);
+                break;
+            default: // Large negative values (limited to avoid overflow in operations)
+                value = new Decimal64(-(nextLong() / 1000), scale);
+                break;
+        }
+
+        sink.copyFrom(value);
+    }
+
+    /**
+     * Generate a random Decimal64 and return a new instance.
+     * This method generates a mix of small, medium, and large values with random scales.
+     *
+     * @return A new Decimal64 instance with random values
+     */
+    public Decimal64 nextDecimal64() {
+        Decimal64 result = new Decimal64();
+        nextDecimal64(result);
+        return result;
+    }
+
+    /**
+     * Generate a random Decimal256 into the provided sink.
+     * This method generates a mix of small, medium, and large values with random scales.
+     *
+     * @param sink The Decimal256 instance to populate with random values
+     */
+    public void nextDecimal256(Decimal256 sink) {
+        // Generate random scale between 0 and MAX_SCALE
+        int scale = nextInt(Decimal256.MAX_SCALE + 1);
+
+        // Generate random value - mix of small, medium and large values
+        Decimal256 value;
+        int valueType = nextInt(6);  // More types for 256-bit range
+
+        switch (valueType) {
+            case 0: // Small values (-1000 to 1000)
+                value = new Decimal256(0, 0, 0, nextLong() % 2000 - 1000, scale);
+                break;
+            case 1: // Medium values (up to int range)
+                value = new Decimal256(0, 0, 0, nextInt(), scale);
+                break;
+            case 2: // Large 64-bit positive values
+                value = new Decimal256(0, 0, 0, nextLong() & Long.MAX_VALUE, scale);
+                break;
+            case 3: // Large 64-bit negative values
+                value = new Decimal256(0, 0, 0, nextLong() | Long.MIN_VALUE, scale);
+                break;
+            case 4: // Very large 128-bit values (using mid and low)
+                value = new Decimal256(0, 0, nextLong(), nextLong(), scale);
+                break;
+            default: // Ultra large 256-bit values (using all four longs)
+                value = new Decimal256(nextLong(), nextLong(), nextLong(), nextLong(), scale);
+                break;
+        }
+
+        sink.copyFrom(value);
+    }
+
+    /**
+     * Generate a random Decimal256 and return a new instance.
+     * This method generates a mix of small, medium, and large values with random scales.
+     *
+     * @return A new Decimal256 instance with random values
+     */
+    public Decimal256 nextDecimal256() {
+        Decimal256 result = new Decimal256();
+        nextDecimal256(result);
+        return result;
+    }
+
     public double nextDouble() {
         return (((long) (nextIntForDouble(26)) << 27) + nextIntForDouble(27)) * DOUBLE_UNIT;
     }
