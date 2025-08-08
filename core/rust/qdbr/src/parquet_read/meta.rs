@@ -58,7 +58,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
 
             // Some types are not supported, this will skip them.
             if let Some(column_type) =
-                Self::descriptor_to_column_type(&column, index, qdb_meta.as_ref())
+                Self::descriptor_to_column_type(column, index, qdb_meta.as_ref())
             {
                 let base_field = column.base_type.get_field_info();
                 let name_str = &base_field.name;
@@ -240,10 +240,7 @@ fn array_column_type(base_type: &ParquetType) -> Option<ColumnType> {
         }
     }
 
-    match encode_array_type(ColumnTypeTag::Double, dim) {
-        Ok(column_type) => Some(column_type),
-        Err(_) => None,
-    }
+    encode_array_type(ColumnTypeTag::Double, dim).ok()
 }
 
 #[cfg(test)]

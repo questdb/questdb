@@ -1333,8 +1333,8 @@ fn append_array<T: DataPageSlicer>(
     data_mem: &mut AcVec<u8>,
     max_rep_level: u32,
     max_def_level: u32,
-    rep_levels: &Vec<u32>,
-    def_levels: &Vec<u32>,
+    rep_levels: &[u32],
+    def_levels: &[u32],
     slicer: &mut T,
 ) -> ParquetResult<()> {
     if def_levels.len() == 1 && def_levels[0] == 0 {
@@ -1350,8 +1350,7 @@ fn append_array<T: DataPageSlicer>(
         let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
         calculate_array_shape(&mut shape, max_rep_level, rep_levels);
         let mut num_elements: usize = 1;
-        for i in 0..max_rep_level as usize {
-            let dim = shape[i];
+        for &dim in shape.iter().take(max_rep_level as usize) {
             num_elements *= dim as usize;
             data_mem.extend_from_slice(&dim.to_le_bytes())?;
         }
@@ -1370,20 +1369,20 @@ fn append_array<T: DataPageSlicer>(
 
         // next, copy elements
         data_mem.reserve(value_size)?;
-        for i in 0..def_levels.len() {
-            if def_levels[i] == max_def_level {
+        for &def_level in def_levels {
+            if def_level == max_def_level {
                 data_mem.extend_from_slice(slicer.next())?;
             } else {
-                data_mem.extend_from_slice(&std::f64::NAN.to_le_bytes())?;
+                data_mem.extend_from_slice(&f64::NAN.to_le_bytes())?;
             }
         }
     }
     Ok(())
 }
 
-fn skip_array<T: DataPageSlicer>(slicer: &mut T, max_def_level: u32, def_levels: &Vec<u32>) {
-    for i in 0..def_levels.len() {
-        if def_levels[i] == max_def_level {
+fn skip_array<T: DataPageSlicer>(slicer: &mut T, max_def_level: u32, def_levels: &[u32]) {
+    for &def_level in def_levels {
+        if def_level == max_def_level {
             slicer.next();
         }
     }

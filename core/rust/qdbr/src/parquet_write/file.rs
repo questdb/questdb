@@ -489,7 +489,8 @@ fn array_primitive_type(parquet_type: ParquetType) -> Option<PrimitiveType> {
             }
         }
     }
-    return primitive_type.cloned();
+
+    primitive_type.cloned()
 }
 
 fn column_chunk_to_primitive_pages(

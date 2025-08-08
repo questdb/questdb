@@ -95,7 +95,7 @@ impl<'a> RepLevelsIterator<'a> {
                 self.nd_indexes[i] = 0;
             }
         }
-        return 0;
+        0
     }
 }
 
@@ -236,7 +236,7 @@ pub fn array_to_page(
                 Some(arr) => {
                     let shape = arr.0;
                     let data = arr.1;
-                    if data.len() == 0 {
+                    if data.is_empty() {
                         RepLevelsIterator::new_single()
                     } else {
                         RepLevelsIterator::new(shape, data.len())
@@ -263,7 +263,7 @@ pub fn array_to_page(
             match arr_slices[i - column_top] {
                 Some(arr) => {
                     let data = arr.1;
-                    if data.len() == 0 {
+                    if data.is_empty() {
                         DefLevelsIterator::new_single(1)
                     } else {
                         // max def level is the number of dimensions plus two optional fields
@@ -564,11 +564,9 @@ impl<'a> LevelsIterator<'a> {
             self.last_rep_level = rep_level as i64;
             self.last_def_level = def_level as i64;
 
-            if rep_level == 0 {
-                if !self.levels.is_empty() {
-                    self.clear_pending = true;
-                    return Some(Ok(&self.levels));
-                }
+            if rep_level == 0 && !self.levels.is_empty() {
+                self.clear_pending = true;
+                return Some(Ok(&self.levels));
             }
         }
     }
@@ -581,7 +579,7 @@ pub struct Levels {
 
 impl Levels {
     fn is_empty(&self) -> bool {
-        return self.rep_levels.is_empty();
+        self.rep_levels.is_empty()
     }
 
     fn clear(&mut self) {
@@ -593,9 +591,9 @@ impl Levels {
 pub fn calculate_array_shape(
     shape: &mut [u32; ARRAY_NDIMS_LIMIT],
     max_rep_level: u32,
-    rep_levels: &Vec<u32>,
+    rep_levels: &[u32],
 ) {
-    if rep_levels.len() == 0 {
+    if rep_levels.is_empty() {
         return;
     }
 
@@ -604,8 +602,8 @@ pub fn calculate_array_shape(
     for &rep_level in rep_levels {
         let rep_level = std::cmp::max(rep_level, 1) as usize;
         // Reset counts for dimensions deeper than repetition level
-        for dim in rep_level..max_rep_level {
-            counts[dim] = 0;
+        for dim in counts.iter_mut().take(max_rep_level).skip(rep_level) {
+            *dim = 0;
         }
         // Increment count at the deepest level (where actual values are)
         counts[max_rep_level - 1] += 1;

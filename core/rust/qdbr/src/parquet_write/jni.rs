@@ -250,10 +250,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 None
             }
         });
-        let sorting_columns = match local_timestamp_index {
-            Some(i) => Some(vec![SortingColumn::new(i, false, false)]),
-            None => None,
-        };
+        let sorting_columns =
+            local_timestamp_index.map(|i| vec![SortingColumn::new(i, false, false)]);
 
         ParquetWriter::new(&mut file)
             .with_version(version)
