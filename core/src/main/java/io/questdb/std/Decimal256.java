@@ -1,0 +1,895 @@
+package io.questdb.std;
+
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
+
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.math.RoundingMode;
+
+/**
+ * Decimal256 - A mutable decimal number implementation.
+ * <p>
+ * This class represents decimal numbers with a fixed scale (number of decimal places)
+ * using 256-bit integer arithmetic for precise calculations. All operations are
+ * performed in-place to eliminate object allocation and improve performance.
+ * </p>
+ * <p>
+ * This type tries to but doesn't follow IEEE 754; one of the main goals is using 256 bits to store
+ * the sign and trailing significant field (T).
+ * Using 1 bit for the sign, we have 255 bits for T, which gives us 77 digits of precision.
+ * </p>
+ */
+public class Decimal256 implements Sinkable {
+    /**
+     * Maximum allowed scale (number of decimal places)
+     */
+    public static final int MAX_SCALE = 77;
+    public static final Decimal256 MAX_VALUE = new Decimal256(Long.MAX_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, 0);
+    public static final Decimal256 MIN_VALUE = new Decimal256(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, 0);
+    private static final long[] POWERS_TEN_TABLE_LL = new long[]{ // from 10⁰ to 10⁷⁶
+            1L, 10L, 100L, 1000L, 10000L,
+            100000L, 1000000L, 10000000L, 100000000L, 1000000000L,
+            10000000000L, 100000000000L, 1000000000000L, 10000000000000L, 100000000000000L,
+            1000000000000000L, 10000000000000000L, 100000000000000000L, 1000000000000000000L, -8446744073709551616L,
+            7766279631452241920L, 3875820019684212736L, 1864712049423024128L, 200376420520689664L, 2003764205206896640L,
+            1590897978359414784L, -2537764290115403776L, -6930898827444486144L, 4477988020393345024L, 7886392056514347008L,
+            5076944270305263616L, -4570789518076018688L, -8814407033341083648L, 4089650035136921600L, 4003012203950112768L,
+            3136633892082024448L, -5527149226598858752L, 68739955140067328L, 687399551400673280L, 6873995514006732800L,
+            -5047021154770878464L, 4870020673419870208L, -6640025486929952768L, 7386721425538678784L, 80237960548581376L,
+            802379605485813760L, 8023796054858137600L, 6450984253743169536L, 9169610316303040512L, -537617205517352960L,
+            -5376172055173529600L, 1578511669393358848L, -2661627379775963136L, -8169529724050079744L, -7908320945662590976L,
+            -5296233161787703296L, 2377900603251621888L, 5332261958806667264L, -2017612633061982208L, -1729382256910270464L,
+            1152921504606846976L, -6917529027641081856L, 4611686018427387904L, -9223372036854775808L, 0L,
+            0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L,
+    };
+    private static final long[] POWERS_TEN_TABLE_LH = new long[]{ // from 10²⁰ to 10⁷⁶
+            5L, 54L, 542L, 5421L, 54210L,
+            542101L, 5421010L, 54210108L, 542101086L, 5421010862L,
+            54210108624L, 542101086242L, 5421010862427L, 54210108624275L, 542101086242752L,
+            5421010862427522L, 54210108624275221L, 542101086242752217L, 5421010862427522170L, -1130123596853433148L,
+            7145508105175220139L, -2331895243086005067L, -4872208357150499052L, 6618148649623664334L, -7605489798601563120L,
+            -2267921691177424736L, -4232472838064695744L, -5431240233227854204L, 1027829888850112811L, -8168445185208423502L,
+            -7897475557246028547L, -5187779277622078999L, 3462439444907864858L, -2269093698340454644L, -4244192909694994819L,
+            -5548440949530844953L, -144177274179794675L, -1441772741797946749L, 4029016655730084128L, 3396678409881738056L,
+            -2926704048601722663L, 7626447661401876602L, 2477500319180559562L, 6328259118096044006L, 7942358959831785217L,
+            5636613303479645706L, 1025900813667802212L, -8187735937031529496L, -8090383075477088496L, -7116854459932678496L,
+            2618431695511421504L, 7737572881404663424L, 3588752519208427776L, -1005962955334825472L, 8387114520361296896L,
+            -8362575164934789120L, 8607968719199866880L,
+    };
+    private static final long[] POWERS_TEN_TABLE_HL = new long[]{ // from 10³⁸ to 10⁷⁶
+            2L,
+            29L, 293L, 2938L, 29387L, 293873L,
+            2938735L, 29387358L, 293873587L, 2938735877L, 29387358770L,
+            293873587705L, 2938735877055L, 29387358770557L, 293873587705571L, 2938735877055718L,
+            29387358770557187L, 293873587705571876L, 2938735877055718769L, -7506129376861915533L, -1274317473780948864L,
+            5703569335900062977L, 1695461137871974930L, -1492132694989802312L, 3525417123811528497L, -1639316909303818259L,
+            2053574980671369030L, 2089005733004138687L, 2443313256331835254L, 5986388489608800929L, 4523652674959354447L,
+            8343038602174441244L, -8803334346803345639L, 4200376900514301694L, 5110280857723913709L, -4237423643889517749L,
+            -5480748291476074254L, 532749306367912313L,
+    };
+    private static final long[] POWERS_TEN_TABLE_HH = new long[]{ // from 10⁵⁷ to 10⁷⁶
+            1L, 15L,
+            159L, 1593L, 15930L, 159309L, 1593091L,
+            15930919L, 159309191L, 1593091911L, 15930919111L, 159309191113L,
+            1593091911132L, 15930919111324L, 159309191113245L, 1593091911132452L, 15930919111324522L,
+            159309191113245227L, 1593091911132452277L,
+    };
+    private static final long[] POWERS_TEN_TABLE_THRESHOLD_LL = new long[]{
+            -9223372036854775808L, -2767011611056432743L, 5257322061007222210L, -8697639830754053587L, -6403787205188270844L,
+            4893644501594038400L, -1355309957211551322L, -3824879810463065456L, -2227162388417261708L, -222716238841726171L,
+            5511751598228692867L, -8672196877031906522L, -8245917317187011299L, 1020082675652254031L, -1742666139805729759L,
+            -3863615428722483300L, 6992336086611572316L, 2543908016032112393L, -5279632420509654246L, -2372637649421920587L,
+            5296759457170673426L, 6063699167829932827L, -6772327712700827364L, -4366581586011993060L, -436658158601199306L,
+            7335031813623700715L, -6645194448121450575L, 6714178184671675588L, 6205441040580033043L, 7999241733541823950L,
+            2644598580725137556L, -3424888956669396568L, 5191534326445925828L, -8704218604210183226L, 6508275769062802323L,
+            -8572544459948495576L, -4546603260736759881L, -4144009140815586312L, 8808971122773217176L, -4653126109835543768L,
+            3224036203758355946L, -3366945194366074729L, 7042003110047213173L, 704200311004721317L, 7449117660584292778L,
+            6278934988171294762L, 6161916720929994961L, -1228482735277955666L, -5656871495640661052L, -4255035964305976429L,
+            -5959526818543463128L, -2440627089225301475L, 1600611698448425014L, -9063310867009933307L, -8285028716184813978L,
+            -2673177278989436560L, 7111379901584876990L, 2555812397529442860L, 5789604461865809770L, 578960446186580977L,
+            57896044618658097L, 5789604461865809L, 578960446186580L, 57896044618658L, 5789604461865L,
+            578960446186L, 57896044618L, 5789604461L, 578960446L, 57896044L,
+            5789604L, 578960L, 57896L, 5789L, 578L,
+            57L, 5L,
+    };
+    private static final long[] POWERS_TEN_TABLE_THRESHOLD_LH = new long[]{
+            -9223372036854775808L, 922337203685477580L, 3781582535110458081L, -1466516153859909354L, -146651615385990936L,
+            5519358060574266391L, 6085959028170292123L, -1236078504553925950L, 5410415371657472889L, 541041537165747288L,
+            -1790570253654380433L, -3868405840107348367L, -5920863806123600322L, 3097262434129550291L, 5843749465525820513L,
+            -1260299460818373111L, 7252667683401983335L, -6653430861143622313L, 8558028950740413576L, 4545151709815951680L,
+            4143863985723505491L, -5119636823540514936L, 3177385132387858829L, 5851761735351651367L, 4274524988277075459L,
+            -1417221908543247616L, -5675745412967190247L, 8655797495558056783L, 865579749555805678L, -7292139654528240079L,
+            8494158071401951800L, 6383439029253060664L, -3051004911816604257L, 3384248323560249897L, 2183099239726980151L,
+            7597007553456518661L, 2604375162716607027L, 260437516271660702L, -5507979470485699415L, 3138550867693340381L,
+            313855086769334038L, 31385508676933403L, 3138550867693340L, 313855086769334L, 31385508676933L,
+            3138550867693L, 313855086769L, 31385508676L, 3138550867L, 313855086L,
+            31385508L, 3138550L, 313855L, 31385L, 3138L,
+            313L, 31L, 3L,
+    };
+    private static final long[] POWERS_TEN_TABLE_THRESHOLD_HL = new long[]{
+            -9223372036854775808L, -4611686018427387904L, 1383505805528216371L, -3550998234189088687L, -7733797452902729516L,
+            -4462728560032183275L, -4135621670745128651L, 8809809869780262942L, -8342391049876749514L, -2678913512358630113L,
+            -5801914573348728497L, 6798506172148947796L, 679850617214894779L, 3757333876463399801L, -5158289834466525505L,
+            6862868646037168095L, 6220310086716582294L, 4311379823413568552L, 4120486797083267178L, -1432625727662628444L,
+            1701411834604692317L, 170141183460469231L, 17014118346046923L, 1701411834604692L, 170141183460469L,
+            17014118346046L, 1701411834604L, 170141183460L, 17014118346L, 1701411834L,
+            170141183L, 17014118L, 1701411L, 170141L, 17014L,
+            1701L, 170L, 17L, 1L,
+    };
+    private static final long[] POWERS_TEN_TABLE_THRESHOLD_HH = new long[]{
+            9223372036854775807L, 922337203685477580L, 92233720368547758L, 9223372036854775L, 922337203685477L,
+            92233720368547L, 9223372036854L, 922337203685L, 92233720368L, 9223372036L,
+            922337203L, 92233720L, 9223372L, 922337L, 92233L,
+            9223L, 922L, 92L, 9L,
+    };
+
+    private long hh; // Highest 64 bits (bits 192-255)
+    private long hl;    // High 64 bits (bits 128-191)
+    private long lh;     // Mid 64 bits (bits 64-127)
+    private long ll;     // Low 64 bits (bits 0-63)
+    private int scale;    // Number of decimal places
+
+    /**
+     * Default constructor - creates zero with scale 0
+     */
+    public Decimal256() {
+        this.hh = 0;
+        this.hl = 0;
+        this.lh = 0;
+        this.ll = 0;
+        this.scale = 0;
+    }
+
+    /**
+     * Constructor with initial values.
+     *
+     * @param highest the highest 64 bits of the decimal value (bits 192-255)
+     * @param high    the high 64 bits of the decimal value (bits 128-191)
+     * @param mid     the mid 64 bits of the decimal value (bits 64-127)
+     * @param low     the low 64 bits of the decimal value (bits 0-63)
+     * @param scale   the number of decimal places
+     * @throws IllegalArgumentException if scale is invalid
+     */
+    public Decimal256(long highest, long high, long mid, long low, int scale) {
+        validateScale(scale);
+        this.hh = highest;
+        this.hl = high;
+        this.lh = mid;
+        this.ll = low;
+        this.scale = scale;
+    }
+
+    /**
+     * Copy constructor.
+     *
+     * @param other the Decimal256 to copy from
+     */
+    public Decimal256(Decimal256 other) {
+        this.hh = other.hh;
+        this.hl = other.hl;
+        this.lh = other.lh;
+        this.ll = other.ll;
+        this.scale = other.scale;
+    }
+
+    /**
+     * Static addition method.
+     *
+     * @param a      the first operand
+     * @param b      the second operand
+     * @param result the result (can be the same as a or b for in-place operation)
+     * @throws NumericException if overflow occurs
+     */
+    public static void add(Decimal256 a, Decimal256 b, Decimal256 result) {
+        // TODO: Implement addition
+    }
+
+    /**
+     * Static division method.
+     *
+     * @param dividend     the dividend
+     * @param divisor      the divisor
+     * @param result       the result
+     * @param scale        the desired scale of the result
+     * @param roundingMode the rounding mode
+     * @throws NumericException if division by zero or overflow occurs
+     */
+    public static void divide(Decimal256 dividend, Decimal256 divisor, Decimal256 result, int scale, RoundingMode roundingMode) {
+        divide(
+                dividend.hh, dividend.hl, dividend.lh, dividend.ll, dividend.scale,
+                divisor.hh, divisor.hl, divisor.lh, divisor.ll, divisor.scale,
+                result, scale, roundingMode
+        );
+    }
+
+    /**
+     * Static division method.
+     *
+     * @param result       the result
+     * @param scale        the desired scale of the result
+     * @param roundingMode the rounding mode
+     * @throws NumericException if division by zero or overflow occurs
+     */
+    public static void divide(
+            long dividendHH, long dividendHL, long dividendLH, long dividendLL, int dividendScale,
+            long divisorHH, long divisorHL, long divisorLH, long divisorLL, int divisorScale,
+            Decimal256 result, int scale, RoundingMode roundingMode) {
+        validateScale(scale);
+
+        // Compute the delta: how much power of 10 we should raise either the dividend or divisor.
+        int delta = scale + (divisorScale - dividendScale);
+
+        // Fail early if we're sure to overflow.
+        if (delta > 0 && (scale + delta) > MAX_SCALE) {
+            throw NumericException.instance().put("Overflow");
+        } else if (delta < 0 && (divisorScale + delta) > MAX_SCALE) {
+            throw NumericException.instance().put("Overflow");
+        }
+
+        final boolean isNegative = (dividendHH < 0) ^ (divisorHH < 0);
+
+        // We need to have both dividend and divisor positive for scaling and division.
+        if (dividendHH < 0) {
+            dividendLL = ~dividendLL + 1;
+            dividendLH = ~dividendLH + (dividendLL == 0 ? 1 : 0);
+            dividendHL = ~dividendHL + (dividendLH == 0 ? 1 : 0);
+            dividendHH = ~dividendHH + (dividendHL == 0 ? 1 : 0);
+        }
+
+        if (divisorHH < 0) {
+            divisorLL = ~divisorLL + 1;
+            divisorLH = ~divisorLH + (divisorLL == 0 ? 1 : 0);
+            divisorHL = ~divisorHL + (divisorLH == 0 ? 1 : 0);
+            divisorHH = ~divisorHH + (divisorHL == 0 ? 1 : 0);
+        }
+
+        if (delta > 0) {
+            // We need to raise the dividend to 10^delta
+            result.of(dividendHH, dividendHL, dividendLH, dividendLL, scale);
+            result.multiplyByPowerOf10InPlace(delta);
+            dividendHH = result.hh;
+            dividendHL = result.hl;
+            dividendLH = result.lh;
+            dividendLL = result.ll;
+        } else if (delta < 0) {
+            result.of(divisorHH, divisorHL, divisorLH, divisorLL, scale);
+            result.multiplyByPowerOf10InPlace(-delta);
+            divisorHH = result.hh;
+            divisorHL = result.hl;
+            divisorLH = result.lh;
+            divisorLL = result.ll;
+        }
+
+        DecimalKnuthDivider divider = DecimalKnuthDivider.instance();
+        divider.ofDividend(dividendHH, dividendHL, dividendLH, dividendLL);
+        divider.ofDivisor(divisorHH, divisorHL, divisorLH, divisorLL);
+        divider.divide(isNegative, roundingMode);
+        divider.sink(result, scale);
+
+        if (isNegative) {
+            result.negate();
+        }
+    }
+
+    /**
+     * Create Decimal256 from a BigDecimal.
+     *
+     * @param bd the BigDecimal value
+     * @return new Decimal256 instance
+     * @throws NumericException if the value cannot be represented in 256 bits
+     */
+    public static Decimal256 fromBigDecimal(BigDecimal bd) {
+        if (bd == null) {
+            throw new IllegalArgumentException("BigDecimal cannot be null");
+        }
+
+        BigInteger unscaledValue = bd.unscaledValue();
+        int scale = bd.scale();
+
+        validateScale(scale);
+
+        // Check if the value fits in 256 bits
+        if (unscaledValue.bitLength() > 255) {
+            throw NumericException.instance().put("BigDecimal value too large for Decimal256");
+        }
+
+        // Convert to 256-bit representation
+        byte[] bytes = unscaledValue.toByteArray();
+        Decimal256 result = new Decimal256();
+        result.scale = scale;
+
+        // Fill the 256-bit value from the byte array
+        result.setFromByteArray(bytes);
+
+        return result;
+    }
+
+    /**
+     * Create Decimal256 from a double value with specified scale.
+     *
+     * @param value the double value
+     * @param scale the desired scale
+     * @return new Decimal256 instance
+     * @throws IllegalArgumentException if scale is invalid
+     */
+    public static Decimal256 fromDouble(double value, int scale) {
+        validateScale(scale);
+        if (Double.isInfinite(value) || Double.isNaN(value)) {
+            throw NumericException.instance().put("Cannot create Decimal256 from " + value);
+        }
+
+        BigDecimal bd = BigDecimal.valueOf(value).setScale(scale, RoundingMode.HALF_UP);
+        return fromBigDecimal(bd);
+    }
+
+    /**
+     * Create Decimal256 from a long value with specified scale.
+     *
+     * @param value the long value
+     * @param scale the desired scale
+     * @return new Decimal256 instance
+     * @throws IllegalArgumentException if scale is invalid
+     */
+    public static Decimal256 fromLong(long value, int scale) {
+        validateScale(scale);
+
+        Decimal256 result = new Decimal256();
+        result.setFromLong(value, scale);
+        return result;
+    }
+
+    /**
+     * Static modulo method.
+     *
+     * @param dividend the dividend
+     * @param divisor  the divisor
+     * @param result   the result
+     * @throws NumericException if division by zero occurs
+     */
+    public static void modulo(Decimal256 dividend, Decimal256 divisor, Decimal256 result) {
+        if (divisor.isZero()) {
+            throw NumericException.instance().put("Modulo by zero");
+        }
+
+        // TODO: Implement modulo
+    }
+
+    /**
+     * Multiply this (unsigned) by 10^n in place
+     */
+    private void multiplyByPowerOf10InPlace(int n) {
+        if (n <= 0 || isZero()) {
+            return;
+        }
+        if (n > 76) {
+            throw NumericException.instance().put("Overflow");
+        }
+
+        // For small powers, use lookup table
+        if (n < 18) {
+            long multiplier = POWERS_TEN_TABLE_LL[n];
+            // Special case: if high is 0, use simple 64-bit multiplication
+            if (hh == 0 && hl == 0 && lh == 0) {
+                // Check if result will overflow 64 bits
+                if (ll <= Long.MAX_VALUE / multiplier) {
+                    ll *= multiplier;
+                    return;
+                }
+            }
+        }
+
+        // For larger powers, break down into smaller chunks, first check the threshold to ensure that we won't overflow
+        // and then apply either a fast multiplyBy64 or multiplyBy128 depending on high/low.
+        // The bound checks for these tables already happens at the beginning of the method.
+        final long thresholdHH = n >= POWERS_TEN_TABLE_THRESHOLD_HH.length ? 0 : POWERS_TEN_TABLE_THRESHOLD_HH[n];
+        final long thresholdHL = n >= POWERS_TEN_TABLE_THRESHOLD_HL.length ? 0 : POWERS_TEN_TABLE_THRESHOLD_HL[n];
+        final long thresholdLH = n >= POWERS_TEN_TABLE_THRESHOLD_LH.length ? 0 : POWERS_TEN_TABLE_THRESHOLD_LH[n];
+        final long thresholdLL = POWERS_TEN_TABLE_THRESHOLD_LL[n];
+
+        if (compareTo(thresholdHH, thresholdHL, thresholdLH, thresholdLL) > 0) {
+            throw NumericException.instance().put("Overflow");
+        }
+
+        final long multiplierHH = n >= 57 ? POWERS_TEN_TABLE_HH[n - 57] : 0L;
+        final long multiplierHL = n >= 38 ? POWERS_TEN_TABLE_HL[n - 38] : 0L;
+        final long multiplierLH = n >= 20 ? POWERS_TEN_TABLE_LH[n - 20] : 0L;
+        final long multiplierLL = POWERS_TEN_TABLE_LL[n];
+
+        if (multiplierHH != 0L /* || multiplierHL < 0L */) { // multiplierHL always false, keep comment to ack
+            multiply256Unchecked(multiplierHH, multiplierHL, multiplierLH, multiplierLL);
+        } else if (multiplierHL != 0L /* || multiplierLH < 0L */) { // multiplierLH always false, keep comment to ack
+            multiply192Unchecked(multiplierHL, multiplierLH, multiplierLL);
+        } else if (multiplierLH != 0L || multiplierLL < 0L) {
+            multiply128Unchecked(multiplierLH, multiplierLL);
+        } else {
+            multiply64Unchecked(multiplierLL);
+        }
+    }
+
+    private void multiply256Unchecked(long hh, long hl, long lh, long ll) {
+        // TODO: Implement 256-bit multiply
+    }
+
+    private void multiply192Unchecked(long h, long m, long l) {
+        // TODO: Implement 192-bit multiply
+    }
+
+    private void multiply128Unchecked(long h, long l) {
+        // Perform 256-bit × 128-bit multiplication
+        // Result is at most 384 bits, but we keep only the lower 256 bits
+
+        // Split this into eight 32-bit parts
+        long a7 = hh >>> 32;
+        long a6 = hh & 0xFFFFFFFFL;
+        long a5 = hl >>> 32;
+        long a4 = hl & 0xFFFFFFFFL;
+        long a3 = lh >>> 32;
+        long a2 = lh & 0xFFFFFFFFL;
+        long a1 = ll >>> 32;
+        long a0 = ll & 0xFFFFFFFFL;
+
+        long b3 = h >> 32;
+        long b2 = h & 0xFFFFFFFFL;
+        long b1 = l >> 32;
+        long b0 = l & 0xFFFFFFFFL;
+
+        // Compute all partial products
+        long p00 = a0 * b0;
+        long p01 = a0 * b1;
+        long p02 = a0 * b2;
+        long p03 = a0 * b3;
+        long p10 = a1 * b0;
+        long p11 = a1 * b1;
+        long p12 = a1 * b2;
+        long p13 = a1 * b3;
+        long p20 = a2 * b0;
+        long p21 = a2 * b1;
+        long p22 = a2 * b2;
+        long p23 = a2 * b3;
+        long p30 = a3 * b0;
+        long p31 = a3 * b1;
+        long p32 = a3 * b2;
+        long p33 = a3 * b3;
+        long p40 = a4 * b0;
+        long p41 = a4 * b1;
+        long p42 = a4 * b2;
+        long p43 = a4 * b3;
+        long p50 = a5 * b0;
+        long p51 = a5 * b1;
+        long p52 = a5 * b2;
+        long p60 = a6 * b0;
+        long p61 = a6 * b1;
+        long p70 = a7 * b0;
+
+        // Gather results into 256-bit result
+        long r0 = (p00 & 0xFFFFFFFFL);
+        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
+        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
+                (p02 & 0xFFFFFFFFL) + (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
+        long r3 = (r2 >>> 32) + (p02 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
+                (p03 & 0xFFFFFFFFL) + (p12 & 0xFFFFFFFFL) + (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
+        long r4 = (r3 >>> 32) + (p03 >>> 32) + (p12 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
+                (p13 & 0xFFFFFFFFL) + (p22 & 0xFFFFFFFFL) + (p31 & 0xFFFFFFFFL) + (p40 & 0xFFFFFFFFL);
+        long r5 = (r4 >>> 32) + (p13 >>> 32) + (p22 >>> 32) + (p31 >>> 32) + (p40 >>> 32) +
+                (p23 & 0xFFFFFFFFL) + (p32 & 0xFFFFFFFFL) + (p41 & 0xFFFFFFFFL) + (p50 & 0xFFFFFFFFL);
+        long r6 = (r5 >>> 32) + (p23 >>> 32) + (p32 >>> 32) + (p41 >>> 32) + (p50 >>> 32) +
+                (p33 & 0xFFFFFFFFL) + (p42 & 0xFFFFFFFFL) + (p51 & 0xFFFFFFFFL) + (p60 & 0xFFFFFFFFL);
+        long r7 = (r6 >>> 32) + (p33 >>> 32) + (p42 >>> 32) + (p51 >>> 32) + (p60 >>> 32) +
+                (p43 & 0xFFFFFFFFL) + (p52 & 0xFFFFFFFFL) + (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
+
+        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+        this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
+        this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
+    }
+
+    private void multiply64Unchecked(long multiplier) {
+        // Perform 256-bit × 64-bit multiplication
+        // Result is at most 320 bits, but we keep only the lower 256 bits
+
+        // Split this into eight 32-bit parts
+        long a7 = hh >>> 32;
+        long a6 = hh & 0xFFFFFFFFL;
+        long a5 = hl >>> 32;
+        long a4 = hl & 0xFFFFFFFFL;
+        long a3 = lh >>> 32;
+        long a2 = lh & 0xFFFFFFFFL;
+        long a1 = ll >>> 32;
+        long a0 = ll & 0xFFFFFFFFL;
+
+        long b1 = multiplier >> 32;
+        long b0 = multiplier & 0xFFFFFFFFL;
+
+        // Compute all partial products
+        long p00 = a0 * b0;
+        long p01 = a0 * b1;
+        long p10 = a1 * b0;
+        long p11 = a1 * b1;
+        long p20 = a2 * b0;
+        long p21 = a2 * b1;
+        long p30 = a3 * b0;
+        long p31 = a3 * b1;
+        long p40 = a4 * b0;
+        long p41 = a4 * b1;
+        long p50 = a5 * b0;
+        long p51 = a5 * b1;
+        long p60 = a6 * b0;
+        long p61 = a6 * b1;
+        long p70 = a7 * b0;
+
+        // Gather results into 256-bit result
+        long r0 = (p00 & 0xFFFFFFFFL);
+        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
+        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
+                (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
+        long r3 = (r2 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
+                (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
+        long r4 = (r3 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
+                (p31 & 0xFFFFFFFFL) + (p40 & 0xFFFFFFFFL);
+        long r5 = (r4 >>> 32) + (p31 >>> 32) + (p40 >>> 32) +
+                (p41 & 0xFFFFFFFFL) + (p50 & 0xFFFFFFFFL);
+        long r6 = (r5 >>> 32) + (p41 >>> 32) + (p50 >>> 32) +
+                (p51 & 0xFFFFFFFFL) + (p60 & 0xFFFFFFFFL);
+        long r7 = (r6 >>> 32) + (p51 >>> 32) + (p60 >>> 32) +
+                (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
+
+        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+        this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
+        this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
+    }
+
+    private int compareTo(long bHH, long bHL, long bLH, long bLL) {
+        if (hh != bHH) {
+            return Long.compare(hh, bHH);
+        }
+        if (hl != bHL) {
+            return Long.compareUnsigned(hl, bHL);
+        }
+        if (lh != bLH) {
+            return Long.compareUnsigned(lh, bLH);
+        }
+        return Long.compareUnsigned(ll, bLL);
+    }
+
+    /**
+     * Compare two longs as if they were unsigned.
+     * Returns true iff one is bigger than two.
+     */
+    private static boolean unsignedLongCompare(long one, long two) {
+        return (one + Long.MIN_VALUE) > (two + Long.MIN_VALUE);
+    }
+
+    /**
+     * Static multiplication method.
+     *
+     * @param a      the first operand
+     * @param b      the second operand
+     * @param result the result (can be the same as a or b for in-place operation)
+     * @throws NumericException if overflow occurs
+     */
+    public static void multiply(Decimal256 a, Decimal256 b, Decimal256 result) {
+        // TODO: Implement multiplication
+    }
+
+    /**
+     * Static subtraction method.
+     *
+     * @param a      the first operand
+     * @param b      the second operand
+     * @param result the result (can be the same as a or b for in-place operation)
+     * @throws NumericException if overflow occurs
+     */
+    public static void subtract(Decimal256 a, Decimal256 b, Decimal256 result) {
+        // TODO: Implement subtraction
+    }
+
+    /**
+     * In-place addition.
+     *
+     * @param other the Decimal256 to add
+     * @throws NumericException if overflow occurs
+     */
+    public void add(Decimal256 other) {
+        add(this, other, this);
+    }
+
+    /**
+     * Compare this Decimal256 with another.
+     *
+     * @param other the Decimal256 to compare with
+     * @return -1, 0, or 1 as this is less than, equal to, or greater than other
+     */
+    public int compareTo(Decimal256 other) {
+        // TODO: Implement compareTo
+        return 0;
+    }
+
+    /**
+     * Copy the value from another Decimal256.
+     *
+     * @param other the Decimal256 to copy from
+     */
+    public void copyFrom(Decimal256 other) {
+        this.hh = other.hh;
+        this.hl = other.hl;
+        this.lh = other.lh;
+        this.ll = other.ll;
+        this.scale = other.scale;
+    }
+
+    /**
+     * In-place division.
+     *
+     * @param divisor      the Decimal256 to divide by
+     * @param targetScale  the desired scale of the result
+     * @param roundingMode the rounding mode
+     * @throws NumericException if division by zero or overflow occurs
+     */
+    public void divide(Decimal256 divisor, int targetScale, RoundingMode roundingMode) {
+        divide(this, divisor, this, targetScale, roundingMode);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (obj == null || getClass() != obj.getClass()) return false;
+
+        Decimal256 other = (Decimal256) obj;
+        return hh == other.hh &&
+                hl == other.hl &&
+                lh == other.lh &&
+                ll == other.ll &&
+                scale == other.scale;
+    }
+
+    // Getter methods
+    public long getHh() {
+        return hh;
+    }
+
+    public long getHl() {
+        return hl;
+    }
+
+    public long getLh() {
+        return lh;
+    }
+
+    public long getLl() {
+        return ll;
+    }
+
+    public int getScale() {
+        return scale;
+    }
+
+    @Override
+    public int hashCode() {
+        int result = (int) (hh ^ (hh >>> 32));
+        result = 31 * result + (int) (hl ^ (hl >>> 32));
+        result = 31 * result + (int) (lh ^ (lh >>> 32));
+        result = 31 * result + (int) (ll ^ (ll >>> 32));
+        result = 31 * result + scale;
+        return result;
+    }
+
+    /**
+     * Check if this Decimal256 is negative.
+     *
+     * @return true if negative, false otherwise
+     */
+    public boolean isNegative() {
+        return hh < 0;
+    }
+
+    /**
+     * Check if this Decimal256 represents zero.
+     *
+     * @return true if zero, false otherwise
+     */
+    public boolean isZero() {
+        return hh == 0 && hl == 0 && lh == 0 && ll == 0;
+    }
+
+    /**
+     * In-place modulo operation.
+     *
+     * @param divisor the Decimal256 to take modulo by
+     * @throws NumericException if division by zero occurs
+     */
+    public void modulo(Decimal256 divisor) {
+        modulo(this, divisor, this);
+    }
+
+    /**
+     * In-place multiplication.
+     *
+     * @param other the Decimal256 to multiply by
+     * @throws NumericException if overflow occurs
+     */
+    public void multiply(Decimal256 other) {
+        multiply(this, other, this);
+    }
+
+    /**
+     * In-place negation.
+     */
+    public void negate() {
+        ll = ~ll + 1;
+        lh = ~lh + (ll == 0 ? 1 : 0);
+        hl = ~hl + (lh == 0 ? 1 : 0);
+        hh = ~hh + (hl == 0 ? 1 : 0);
+    }
+
+    public void of(long hh, long hl, long lh, long ll, int scale) {
+        this.hh = hh;
+        this.hl = hl;
+        this.lh = lh;
+        this.ll = ll;
+        this.scale = scale;
+    }
+
+    /**
+     * Round to specified scale.
+     *
+     * @param targetScale  the target scale
+     * @param roundingMode the rounding mode
+     * @throws IllegalArgumentException if target scale is invalid
+     */
+    public void round(int targetScale, RoundingMode roundingMode) {
+        validateScale(targetScale);
+
+        if (roundingMode == RoundingMode.UNNECESSARY) {
+            // UNNECESSARY mode is a no-op in this implementation
+            return;
+        }
+
+        if (targetScale == this.scale) {
+            return; // No rounding needed
+        }
+
+        // TODO: Implement rounding
+    }
+
+    /**
+     * Set this Decimal256 from a long value with specified scale.
+     *
+     * @param value the long value
+     * @param scale the desired scale
+     */
+    public void setFromLong(long value, int scale) {
+        validateScale(scale);
+
+        this.scale = scale;
+        this.ll = value;
+        this.lh = value < 0 ? -1L : 0L;  // Sign extension
+        this.hl = value < 0 ? -1L : 0L;
+        this.hh = value < 0 ? -1L : 0L;
+    }
+
+    /**
+     * In-place subtraction.
+     *
+     * @param other the Decimal256 to subtract
+     * @throws NumericException if overflow occurs
+     */
+    public void subtract(Decimal256 other) {
+        subtract(this, other, this);
+    }
+
+    /**
+     * Convert to BigDecimal.
+     *
+     * @return BigDecimal representation
+     */
+    public BigDecimal toBigDecimal() {
+        if (isZero()) {
+            return BigDecimal.ZERO.setScale(scale);
+        }
+
+        // Convert 256-bit value to BigInteger
+        byte[] bytes = new byte[32]; // 256 bits = 32 bytes
+
+        // Fill bytes in big-endian order
+        putLongIntoBytes(bytes, 0, hh);
+        putLongIntoBytes(bytes, 8, hl);
+        putLongIntoBytes(bytes, 16, lh);
+        putLongIntoBytes(bytes, 24, ll);
+
+        BigInteger unscaledValue = new BigInteger(bytes);
+        return new BigDecimal(unscaledValue, scale);
+    }
+
+    /**
+     * Convert to double (may lose precision).
+     *
+     * @return double representation
+     */
+    public double toDouble() {
+        return toBigDecimal().doubleValue();
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink sink) {
+        BigDecimal bd = toBigDecimal();
+        sink.put(bd.toPlainString());
+    }
+
+    @Override
+    public String toString() {
+        StringSink sink = new StringSink();
+        toSink(sink);
+        return sink.toString();
+    }
+
+    /**
+     * Validates that the scale is within the allowed range.
+     *
+     * @param scale the scale to validate
+     * @throws IllegalArgumentException if scale is invalid
+     */
+    private static void validateScale(int scale) {
+        if (scale < 0 || scale > MAX_SCALE) {
+            throw new IllegalArgumentException("Scale must be between 0 and " + MAX_SCALE + ", got: " + scale);
+        }
+    }
+
+    private void putLongIntoBytes(byte[] bytes, int offset, long value) {
+        for (int i = 0; i < 8; i++) {
+            bytes[offset + i] = (byte) (value >>> ((7 - i) * 8));
+        }
+    }
+
+    /**
+     * Set this Decimal256 from a byte array representation.
+     *
+     * @param bytes the byte array
+     */
+    private void setFromByteArray(byte[] bytes) {
+        // Clear all fields first
+        this.hh = 0;
+        this.hl = 0;
+        this.lh = 0;
+        this.ll = 0;
+
+        // Determine if the number is negative
+        boolean negative = bytes.length > 0 && (bytes[0] & 0x80) != 0;
+
+        // Fill from the least significant bytes
+        int byteIndex = bytes.length - 1;
+
+        // Fill low 64 bits
+        for (int i = 0; i < 8 && byteIndex >= 0; i++, byteIndex--) {
+            this.ll |= ((long) (bytes[byteIndex] & 0xFF)) << (i * 8);
+        }
+
+        // Fill mid 64 bits
+        for (int i = 0; i < 8 && byteIndex >= 0; i++, byteIndex--) {
+            this.lh |= ((long) (bytes[byteIndex] & 0xFF)) << (i * 8);
+        }
+
+        // Fill high 64 bits
+        for (int i = 0; i < 8 && byteIndex >= 0; i++, byteIndex--) {
+            this.hl |= ((long) (bytes[byteIndex] & 0xFF)) << (i * 8);
+        }
+
+        // Fill highest 64 bits
+        for (int i = 0; i < 8 && byteIndex >= 0; i++, byteIndex--) {
+            this.hh |= ((long) (bytes[byteIndex] & 0xFF)) << (i * 8);
+        }
+
+        // Sign extend if necessary
+        if (negative) {
+            if (byteIndex >= 0) {
+                // We still have bytes, so sign extend the remaining parts
+                if (this.hh == 0) this.hh = -1L;
+                if (this.hl == 0) this.hl = -1L;
+                if (this.lh == 0) this.lh = -1L;
+            }
+        }
+    }
+}
