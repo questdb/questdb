@@ -68,6 +68,7 @@ public class StaticOverrides extends Overrides {
 
         AbstractCairoTest.currentMicros = -1;
         AbstractCairoTest.testMicrosClock = AbstractCairoTest.defaultMicrosecondClock;
+        AbstractCairoTest.testNanoClock = AbstractCairoTest.defaultNanosecondClock;
         AbstractCairoTest.sqlExecutionContext.initNow();
         AbstractCairoTest.ff = null;
         AbstractCairoTest.factoryProvider = null;

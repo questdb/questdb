@@ -86,26 +86,6 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNanoTimestampSequenceWithSystimestampCall() throws Exception {
-        final String expected = "ac\tts\n" +
-                "1\t1970-01-01T00:00:00.000000000Z\n" +
-                "2\t1970-01-01T00:00:00.000001000Z\n" +
-                "3\t1970-01-01T00:00:00.000002000Z\n" +
-                "4\t1970-01-01T00:00:00.000003000Z\n" +
-                "5\t1970-01-01T00:00:00.000004000Z\n" +
-                "6\t1970-01-01T00:00:00.000005000Z\n" +
-                "7\t1970-01-01T00:00:00.000006000Z\n" +
-                "8\t1970-01-01T00:00:00.000007000Z\n" +
-                "9\t1970-01-01T00:00:00.000008000Z\n" +
-                "10\t1970-01-01T00:00:00.000009000Z\n";
-
-        assertSql(
-                expected,
-                "select x ac, timestamp_sequence(systimestamp_ns(), 1000) ts from long_sequence(10)"
-        );
-    }
-
-    @Test
     public void testNanoTimestampSequenceWithZeroStartValue() throws Exception {
         final String expected = "ac\tts\n" +
                 "1\t1970-01-01T00:00:00.000000000Z\n" +
@@ -176,7 +156,7 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampSequenceWithSystimestampCall() throws Exception {
-        final String expected = "ac\tts\n" +
+        String expected = "ac\tts\n" +
                 "1\t1970-01-01T00:00:00.000000Z\n" +
                 "2\t1970-01-01T00:00:00.001000Z\n" +
                 "3\t1970-01-01T00:00:00.002000Z\n" +
@@ -191,6 +171,23 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
         assertSql(
                 expected,
                 "select x ac, timestamp_sequence(systimestamp(), 1000) ts from long_sequence(10)"
+        );
+
+        expected = "ac\tts\n" +
+                "1\t1970-01-01T00:00:00.000000000Z\n" +
+                "2\t1970-01-01T00:00:00.000001000Z\n" +
+                "3\t1970-01-01T00:00:00.000002000Z\n" +
+                "4\t1970-01-01T00:00:00.000003000Z\n" +
+                "5\t1970-01-01T00:00:00.000004000Z\n" +
+                "6\t1970-01-01T00:00:00.000005000Z\n" +
+                "7\t1970-01-01T00:00:00.000006000Z\n" +
+                "8\t1970-01-01T00:00:00.000007000Z\n" +
+                "9\t1970-01-01T00:00:00.000008000Z\n" +
+                "10\t1970-01-01T00:00:00.000009000Z\n";
+
+        assertSql(
+                expected,
+                "select x ac, timestamp_sequence(systimestamp_ns(), 1000) ts from long_sequence(10)"
         );
     }
 

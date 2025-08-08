@@ -121,12 +121,14 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
 
     @Override
     public @NotNull MillisecondClock getMillisecondClock() {
-        return () -> overrides.getTestMicrosClock().getTicks() / 1000L;
+        MicrosecondClock microsecondClock = overrides.getTestMicrosClock();
+        return () -> microsecondClock.getTicks() / 1000L;
     }
 
     @Override
     public NanosecondClock getNanosecondClock() {
-        return () -> overrides.getTestMicrosClock().getTicks() * 1000L;
+        MicrosecondClock microsecondClock = overrides.getTestMicrosClock();
+        return () -> microsecondClock.getTicks() * 1000L;
     }
 
     @Override

@@ -1139,6 +1139,11 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
                             "2016-02-10T17:18:22.860000Z\n",
                     "3T", "2016-02-10T16:18:22.862145Z", "2016-02-10T00:00:00Z", "00:10", "Europe/Berlin"
             );
+            assertTimestampFloor(
+                    "timestamp_floor\n" +
+                            "2016-02-10T17:18:22.860000000Z\n",
+                    "3T", "2016-02-10T16:18:22.862145792Z", "2016-02-10T00:00:00Z", "00:10", "Europe/Berlin"
+            );
         });
     }
 
@@ -1189,8 +1194,8 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
             );
             assertTimestampFloor(
                     "timestamp_floor\n" +
-                            "2016-02-10T17:18:00.000000Z\n",
-                    "1m", "2016-02-10T16:18:22.862145Z", null, "00:00", "Europe/Paris"
+                            "2016-02-10T17:18:00.000000000Z\n",
+                    "1m", "2016-02-10T16:18:22.862145123Z", null, "00:00", "Europe/Paris"
             );
 
             assertTimestampFloor(
@@ -1205,8 +1210,8 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
             );
             assertTimestampFloor(
                     "timestamp_floor\n" +
-                            "2016-02-10T17:00:00.000000Z\n",
-                    "6m", "2016-02-10T16:02:00.000000Z", "2016-02-10T16:00:00Z", "00:00", "Europe/Paris"
+                            "2016-02-10T17:00:00.000000000Z\n",
+                    "6m", "2016-02-10T16:02:00.000000123Z", "2016-02-10T16:00:00Z", "00:00", "Europe/Paris"
             );
         });
     }
@@ -1276,6 +1281,11 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
                     "timestamp_floor\n" +
                             "2016-05-10T12:00:00.000000Z\n",
                     "3M", "2016-07-10T16:18:22.862145Z", "2016-02-10T00:00:00Z", "12:00", "Europe/Sofia"
+            );
+            assertTimestampFloor(
+                    "timestamp_floor\n" +
+                            "2016-05-10T12:00:00.000000000Z\n",
+                    "3M", "2016-07-10T16:18:22.862145123Z", "2016-02-10T00:00:00Z", "12:00", "GMT+02:00"
             );
         });
     }
@@ -1434,8 +1444,8 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
 
             assertTimestampFloor(
                     "timestamp_floor\n" +
-                            "2016-02-10T16:18:22.000000Z\n",
-                    "1s", "2016-02-10T16:18:22.862145Z", null, "00:00", null
+                            "2016-02-10T16:18:22.000000000Z\n",
+                    "1s", "2016-02-10T16:18:22.862145123Z", null, "00:00", null
             );
             assertTimestampFloor(
                     "timestamp_floor\n" +
@@ -1537,6 +1547,11 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
                             "2016-03-02T00:42:00.000000Z\n",
                     "3w", "2016-03-10T16:18:22.862145Z", "2016-02-10T00:00:00Z", "00:42", null
             );
+            assertTimestampFloor(
+                    "timestamp_floor\n" +
+                            "2016-03-02T00:42:00.000000000Z\n",
+                    "3w", "2016-03-10T16:18:22.862145123Z", "2016-02-10T00:00:00Z", "00:42", null
+            );
         });
     }
 
@@ -1605,6 +1620,11 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
                     "timestamp_floor\n" +
                             "2018-02-10T21:00:00.000000Z\n",
                     "2y", "2019-02-10T16:02:00.000000Z", "2016-02-10T16:00:00Z", "05:00", "Europe/London"
+            );
+            assertTimestampFloor(
+                    "timestamp_floor\n" +
+                            "2018-02-10T21:00:00.000000000Z\n",
+                    "2y", "2019-02-10T16:02:00.000000123Z", "2016-02-10T16:00:00Z", "05:00", "Europe/London"
             );
         });
     }

@@ -3599,7 +3599,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from " + tableName + " where\n" +
                             "(ts = '2024-02-29'::varchar or ts <= '2024-03-01'::varchar) or ts = '2024-05-01'::varchar",
-                    "Async JIT Filter workers: 1\n" +
+                    "Async Filter workers: 1\n" +
                             "  filter: ((ts=2024-02-29T00:00:00.000000Z or 2024-03-01T00:00:00.000000Z>=ts) or ts=2024-05-01T00:00:00.000000Z) [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
