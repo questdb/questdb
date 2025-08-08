@@ -89,7 +89,7 @@ public class JsonExtractFunction implements Function {
                 stateB = null;
                 break;
         }
-        driver = ColumnType.getTimestampDriver(targetType);
+        driver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(targetType));
     }
 
     @Override

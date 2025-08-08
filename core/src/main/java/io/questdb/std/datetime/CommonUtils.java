@@ -183,6 +183,7 @@ public class CommonUtils {
             case 's':
             case 'T':
             case 'U':
+            case 'n':
                 return unit;
             default:
                 throw SqlException.position(position).put("Invalid unit: ").put(str);

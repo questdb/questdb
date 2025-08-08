@@ -315,8 +315,10 @@ public final class Nanos {
     }
 
     public static long floorMC(long nanos, int stride, long offset) {
-        long result = nanos - ((nanos - offset) % (stride * MICRO_NANOS));
-        return Math.min(result, nanos);
+        if (nanos < offset) {
+            return offset;
+        }
+        return nanos - ((nanos - offset) % (stride * MICRO_NANOS));
     }
 
     public static long floorMI(long nanos) {
@@ -327,8 +329,11 @@ public final class Nanos {
         return nanos - nanos % (stride * MINUTE_NANOS);
     }
 
-    public static long floorMI(long nanos, int stride, long offsetNanos) {
-        return nanos - ((nanos - offsetNanos) % (stride * MINUTE_NANOS));
+    public static long floorMI(long nanos, int stride, long offset) {
+        if (nanos < offset) {
+            return offset;
+        }
+        return nanos - ((nanos - offset) % (stride * MINUTE_NANOS));
     }
 
     public static long floorMM(long nanos) {
@@ -343,6 +348,9 @@ public final class Nanos {
     }
 
     public static long floorMM(long nanos, int stride, long offset) {
+        if (nanos < offset) {
+            return offset;
+        }
         final long monthsDiff = getMonthsBetween(nanos, offset);
         final long monthsToAdd = monthsDiff - (monthsDiff % stride);
         return addMonths(offset, (int) monthsToAdd);
@@ -365,9 +373,11 @@ public final class Nanos {
         return floorMR(nanos, 1);
     }
 
-    public static long floorMS(long nanos, int stride, long offsetNanos) {
-        long result = nanos - ((nanos - offsetNanos) % (stride * MILLI_NANOS));
-        return Math.min(result, nanos);
+    public static long floorMS(long nanos, int stride, long offset) {
+        if (nanos < offset) {
+            return offset;
+        }
+        return nanos - ((nanos - offset) % (stride * MILLI_NANOS));
     }
 
     public static long floorMS(long nanos) {
@@ -403,6 +413,9 @@ public final class Nanos {
     }
 
     public static long floorNS(long nanos, int stride, long offset) {
+        if (nanos < offset) {
+            return offset;
+        }
         return nanos - ((nanos - offset) % stride);
     }
 
@@ -433,6 +446,9 @@ public final class Nanos {
     }
 
     public static long floorSS(long nanos, int stride, long offset) {
+        if (nanos < offset) {
+            return offset;
+        }
         return nanos - ((nanos - offset) % (stride * SECOND_NANOS));
     }
 

@@ -322,6 +322,9 @@ public final class Timestamps {
     }
 
     public static long floorMC(long micros, int stride, long offset) {
+        if (micros < offset) {
+            return offset;
+        }
         return micros - ((micros - offset) % stride);
     }
 
@@ -334,6 +337,9 @@ public final class Timestamps {
     }
 
     public static long floorMI(long micros, int stride, long offset) {
+        if (micros < offset) {
+            return offset;
+        }
         return micros - ((micros - offset) % (stride * MINUTE_MICROS));
     }
 
@@ -349,6 +355,9 @@ public final class Timestamps {
     }
 
     public static long floorMM(long micros, int stride, long offset) {
+        if (micros < offset) {
+            return offset;
+        }
         final long monthsDiff = getMonthsBetween(micros, offset);
         final long monthsToAdd = monthsDiff - (monthsDiff % stride);
         return addMonths(offset, (int) monthsToAdd);
@@ -364,8 +373,10 @@ public final class Timestamps {
     }
 
     public static long floorMS(long micros, int stride, long offset) {
-        long result = micros - ((micros - offset) % (stride * MILLI_MICROS));
-        return Math.min(result, micros);
+        if (micros < offset) {
+            return offset;
+        }
+        return micros - ((micros - offset) % (stride * MILLI_MICROS));
     }
 
     public static long floorMS(long micros) {
@@ -402,8 +413,11 @@ public final class Timestamps {
     }
 
     public static long floorNS(long micros, int stride, long offset) {
+        if (micros < offset) {
+            return offset;
+        }
         long nanos = micros * MICRO_NANOS;
-        return (nanos - ((nanos - offset) % stride)) / MICRO_NANOS;
+        return (nanos - ((nanos - offset * MICRO_NANOS) % stride)) / MICRO_NANOS;
     }
 
     /**
@@ -433,6 +447,9 @@ public final class Timestamps {
     }
 
     public static long floorSS(long micros, int stride, long offset) {
+        if (micros < offset) {
+            return offset;
+        }
         return micros - ((micros - offset) % (stride * SECOND_MICROS));
     }
 
