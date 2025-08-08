@@ -34,7 +34,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cutlass.text.SerialCsvFileImporter;
-import io.questdb.griffin.engine.table.parquet.MappedMemoryPartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
@@ -116,7 +115,7 @@ public class SerialParquetExporter implements Closeable {
                 statusReporter.report(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, CopyExportRequestTask.STATUS_FAILED, "empty table", Long.MIN_VALUE);
             } else {
 
-                try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor(ff)) {
+                try (PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
 
                     for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
 

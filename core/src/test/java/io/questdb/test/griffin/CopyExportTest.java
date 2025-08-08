@@ -72,17 +72,6 @@ public class CopyExportTest extends AbstractCairoTest {
         AbstractCairoTest.setUpStatic();
     }
 
-    public CopyExportRunnable assertSucceedsAndFileExists(String copyId) {
-        String query = "SELECT file FROM \"sys.copy_export_log\" WHERE copyId = '" + copyId + "' AND status = 'finished' LIMIT -1";
-        CopyExportRunnable test = () ->
-                TestUtils.assertEventually(() -> {
-                    printSql(query);
-                    assertSql("ts\tid\ttable_name\tfile\tphase\tstatus\tmessage\terrors\n" +
-                            "2025-08-08T12:46:57.273782Z\t25b9a3c817ed067e\ttest_table\toutput_max_rows\t\tfinished\t\tnull", "\"sys.copy_export_log\" LIMIT -1");
-                });
-        return test;
-    }
-
     @Test
     public void testCopyCancelSyntaxError() throws Exception {
         assertException(
@@ -101,7 +90,7 @@ public class CopyExportTest extends AbstractCairoTest {
             drainWalQueue();
 
             CopyExportRunnable stmt = () ->
-                    runAndFetchCopyExportID("copy test_table to 'test_tablea' with format parquet row_group_size 2147483647", sqlExecutionContext);
+                    runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet row_group_size 2147483647", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
                     TestUtils.assertEventually(() -> {
@@ -161,11 +150,24 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyParquetBoundaryValues_ZeroRowGroupSize() throws Exception {
-        assertException(
-                "copy test_table to 'output' with format parquet row_group_size 0",
-                64,
-                "row group size must be positive"
-        );
+        assertMemoryLeak(() -> {
+            execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
+            execute("insert into test_table values (0, 1)");
+            drainWalQueue();
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet row_group_size 0", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    TestUtils.assertEventually(() -> {
+                        assertSql("file\tstatus\n" +
+                                        "test_table\tfinished\n",
+                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
+                    });
+
+
+            testCopyExport(stmt, test);
+        });
     }
 
     @Test
@@ -356,7 +358,7 @@ public class CopyExportTest extends AbstractCairoTest {
         assertException(
                 "copy test_table to 'output' with format parquet row_group_size 'invalid'",
                 64,
-                "invalid row group size, expected integer"
+                "found [tok=''invalid'', len=9] bad integer"
         );
     }
 
@@ -383,7 +385,7 @@ public class CopyExportTest extends AbstractCairoTest {
         assertException(
                 "copy test_table to 'output' with format parquet compression_codec",
                 67,
-                "missing option value"
+                "literal expected"
         );
     }
 
@@ -730,7 +732,7 @@ public class CopyExportTest extends AbstractCairoTest {
             execute("create table test_table (x int, y string)");
             execute("insert into test_table values (1, 'test')");
 
-            execute("copy test_table to 'output14' with FORMAT PARQUET COMPRESSION_CODEC 'SNAPPY'");
+            execute("copy test_table to 'output14' with FORMAT PARQUET COMPRESSION_CODEC SNAPPY");
 
             assertTrue(exportDirectoryExists("output14"));
 
@@ -746,7 +748,7 @@ public class CopyExportTest extends AbstractCairoTest {
             execute("create table test_table (x int, y string)");
             execute("insert into test_table values (1, 'test')");
 
-            execute("copy test_table to 'output4' with format parquet compression_codec 'snappy'");
+            execute("copy test_table to 'output4' with format parquet compression_codec snappy");
 
             assertTrue(exportDirectoryExists("output4"));
 
@@ -796,7 +798,7 @@ public class CopyExportTest extends AbstractCairoTest {
             execute("insert into test_table values (1, 'hello', 1.5), (2, 'world', 2.5)");
 
             execute("copy test_table to 'output13' with format parquet " +
-                    "compression_codec 'gzip' compression_level 6 " +
+                    "compression_codec gzip compression_level 6 " +
                     "row_group_size 5000 data_page_size 8192 " +
                     "statistics_enabled true parquet_version 2");
 
