@@ -39,7 +39,7 @@ pub struct MappedColumn {
 
 impl MappedColumn {
     // nightly has add_extension
-    pub fn build_file_extension(base_extension: &str, col_version: Option<u64>) -> Cow<str> {
+    pub fn build_file_extension(base_extension: &str, col_version: Option<u64>) -> Cow<'_, str> {
         match col_version {
             Some(version) if version > 0 => Cow::Owned(format!("{}.{}", base_extension, version)),
             _ => Cow::Borrowed(base_extension),
