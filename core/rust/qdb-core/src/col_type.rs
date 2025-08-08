@@ -80,7 +80,7 @@ impl ColumnTypeTag {
         Self::Long128,
         Self::IPv4,
         Self::Varchar,
-        Self::Array
+        Self::Array,
     ];
 
     /// If true, the column is encoded with both data and aux vectors.
@@ -271,7 +271,7 @@ impl ColumnType {
                 self
             ));
         }
-        let tag= (self.code() >> ARRAY_ELEMTYPE_FIELD_POS) & ARRAY_ELEMTYPE_FIELD_MASK;
+        let tag = (self.code() >> ARRAY_ELEMTYPE_FIELD_POS) & ARRAY_ELEMTYPE_FIELD_MASK;
         let tag = ColumnTypeTag::try_from(tag as u8)?;
         Ok(tag)
     }
@@ -322,10 +322,7 @@ impl<'de> Deserialize<'de> for ColumnType {
 
 pub fn encode_array_type(elem_type: ColumnTypeTag, dim: i32) -> CoreResult<ColumnType> {
     if !(1..=ARRAY_NDIMS_LIMIT).contains(&dim) {
-        return Err(fmt_err!(
-            InvalidType,
-            "invalid array dimensionality {dim}",
-        ));
+        return Err(fmt_err!(InvalidType, "invalid array dimensionality {dim}",));
     }
     if elem_type != ColumnTypeTag::Double {
         return Err(fmt_err!(
@@ -334,7 +331,8 @@ pub fn encode_array_type(elem_type: ColumnTypeTag, dim: i32) -> CoreResult<Colum
             elem_type.name()
         ));
     }
-    let extra = ((dim -1)  & ARRAY_NDIMS_FIELD_MASK) << (ARRAY_NDIMS_FIELD_POS - ARRAY_ELEMTYPE_FIELD_POS)
+    let extra = ((dim - 1) & ARRAY_NDIMS_FIELD_MASK)
+        << (ARRAY_NDIMS_FIELD_POS - ARRAY_ELEMTYPE_FIELD_POS)
         | ((elem_type as i32) & ARRAY_ELEMTYPE_FIELD_MASK);
     Ok(ColumnType::new(ColumnTypeTag::Array, extra))
 }
@@ -434,7 +432,7 @@ mod tests {
         let elem_typ = typ.array_element_type();
         assert!(elem_typ.is_ok());
         assert_eq!(elem_typ.unwrap(), ColumnTypeTag::Double);
-        
+
         let dim = typ.array_dimensionality();
         assert!(dim.is_ok());
         assert_eq!(dim.unwrap(), 11);
