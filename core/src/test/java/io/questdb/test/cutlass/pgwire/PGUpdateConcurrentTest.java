@@ -48,13 +48,10 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
-import java.util.Collection;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -62,23 +59,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 
-@RunWith(Parameterized.class)
 public class PGUpdateConcurrentTest extends BasePGTest {
     private static final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
-
-    public PGUpdateConcurrentTest(LegacyMode legacyMode) {
-        super(legacyMode);
-    }
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 256);
         AbstractCairoTest.setUpStatic();
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> testParams() {
-        return legacyModeParams();
     }
 
     @Override
@@ -90,57 +77,41 @@ public class PGUpdateConcurrentTest extends BasePGTest {
 
     @Test
     public void testConcurrencyMultipleWriterMultipleReaderMultiPartitioned() throws Exception {
-        // concurrent update breaks because we cache update statements and attempt to re-execute
-        // operations. Update operation is non-reusable.
-        skipInModernMode();
         testConcurrency(4, 10, 8, PartitionMode.MULTIPLE);
     }
 
     @Test
-    public void testConcurrencyMultipleWriterMultipleReaderNonPartitioned() throws Exception {
-        skipInModernMode();
-        testConcurrency(4, 10, 8, PartitionMode.NONE);
-    }
-
-    @Test
     public void testConcurrencyMultipleWriterMultipleReaderSinglePartitioned() throws Exception {
-        skipInModernMode();
         testConcurrency(4, 10, 8, PartitionMode.SINGLE);
     }
 
     @Test
     public void testConcurrencySingleWriterMultipleReaderMultiPartitioned() throws Exception {
-        skipInModernMode();
         testConcurrency(1, 10, 25, PartitionMode.MULTIPLE);
     }
 
     @Test
     public void testConcurrencySingleWriterMultipleReaderNonPartitioned() throws Exception {
-        skipInModernMode();
         testConcurrency(1, 10, 40, PartitionMode.NONE);
     }
 
     @Test
     public void testConcurrencySingleWriterMultipleReaderSinglePartitioned() throws Exception {
-        skipInModernMode();
         testConcurrency(1, 10, 40, PartitionMode.SINGLE);
     }
 
     @Test
     public void testConcurrencySingleWriterSingleReaderMultiPartitioned() throws Exception {
-        skipInModernMode();
         testConcurrency(1, 1, 30, PartitionMode.MULTIPLE);
     }
 
     @Test
     public void testConcurrencySingleWriterSingleReaderNonPartitioned() throws Exception {
-        skipInModernMode();
         testConcurrency(1, 1, 50, PartitionMode.NONE);
     }
 
     @Test
     public void testConcurrencySingleWriterSingleReaderSinglePartitioned() throws Exception {
-        skipInModernMode();
         testConcurrency(1, 1, 50, PartitionMode.SINGLE);
     }
 
@@ -244,9 +215,11 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                             " 0 as x" +
                             " from long_sequence(5))" +
                             " timestamp(ts)" +
-                            (PartitionMode.isPartitioned(partitionMode) ? " partition by DAY" : ""));
+                            (PartitionMode.isPartitioned(partitionMode) ? " partition by DAY WAL" : ""));
                     create.execute();
                     create.close();
+
+                    TestUtils.drainWalQueue(engine);
                 }
 
                 Thread tick = new Thread(() -> {
@@ -269,7 +242,8 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                                 PreparedStatement update = connection.prepareStatement("UPDATE up SET x = ?");
                                 for (int i = 0; i < numOfUpdates; i++) {
                                     update.setInt(1, i);
-                                    Assert.assertEquals(5, update.executeUpdate());
+                                    // update against WAL table will return txn instead of row count
+                                    update.executeUpdate();
                                     current.incrementAndGet();
                                 }
                                 update.close();

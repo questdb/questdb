@@ -42,9 +42,7 @@ public interface IPGWireServer extends Closeable {
             CircuitBreakerRegistry registry,
             ObjectFactory<SqlExecutionContextImpl> executionContextFactory
     ) {
-        return configuration.isLegacyModeEnabled()
-                ? new PGWireServer(configuration, cairoEngine, networkSharedPool, registry, executionContextFactory)
-                : new PGWireServerModern(configuration, cairoEngine, networkSharedPool, registry, executionContextFactory);
+        return new PGWireServerModern(configuration, cairoEngine, networkSharedPool, registry, executionContextFactory);
     }
 
     void clearSelectCache();

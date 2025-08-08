@@ -38,7 +38,7 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.SocketAuthenticator;
-import io.questdb.cutlass.pgwire.BadProtocolException;
+import io.questdb.cutlass.pgwire.MessageProcessingException;
 import io.questdb.cutlass.pgwire.OptionsListener;
 import io.questdb.cutlass.pgwire.PGResponseSink;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
@@ -198,7 +198,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private SuspendEvent suspendEvent;
     // insert 'statements' are cached only for the duration of user session
     private SimpleAssociativeCache<TypesAndInsertModern> taiCache;
-    private AssociativeCache<TypesAndSelectModern> tasCache;
+    private final AssociativeCache<TypesAndSelectModern> tasCache;
     private final PGResumeCallback msgFlushRef = this::msgFlush0;
     private boolean tlsSessionStarting = false;
     private long totalReceived = 0;
@@ -276,7 +276,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         return -1;
     }
 
-    public static long getUtf8StrSize(long x, long limit, CharSequence errorMessage, @Nullable PGPipelineEntry pe) throws BadProtocolException {
+    public static long getUtf8StrSize(long x, long limit, CharSequence errorMessage, @Nullable PGPipelineEntry pe) throws MessageProcessingException {
         long len = Unsafe.getUnsafe().getByte(x) == 0 ? x : getStringLengthTedious(x, limit);
         if (len > -1) {
             return len;
@@ -288,7 +288,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         } else {
             LOG.error().$(errorMessage).$();
         }
-        throw BadProtocolException.INSTANCE;
+        throw MessageProcessingException.INSTANCE;
     }
 
     public static void putInt(long address, int value) {
@@ -405,7 +405,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     socket.startTlsSession(null);
                 } catch (TlsSessionInitFailedException e) {
                     LOG.error().$("failed to create new TLS session").$((Throwable) e).$();
-                    throw BadProtocolException.INSTANCE;
+                    throw MessageProcessingException.INSTANCE;
                 }
                 // Start listening for read.
                 throw PeerIsSlowToWriteException.INSTANCE;
@@ -414,7 +414,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         } catch (PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
             // BAU, not error metric
             throw e;
-        } catch (BadProtocolException bpe) {
+        } catch (MessageProcessingException bpe) {
             shutdownSocketGracefully();
             throw bpe; // request disconnection
         } catch (Throwable th) {
@@ -461,7 +461,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
             try {
                 parseMessage(recvBuffer + recvBufferReadOffset, (int) (recvBufferWriteOffset - recvBufferReadOffset));
-            } catch (BadProtocolException e) {
+            } catch (MessageProcessingException e) {
                 LOG.error().$("failed to parse message [err: `").$safe(e.getFlyweightMessage()).$("`]").$();
                 // ignore, we are interrupting the current message processing, but have to continue processing other
                 // messages
@@ -505,13 +505,13 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
     }
 
-    private void assertBufferSize(boolean check) throws BadProtocolException {
+    private void assertBufferSize(boolean check) throws MessageProcessingException {
         if (check) {
             return;
         }
         // we did not find 0 within message limit
         LOG.error().$("undersized receive buffer or someone is abusing protocol [recvBufferSize=").$(recvBufferSize).$(']').$();
-        throw BadProtocolException.INSTANCE;
+        throw MessageProcessingException.INSTANCE;
     }
 
     private void clearRecvBuffer() {
@@ -590,7 +590,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     }
 
     private void handleAuthentication()
-            throws PeerIsSlowToWriteException, PeerIsSlowToReadException, BadProtocolException, PeerDisconnectedException {
+            throws PeerIsSlowToWriteException, PeerIsSlowToReadException, MessageProcessingException, PeerDisconnectedException {
         if (authenticator.isAuthenticated()) {
             return;
         }
@@ -627,7 +627,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             case SocketAuthenticator.NEEDS_DISCONNECT:
                 throw PeerDisconnectedException.INSTANCE;
             default:
-                throw BadProtocolException.INSTANCE;
+                throw MessageProcessingException.INSTANCE;
         }
 
 
@@ -636,7 +636,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         recvBufferReadOffset = authenticator.getRecvBufPseudoStart() - recvBuffer;
     }
 
-    private void handleTlsRequest() throws PeerIsSlowToWriteException, PeerIsSlowToReadException, BadProtocolException, PeerDisconnectedException {
+    private void handleTlsRequest() throws PeerIsSlowToWriteException, PeerIsSlowToReadException, MessageProcessingException, PeerDisconnectedException {
         if (!socket.supportsTls() || tlsSessionStarting || socket.isTlsSessionStarted()) {
             return;
         }
@@ -646,7 +646,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         if (bufferRemainingSize > 0) {
             sendBuffer(bufferRemainingOffset, bufferRemainingSize);
             // The client received the response; shutdown the socket
-            throw BadProtocolException.INSTANCE;
+            throw MessageProcessingException.INSTANCE;
         }
 
         recv();
@@ -658,7 +658,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         if (len != expectedLen) {
             LOG.error().$("request SSL message expected [actualLen=").$(len).I$();
             sendErrorResponseAndReset(responseUtf8Sink, "request SSL message expected");
-            throw BadProtocolException.INSTANCE;
+            throw MessageProcessingException.INSTANCE;
         }
         long address = recvBuffer + recvBufferReadOffset;
         int msgLen = getIntUnsafe(address);
@@ -667,14 +667,14 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         if (msgLen != expectedLen) {
             LOG.error().$("unexpected request SSL message [msgLen=").$(msgLen).I$();
             sendErrorResponseAndReset(responseUtf8Sink, "unexpected request SSL message");
-            throw BadProtocolException.INSTANCE;
+            throw MessageProcessingException.INSTANCE;
         }
         int request = getIntUnsafe(address);
         recvBufferReadOffset += Integer.BYTES;
         if (request != SSL_REQUEST) {
             LOG.error().$("unexpected request SSL message [request=").$(msgLen).I$();
             sendErrorResponseAndReset(responseUtf8Sink, "unexpected request SSL message");
-            throw BadProtocolException.INSTANCE;
+            throw MessageProcessingException.INSTANCE;
         }
         // tell the client that SSL is supported
         responseUtf8Sink.put(MESSAGE_TYPE_SSL_SUPPORTED_RESPONSE);
@@ -682,7 +682,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         responseUtf8Sink.sendBufferAndReset();
     }
 
-    private void lookupPipelineEntryForNamedPortal(@Nullable Utf8Sequence namedPortal) throws BadProtocolException {
+    private void lookupPipelineEntryForNamedPortal(@Nullable Utf8Sequence namedPortal) throws MessageProcessingException {
         if (namedPortal != null) {
             PGPipelineEntry pe = namedPortals.get(namedPortal);
             if (pe == null) {
@@ -694,7 +694,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
     }
 
-    private void lookupPipelineEntryForNamedStatement(long lo, long hi) throws BadProtocolException {
+    private void lookupPipelineEntryForNamedStatement(long lo, long hi) throws MessageProcessingException {
         @Nullable Utf8Sequence namedStatement = getUtf8NamedStatement(lo, hi);
         if (namedStatement != null) {
             PGPipelineEntry pe = namedStatements.get(namedStatement);
@@ -707,7 +707,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
     }
 
-    private void msgBind(long lo, long msgLimit) throws BadProtocolException {
+    private void msgBind(long lo, long msgLimit) throws MessageProcessingException {
         if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
             return;
         }
@@ -839,7 +839,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         pipelineCurrentEntry.msgBindCopySelectFormatCodes(lo, columnFormatCodeCount);
     }
 
-    private void msgClose(long lo, long msgLimit) throws BadProtocolException {
+    private void msgClose(long lo, long msgLimit) throws MessageProcessingException {
         // 'close' message can either:
         // - close the named entity, portal or statement
         final byte type = Unsafe.getUnsafe().getByte(lo);
@@ -885,7 +885,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         pipelineCurrentEntry.setStateClosed(true, isStatementClose);
     }
 
-    private void msgDescribe(long lo, long msgLimit) throws BadProtocolException {
+    private void msgDescribe(long lo, long msgLimit) throws MessageProcessingException {
         if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
             return;
         }
@@ -912,7 +912,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         pipelineCurrentEntry.setStateDesc(isPortal ? PGPipelineEntry.SYNC_DESC_ROW_DESCRIPTION : PGPipelineEntry.SYNC_DESC_PARAMETER_DESCRIPTION);
     }
 
-    private void msgExecute(long lo, long msgLimit) throws BadProtocolException {
+    private void msgExecute(long lo, long msgLimit) throws MessageProcessingException {
         if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
             return;
         }
@@ -961,17 +961,17 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         responseUtf8Sink.sendBufferAndReset();
     }
 
-    private BadProtocolException msgKaput() {
+    private MessageProcessingException msgKaput() {
         // The error message and position is to be reported to the client
         // To do that, we store message on the pipeline entry, if it exists and
         // make sure this entry is added to the pipeline (eventually)
         if (pipelineCurrentEntry == null) {
             pipelineCurrentEntry = entryPool.next();
         }
-        return BadProtocolException.instance(pipelineCurrentEntry);
+        return MessageProcessingException.instance(pipelineCurrentEntry);
     }
 
-    private void msgParse(long address, long lo, long msgLimit) throws BadProtocolException {
+    private void msgParse(long address, long lo, long msgLimit) throws MessageProcessingException {
         if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
             return;
         }
@@ -1079,7 +1079,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         msgParseCreateNamedStatement(namedStatement);
     }
 
-    private void msgParseCreateNamedStatement(Utf8Sequence namedStatement) throws BadProtocolException {
+    private void msgParseCreateNamedStatement(Utf8Sequence namedStatement) throws MessageProcessingException {
         if (namedStatement != null) {
             LOG.info().$("create prepared statement [name=").$(namedStatement).I$();
             int index = namedStatements.keyIndex(namedStatement);
@@ -1099,7 +1099,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     }
 
     // processes one or more queries (batch/script). "Simple Query" in PostgreSQL docs.
-    private void msgQuery(long lo, long limit) throws BadProtocolException, PeerIsSlowToReadException, QueryPausedException, PeerDisconnectedException {
+    private void msgQuery(long lo, long limit) throws MessageProcessingException, PeerIsSlowToReadException, QueryPausedException, PeerDisconnectedException {
         if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
             return;
         }
@@ -1135,7 +1135,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     pipelineCurrentEntry = entryPool.next();
                 }
                 pipelineCurrentEntry.commit(pendingWriters);
-            } catch (BadProtocolException ignore) {
+            } catch (MessageProcessingException ignore) {
                 // the failed commit will have already labelled the pipeline entry as error
                 // the intent of the exception is to abort message processing, but this is sync.
                 // Sync cannot be aborted. This is the method that will report an error to the client
@@ -1188,7 +1188,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
      * any additional bytes received
      */
     private void parseMessage(long address, int len)
-            throws BadProtocolException, PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException {
+            throws MessageProcessingException, PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException {
         // we will wait until we receive the entire header
         if (len < PREFIXED_MESSAGE_HEADER_LEN) {
             // we need to be able to read header and length
@@ -1205,7 +1205,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     .$(", recvBufferWriteOffset=").$(recvBufferWriteOffset)
                     .$(", totalReceived=").$(totalReceived)
                     .I$();
-            throw BadProtocolException.INSTANCE;
+            throw MessageProcessingException.INSTANCE;
         }
 
         // msgLen does not take into account type byte
@@ -1490,7 +1490,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         return n;
     }
 
-    void recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
+    void recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, MessageProcessingException {
         final int remaining = (int) (recvBufferSize - recvBufferWriteOffset);
 
         assertBufferSize(remaining > 0);

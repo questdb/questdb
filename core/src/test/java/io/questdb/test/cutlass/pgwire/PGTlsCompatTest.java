@@ -39,29 +39,15 @@ import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
-import java.util.Collection;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 
-@RunWith(Parameterized.class)
 public class PGTlsCompatTest extends BasePGTest {
-
-    public PGTlsCompatTest(LegacyMode legacyMode) {
-        super(legacyMode);
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> testParams() {
-        return legacyModeParams();
-    }
 
     @Test
     public void testTlsSessionGetsCreatedWhenSocketSupportsTls() throws Exception {
@@ -146,7 +132,6 @@ public class PGTlsCompatTest extends BasePGTest {
 
     @Test
     public void testTlsSessionRequestErrors() throws Exception {
-        Assume.assumeFalse(legacyMode);
         assertMemoryLeak(() -> {
             final AtomicInteger createTlsSessionCalls = new AtomicInteger();
             final AtomicInteger tlsIOCalls = new AtomicInteger();

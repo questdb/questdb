@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.auth.UsernamePasswordMatcher;
-import io.questdb.cutlass.pgwire.BadProtocolException;
+import io.questdb.cutlass.pgwire.MessageProcessingException;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.OptionsListener;
 import io.questdb.cutlass.pgwire.PGKeywords;
@@ -224,7 +224,7 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
                         assert false;
                 }
             }
-        } catch (BadProtocolException e) {
+        } catch (MessageProcessingException e) {
             throw AuthenticatorException.INSTANCE;
         }
     }
@@ -373,7 +373,7 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
         }
     }
 
-    private int processInitMessage() throws BadProtocolException {
+    private int processInitMessage() throws MessageProcessingException {
         int availableToRead = availableToRead();
         if (availableToRead < Integer.BYTES) { // size of message
             return SocketAuthenticator.NEEDS_READ;
@@ -406,12 +406,12 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
                 break;
             default:
                 LOG.error().$("unknown init message [protocol=").$(protocol).$(']').$();
-                throw BadProtocolException.INSTANCE;
+                throw MessageProcessingException.INSTANCE;
         }
         return SocketAuthenticator.OK;
     }
 
-    private int processPasswordMessage() throws BadProtocolException {
+    private int processPasswordMessage() throws MessageProcessingException {
         int availableToRead = availableToRead();
         if (availableToRead < 1 + Integer.BYTES) { // msgType + msgLen
             return SocketAuthenticator.NEEDS_READ;
@@ -441,7 +441,7 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
         return SocketAuthenticator.OK;
     }
 
-    private void processStartupMessage(int msgLen) throws BadProtocolException {
+    private void processStartupMessage(int msgLen) throws MessageProcessingException {
         long msgLimit = (recvBufStart + msgLen);
         long lo = recvBufReadPos;
 

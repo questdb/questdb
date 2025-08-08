@@ -33,18 +33,18 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class BadProtocolException extends Exception implements FlyweightMessageContainer {
-    public static final BadProtocolException INSTANCE = new BadProtocolException();
+public class MessageProcessingException extends Exception implements FlyweightMessageContainer {
+    public static final MessageProcessingException INSTANCE = new MessageProcessingException();
 
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
-    private static final io.questdb.std.ThreadLocal<BadProtocolException> tlException = new ThreadLocal<>(BadProtocolException::new);
+    private static final io.questdb.std.ThreadLocal<MessageProcessingException> tlException = new ThreadLocal<>(MessageProcessingException::new);
     private StringSink message;
     private PGPipelineEntry pe;
 
-    public static BadProtocolException instance(@NotNull PGPipelineEntry pe) {
-        BadProtocolException ex = tlException.get();
+    public static MessageProcessingException instance(@NotNull PGPipelineEntry pe) {
+        MessageProcessingException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
-        assert (ex = new BadProtocolException()) != null;
+        assert (ex = new MessageProcessingException()) != null;
         ex.message = pe.getErrorMessageSink();
         ex.pe = pe;
         return ex;
@@ -63,7 +63,7 @@ public class BadProtocolException extends Exception implements FlyweightMessageC
         return result;
     }
 
-    public BadProtocolException put(Throwable e) {
+    public MessageProcessingException put(Throwable e) {
         if (e instanceof FlyweightMessageContainer) {
             message.put(((FlyweightMessageContainer) e).getFlyweightMessage());
             pe.setErrorMessagePosition(((FlyweightMessageContainer) e).getPosition());
@@ -73,37 +73,37 @@ public class BadProtocolException extends Exception implements FlyweightMessageC
         return this;
     }
 
-    public BadProtocolException put(long value) {
+    public MessageProcessingException put(long value) {
         message.put(value);
         return this;
     }
 
-    public BadProtocolException put(double value) {
+    public MessageProcessingException put(double value) {
         message.put(value);
         return this;
     }
 
-    public BadProtocolException put(@Nullable CharSequence cs) {
+    public MessageProcessingException put(@Nullable CharSequence cs) {
         message.put(cs);
         return this;
     }
 
-    public BadProtocolException put(@Nullable Utf8Sequence us) {
+    public MessageProcessingException put(@Nullable Utf8Sequence us) {
         message.put(us);
         return this;
     }
 
-    public BadProtocolException put(Sinkable sinkable) {
+    public MessageProcessingException put(Sinkable sinkable) {
         sinkable.toSink(message);
         return this;
     }
 
-    public BadProtocolException put(char c) {
+    public MessageProcessingException put(char c) {
         message.put(c);
         return this;
     }
 
-    public BadProtocolException put(boolean value) {
+    public MessageProcessingException put(boolean value) {
         message.put(value);
         return this;
     }

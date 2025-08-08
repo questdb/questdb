@@ -29,7 +29,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.SocketAuthenticator;
-import io.questdb.cutlass.pgwire.BadProtocolException;
+import io.questdb.cutlass.pgwire.MessageProcessingException;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
@@ -119,7 +119,7 @@ public class PGWireServerModern implements IPGWireServer {
                                         ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV
                                         : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND
                         );
-                    } catch (BadProtocolException e) {
+                    } catch (MessageProcessingException e) {
                         LOG.error().$("protocol issue [err: `").$safe(e.getFlyweightMessage()).$("`]").$();
                         dispatcher.disconnect(context, DISCONNECT_REASON_PROTOCOL_VIOLATION);
                     } catch (Throwable e) { // must remain last in catch list!
