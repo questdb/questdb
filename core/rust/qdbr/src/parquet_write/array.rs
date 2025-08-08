@@ -580,7 +580,7 @@ pub struct Levels {
 }
 
 impl Levels {
-    fn is_empty(&mut self) -> bool {
+    fn is_empty(&self) -> bool {
         return self.rep_levels.is_empty();
     }
 
