@@ -68,6 +68,8 @@ import java.io.Closeable;
  * See different implementations of the interface for the storage details.
  */
 public interface TableTransactionLogFile extends Closeable {
+    // N.B. Replication uses the last 8 bytes of this reserved range to store
+    //      the txn for the last "written" txn, before it updates the readable "max_txn" field.
     int HEADER_RESERVED = 6 * Long.BYTES + Integer.BYTES;
     long MAX_TXN_OFFSET_64 = Integer.BYTES;
     int STRUCTURAL_CHANGE_WAL_ID = -1;
