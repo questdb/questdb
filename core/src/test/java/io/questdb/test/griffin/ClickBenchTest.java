@@ -42,7 +42,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             "    EventTime timestamp,\n" +
             "    Eventdate timestamp,\n" +
             "    CounterID int,\n" +
-            "    ClientIP IPv4,\n" +
+            "    ClientIP ipv4,\n" +
             "    RegionID int,\n" +
             "    UserID long,\n" +
             "    CounterClass byte,\n" +
