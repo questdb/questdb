@@ -129,7 +129,7 @@ sonuçları:
 
 - [QuestDB dokümantasyon:](https://questdb.io/docs/introduction/) QuestDB'nin
   nasıl çalıştıracağını ve yapılandırılacağını anlayın.
-- [Tutorials:](https://questdb.io/tutorial/) QuestDB ile nelerin
+- [Tutorials:](https://questdb.com/blog/?tag=tutorial) QuestDB ile nelerin
   mümkün olduğunu adım adım öğrenin.
 - [Ürün roadmap:](https://github.com/questdb/questdb/projects) Yeni gelecek sürümler
   için planımıza göz atın.
@@ -145,10 +145,10 @@ sonuçları:
 
 ### 🚢 QuestDB'yi hazır edin
 
-- [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
-- [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)
-- [Official Docker image](https://questdb.io/docs/get-started/docker)
-- [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean)
+- [AWS AMI](https://questdb.com/docs/deployment/aws/)
+- [Google Cloud Platform](https://questdb.com/docs/deployment/gcp/)
+- [Official Docker image](https://questdb.com/docs/quick-start/#docker)
+- [DigitalOcean droplets](https://questdb.com/docs/deployment/digital-ocean/)
 - [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)
 
 ## Katkıda bulunun
