@@ -37,9 +37,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cutlass.pgwire.DefaultCircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.IPGWireServer;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlException;
@@ -211,7 +211,7 @@ public class PGJobContextTest extends BasePGTest {
         stringTypeName = ColumnType.nameOf(ColumnType.STRING);
     }
 
-    @Parameters(name = "{0}, {1}")
+    @Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
                 {WalMode.WITH_WAL},
@@ -2504,7 +2504,7 @@ if __name__ == "__main__":
     @Test
     public void testBlobOverLimit() throws Exception {
         skipOnWalRun(); // non-partitioned
-        PGWireConfiguration configuration = new Port0PGWireConfiguration() {
+        PGConfiguration configuration = new Port0PGConfiguration() {
             @Override
             public int getMaxBlobSizeOnQuery() {
                 return 150;
@@ -2513,7 +2513,7 @@ if __name__ == "__main__":
 
         assertMemoryLeak(() -> {
             try (
-                    final IPGWireServer server = createPGServer(configuration);
+                    final PGServer server = createPGServer(configuration);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -2674,7 +2674,7 @@ if __name__ == "__main__":
             mayDrainWalQueue();
 
             try (
-                    final IPGWireServer server = createPGServer(2);
+                    final PGServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -3203,7 +3203,7 @@ if __name__ == "__main__":
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                new Port0PGWireConfiguration()
+                new Port0PGConfiguration()
         );
     }
 
@@ -5411,7 +5411,7 @@ if __name__ == "__main__":
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                new Port0PGWireConfiguration()
+                new Port0PGConfiguration()
         );
     }
 
@@ -6504,7 +6504,7 @@ nodejs code:
                 ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
                 "<31000000043200000004540000001a00013100000000000001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
                 ">5800000004\n";
-        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration() {
+        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGConfiguration() {
             @Override
             public String getDefaultPassword() {
                 return "oh";
@@ -6812,7 +6812,7 @@ nodejs code:
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                new Port0PGWireConfiguration()
+                new Port0PGConfiguration()
         );
     }
 
@@ -6823,7 +6823,7 @@ nodejs code:
                 NetworkFacadeImpl.INSTANCE,
                 ">0000004c00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                         "<!!",
-                new Port0PGWireConfiguration()
+                new Port0PGConfiguration()
         );
     }
 
@@ -6834,7 +6834,7 @@ nodejs code:
                 NetworkFacadeImpl.INSTANCE,
                 ">0000001e00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                         "<!!",
-                new Port0PGWireConfiguration()
+                new Port0PGConfiguration()
         );
     }
 
@@ -6996,7 +6996,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final IPGWireServer server = createPGServer(1);
+                    final PGServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -7031,7 +7031,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final IPGWireServer server = createPGServer(1);
+                    final PGServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -7074,7 +7074,9 @@ nodejs code:
                     // and close them when they are GCed
                     statements.add(stmt);
                     try (ResultSet ignore = stmt.executeQuery("select * from x")) {
-                        // consume result set
+                        while (ignore.next()) {
+                            // ignore
+                        }
                     }
                 }
                 Assert.fail("Expected exception");
@@ -7325,7 +7327,7 @@ nodejs code:
                             ") timestamp (timestamp)"
             );
             try (
-                    final IPGWireServer server = createPGServer(new Port0PGWireConfiguration(), true);
+                    final PGServer server = createPGServer(new Port0PGConfiguration(), true);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -7609,14 +7611,14 @@ nodejs code:
                         "<310000000432000000044300000008534554005a0000000549\n" +
                         ">50000000cd0073656c65637420782c24312c24322c24332c24342c24352c24362c24372c24382c24392c2431302c2431312c2431322c2431332c2431342c2431352c2431362c2431372c2431382c2431392c2432302c2432312c2432322066726f6d206c6f6e675f73657175656e63652835290000160000001700000014000002bd000002bd0000001500000010000004130000041300000000000000000000001700000014000002bc000002bd000000150000001000000413000004130000043a000000000000045a000004a04200000123000000160000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001600000001340000000331323300000004352e343300000007302e353637383900000002993100000004545255450000000568656c6c6f0000001dd0b3d180d183d0bfd0bfd0b020d182d183d180d0b8d181d182d0bed0b20000000e313937302d30312d3031202b30300000001a313937302d30382d32302031313a33333a32302e3033332b3030ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000001a313937302d30312d30312030303a30353a30302e3031312b30300000001a313937302d30312d30312030303a30383a32302e3032332b3030000044000000065000450000000900000000005300000004\n" +
                         "<4500000050433030303030004d696e76616c6964205554463820656e636f64696e6720666f7220737472696e672076616c7565205b7661726961626c65496e6465783d345d00534552524f5200503100005a0000000549\n";
-        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration());
+        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGConfiguration());
     }
 
     @Test
     public void testPreparedStatementParams() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            final PGWireConfiguration conf = new Port0PGWireConfiguration() {
+            final PGConfiguration conf = new Port0PGConfiguration() {
                 @Override
                 public int getWorkerCount() {
                     return 4;
@@ -7624,7 +7626,7 @@ nodejs code:
             };
 
             final WorkerPool workerPool = new TestWorkerPool(4, conf.getMetrics());
-            try (final IPGWireServer server = createPGWireServer(
+            try (final PGServer server = createPGWireServer(
                     conf,
                     engine,
                     workerPool
@@ -8051,7 +8053,7 @@ nodejs code:
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                new Port0PGWireConfiguration()
+                new Port0PGConfiguration()
         );
     }
 
@@ -8100,7 +8102,7 @@ nodejs code:
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                new Port0PGWireConfiguration()
+                new Port0PGConfiguration()
         );
     }
 
@@ -8409,7 +8411,7 @@ nodejs code:
     public void testQueryEventuallySucceedsOnDataUnavailableSmallSendBuffer() throws Exception {
         skipOnWalRun(); // test doesn't use tables
         assertMemoryLeak(() -> {
-            PGWireConfiguration configuration = new Port0PGWireConfiguration() {
+            PGConfiguration configuration = new Port0PGConfiguration() {
                 @Override
                 public int getSendBufferSize() {
                     return 192;
@@ -8417,7 +8419,7 @@ nodejs code:
             };
 
             try (
-                    IPGWireServer server = createPGServer(configuration);
+                    PGServer server = createPGServer(configuration);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -8778,7 +8780,7 @@ nodejs code:
     public void testRowLimitNotResumed() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final IPGWireServer server = createPGServer(1);
+                    final PGServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -8796,7 +8798,7 @@ nodejs code:
             mayDrainWalQueue();
 
             try (
-                    final IPGWireServer server = createPGServer(1);
+                    final PGServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -9486,7 +9488,7 @@ create table tab as (
         selectCacheBlockCount = 100; // large cache, must be larger than 'cairo.sql.max.recompile.attempts'
         assertMemoryLeak(() -> {
             try (
-                    final IPGWireServer server = createPGServer(2);
+                    final PGServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -9816,7 +9818,7 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             DelayingNetworkFacade nf = new DelayingNetworkFacade();
-            PGWireConfiguration configuration = new Port0PGWireConfiguration() {
+            PGConfiguration configuration = new Port0PGConfiguration() {
                 @Override
                 public NetworkFacade getNetworkFacade() {
                     return nf;
@@ -9828,7 +9830,7 @@ create table tab as (
                 }
             };
             try (
-                    final IPGWireServer server = createPGServer(configuration);
+                    final PGServer server = createPGServer(configuration);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -9855,14 +9857,14 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             DelayingNetworkFacade nf = new DelayingNetworkFacade();
-            PGWireConfiguration configuration = new Port0PGWireConfiguration() {
+            PGConfiguration configuration = new Port0PGConfiguration() {
                 @Override
                 public NetworkFacade getNetworkFacade() {
                     return nf;
                 }
             };
             try (
-                    final IPGWireServer server = createPGServer(configuration);
+                    final PGServer server = createPGServer(configuration);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -10374,7 +10376,7 @@ create table tab as (
                         "<3100000004740000000a000100000017540000001b0001243100000000000001000000170004ffffffff00005a0000000549\n" +
                         ">42000000200073716c785f735f310000010001000100000004000000010001000145000000090000000000430000000650005300000004\n" +
                         "<3200000004440000000e00010000000400000001440000000e00010000000400000001430000000d53454c45435420320033000000045a0000000549\n";
-        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration());
+        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGConfiguration());
     }
 
     @Test
@@ -10862,7 +10864,7 @@ create table tab as (
     public void testUpdateNoAutoCommit() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final IPGWireServer server = createPGServer(1);
+                    final PGServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -11328,7 +11330,7 @@ create table tab as (
                         ">5800000004\n";
 
         assertHexScript(
-                NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration()
+                NetworkFacadeImpl.INSTANCE, script, new Port0PGConfiguration()
         );
     }
 
@@ -11390,7 +11392,7 @@ create table tab as (
                         "<5a0000000549\n";
 
         assertHexScript(
-                NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration()
+                NetworkFacadeImpl.INSTANCE, script, new Port0PGConfiguration()
         );
     }
 
@@ -11525,7 +11527,7 @@ create table tab as (
     private void assertHexScript(
             NetworkFacade clientNf,
             String script,
-            PGWireConfiguration configuration
+            PGConfiguration configuration
     ) throws Exception {
 
         /*
@@ -11557,7 +11559,7 @@ create table tab as (
 
         assertMemoryLeak(() -> {
             try (
-                    IPGWireServer server = createPGServer(configuration, true);
+                    PGServer server = createPGServer(configuration, true);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -11665,10 +11667,10 @@ create table tab as (
         }
     }
 
-    private IPGWireServer createPGServer(SOCountDownLatch queryScheduledCount) {
+    private PGServer createPGServer(SOCountDownLatch queryScheduledCount) {
         int workerCount = 2;
 
-        final PGWireConfiguration conf = new Port0PGWireConfiguration() {
+        final PGConfiguration conf = new Port0PGConfiguration() {
 
             @Override
             public int getWorkerCount() {
@@ -11677,7 +11679,7 @@ create table tab as (
         };
 
         WorkerPool workerPool = new TestWorkerPool(2, conf.getMetrics());
-        DefaultCircuitBreakerRegistry registry = new DefaultCircuitBreakerRegistry(conf, engine.getConfiguration());
+        DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(conf, engine.getConfiguration());
         try {
             return createPGWireServer(
                     conf,
@@ -11779,7 +11781,7 @@ create table tab as (
         AtomicLong errors = new AtomicLong();
         int workerCount = 2;
 
-        final PGWireConfiguration conf = new Port0PGWireConfiguration() {
+        final PGConfiguration conf = new Port0PGConfiguration() {
 
             @Override
             public int getWorkerCount() {
@@ -11788,12 +11790,12 @@ create table tab as (
         };
 
         try (
-                DefaultCircuitBreakerRegistry registry = new DefaultCircuitBreakerRegistry(conf, engine.getConfiguration());
+                DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(conf, engine.getConfiguration());
                 WorkerPool pool = new WorkerPool(conf)
         ) {
             pool.assign(engine.getEngineMaintenanceJob());
             try (
-                    IPGWireServer server = createPGWireServer(
+                    PGServer server = createPGWireServer(
                             conf,
                             engine,
                             pool,
@@ -12177,14 +12179,14 @@ create table tab as (
     private void testDisconnectDuringAuth0(int allowedSendCount) throws Exception {
         DisconnectOnSendNetworkFacade nf = new DisconnectOnSendNetworkFacade(allowedSendCount);
         assertMemoryLeak(() -> {
-            PGWireConfiguration configuration = new Port0PGWireConfiguration() {
+            PGConfiguration configuration = new Port0PGConfiguration() {
                 @Override
                 public NetworkFacade getNetworkFacade() {
                     return nf;
                 }
             };
             try (
-                    final IPGWireServer server = createPGServer(configuration);
+                    final PGServer server = createPGServer(configuration);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -12374,7 +12376,7 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    IPGWireServer server = createPGServer(1);
+                    PGServer server = createPGServer(1);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -12430,7 +12432,7 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    IPGWireServer server = createPGServer(1);
+                    PGServer server = createPGServer(1);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -12470,7 +12472,7 @@ create table tab as (
     private void testUpdateAsync(SOCountDownLatch queryScheduledCount, OnTickAction onTick, String expected) throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final IPGWireServer server = createPGServer(queryScheduledCount);
+                    final PGServer server = createPGServer(queryScheduledCount);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);

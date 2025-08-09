@@ -24,19 +24,19 @@
 
 package io.questdb.test.cutlass.pgwire;
 
-import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
+import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
 import io.questdb.std.Rnd;
 
 
-public class Port0PGWireConfiguration extends DefaultPGWireConfiguration {
+public class Port0PGConfiguration extends DefaultPGConfiguration {
     private static final String DEBUG_PGWIRE_PORT = "QDB_DEBUG_PGWIRE_PORT";
     int connectionLimit;
 
-    public Port0PGWireConfiguration() {
+    public Port0PGConfiguration() {
         this(-1);
     }
 
-    public Port0PGWireConfiguration(int connectionLimit) {
+    public Port0PGConfiguration(int connectionLimit) {
         this.connectionLimit = connectionLimit;
     }
 

@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.modern;
+package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.IntList;
@@ -35,7 +35,7 @@ import io.questdb.std.Transient;
  * Unlike other TypesAnd* classes, this one doesn't self-return to a pool. That's because
  * it's used for multithreaded calls to {@link io.questdb.std.ConcurrentAssociativeCache}.
  */
-public class TypesAndSelectModern implements QuietCloseable, TypeContainer {
+public class TypesAndSelect implements QuietCloseable, TypeContainer {
     // The client parameter types as they sent it to us when SQL was cached
     // this could be 0 or more parameter types. These types are used
     // to validate cache entries against client requests. For example, when
@@ -55,7 +55,7 @@ public class TypesAndSelectModern implements QuietCloseable, TypeContainer {
     private final short sqlType;
     private RecordCursorFactory factory;
 
-    public TypesAndSelectModern(
+    public TypesAndSelect(
             RecordCursorFactory factory,
             short sqlType,
             String sqlTag,

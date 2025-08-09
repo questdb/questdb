@@ -24,38 +24,14 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.pgwire.modern.PGWireServerModern;
-import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.mp.WorkerPool;
-import io.questdb.std.ObjectFactory;
-import org.jetbrains.annotations.TestOnly;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cutlass.auth.SocketAuthenticator;
 
-import java.io.Closeable;
-
-public interface IPGWireServer extends Closeable {
-
-    static IPGWireServer newInstance(
-            PGWireConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool networkSharedPool,
-            CircuitBreakerRegistry registry,
-            ObjectFactory<SqlExecutionContextImpl> executionContextFactory
-    ) {
-        return new PGWireServerModern(configuration, cairoEngine, networkSharedPool, registry, executionContextFactory);
-    }
-
-    void clearSelectCache();
-
-    @Override
-    void close();
-
-    int getPort();
-
-    @TestOnly
-    WorkerPool getWorkerPool();
-
-    boolean isListening();
-
-    void resetQueryCache();
+public interface PGAuthenticatorFactory {
+    SocketAuthenticator getPgWireAuthenticator(
+            PGConfiguration configuration,
+            NetworkSqlExecutionCircuitBreaker circuitBreaker,
+            PGCircuitBreakerRegistry registry,
+            OptionsListener optionsListener
+    );
 }

@@ -56,7 +56,7 @@ import io.questdb.cutlass.line.LineTimestampAdapter;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
@@ -353,7 +353,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int partitionEncoderParquetVersion;
     private final boolean pgEnabled;
     private final PropPGWireConcurrentCacheConfiguration pgWireConcurrentCacheConfiguration = new PropPGWireConcurrentCacheConfiguration();
-    private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
+    private final PGConfiguration pgConfiguration = new PropPGConfiguration();
     private final String posthogApiKey;
     private final boolean posthogEnabled;
     private final int preferencesStringPoolCapacity;
@@ -1858,8 +1858,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public PGWireConfiguration getPGWireConfiguration() {
-        return pgWireConfiguration;
+    public PGConfiguration getPGWireConfiguration() {
+        return pgConfiguration;
     }
 
     @Override
@@ -5241,7 +5241,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropPGWireConfiguration implements PGWireConfiguration {
+    private class PropPGConfiguration implements PGConfiguration {
 
         @Override
         public long getAcceptLoopTimeout() {

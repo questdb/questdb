@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.modern;
+package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.std.AbstractSelfReturningObject;
@@ -32,7 +32,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.WeakSelfReturningObjectPool;
 
-public class TypesAndInsertModern extends AbstractSelfReturningObject<TypesAndInsertModern> implements TypeContainer {
+public class TypesAndInsert extends AbstractSelfReturningObject<TypesAndInsert> implements TypeContainer {
     // Parameter types as received via "P" message. The client is liable to send
     // arbitrary number of parameters, which does not have to match the number of actual
     // bind variable used in the INSERT SQL. These are PostgresSQL OIDs in BigEndian.
@@ -43,12 +43,11 @@ public class TypesAndInsertModern extends AbstractSelfReturningObject<TypesAndIn
     //                   types SQL Compiled derived from the SQL. Type from the PARSE message have a priority.
     private final LongList pgOutParameterTypes = new LongList();
     private boolean closing;
-    private boolean hasBindVariables;
     private InsertOperation insert;
     private String sqlTag;
     private short sqlType;
 
-    public TypesAndInsertModern(WeakSelfReturningObjectPool<TypesAndInsertModern> parentPool) {
+    public TypesAndInsert(WeakSelfReturningObjectPool<TypesAndInsert> parentPool) {
         super(parentPool);
     }
 
@@ -86,10 +85,6 @@ public class TypesAndInsertModern extends AbstractSelfReturningObject<TypesAndIn
         return sqlType;
     }
 
-    public boolean hasBindVariables() {
-        return hasBindVariables;
-    }
-
     public void of(
             InsertOperation insert,
             short sqlType,
@@ -100,7 +95,6 @@ public class TypesAndInsertModern extends AbstractSelfReturningObject<TypesAndIn
         this.insert = insert;
         this.sqlType = sqlType;
         this.sqlTag = sqlTag;
-        this.hasBindVariables = pgOutParameterTypes.size() > 0;
         this.pgInParameterTypeOIDs.addAll(pgInParameterTypeOIDs);
         this.pgOutParameterTypes.addAll(pgOutParameterTypes);
     }

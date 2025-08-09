@@ -22,13 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.modern;
+package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cutlass.pgwire.MessageProcessingException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Long256;
@@ -84,7 +83,7 @@ class PGUtils {
     /**
      * Returns the size of the serialized value in bytes, or -1 if the type is not supported.
      *
-     * @throws MessageProcessingException if the binary value exceeds maxBlobSize
+     * @throws PGMessageProcessingException if the binary value exceeds maxBlobSize
      */
     public static int calculateColumnBinSize(
             PGPipelineEntry pipelineEntry,
@@ -94,7 +93,7 @@ class PGUtils {
             int geohashSize,
             long maxBlobSize,
             int arrayResumePoint
-    ) throws MessageProcessingException {
+    ) throws PGMessageProcessingException {
         final short typeTag = ColumnType.tagOf(columnType);
         switch (typeTag) {
             case ColumnType.NULL:
@@ -161,7 +160,7 @@ class PGUtils {
                     if (blobSize < maxBlobSize) {
                         return Integer.BYTES + (int) blobSize;
                     } else {
-                        throw MessageProcessingException.instance(pipelineEntry)
+                        throw PGMessageProcessingException.instance(pipelineEntry)
                                 .put("blob is too large [blobSize=").put(blobSize)
                                 .put(", maxBlobSize=").put(maxBlobSize)
                                 .put(", columnIndex=").put(columnIndex)

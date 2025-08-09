@@ -28,12 +28,12 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.DefaultCircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
-import io.questdb.cutlass.pgwire.HexTestsCircuitBreakRegistry;
-import io.questdb.cutlass.pgwire.IPGWireServer;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
+import io.questdb.cutlass.pgwire.PGCircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.pgwire.PGHexTestsCircuitBreakRegistry;
+import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
@@ -74,7 +74,7 @@ import java.util.Properties;
 import java.util.TimeZone;
 
 import static io.questdb.std.Numbers.hexDigits;
-import static io.questdb.test.cutlass.pgwire.Port0PGWireConfiguration.getPGWirePort;
+import static io.questdb.test.cutlass.pgwire.Port0PGConfiguration.getPGWirePort;
 
 public abstract class BasePGTest extends AbstractCairoTest {
 
@@ -99,21 +99,21 @@ public abstract class BasePGTest extends AbstractCairoTest {
         assertResultSet(null, expected, sink, rs);
     }
 
-    public static IPGWireServer createPGWireServer(
-            PGWireConfiguration configuration,
+    public static PGServer createPGWireServer(
+            PGConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
-            CircuitBreakerRegistry registry,
+            PGCircuitBreakerRegistry registry,
             ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
     ) {
         if (!configuration.isEnabled()) {
             return null;
         }
-        return IPGWireServer.newInstance(configuration, cairoEngine, workerPool, registry, executionContextObjectFactory);
+        return new PGServer(configuration, cairoEngine, workerPool, registry, executionContextObjectFactory);
     }
 
-    public static IPGWireServer createPGWireServer(
-            PGWireConfiguration configuration,
+    public static PGServer createPGWireServer(
+            PGConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
             boolean fixedClientIdAndSecret
@@ -122,21 +122,15 @@ public abstract class BasePGTest extends AbstractCairoTest {
             return null;
         }
 
-        CircuitBreakerRegistry registry = fixedClientIdAndSecret
-                ? HexTestsCircuitBreakRegistry.INSTANCE
-                : new DefaultCircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
+        PGCircuitBreakerRegistry registry = fixedClientIdAndSecret
+                ? PGHexTestsCircuitBreakRegistry.INSTANCE
+                : new DefaultPGCircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
 
-        return IPGWireServer.newInstance(
-                configuration,
-                cairoEngine,
-                workerPool,
-                registry,
-                () -> new SqlExecutionContextImpl(cairoEngine, sharedQueryWorkerCount)
-        );
+        return new PGServer(configuration, cairoEngine, workerPool, registry, () -> new SqlExecutionContextImpl(cairoEngine, sharedQueryWorkerCount));
     }
 
-    public static IPGWireServer createPGWireServer(
-            PGWireConfiguration configuration,
+    public static PGServer createPGWireServer(
+            PGConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool
     ) {
@@ -464,7 +458,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
         try {
             assertMemoryLeak(() -> {
                 try (
-                        final IPGWireServer server = createPGServer(2);
+                        final PGServer server = createPGServer(2);
                         WorkerPool workerPool = server.getWorkerPool()
                 ) {
                     workerPool.start(LOG);
@@ -522,12 +516,12 @@ public abstract class BasePGTest extends AbstractCairoTest {
         assertWithPgServer(Mode.EXTENDED, true, -1, runnable, setUpRunnable);
     }
 
-    protected IPGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {
+    protected PGServer createPGServer(PGConfiguration configuration) throws SqlException {
         return createPGServer(configuration, false);
     }
 
-    protected IPGWireServer createPGServer(
-            PGWireConfiguration configuration,
+    protected PGServer createPGServer(
+            PGConfiguration configuration,
             boolean fixedClientIdAndSecret
     ) throws SqlException {
         TestWorkerPool workerPool = new TestWorkerPool(configuration);
@@ -544,7 +538,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
         );
     }
 
-    protected IPGWireServer createPGServer(int workerCount) throws SqlException {
+    protected PGServer createPGServer(int workerCount) throws SqlException {
 
         final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
@@ -574,7 +568,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
             }
         };
 
-        final PGWireConfiguration conf = new Port0PGWireConfiguration(-1) {
+        final PGConfiguration conf = new Port0PGConfiguration(-1) {
 
             @Override
             public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
@@ -684,8 +678,8 @@ public abstract class BasePGTest extends AbstractCairoTest {
     }
 
     @NotNull
-    protected DefaultPGWireConfiguration getStdPgWireConfig() {
-        return new DefaultPGWireConfiguration() {
+    protected DefaultPGConfiguration getStdPgWireConfig() {
+        return new DefaultPGConfiguration() {
             @Override
             public int getBindPort() {
                 return getPGWirePort();
@@ -699,8 +693,8 @@ public abstract class BasePGTest extends AbstractCairoTest {
     }
 
     @NotNull
-    protected DefaultPGWireConfiguration getStdPgWireConfigAltCreds() {
-        return new DefaultPGWireConfiguration() {
+    protected DefaultPGConfiguration getStdPgWireConfigAltCreds() {
+        return new DefaultPGConfiguration() {
             @Override
             public int getBindPort() {
                 return getPGWirePort();

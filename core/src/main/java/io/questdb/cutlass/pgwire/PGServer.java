@@ -22,17 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.modern;
+package io.questdb.cutlass.pgwire;
 
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.SocketAuthenticator;
-import io.questdb.cutlass.pgwire.MessageProcessingException;
-import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.IPGWireServer;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -56,23 +52,25 @@ import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
+import java.io.Closeable;
+
 import static io.questdb.network.IODispatcher.*;
 
-public class PGWireServerModern implements IPGWireServer {
-    private static final Log LOG = LogFactory.getLog(PGWireServerModern.class);
-    private static final NoOpAssociativeCache<TypesAndSelectModern> NO_OP_CACHE = new NoOpAssociativeCache<>();
+public class PGServer implements Closeable {
+    private static final Log LOG = LogFactory.getLog(PGServer.class);
+    private static final NoOpAssociativeCache<TypesAndSelect> NO_OP_CACHE = new NoOpAssociativeCache<>();
     private final PGConnectionContextFactory contextFactory;
-    private final IODispatcher<PGConnectionContextModern> dispatcher;
+    private final IODispatcher<PGConnectionContext> dispatcher;
     private final Metrics metrics;
-    private final CircuitBreakerRegistry registry;
-    private final AssociativeCache<TypesAndSelectModern> typesAndSelectCache;
+    private final PGCircuitBreakerRegistry registry;
+    private final AssociativeCache<TypesAndSelect> typesAndSelectCache;
     private final WorkerPool sharedPoolNetwork;
 
-    public PGWireServerModern(
-            PGWireConfiguration configuration,
+    public PGServer(
+            PGConfiguration configuration,
             CairoEngine engine,
             WorkerPool sharedPoolNetwork,
-            CircuitBreakerRegistry registry,
+            PGCircuitBreakerRegistry registry,
             ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
     ) {
         this.metrics = engine.getMetrics();
@@ -96,7 +94,7 @@ public class PGWireServerModern implements IPGWireServer {
 
         for (int i = 0, n = sharedPoolNetwork.getWorkerCount(); i < n; i++) {
             sharedPoolNetwork.assign(i, new Job() {
-                private final IORequestProcessor<PGConnectionContextModern> processor = (operation, context, dispatcher) -> {
+                private final IORequestProcessor<PGConnectionContext> processor = (operation, context, dispatcher) -> {
                     try {
                         if (operation == IOOperation.HEARTBEAT) {
                             dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
@@ -119,7 +117,7 @@ public class PGWireServerModern implements IPGWireServer {
                                         ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV
                                         : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND
                         );
-                    } catch (MessageProcessingException e) {
+                    } catch (PGMessageProcessingException e) {
                         LOG.error().$("protocol issue [err: `").$safe(e.getFlyweightMessage()).$("`]").$();
                         dispatcher.disconnect(context, DISCONNECT_REASON_PROTOCOL_VIOLATION);
                     } catch (Throwable e) { // must remain last in catch list!
@@ -143,7 +141,6 @@ public class PGWireServerModern implements IPGWireServer {
         }
     }
 
-    @Override
     public void clearSelectCache() {
         typesAndSelectCache.clear();
     }
@@ -156,37 +153,33 @@ public class PGWireServerModern implements IPGWireServer {
         Misc.free(typesAndSelectCache);
     }
 
-    @Override
     public int getPort() {
         return dispatcher.getPort();
     }
 
     @TestOnly
-    @Override
     public WorkerPool getWorkerPool() {
         return sharedPoolNetwork;
     }
 
-    @Override
     public boolean isListening() {
         return dispatcher.isListening();
     }
 
-    @Override
     public void resetQueryCache() {
         if (typesAndSelectCache != null) {
             typesAndSelectCache.clear();
         }
     }
 
-    private static class PGConnectionContextFactory extends IOContextFactoryImpl<PGConnectionContextModern> {
+    private static class PGConnectionContextFactory extends IOContextFactoryImpl<PGConnectionContext> {
 
         public PGConnectionContextFactory(
                 CairoEngine engine,
-                PGWireConfiguration configuration,
-                CircuitBreakerRegistry registry,
+                PGConfiguration configuration,
+                PGCircuitBreakerRegistry registry,
                 ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory,
-                AssociativeCache<TypesAndSelectModern> typesAndSelectCache
+                AssociativeCache<TypesAndSelect> typesAndSelectCache
         ) {
             super(
                     () -> {
@@ -194,7 +187,7 @@ public class PGWireServerModern implements IPGWireServer {
                                 configuration.getCircuitBreakerConfiguration(),
                                 MemoryTag.NATIVE_CB5
                         );
-                        PGConnectionContextModern pgConnectionContext = new PGConnectionContextModern(
+                        PGConnectionContext pgConnectionContext = new PGConnectionContext(
                                 engine,
                                 configuration,
                                 executionContextObjectFactory.newInstance(),

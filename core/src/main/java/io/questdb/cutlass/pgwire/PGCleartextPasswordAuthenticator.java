@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.modern;
+package io.questdb.cutlass.pgwire;
 
 import io.questdb.BuildInformation;
 import io.questdb.cairo.CairoException;
@@ -30,11 +30,6 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.auth.UsernamePasswordMatcher;
-import io.questdb.cutlass.pgwire.MessageProcessingException;
-import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.OptionsListener;
-import io.questdb.cutlass.pgwire.PGKeywords;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.log.Log;
@@ -53,15 +48,15 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
-import static io.questdb.cutlass.pgwire.modern.PGConnectionContextModern.dumpBuffer;
+import static io.questdb.cutlass.pgwire.PGConnectionContext.dumpBuffer;
 
-public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthenticator {
+public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
     public static final char STATUS_IDLE = 'I';
     private static final int INIT_CANCEL_REQUEST = 80877102;
     private static final int INIT_GSS_REQUEST = 80877104;
     private static final int INIT_SSL_REQUEST = 80877103;
     private static final int INIT_STARTUP_MESSAGE = 196608;
-    private static final Log LOG = LogFactory.getLog(CleartextPasswordPgWireAuthenticatorModern.class);
+    private static final Log LOG = LogFactory.getLog(PGCleartextPasswordAuthenticator.class);
     private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
     private static final byte MESSAGE_TYPE_LOGIN_RESPONSE = 'R';
     private static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
@@ -75,7 +70,7 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
     private final DirectUtf8String dus = new DirectUtf8String();
     private final boolean matcherOwned;
     private final OptionsListener optionsListener;
-    private final CircuitBreakerRegistry registry;
+    private final PGCircuitBreakerRegistry registry;
     private final String serverVersion;
     private final ResponseSink sink;
     private byte authType = AUTH_TYPE_NONE;
@@ -92,11 +87,11 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
     private State state = State.EXPECT_INIT_MESSAGE;
     private CharSequence username;
 
-    public CleartextPasswordPgWireAuthenticatorModern(
-            PGWireConfiguration configuration,
+    public PGCleartextPasswordAuthenticator(
+            PGConfiguration configuration,
             BuildInformation buildInformation,
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
-            CircuitBreakerRegistry registry,
+            PGCircuitBreakerRegistry registry,
             OptionsListener optionsListener,
             UsernamePasswordMatcher matcher,
             boolean matcherOwned
@@ -224,7 +219,7 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
                         assert false;
                 }
             }
-        } catch (MessageProcessingException e) {
+        } catch (PGMessageProcessingException e) {
             throw AuthenticatorException.INSTANCE;
         }
     }
@@ -373,7 +368,7 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
         }
     }
 
-    private int processInitMessage() throws MessageProcessingException {
+    private int processInitMessage() throws PGMessageProcessingException {
         int availableToRead = availableToRead();
         if (availableToRead < Integer.BYTES) { // size of message
             return SocketAuthenticator.NEEDS_READ;
@@ -406,12 +401,12 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
                 break;
             default:
                 LOG.error().$("unknown init message [protocol=").$(protocol).$(']').$();
-                throw MessageProcessingException.INSTANCE;
+                throw PGMessageProcessingException.INSTANCE;
         }
         return SocketAuthenticator.OK;
     }
 
-    private int processPasswordMessage() throws MessageProcessingException {
+    private int processPasswordMessage() throws PGMessageProcessingException {
         int availableToRead = availableToRead();
         if (availableToRead < 1 + Integer.BYTES) { // msgType + msgLen
             return SocketAuthenticator.NEEDS_READ;
@@ -428,7 +423,7 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
         // at this point we have a full message available ready to be processed
         recvBufReadPos += 1 + Integer.BYTES; // first move beyond the msgType and msgLen
 
-        long hi = PGConnectionContextModern.getUtf8StrSize(recvBufReadPos, msgLimit, "bad password length", null);
+        long hi = PGConnectionContext.getUtf8StrSize(recvBufReadPos, msgLimit, "bad password length", null);
         authType = verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos));
         if (authType != AUTH_TYPE_NONE) {
             recvBufReadPos = msgLimit;
@@ -441,16 +436,16 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
         return SocketAuthenticator.OK;
     }
 
-    private void processStartupMessage(int msgLen) throws MessageProcessingException {
+    private void processStartupMessage(int msgLen) throws PGMessageProcessingException {
         long msgLimit = (recvBufStart + msgLen);
         long lo = recvBufReadPos;
 
         // there is an extra byte at the end, and it has to be 0
         while (lo < msgLimit - 1) {
             final long nameLo = lo;
-            final long nameHi = PGConnectionContextModern.getUtf8StrSize(lo, msgLimit, "malformed property name", null);
+            final long nameHi = PGConnectionContext.getUtf8StrSize(lo, msgLimit, "malformed property name", null);
             final long valueLo = nameHi + 1;
-            final long valueHi = PGConnectionContextModern.getUtf8StrSize(valueLo, msgLimit, "malformed property value", null);
+            final long valueHi = PGConnectionContext.getUtf8StrSize(valueLo, msgLimit, "malformed property value", null);
             lo = valueHi + 1;
 
             // store user

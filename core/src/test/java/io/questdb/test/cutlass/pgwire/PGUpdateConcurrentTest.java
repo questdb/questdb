@@ -31,7 +31,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cutlass.pgwire.IPGWireServer;
+import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
@@ -119,7 +119,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     public void testUpdateTimeout() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    IPGWireServer server1 = createPGServer(1);
+                    PGServer server1 = createPGServer(1);
                     WorkerPool workerPool = server1.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -205,7 +205,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
             ObjList<Thread> threads = new ObjList<>(numOfWriters + numOfReaders + 1);
 
             try (
-                    final IPGWireServer pgServer = createPGServer(2);
+                    final PGServer pgServer = createPGServer(2);
                     WorkerPool workerPool = pgServer.getWorkerPool()
             ) {
                 workerPool.start(LOG);

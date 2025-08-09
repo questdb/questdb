@@ -26,7 +26,7 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.pgwire.IPGWireServer;
+import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.network.SuspendEvent;
@@ -448,7 +448,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    public void testCreateAsSelectReturnsRightInsertCountModern() throws Exception {
+    public void testCreateAsSelectReturnsRightInsertCount() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
@@ -1552,7 +1552,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     class PGTestSetup implements Closeable {
         final Connection connection;
-        final IPGWireServer server;
+        final PGServer server;
         final Statement statement;
 
         PGTestSetup(boolean useSimpleMode) throws SQLException, SqlException {

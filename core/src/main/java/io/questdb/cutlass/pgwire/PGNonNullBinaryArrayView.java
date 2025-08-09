@@ -22,15 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.modern;
+package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.arr.MutableArray;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cutlass.pgwire.MessageProcessingException;
-import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
@@ -39,11 +37,11 @@ import io.questdb.std.Unsafe;
  * A view into a binary encoded array received from PGWire clients. The view is backed directly by the memory arena that
  * holds data received along with BIND messages.
  */
-final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayView, Mutable {
+final class PGNonNullBinaryArrayView extends MutableArray implements FlatArrayView, Mutable {
     private long hi;
     private long lo;
 
-    public PgNonNullBinaryArrayView() {
+    public PGNonNullBinaryArrayView() {
         this.isVanilla = false;
         this.flatViewLength = 1;
         this.flatView = this;
@@ -118,10 +116,10 @@ final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
      * @param hi            End address of the binary array data in memory (exclusive)
      * @param pgOidType     PostgreSQL OID type identifier
      * @param pipelineEntry The pipeline entry context for error reporting
-     * @throws MessageProcessingException If array structure is invalid or contains unsupported elements
+     * @throws PGMessageProcessingException If array structure is invalid or contains unsupported elements
      * @throws CairoException             If array contains NULL elements or has unsupported element type
      */
-    void setPtrAndCalculateStrides(long lo, long hi, int pgOidType, PGPipelineEntry pipelineEntry) throws MessageProcessingException {
+    void setPtrAndCalculateStrides(long lo, long hi, int pgOidType, PGPipelineEntry pipelineEntry) throws PGMessageProcessingException {
         assert shape.size() > 0;
 
         short componentNativeType;
@@ -155,7 +153,7 @@ final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
 
             if (actualElementSizeBE != expectedElementSizeBE) {
                 int actualElementSize = Numbers.bswap(actualElementSizeBE);
-                throw MessageProcessingException.instance(pipelineEntry).put("unexpected array element size [expected=").put(expectedElementSize).put(", actual=").put(actualElementSize).put(']');
+                throw PGMessageProcessingException.instance(pipelineEntry).put("unexpected array element size [expected=").put(expectedElementSize).put(", actual=").put(actualElementSize).put(']');
             }
         }
 
@@ -165,7 +163,7 @@ final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
         // since that's more likely than a buggy client.
         long totalExpectedSizeBytes = (long) (expectedElementSize + Integer.BYTES) * flatViewLength;
         if (hi - lo != totalExpectedSizeBytes) {
-            throw MessageProcessingException.instance(pipelineEntry).put("unexpected array size [expected=").put(totalExpectedSizeBytes).put(", actual=").put(hi - lo).put(']');
+            throw PGMessageProcessingException.instance(pipelineEntry).put("unexpected array size [expected=").put(totalExpectedSizeBytes).put(", actual=").put(hi - lo).put(']');
         }
 
         // ok, all good, looks we were given a valid array

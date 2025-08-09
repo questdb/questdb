@@ -31,7 +31,7 @@ import io.questdb.PropServerConfiguration;
 import io.questdb.ServerConfiguration;
 import io.questdb.ServerMain;
 import io.questdb.cutlass.auth.SocketAuthenticator;
-import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
+import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
 import io.questdb.network.Socket;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
@@ -119,7 +119,7 @@ public class PGErrorHandlingTest extends AbstractBootstrapTest {
                                 bootstrap.getMicrosecondClock(),
                                 (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration) {
                                     @Override
-                                    public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
+                                    public @NotNull PGAuthenticatorFactory getPgWireAuthenticatorFactory() {
                                         return (pgWireConfiguration, circuitBreaker, registry, optionsListener) -> new SocketAuthenticator() {
 
                                             @Override

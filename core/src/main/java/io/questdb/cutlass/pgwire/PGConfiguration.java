@@ -32,7 +32,7 @@ import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateLocale;
 
-public interface PGWireConfiguration extends IODispatcherConfiguration, WorkerPoolConfiguration {
+public interface PGConfiguration extends IODispatcherConfiguration, WorkerPoolConfiguration {
 
     int getBinParamCountCapacity();
 

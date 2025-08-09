@@ -22,9 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.modern;
+package io.questdb.cutlass.pgwire;
 
-@FunctionalInterface
-interface PGResumeCallback {
-    void resume() throws Exception;
+import io.questdb.std.IntList;
+
+public interface TypeContainer {
+    IntList getPgInParameterTypeOIDs();
 }

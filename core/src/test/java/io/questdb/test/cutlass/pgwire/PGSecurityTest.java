@@ -27,8 +27,8 @@ package io.questdb.test.cutlass.pgwire;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cutlass.pgwire.IPGWireServer;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Os;
@@ -60,7 +60,7 @@ public class PGSecurityTest extends BasePGTest {
             return READ_ONLY_SECURITY_CONTEXT_FACTORY;
         }
     };
-    private static final PGWireConfiguration READ_ONLY_CONF = new Port0PGWireConfiguration() {
+    private static final PGConfiguration READ_ONLY_CONF = new Port0PGConfiguration() {
         @Override
         public FactoryProvider getFactoryProvider() {
             return READ_ONLY_FACTORY_PROVIDER;
@@ -73,7 +73,7 @@ public class PGSecurityTest extends BasePGTest {
             return READ_ONLY_USER_SECURITY_CONTEXT_FACTORY;
         }
     };
-    private static final PGWireConfiguration READ_ONLY_USER_CONF = new Port0PGWireConfiguration() {
+    private static final PGConfiguration READ_ONLY_USER_CONF = new Port0PGConfiguration() {
         @Override
         public FactoryProvider getFactoryProvider() {
             return READ_ONLY_USER_FACTORY_PROVIDER;
@@ -278,7 +278,7 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             execute("create table src (ts TIMESTAMP)");
             try (
-                    final IPGWireServer server = createPGServer(READ_ONLY_USER_CONF);
+                    final PGServer server = createPGServer(READ_ONLY_USER_CONF);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -312,7 +312,7 @@ public class PGSecurityTest extends BasePGTest {
 
     private void executeWithPg(String query) throws Exception {
         try (
-                final IPGWireServer server = createPGServer(READ_ONLY_CONF);
+                final PGServer server = createPGServer(READ_ONLY_CONF);
                 final WorkerPool workerPool = server.getWorkerPool()
         ) {
             workerPool.start(LOG);

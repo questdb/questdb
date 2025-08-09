@@ -26,8 +26,8 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
-import io.questdb.cutlass.pgwire.IPGWireServer;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
@@ -55,7 +55,7 @@ public class PGTlsCompatTest extends BasePGTest {
             final AtomicInteger createTlsSessionCalls = new AtomicInteger();
             final AtomicInteger tlsIOCalls = new AtomicInteger();
 
-            final PGWireConfiguration conf = new Port0PGWireConfiguration() {
+            final PGConfiguration conf = new Port0PGConfiguration() {
                 @Override
                 public FactoryProvider getFactoryProvider() {
                     return new DefaultFactoryProvider() {
@@ -68,7 +68,7 @@ public class PGTlsCompatTest extends BasePGTest {
             };
 
             final WorkerPool workerPool = new TestWorkerPool(1, conf.getMetrics());
-            try (final IPGWireServer server = createPGWireServer(conf, engine, workerPool)) {
+            try (final PGServer server = createPGWireServer(conf, engine, workerPool)) {
                 Assert.assertNotNull(server);
 
                 workerPool.start(LOG);
@@ -96,7 +96,7 @@ public class PGTlsCompatTest extends BasePGTest {
             final AtomicInteger createTlsSessionCalls = new AtomicInteger();
             final AtomicInteger tlsIOCalls = new AtomicInteger();
 
-            final PGWireConfiguration conf = new Port0PGWireConfiguration() {
+            final PGConfiguration conf = new Port0PGConfiguration() {
                 @Override
                 public FactoryProvider getFactoryProvider() {
                     return new DefaultFactoryProvider() {
@@ -109,7 +109,7 @@ public class PGTlsCompatTest extends BasePGTest {
             };
 
             final WorkerPool workerPool = new TestWorkerPool(1, conf.getMetrics());
-            try (final IPGWireServer server = createPGWireServer(conf, engine, workerPool)) {
+            try (final PGServer server = createPGWireServer(conf, engine, workerPool)) {
                 Assert.assertNotNull(server);
 
                 workerPool.start(LOG);
@@ -136,7 +136,7 @@ public class PGTlsCompatTest extends BasePGTest {
             final AtomicInteger createTlsSessionCalls = new AtomicInteger();
             final AtomicInteger tlsIOCalls = new AtomicInteger();
 
-            final PGWireConfiguration conf = new Port0PGWireConfiguration() {
+            final PGConfiguration conf = new Port0PGConfiguration() {
                 @Override
                 public FactoryProvider getFactoryProvider() {
                     return new DefaultFactoryProvider() {
@@ -155,7 +155,7 @@ public class PGTlsCompatTest extends BasePGTest {
 
             final int N = 10;
             final WorkerPool workerPool = new TestWorkerPool(1, conf.getMetrics());
-            try (final IPGWireServer server = createPGWireServer(conf, engine, workerPool)) {
+            try (final PGServer server = createPGWireServer(conf, engine, workerPool)) {
                 Assert.assertNotNull(server);
                 final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", server.getPort());
 
