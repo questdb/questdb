@@ -6634,7 +6634,7 @@ public class SqlOptimiser implements Mutable {
         // first we want to see if this is an appropriate model to make this transformation
         if (model.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL
                 && nestedModel.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY) {
-
+            // TODO(puzpuzpuz): move to an optimizer's field
             CharSequenceIntHashMap nestedCandidates = new CharSequenceIntHashMap();
             final ObjList<QueryColumn> nestedColumns = nestedModel.getColumns();
             boolean anyCandidates = false;
@@ -6646,7 +6646,8 @@ public class SqlOptimiser implements Mutable {
                     // If it's an operation we care about
                     if (nestedAst.token.length() == 1 && rewriteTrivialExpressionsValidOp(nestedAst.token.charAt(0))) {
                         // Check if it's a simple pattern i.e A + 1 or 1 + A
-                        CharSequence token = nestedAst.lhs.type == LITERAL && nestedAst.rhs.type == CONSTANT ? nestedAst.lhs.token
+                        final CharSequence token = nestedAst.lhs.type == LITERAL && nestedAst.rhs.type == CONSTANT
+                                ? nestedAst.lhs.token
                                 : nestedAst.lhs.type == CONSTANT && nestedAst.rhs.type == LITERAL ? nestedAst.rhs.token : null;
 
                         if (token != null) {
@@ -6666,7 +6667,6 @@ public class SqlOptimiser implements Mutable {
             }
 
             if (anyCandidates) {
-
                 for (int i = nestedColumns.size() - 1; i > 0; i--) {
                     final QueryColumn nestedColumn = nestedColumns.getQuick(i);
                     final ExpressionNode nestedAst = nestedColumn.getAst();
@@ -6679,13 +6679,14 @@ public class SqlOptimiser implements Mutable {
                         }
 
                         if (nestedAst.type == OPERATION) {
-                            final CharSequence candidate = nestedAst.lhs.type == LITERAL ? nestedAst.lhs.token : nestedAst.rhs.type == LITERAL ? nestedAst.rhs.token : null;
+                            final CharSequence candidate = nestedAst.lhs.type == LITERAL
+                                    ? nestedAst.lhs.token
+                                    : nestedAst.rhs.type == LITERAL ? nestedAst.rhs.token : null;
                             assert candidate != null;
 
                             // check if the candidates is valid to be pulled up
                             if (nestedCandidates.contains(candidate) && nestedCandidates.get(candidate) >= 2) {
                                 // remove from current, keep in new
-
                                 final QueryColumn currentColumn = model.getAliasToColumnMap().get(nestedColumn.getAlias());
                                 assert Chars.equals(currentColumn.getAlias(), nestedColumn.getAlias());
 
@@ -6696,7 +6697,6 @@ public class SqlOptimiser implements Mutable {
                             }
                         }
                     }
-
                 }
 
                 // if limit is on the virtual, push it down to the group by
@@ -6709,6 +6709,7 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
+        // TODO(puzpuzpuz): call on joined and unioned models
         // recurse
         rewriteTrivialExpressions(nestedModel);
     }
