@@ -32,7 +32,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 public final class IPv4Adapter extends AbstractTypeAdapter {
-
     public static final IPv4Adapter INSTANCE = new IPv4Adapter();
 
     private IPv4Adapter() {
@@ -45,16 +44,24 @@ public final class IPv4Adapter extends AbstractTypeAdapter {
 
     @Override
     public boolean probe(DirectUtf8Sequence text) {
-        if (text.size() < 7)
+        if (text.size() < 7) {
             return false;
+        }
+        boolean noDots = true;
         if (Numbers.notDigit(text.byteAt(0))) {
             if (text.byteAt(0) != '.') {
                 return false;
+            } else {
+                noDots = false;
             }
         }
 
         try {
-            Numbers.parseIPv4(text);
+            if (noDots) {
+                Numbers.parseIPv4(text);
+            } else {
+                Numbers.parseInt(text);
+            }
             return true;
         } catch (NumericException e) {
             return false;
@@ -67,6 +74,15 @@ public final class IPv4Adapter extends AbstractTypeAdapter {
     }
 
     private int parseIPv4(DirectUtf8Sequence value) throws NumericException {
-        return Numbers.parseIPv4(value);
+        // TODO(puzpuzpuz): introduce SWAR method to check for dots
+        try {
+            return Numbers.parseIPv4(value);
+        } catch (NumericException e) {
+            try {
+                return Numbers.parseInt(value);
+            } catch (Throwable ignore) {
+                throw e;
+            }
+        }
     }
 }

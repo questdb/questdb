@@ -2315,6 +2315,81 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportIPv4() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(NetworkFacadeImpl.INSTANCE)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .run((engine, sqlExecutionContext) -> {
+                            try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                                engine.execute("create table test (ip1 ipv4, ip2 ipv4)", executionContext);
+
+                                sendAndReceive(
+                                        NetworkFacadeImpl.INSTANCE,
+                                        "POST /upload?name=test&forceHeader=true HTTP/1.1\r\n" +
+                                                "Host: localhost:9000\r\n" +
+                                                "User-Agent: curl/7.71.1\r\n" +
+                                                "Accept: */*\r\n" +
+                                                "Content-Length: 384\r\n" +
+                                                "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "Content-Disposition: form-data; name=\"data\"\r\n" +
+                                                "\r\n" +
+                                                "ip1,ip2\r\n" +
+                                                "null,null\r\n" +
+                                                "127.0.0.1,42\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: text/plain; charset=utf-8\r\n" +
+                                                "\r\n" +
+                                                "0507\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                                "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                                                "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|   Rows handled  |                                                 2  |                 |         |              |\r\n" +
+                                                "|  Rows imported  |                                                 2  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|              0  |                                               ip1  |                     IPv4  |           0  |\r\n" +
+                                                "|              1  |                                               ip2  |                     IPv4  |           0  |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "\r\n" +
+                                                "00\r\n" +
+                                                "\r\n",
+                                        1,
+                                        0,
+                                        false
+                                );
+
+                                StringSink sink = new StringSink();
+                                TestUtils.assertSql(
+                                        engine,
+                                        executionContext,
+                                        "test",
+                                        sink,
+                                        "ip1\tip2\n" +
+                                                "\t\n" +
+                                                "127.0.0.1\t0.0.0.42\n"
+                                );
+                            }
+                        }
+                );
+    }
+
+    @Test
     public void testImportMultipleOnSameConnection()
             throws Exception {
         testImport(
