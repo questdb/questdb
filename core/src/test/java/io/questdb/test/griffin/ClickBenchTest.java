@@ -42,7 +42,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             "    EventTime timestamp,\n" +
             "    Eventdate timestamp,\n" +
             "    CounterID int,\n" +
-            "    ClientIP int,\n" +
+            "    ClientIP IPv4,\n" +
             "    RegionID int,\n" +
             "    UserID long,\n" +
             "    CounterClass byte,\n" +
@@ -568,16 +568,15 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "                Row forward scan\n" +
                             "                Frame forward scan on: hits\n"
             ),
-            // TODO: https://github.com/questdb/questdb/issues/4141
             new TestCase(
                     "Q35",
                     "SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, COUNT(*) AS c FROM hits GROUP BY ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3 ORDER BY c DESC LIMIT 10;",
-                    "Sort light lo: 10\n" +
-                            "  keys: [c desc]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [ClientIP,column,column1,column2,c]\n" +
+                    "VirtualRecord\n" +
+                            "  functions: [ClientIP,ClientIP+1,ClientIP+2,ClientIP+3,c]\n" +
+                            "    Long Top K lo: 10\n" +
+                            "      keys: [c desc]\n" +
                             "        Async Group By workers: 1\n" +
-                            "          keys: [ClientIP,column,column1,column2]\n" +
+                            "          keys: [ClientIP]\n" +
                             "          values: [count(*)]\n" +
                             "          filter: null\n" +
                             "            PageFrame\n" +
