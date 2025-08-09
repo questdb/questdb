@@ -79,7 +79,19 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "select must provide exactly one column");
         }
 
-        switch (metadata.getColumnType(0)) {
+        final Function lhs = args.getQuick(0);
+        final int lhsType = lhs.getType();
+
+        final int rhsType = metadata.getColumnType(0);
+
+        if (lhsType != ColumnType.TIMESTAMP &&
+                lhsType != ColumnType.STRING &&
+                lhsType != ColumnType.VARCHAR) {
+            throw SqlException.$(argPositions.getQuick(0), "left operand must be a TIMESTAMP, STRING, or VARCHAR, found: ")
+                    .put(ColumnType.nameOf(rhsType));
+        }
+
+        switch (rhsType) {
             case ColumnType.TIMESTAMP:
             case ColumnType.NULL:
                 return new TimestampCursorFunc(factory, args.getQuick(0), args.getQuick(1));
@@ -88,7 +100,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
             case ColumnType.VARCHAR:
                 return new VarcharCursorFunc(factory, args.getQuick(0), args.getQuick(1), argPositions.getQuick(1));
             default:
-                throw SqlException.$(argPositions.getQuick(1), "cannot compare TIMESTAMP and ").put(ColumnType.nameOf(metadata.getColumnType(0)));
+                throw SqlException.$(argPositions.getQuick(1), "cannot compare TIMESTAMP and ").put(ColumnType.nameOf(rhsType));
         }
     }
 

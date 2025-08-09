@@ -328,4 +328,17 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testPreventIntImplicitCastingToTimestampInSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (i int)");
+
+            assertException(
+                    "select * from tab where i > (select max(i) from tab)",
+                    24,
+                    "left operand must be a TIMESTAMP, STRING, or VARCHAR, found: INT"
+            );
+        });
+    }
 }
