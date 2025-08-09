@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.modern;
+package io.questdb.cutlass.pgwire;
 
 import io.questdb.BuildInformation;
 import io.questdb.BuildInformationHolder;
@@ -31,19 +31,14 @@ import io.questdb.ServerConfiguration;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.auth.UsernamePasswordMatcher;
-import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.HexTestsCircuitBreakRegistry;
-import io.questdb.cutlass.pgwire.OptionsListener;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
 import org.jetbrains.annotations.Nullable;
 
-public final class DefaultPgWireAuthenticatorFactoryModern implements PgWireAuthenticatorFactory {
-    public static final PgWireAuthenticatorFactory INSTANCE = new DefaultPgWireAuthenticatorFactoryModern(null);
+public final class DefaultPGAuthenticatorFactory implements PGAuthenticatorFactory {
+    public static final PGAuthenticatorFactory INSTANCE = new DefaultPGAuthenticatorFactory(null);
     private final BuildInformation buildInformation;
     private final ServerConfiguration serverConfiguration;
 
-    public DefaultPgWireAuthenticatorFactoryModern(@Nullable ServerConfiguration serverConfiguration) {
+    public DefaultPGAuthenticatorFactory(@Nullable ServerConfiguration serverConfiguration) {
         this.serverConfiguration = serverConfiguration;
         if (serverConfiguration == null) {
             buildInformation = new BuildInformationHolder();
@@ -54,9 +49,9 @@ public final class DefaultPgWireAuthenticatorFactoryModern implements PgWireAuth
 
     @Override
     public SocketAuthenticator getPgWireAuthenticator(
-            PGWireConfiguration configuration,
+            PGConfiguration configuration,
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
-            CircuitBreakerRegistry registry,
+            PGCircuitBreakerRegistry registry,
             OptionsListener optionsListener
     ) {
         // Normally, all authenticators instances share native buffers for static passwords as the buffers are allocated
@@ -69,9 +64,9 @@ public final class DefaultPgWireAuthenticatorFactoryModern implements PgWireAuth
         // HexTestsCircuitBreakRegistry implies we are either recording or replaying a hex test.
         // In this case, we don't send build information to the client. Build information is volatile by nature, we
         // only record what does not change over time.
-        BuildInformation buildInformationToUse = (registry == HexTestsCircuitBreakRegistry.INSTANCE ? null : buildInformation);
+        BuildInformation buildInformationToUse = (registry == PGHexTestsCircuitBreakRegistry.INSTANCE ? null : buildInformation);
 
-        return new CleartextPasswordPgWireAuthenticatorModern(
+        return new PGCleartextPasswordAuthenticator(
                 configuration,
                 buildInformationToUse,
                 circuitBreaker,

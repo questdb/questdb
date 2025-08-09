@@ -33,8 +33,8 @@ import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.metrics.DefaultMetricsConfiguration;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -48,7 +48,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration;
     private final DefaultMemoryConfiguration memoryConfiguration = new DefaultMemoryConfiguration();
     private final DefaultMetricsConfiguration metricsConfiguration = new DefaultMetricsConfiguration();
-    private final DefaultPGWireConfiguration pgWireConfiguration = new DefaultPGWireConfiguration();
+    private final DefaultPGConfiguration pgWireConfiguration = new DefaultPGConfiguration();
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new DefaultPublicPassthroughConfiguration();
     private final DefaultWorkerPoolConfiguration queryWorkerPoolConfiguration;
     private final WorkerPoolConfiguration walApplyPoolConfiguration;
@@ -125,7 +125,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public PGWireConfiguration getPGWireConfiguration() {
+    public PGConfiguration getPGWireConfiguration() {
         return pgWireConfiguration;
     }
 

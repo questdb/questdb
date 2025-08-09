@@ -24,14 +24,8 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cutlass.auth.SocketAuthenticator;
+import io.questdb.std.IntList;
 
-public interface PgWireAuthenticatorFactory {
-    SocketAuthenticator getPgWireAuthenticator(
-            PGWireConfiguration configuration,
-            NetworkSqlExecutionCircuitBreaker circuitBreaker,
-            CircuitBreakerRegistry registry,
-            OptionsListener optionsListener
-    );
+public interface TypeContainer {
+    IntList getPgInParameterTypeOIDs();
 }

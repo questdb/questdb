@@ -33,7 +33,7 @@ import io.questdb.std.Rnd;
 
 // registry of circuit breakers utilized by pg wire contexts 
 // makes it possible to cancel queries executed in other connections/threads
-public final class DefaultCircuitBreakerRegistry implements CircuitBreakerRegistry {
+public final class DefaultPGCircuitBreakerRegistry implements PGCircuitBreakerRegistry {
 
     private final ObjList<NetworkSqlExecutionCircuitBreaker> circuitBreakers;
     private final IntList freeIdx;
@@ -44,7 +44,7 @@ public final class DefaultCircuitBreakerRegistry implements CircuitBreakerRegist
 
     private volatile boolean closed = false;
 
-    public DefaultCircuitBreakerRegistry(PGWireConfiguration configuration, CairoConfiguration cairoConfig) {
+    public DefaultPGCircuitBreakerRegistry(PGConfiguration configuration, CairoConfiguration cairoConfig) {
         lock = new SimpleSpinLock();
         int limit = configuration.getLimit();
         circuitBreakers = new ObjList<>(limit);
