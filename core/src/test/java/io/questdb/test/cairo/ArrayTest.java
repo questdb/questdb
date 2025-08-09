@@ -2062,24 +2062,32 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPartitionConversionToParquetFailsGracefully() throws Exception {
+    public void testParquet() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts timestamp, i int, arr double[]) timestamp(ts) partition by DAY");
             execute("INSERT INTO tango VALUES ('2001-01', 1, '{1.0, 2.0}')");
             execute("INSERT INTO tango VALUES ('2001-02', 1, '{1.0, 2.0}')");
 
-            // with predicate
-            assertException(
-                    "ALTER TABLE tango CONVERT PARTITION TO PARQUET where ts in '2001-01';",
-                    39,
-                    "tables with array columns cannot be converted to Parquet partitions yet [table=tango, column=arr]"
+            final String expected = "ts\ti\tarr\n" +
+                    "2001-01-01T00:00:00.000000Z\t1\t[1.0,2.0]\n" +
+                    "2001-02-01T00:00:00.000000Z\t1\t[1.0,2.0]\n";
+
+            execute("ALTER TABLE tango CONVERT PARTITION TO PARQUET where ts in '2001-01';");
+            assertQuery(
+                    expected,
+                    "tango",
+                    "ts",
+                    true,
+                    true
             );
 
-            // with list
-            assertException(
-                    "ALTER TABLE tango CONVERT PARTITION TO PARQUET list '2001-01';",
-                    39,
-                    "tables with array columns cannot be converted to Parquet partitions yet [table=tango, column=arr]"
+            execute("ALTER TABLE tango CONVERT PARTITION TO NATIVE where ts in '2001-01';");
+            assertQuery(
+                    expected,
+                    "tango",
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -2092,7 +2100,8 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[2.0, 3.0], ARRAY[4.0, 5]), " +
                     "(ARRAY[6.0, 7], ARRAY[8.0, 9])");
 
-            assertQuery("a1\tb1\ta2\tb2\n" +
+            assertQuery(
+                    "a1\tb1\ta2\tb2\n" +
                             "[2.0,3.0]\t[4.0,5.0]\t[2.0,3.0]\t[4.0,5.0]\n" +
                             "[6.0,7.0]\t[8.0,9.0]\t[6.0,7.0]\t[8.0,9.0]\n",
                     "select a as a1, b as b1, a as a2, b as b2 from 'tango' ",

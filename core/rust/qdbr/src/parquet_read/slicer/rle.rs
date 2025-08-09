@@ -4,7 +4,7 @@ use crate::parquet_read::slicer::DataPageSlicer;
 use parquet2::encoding::bitpacked;
 use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
 
-type RepeatIterator = std::iter::Take<std::iter::Repeat<u32>>;
+type RepeatIterator = std::iter::RepeatN<u32>;
 type BitbackIterator<'a> = bitpacked::Decoder<'a, u32>;
 
 enum RleIterator<'a> {
@@ -72,7 +72,7 @@ impl<'a, 'b> SlicerInner<'a, 'b> {
                     *dst = *src;
                 });
                 let value = u32::from_le_bytes(bytes);
-                let iterator = std::iter::repeat(value).take(repeat);
+                let iterator = std::iter::repeat_n(value, repeat);
                 self.data = RleIterator::Rle(iterator);
             }
         }
@@ -173,7 +173,7 @@ impl<'a, 'b, T: DictDecoder> RleDictionarySlicer<'a, 'b, T> {
                 dict,
                 inner: SlicerInner::new(
                     Some(decoder),
-                    RleIterator::Rle(std::iter::repeat(0).take(0)),
+                    RleIterator::Rle(std::iter::repeat_n(0, 0)),
                     sliced_row_count,
                     error_value,
                 ),
@@ -185,7 +185,7 @@ impl<'a, 'b, T: DictDecoder> RleDictionarySlicer<'a, 'b, T> {
                 dict,
                 inner: SlicerInner::new(
                     None,
-                    RleIterator::Rle(std::iter::repeat(0).take(row_count)),
+                    RleIterator::Rle(std::iter::repeat_n(0, row_count)),
                     sliced_row_count,
                     error_value,
                 ),
@@ -266,7 +266,7 @@ impl<'a, 'b> RleLocalIsGlobalSymbolDecoder<'a, 'b> {
                 next_value: [0; 4],
                 inner: SlicerInner::new(
                     Some(decoder),
-                    RleIterator::Rle(std::iter::repeat(0).take(0)),
+                    RleIterator::Rle(std::iter::repeat_n(0, 0)),
                     sliced_row_count,
                     error_value,
                 ),
@@ -278,7 +278,7 @@ impl<'a, 'b> RleLocalIsGlobalSymbolDecoder<'a, 'b> {
                 next_value: [0; 4],
                 inner: SlicerInner::new(
                     None,
-                    RleIterator::Rle(std::iter::repeat(0).take(row_count)),
+                    RleIterator::Rle(std::iter::repeat_n(0, row_count)),
                     sliced_row_count,
                     error_value,
                 ),
