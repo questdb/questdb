@@ -117,7 +117,7 @@ final class PGNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
      * @param pgOidType     PostgreSQL OID type identifier
      * @param pipelineEntry The pipeline entry context for error reporting
      * @throws PGMessageProcessingException If array structure is invalid or contains unsupported elements
-     * @throws CairoException             If array contains NULL elements or has unsupported element type
+     * @throws CairoException               If array contains NULL elements or has unsupported element type
      */
     void setPtrAndCalculateStrides(long lo, long hi, int pgOidType, PGPipelineEntry pipelineEntry) throws PGMessageProcessingException {
         assert shape.size() > 0;
