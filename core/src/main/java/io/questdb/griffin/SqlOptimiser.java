@@ -354,7 +354,6 @@ public class SqlOptimiser implements Mutable {
         model.getJoinModels().getQuick(parent).removeDependency(child);
     }
 
-
     private void addColumnToSelectModel(QueryModel model, IntList insertColumnIndexes, ObjList<QueryColumn> insertColumnAliases, CharSequence timestampAlias) {
         tempColumns.clear();
         tempColumns.addAll(model.getBottomUpColumns());
@@ -2355,6 +2354,78 @@ public class SqlOptimiser implements Mutable {
         return -1;
     }
 
+    private boolean findIfValidWhereClauseForASOFJoinOptimisation(ExpressionNode whereClause, QueryModel targetModel) {
+        if (whereClause == null || whereClause.type == LITERAL || whereClause.type == CONSTANT) {
+            return true;
+        }
+
+        boolean evaluateLhs = findIfValidWhereClauseForASOFJoinOptimisation(whereClause.lhs, targetModel);
+        boolean evaluateRhs = findIfValidWhereClauseForASOFJoinOptimisation(whereClause.rhs, targetModel);
+        String clauseType = whereClause.token.toString();
+        switch (clauseType) {
+            case "between":
+                ObjList<ExpressionNode> whereClauseArgs = whereClause.args;
+                //if between clause is present, then both the values should be constant
+                if (whereClauseArgs.get(0).type != CONSTANT || whereClauseArgs.get(1).type != CONSTANT) {
+                    return false;
+                }
+                String whereClauseColumn = whereClauseArgs.get(2).token.toString();
+                int dot = whereClauseArgs.get(2).token.toString().indexOf('.');
+                String whereClauseColumnName = whereClauseColumn.substring(dot + 1);
+                //check with column in between clause should be of master table
+                if (dot != -1) {
+                    String whereClauseAlias = whereClauseColumn.substring(0, dot);
+                    String masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token.toString() :
+                            targetModel.getTableNameExpr().token.toString();
+                    if (!whereClauseAlias.equals(masterTableAlias) ||
+                            !targetModel.getAliasToColumnMap().contains(whereClauseColumnName))
+                        return false;
+                }
+                break;
+            case "and":
+                return evaluateLhs && evaluateRhs;
+            case "or":
+                return evaluateLhs && evaluateRhs;
+            //case in or normal equality clause
+            default:
+                ExpressionNode lhs = whereClause.lhs;
+                ExpressionNode rhs = whereClause.rhs;
+                if (rhs.type == CONSTANT) {
+                    //if rhs is constant, then lhs should be of master table
+                    String lhsColumn = lhs.token.toString();
+                    int dotIndex = lhsColumn.indexOf('.');
+                    String lhsColumnName = lhsColumn.substring(dotIndex + 1);
+                    if (dotIndex != -1) {
+                        String lhsAlias = lhsColumn.substring(0, dotIndex);
+                        String masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token.toString() :
+                                targetModel.getTableNameExpr().token.toString();
+                        if (!lhsAlias.equals(masterTableAlias) ||
+                                !targetModel.getAliasToColumnMap().contains(lhsColumnName)) {
+                            return false;
+                        }
+                    }
+                } else if (lhs.type == CONSTANT) {
+                    //if lhs is constant, then rhs should be of master table
+                    String rhsColumn = rhs.token.toString();
+                    int dotIndex = rhsColumn.indexOf('.');
+                    String rhsColumnName = rhsColumn.substring(dotIndex + 1);
+                    if (dotIndex != -1) {
+                        String rhsAlias = rhsColumn.substring(0, dotIndex);
+                        String masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token.toString() :
+                                targetModel.getTableNameExpr().token.toString();
+                        if (!rhsAlias.equals(masterTableAlias) ||
+                                !targetModel.getAliasToColumnMap().contains(rhsColumnName)) {
+                            return false;
+                        }
+                    }
+                }
+                //if both lhs and rhs are not constant, then it is not eligible for ASOF join optimisation
+                else
+                    return false;
+        }
+        return true;
+    }
+
     private CharSequence findQueryColumnByAst(ObjList<QueryColumn> bottomUpColumns, ExpressionNode node) {
         for (int i = 0, max = bottomUpColumns.size(); i < max; i++) {
             QueryColumn qc = bottomUpColumns.getQuick(i);
@@ -2633,7 +2704,7 @@ public class SqlOptimiser implements Mutable {
       1- If order-by and limit clause are present, order-by should be on master table columns only.
       2- If where clause is present, it should be on master table columns only.
      */
-    private boolean isModelEligibleForOptimisation(SqlExecutionContext executionContext, QueryModel targetModel, QueryModel parent) {
+    private boolean isModelEligibleForASOFJoinOptimisation(SqlExecutionContext executionContext, QueryModel targetModel, QueryModel parent) {
         boolean isOrderByPresent = false;
         boolean isLimitPresent = false;
         boolean isWhereClausePresent = false;
@@ -2653,37 +2724,11 @@ public class SqlOptimiser implements Mutable {
 
             if (targetModel.getWhereClause() != null) {
                 isWhereClausePresent = true;
-                if (targetModel.getWhereClause().token.toString().equals("between")) {
-                    ObjList<ExpressionNode> whereClauseArgs = targetModel.getWhereClause().args;
-                    if (whereClauseArgs.get(0).type != CONSTANT || whereClauseArgs.get(1).type != CONSTANT) {
-                        return false;
-                    }
-                } else {
-                    String whereClauseColumn = targetModel.getWhereClause().lhs.token.toString();
-                    int dot = whereClauseColumn.indexOf('.');
-                    String whereClauseColumnName = whereClauseColumn.substring(dot + 1);
-                    int whereClauseValueType = targetModel.getWhereClause().rhs.type;
-
-                    /*if where clause column is not from master table,
-                    then ASOF join optimisation will not be applied*/
-
-                    //check with alias of where clause
-                    if (dot != -1) {
-                        String whereClauseAlias = whereClauseColumn.substring(0, dot);
-                        String masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token.toString() :
-                                targetModel.getTableNameExpr().token.toString();
-                        if (!whereClauseAlias.toString().equals(masterTableAlias))
-                            return false;
-                    }
-
-                    //check with column name of where clause
-                    if (whereClauseValueType != CONSTANT
-                            || !targetModel.getAliasToColumnMap().contains(whereClauseColumnName)) {
-                        return false;
-                    }
+                boolean isValidWhereClause = findIfValidWhereClauseForASOFJoinOptimisation(targetModel.getWhereClause(), targetModel);
+                if (!isValidWhereClause) {
+                    return false;
                 }
             }
-
             isLimitPresent = parent.getLimitLo() != null;
             return isWhereClausePresent || (isOrderByPresent && isLimitPresent);
         }
@@ -3408,7 +3453,7 @@ public class SqlOptimiser implements Mutable {
             targetModel = targetModel.getNestedModel();
         }
 
-        if (!isModelEligibleForOptimisation(executionContext, targetModel, parentModel))
+        if (!isModelEligibleForASOFJoinOptimisation(executionContext, targetModel, parentModel))
             return;
 
         ObjList<QueryModel> joinModels = model.getJoinModels();
@@ -7276,6 +7321,7 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
+            System.out.println("*****" + rewrittenModel.toString0() + "*****");
             return rewrittenModel;
         } catch (Throwable th) {
             // at this point, models may have functions than need to be freed

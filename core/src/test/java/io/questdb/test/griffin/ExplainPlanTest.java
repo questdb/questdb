@@ -680,6 +680,92 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsofJoinOptimisationShouldNotWorkWithWhereClauseColumnFromSlaveTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 't1' ( \n" +
+                    "\ts SYMBOL CAPACITY 256 CACHE INDEX CAPACITY 256,\n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 't2' ( \n" +
+                    "\ts SYMBOL CAPACITY 256 CACHE INDEX CAPACITY 256,\n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
+                            "                    FROM t1 \n" +
+                            "                    ASOF JOIN t2 ON t1.s = t2.s\n" +
+                            "                    WHERE \n" +
+                            "                    t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z' and\n" +
+                            "                    t1.ts = '2023-09-01T00:00:00.000Z' and\n" +
+                            "                     t2.ts IN ('2023-09-01T00:00:00.000Z')\n" +
+                            "                    and t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z' \n" +
+                            "                    ORDER BY t1.s, t1.ts\n" +
+                            "                    LIMIT 5;",
+                    "Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
+                            "    Sort\n" +
+                            "      keys: [s, ts]\n" +
+                            "        SelectedRecord\n" +
+                            "            Filter filter: t2.ts in [1693526400000000,1693526400000000]\n" +
+                            "                AsOf Join Fast Scan\n" +
+                            "                  condition: t2.s=t1.s\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Interval forward scan on: t1\n" +
+                            "                          intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: t2\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsofJoinOptimisationShouldWorkWithWhereClauseColumnFromMasterTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 't1' ( \n" +
+                    "\ts SYMBOL CAPACITY 256 CACHE INDEX CAPACITY 256,\n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            execute("CREATE TABLE 't2' ( \n" +
+                    "\ts SYMBOL CAPACITY 256 CACHE INDEX CAPACITY 256,\n" +
+                    "\tts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY WAL\n" +
+                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;");
+            assertPlanNoLeakCheck(
+                    "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
+                            "                    FROM t1 \n" +
+                            "                    ASOF JOIN t2 ON t1.s = t2.s\n" +
+                            "                    WHERE \n" +
+                            "                    t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z' and\n" +
+                            "                    t1.ts = '2023-09-01T00:00:00.000Z' and\n" +
+                            "                     t1.ts IN ('2023-09-01T00:00:00.000Z')\n" +
+                            "                    and t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z' \n" +
+                            "                    ORDER BY t1.s, t1.ts\n" +
+                            "                    LIMIT 5;",
+                    "Sort\n" +
+                            "  keys: [s, ts]\n" +
+                            "    SelectedRecord\n" +
+                            "        AsOf Join Fast Scan\n" +
+                            "          condition: t2.s=t1.s\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [ts]\n" +
+                            "                Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
+                            "                    SortedSymbolIndex\n" +
+                            "                        Index forward scan on: s\n" +
+                            "                          symbolOrder: asc\n" +
+                            "                        Interval forward scan on: t1\n" +
+                            "                          intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t2\n"
+            );
+        });
+    }
+
+    @Test
     public void testAsofJoinOptimisationWithSimpleQuery() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE 'trades' ( \n" +
@@ -764,6 +850,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
         });
     }
+
 
     @Test
     public void testCachedWindowRecordCursorFactoryWithLimit() throws Exception {
