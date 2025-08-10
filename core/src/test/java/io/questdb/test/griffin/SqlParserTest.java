@@ -980,7 +980,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAsOfJoin() throws SqlException {
         assertQuery(
-                "select-choose t.timestamp timestamp, t.tag tag, q.timestamp timestamp1 from (select [timestamp, tag] from (select-choose [timestamp, tag] timestamp, tag from (select-choose [timestamp, tag] timestamp, tag from (select-choose [timestamp, tag] timestamp, tag from (select [timestamp, tag] from trades t timestamp (timestamp) where tag = null))) order by timestamp) t asof join select [timestamp] from quotes q timestamp (timestamp)) t",
+                "select-choose t.timestamp timestamp, t.tag tag, q.timestamp timestamp1 from (select [timestamp, tag] from trades t timestamp (timestamp) asof join select [timestamp] from quotes q timestamp (timestamp) where tag = null) t",
                 "trades t ASOF JOIN quotes q WHERE tag = null",
                 modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL),
                 modelOf("quotes").timestamp()
@@ -5721,7 +5721,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
         // model with joins
         assertQuery(
-                "select-choose t.timestamp timestamp, t.tag tag, q.timestamp timestamp1 from (select [timestamp, tag] from (select-choose [timestamp, tag] timestamp, tag from (select-choose [timestamp, tag] timestamp, tag from (select-choose [timestamp, tag] timestamp, tag from (select [timestamp, tag] from trades t timestamp (timestamp) where tag = null))) order by timestamp) t asof join select [timestamp] from quotes q timestamp (timestamp) hints[HINT] hints[HINT]) t hints[HINT]",
+                "select-choose t.timestamp timestamp, t.tag tag, q.timestamp timestamp1 from (select [timestamp, tag] from trades t timestamp (timestamp) asof join select [timestamp] from quotes q timestamp (timestamp) hints[HINT] where tag = null hints[HINT]) t hints[HINT]",
                 "select /*+ HINT*/ * from trades t ASOF JOIN quotes q WHERE tag = null",
                 modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL),
                 modelOf("quotes").timestamp()
