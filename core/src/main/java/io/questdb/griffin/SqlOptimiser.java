@@ -2707,7 +2707,6 @@ public class SqlOptimiser implements Mutable {
     private boolean isModelEligibleForASOFJoinOptimisation(SqlExecutionContext executionContext, QueryModel targetModel, QueryModel parent) {
         boolean isOrderByPresent = false;
         boolean isLimitPresent = false;
-        boolean isWhereClausePresent = false;
         if (targetModel != null && targetModel.getJoinModels().size() > 1 &&
                 targetModel.getJoinModels().get(1).getJoinType() == QueryModel.JOIN_ASOF) {
 
@@ -2730,14 +2729,13 @@ public class SqlOptimiser implements Mutable {
             }
 
             if (targetModel.getWhereClause() != null) {
-                isWhereClausePresent = true;
                 boolean isValidWhereClause = findIfValidWhereClauseForASOFJoinOptimisation(targetModel.getWhereClause(), targetModel);
                 if (!isValidWhereClause) {
                     return false;
                 }
             }
             isLimitPresent = parent.getLimitLo() != null;
-            return isWhereClausePresent || (isOrderByPresent && isLimitPresent);
+            return isOrderByPresent && isLimitPresent;
         }
         return false;
     }
