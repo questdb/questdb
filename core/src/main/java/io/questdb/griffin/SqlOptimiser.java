@@ -2715,6 +2715,13 @@ public class SqlOptimiser implements Mutable {
                 isOrderByPresent = true;
                 String orderByColumn = targetModel.getOrderBy().get(i).token.toString();
                 int dot = orderByColumn.indexOf('.');
+                if (dot != -1) {
+                    String orderByAlias = orderByColumn.substring(0, dot);
+                    String masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token.toString() :
+                            targetModel.getTableNameExpr().token.toString();
+                    if (!orderByAlias.equals(masterTableAlias))
+                        return false;
+                }
                 String orderByColumnName = orderByColumn.substring(dot + 1);
                 //if any order by column is from slave table, then order optimisation will not be applied
                 if (!targetModel.getAliasToColumnMap().contains(orderByColumnName)) {
