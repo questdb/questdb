@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.line.tcp.auth;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.AuthenticatorException;
@@ -44,7 +43,6 @@ import java.security.SecureRandom;
 
 public class EllipticCurveAuthenticator implements SocketAuthenticator {
     private static final Log LOG = LogFactory.getLog(EllipticCurveAuthenticator.class);
-    private static final int MIN_BUF_SIZE = AuthUtils.CHALLENGE_LEN + 1;
 
     private static final ThreadLocal<SecureRandom> tlSrand = new ThreadLocal<>(SecureRandom::new);
     private final ChallengeResponseMatcher challengeResponseMatcher;
@@ -114,9 +112,6 @@ public class EllipticCurveAuthenticator implements SocketAuthenticator {
 
     @Override
     public void init(@NotNull Socket socket, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
-        if (recvBufferLimit - recvBuffer < MIN_BUF_SIZE) {
-            throw CairoException.critical(0).put("Minimum buffer length is ").put(MIN_BUF_SIZE);
-        }
         this.socket = socket;
         authState = AuthState.WAITING_FOR_KEY_ID;
         this.recvBufStart = recvBuffer;

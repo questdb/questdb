@@ -66,7 +66,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     private final long dataAppendPageSize;
     private final ObjList<MemoryCMARW> dstColumns = new ObjList<>();
     private final FilesFacade ff;
-    private final long fileOpenOpts;
+    private final int fileOpenOpts;
     private final Path path;
     private final PurgingOperator purgingOperator;
     private final int rootLen;

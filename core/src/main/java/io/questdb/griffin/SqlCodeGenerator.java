@@ -224,6 +224,7 @@ import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexRowCursorFactory;
@@ -305,8 +306,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
+import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_HOUR_INT = 1;
@@ -404,6 +405,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final WhereClauseSymbolEstimator symbolEstimator = new WhereClauseSymbolEstimator();
     private final IntList tempAggIndex = new IntList();
+    private final ObjList<QueryColumn> tempColumnsList = new ObjList<>();
+    private final ObjList<ExpressionNode> tempExpressionNodeList = new ObjList<>();
     private final IntList tempKeyIndex = new IntList();
     private final IntList tempKeyIndexesInBase = new IntList();
     private final IntList tempKeyKinds = new IntList();
@@ -1020,14 +1023,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private @Nullable ObjList<Function> compileWorkerFilterConditionally(
             SqlExecutionContext executionContext,
             @Nullable Function filter,
-            int workerCount,
+            int sharedQueryWorkerCount,
             @Nullable ExpressionNode filterExpr,
             RecordMetadata metadata
     ) throws SqlException {
-        if (filter != null && !filter.isThreadSafe()) {
+        if (filter != null && !filter.isThreadSafe() && sharedQueryWorkerCount > 0) {
             assert filterExpr != null;
             ObjList<Function> workerFilters = new ObjList<>();
-            for (int i = 0; i < workerCount; i++) {
+            for (int i = 0; i < sharedQueryWorkerCount; i++) {
                 restoreWhereClause(filterExpr); // restore original filters in node query models
                 Function workerFilter = compileBooleanFilter(filterExpr, metadata, executionContext);
                 workerFilters.extendAndSet(i, workerFilter);
@@ -2432,13 +2435,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             compileWorkerFilterConditionally(
                                     executionContext,
                                     filter,
-                                    executionContext.getSharedWorkerCount(),
+                                    executionContext.getSharedQueryWorkerCount(),
                                     filterExpr,
                                     factory.getMetadata()
                             ),
                             limitLoFunction,
                             limitLoPos,
-                            executionContext.getSharedWorkerCount()
+                            executionContext.getSharedQueryWorkerCount()
                     );
                 } catch (SqlException | LimitOverflowException ex) {
                     Misc.free(compiledFilter);
@@ -2466,13 +2469,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         compileWorkerFilterConditionally(
                                 executionContext,
                                 filter,
-                                executionContext.getSharedWorkerCount(),
+                                executionContext.getSharedQueryWorkerCount(),
                                 filterExpr,
                                 factory.getMetadata()
                         ),
                         limitLoFunction,
                         limitLoPos,
-                        executionContext.getSharedWorkerCount()
+                        executionContext.getSharedQueryWorkerCount()
                 );
             } catch (Throwable e) {
                 Misc.free(filter);
@@ -2788,7 +2791,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 // that includes the timestamp index.
                                                 assert slaveBase.getMetadata().getTimestampIndex() == slaveTimestampIndex;
 
-
                                                 Function stolenFilter = slave.getFilter();
                                                 assert stolenFilter != null;
 
@@ -2796,7 +2798,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 Misc.free(slave.getBindVarMemory());
                                                 Misc.freeObjList(slave.getBindVarFunctions());
                                                 slave.halfClose();
-
 
                                                 master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
                                                         configuration,
@@ -3054,13 +3055,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 compileWorkerFilterConditionally(
                                         executionContext,
                                         filter,
-                                        executionContext.getSharedWorkerCount(),
+                                        executionContext.getSharedQueryWorkerCount(),
                                         filterExpr,
                                         master.getMetadata()
                                 ),
                                 null,
                                 0,
-                                executionContext.getSharedWorkerCount()
+                                executionContext.getSharedQueryWorkerCount()
                         );
                     } else {
                         master = new FilteredRecordCursorFactory(
@@ -3104,13 +3105,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 compileWorkerFilterConditionally(
                                         executionContext,
                                         filter,
-                                        executionContext.getSharedWorkerCount(),
+                                        executionContext.getSharedQueryWorkerCount(),
                                         constFilterExpr,
                                         master.getMetadata()
                                 ),
                                 null,
                                 0,
-                                executionContext.getSharedWorkerCount()
+                                executionContext.getSharedQueryWorkerCount()
                         );
                     } else {
                         master = new FilteredRecordCursorFactory(master, filter);
@@ -3592,32 +3593,79 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (recordCursorFactory.recordCursorSupportsRandomAccess()) {
                     if (canSortAndLimitBeOptimized(model, executionContext, loFunc, hiFunc)) {
                         model.setLimitImplemented(true);
-                        int baseCursorTimestampIndex = preSortedByTs ? timestampIndex : -1;
-                        if (
-                                !preSortedByTs
-                                        && loFunc.isConstant()
-                                        && hiFunc == null
-                                        && listColumnFilterA.size() == 1
-                                        && recordCursorFactory.recordCursorSupportsLongTopK()
-                        ) {
+                        if (!preSortedByTs && loFunc.isConstant() && hiFunc == null) {
                             final long lo = loFunc.getLong(null);
-                            final int index = listColumnFilterA.getQuick(0);
-                            final int columnIndex = (index > 0 ? index : -index) - 1;
-                            if (lo > 0 && lo <= Integer.MAX_VALUE && metadata.getColumnType(columnIndex) == ColumnType.LONG) {
-                                return new LongTopKRecordCursorFactory(
-                                        orderedMetadata,
-                                        recordCursorFactory,
-                                        columnIndex,
-                                        (int) lo,
-                                        index > 0
-                                );
+                            if (lo > 0 && lo <= Integer.MAX_VALUE) {
+                                // Long top K has decent performance even though being single-threaded,
+                                // so we try to go with it before the parallel top K factory.
+                                if (listColumnFilterA.size() == 1 && recordCursorFactory.recordCursorSupportsLongTopK()) {
+                                    final int index = listColumnFilterA.getQuick(0);
+                                    final int columnIndex = (index > 0 ? index : -index) - 1;
+                                    if (metadata.getColumnType(columnIndex) == ColumnType.LONG) {
+                                        return new LongTopKRecordCursorFactory(
+                                                orderedMetadata,
+                                                recordCursorFactory,
+                                                columnIndex,
+                                                (int) lo,
+                                                index > 0
+                                        );
+                                    }
+                                }
+
+                                final boolean parallelTopKEnabled = executionContext.isParallelTopKEnabled();
+                                if (parallelTopKEnabled && (recordCursorFactory.supportsPageFrameCursor() || recordCursorFactory.supportsFilterStealing())) {
+                                    QueryModel.restoreWhereClause(expressionNodePool, model);
+
+                                    RecordCursorFactory baseFactory = recordCursorFactory;
+                                    CompiledFilter compiledFilter = null;
+                                    MemoryCARW bindVarMemory = null;
+                                    ObjList<Function> bindVarFunctions = null;
+                                    Function filter = null;
+                                    if (recordCursorFactory.supportsFilterStealing()) {
+                                        baseFactory = recordCursorFactory.getBaseFactory();
+                                        compiledFilter = recordCursorFactory.getCompiledFilter();
+                                        bindVarMemory = recordCursorFactory.getBindVarMemory();
+                                        bindVarFunctions = recordCursorFactory.getBindVarFunctions();
+                                        filter = recordCursorFactory.getFilter();
+                                        recordCursorFactory.halfClose();
+                                    }
+
+                                    final QueryModel nested = model.getNestedModel();
+                                    assert nested != null;
+
+                                    return new AsyncTopKRecordCursorFactory(
+                                            configuration,
+                                            executionContext.getMessageBus(),
+                                            orderedMetadata,
+                                            baseFactory,
+                                            reduceTaskFactory,
+                                            filter,
+                                            compileWorkerFilterConditionally(
+                                                    executionContext,
+                                                    filter,
+                                                    executionContext.getSharedQueryWorkerCount(),
+                                                    locatePotentiallyFurtherNestedWhereClause(nested),
+                                                    baseFactory.getMetadata()
+                                            ),
+                                            compiledFilter,
+                                            bindVarMemory,
+                                            bindVarFunctions,
+                                            recordComparatorCompiler,
+                                            listColumnFilterA.copy(),
+                                            metadata,
+                                            lo,
+                                            executionContext.getSharedQueryWorkerCount()
+                                    );
+                                }
                             }
                         }
+
+                        final int baseCursorTimestampIndex = preSortedByTs ? timestampIndex : -1;
                         return new LimitedSizeSortedLightRecordCursorFactory(
                                 configuration,
                                 orderedMetadata,
                                 recordCursorFactory,
-                                recordComparatorCompiler.compile(metadata, listColumnFilterA),
+                                recordComparatorCompiler.newInstance(metadata, listColumnFilterA),
                                 loFunc,
                                 hiFunc,
                                 listColumnFilterA.copy(),
@@ -3642,7 +3690,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 configuration,
                                 orderedMetadata,
                                 recordCursorFactory,
-                                recordComparatorCompiler.compile(metadata, listColumnFilterA),
+                                recordComparatorCompiler.newInstance(metadata, listColumnFilterA),
                                 listColumnFilterA.copy()
                         );
                     }
@@ -3657,7 +3705,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         orderedMetadata,
                         recordCursorFactory,
                         RecordSinkFactory.getInstance(asm, orderedMetadata, entityColumnFilter),
-                        recordComparatorCompiler.compile(metadata, listColumnFilterA),
+                        recordComparatorCompiler.newInstance(metadata, listColumnFilterA),
                         listColumnFilterA.copy()
                 );
             }
@@ -3783,9 +3831,37 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         final RecordMetadata baseMetadata = factory.getMetadata();
-        final ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
+        ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
         final TimestampSampler timestampSampler;
-        final int fillCount = sampleByFill.size();
+        int fillCount = sampleByFill.size();
+
+        // sampleByFill is originally set up based on GroupByFunctions in BottomUpColumns,
+        // but TopDownColumns may have different order and count with BottomUpColumns.
+        // Need to reorganize sampleByFill according to the position relationship between
+        // TopDownColumns and BottomUpColumns to ensure correct fill value alignment.
+        if (fillCount != 0 && model.getTopDownColumns().size() != 0) {
+            tempColumnsList.clear();
+            for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
+                final QueryColumn column = model.getBottomUpColumns().getQuick(i);
+                if (!column.isWindowColumn()) {
+                    final ExpressionNode node = column.getAst();
+                    if (node.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
+                        tempColumnsList.add(column);
+                    }
+                }
+            }
+
+            tempExpressionNodeList.clear();
+            for (int i = 0, n = model.getTopDownColumns().size(); i < n; i++) {
+                int index = tempColumnsList.indexOf(model.getTopDownColumns().getQuick(i));
+                if (index != -1 && fillCount > index) {
+                    tempExpressionNodeList.add(sampleByFill.getQuick(index));
+                }
+            }
+            sampleByFill = tempExpressionNodeList;
+            fillCount = sampleByFill.size();
+        }
+
         try {
             if (sampleByUnits == null) {
                 timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
@@ -4477,7 +4553,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     VectorAggregateFunction vaf = constructor.create(
                             tempKeyKinds.size() == 0 ? 0 : tempKeyKinds.getQuick(0),
                             indexInBase,
-                            executionContext.getSharedWorkerCount()
+                            executionContext.getSharedQueryWorkerCount()
                     );
                     tempVaf.add(vaf);
                     meta.add(
@@ -4495,7 +4571,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             configuration,
                             factory,
                             meta,
-                            executionContext.getSharedWorkerCount(),
+                            executionContext.getSharedQueryWorkerCount(),
                             tempVaf
                     );
                 }
@@ -4531,7 +4607,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     factory,
                                     meta,
                                     arrayColumnTypes,
-                                    executionContext.getSharedWorkerCount(),
+                                    executionContext.getSharedQueryWorkerCount(),
                                     tempVaf,
                                     tempKeyIndexesInBase.getQuick(0),
                                     tempKeyIndex.getQuick(0),
@@ -4652,7 +4728,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         executionContext,
                                         model,
                                         groupByFunctions,
-                                        executionContext.getSharedWorkerCount(),
+                                        executionContext.getSharedQueryWorkerCount(),
                                         factory.getMetadata()
                                 ),
                                 valueTypesCopy.getColumnCount(),
@@ -4664,11 +4740,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 compileWorkerFilterConditionally(
                                         executionContext,
                                         filter,
-                                        executionContext.getSharedWorkerCount(),
+                                        executionContext.getSharedQueryWorkerCount(),
                                         locatePotentiallyFurtherNestedWhereClause(nested),
                                         factory.getMetadata()
                                 ),
-                                executionContext.getSharedWorkerCount()
+                                executionContext.getSharedQueryWorkerCount()
                         );
                     }
 
@@ -4678,7 +4754,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             executionContext,
                             model.getColumns(),
                             innerProjectionFunctions,
-                            executionContext.getSharedWorkerCount(),
+                            executionContext.getSharedQueryWorkerCount(),
                             baseMetadata
                     );
 
@@ -4717,11 +4793,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     compileWorkerFilterConditionally(
                                             executionContext,
                                             filter,
-                                            executionContext.getSharedWorkerCount(),
+                                            executionContext.getSharedQueryWorkerCount(),
                                             locatePotentiallyFurtherNestedWhereClause(nested),
                                             factory.getMetadata()
                                     ),
-                                    executionContext.getSharedWorkerCount()
+                                    executionContext.getSharedQueryWorkerCount()
                             ),
                             executionContext
                     );
@@ -5344,7 +5420,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ObjList<ObjList<WindowFunction>> functionGroups = new ObjList<>(groupedWindow.size());
             final ObjList<IntList> keys = new ObjList<>();
             for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
-                windowComparators.add(recordComparatorCompiler.compile(chainTypes, e.key));
+                windowComparators.add(recordComparatorCompiler.newInstance(chainTypes, e.key));
                 functionGroups.add(e.value);
                 keys.add(e.key);
             }

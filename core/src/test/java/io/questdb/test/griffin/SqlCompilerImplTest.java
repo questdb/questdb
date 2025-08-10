@@ -2986,7 +2986,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 long fd = super.openRW(name, opts);
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.TXN_FILE_NAME)) {
                     txnFd = fd;
@@ -6372,7 +6372,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "APPL\tAPPL\tAPPL_APPL\n" +
                     "APPL\tAPPL\tAPPL_APPL\n" +
                     "APPL\tAPPL\tAPPL_APPL\n";
-            assertQueryNoLeakCheck(expected, "select xx.a, yy.b, concat(xx.a, '_', yy.b) c from xx join yy on xx.a = yy.b", null, false, true);
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select xx.a, yy.b, concat(xx.a, '_', yy.b) c from xx join yy on xx.a = yy.b",
+                    null,
+                    false,
+                    false
+            );
         });
     }
 

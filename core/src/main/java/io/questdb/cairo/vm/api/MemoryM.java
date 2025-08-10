@@ -81,9 +81,9 @@ public interface MemoryM extends Closeable {
      * @param opts              open file flags
      * @param madviseOpts       madvise flags - madvise call is made when a non-negative value is provided
      */
-    void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts);
+    void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts, int madviseOpts);
 
-    default void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+    default void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts) {
         of(ff, name, extendSegmentSize, size, memoryTag, opts, -1);
     }
 

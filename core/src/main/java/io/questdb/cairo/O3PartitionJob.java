@@ -128,7 +128,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final boolean statisticsEnabled = cairoConfiguration.isPartitionEncoderParquetStatisticsEnabled();
 
                 // partitionUpdater is the owner of the partitionDecoder descriptor
-                final long opts = cairoConfiguration.getWriterFileOpenOpts();
+                final int opts = cairoConfiguration.getWriterFileOpenOpts();
                 partitionUpdater.of(
                         path.$(),
                         opts,
@@ -296,24 +296,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 LOG.error().$("could not truncate partition file [path=").$(path).I$();
             }
             ff.close(fd);
-            // delete all index files unconditionally
-            path.of(pathToTable);
-            setPathForNativePartition(path, partitionBy, partitionTimestamp, srcNameTxn);
-            final int pLen = path.size();
-            for (int i = 0, n = tableWriterMetadata.getColumnCount(); i < n; i++) {
-                if (tableWriterMetadata.getColumnType(i) == ColumnType.SYMBOL && tableWriterMetadata.isColumnIndexed(i)) {
-                    final CharSequence columnName = tableWriterMetadata.getColumnName(i);
-                    final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, i);
-                    final int indexBlockCapacity = tableWriterMetadata.getIndexValueBlockCapacity(i);
-                    if (indexBlockCapacity < 0) {
-                        continue;
-                    }
-
-                    BitmapIndexUtils.keyFileName(path.trimTo(pLen), columnName, columnNameTxn);
-                    BitmapIndexUtils.valueFileName(path.trimTo(pLen), columnName, columnNameTxn);
-                }
-            }
-
             tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
         } finally {
             path.of(pathToTable);
@@ -800,6 +782,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 if (tableWriter.isCommitReplaceMode()) {
                     if (prefixHi < prefixLo) {
                         prefixType = O3_BLOCK_NONE;
+                        // prefixType == O3_BLOCK_NONE and prefixHi >= also is used
+                        // to indicate split partition. To avoid that, set prefixHi to -1.
+                        prefixLo = 0;
+                        prefixHi = -1;
                     }
                     if (suffixHi < suffixLo) {
                         suffixType = O3_BLOCK_NONE;
@@ -925,6 +911,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // srcOooLo > srcOooHi means that O3 data is empty
                         if (prefixType == O3_BLOCK_O3) {
                             prefixType = O3_BLOCK_NONE;
+                            // prefixType == O3_BLOCK_NONE and prefixHi >= also is used
+                            // to indicate split partition. To avoid that, set prefixHi to -1.
+                            prefixLo = 0;
+                            prefixHi = -1;
                         }
 
                         // srcOooLo > srcOooHi means that O3 data is empty

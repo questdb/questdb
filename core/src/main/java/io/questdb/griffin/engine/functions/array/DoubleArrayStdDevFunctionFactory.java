@@ -22,13 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.mv;
+package io.questdb.griffin.engine.functions.array;
 
-import io.questdb.mp.WorkerPoolConfiguration;
+public class DoubleArrayStdDevFunctionFactory extends DoubleArrayStdDevSampFunctionFactory {
 
-public class DefaultMatViewRefreshWorkerPoolConfiguration implements WorkerPoolConfiguration {
     @Override
-    public int getWorkerCount() {
-        return 2;
+    public String getSignature() {
+        return "array_stddev(D[])";
     }
 }
