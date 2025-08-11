@@ -44,7 +44,8 @@ use crate::allocator::AcVec;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, encode_group_levels, encode_primitive_def_levels, ExactSizedIter, BinaryMaxMinStats,
+    build_plain_page, encode_group_levels, encode_primitive_def_levels, BinaryMaxMinStats,
+    ExactSizedIter,
 };
 
 const HEADER_SIZE_NULL: [u8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
