@@ -749,9 +749,7 @@ pub fn calculate_array_shape(
                 let rep_level = rep_level.max(1) as usize;
 
                 // Reset counts for dimensions deeper than repetition level
-                for dim in rep_level..max_rep_level {
-                    counts[dim] = 0;
-                }
+                counts[rep_level..max_rep_level].fill(0);
 
                 // Increment count at the deepest level
                 counts[max_rep_level - 1] += 1;
@@ -1002,9 +1000,7 @@ mod tests {
         // Test performance with larger array (over CHUNK_SIZE)
         let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
         let mut rep_levels = vec![0]; // start with new record
-        for _ in 0..100 {
-            rep_levels.push(1); // continue in same array
-        }
+        rep_levels.extend(std::iter::repeat_n(1, 100)); // continue in same array
         calculate_array_shape(&mut shape, 1, &rep_levels);
         assert_eq!(shape[0], 101);
 
@@ -1017,9 +1013,7 @@ mod tests {
             } else {
                 rep_levels.push(0); // new record
             }
-            for _ in 0..15 {
-                rep_levels.push(2); // elements in sub-array
-            }
+            rep_levels.extend(std::iter::repeat_n(2, 15)); // elements in sub-array
         }
         calculate_array_shape(&mut shape, 2, &rep_levels);
         assert_eq!(shape[0], 10); // 10 sub-arrays
@@ -1034,15 +1028,13 @@ mod tests {
         let mut rep_levels = vec![0]; // new record
 
         // Add elements at deepest level
-        for _ in 0..5 {
-            rep_levels.push(max_dim);
-        }
+        rep_levels.extend(std::iter::repeat_n(max_dim, 5));
 
         calculate_array_shape(&mut shape, max_dim, &rep_levels);
 
         // Should have shape [1,1,1,...,1,6] with 6 at the deepest level
-        for i in 0..(max_dim as usize - 1) {
-            assert_eq!(shape[i], 1, "dimension {} should be 1", i);
+        for (i, &value) in shape[0..(max_dim as usize - 1)].iter().enumerate() {
+            assert_eq!(value, 1, "dimension {} should be 1", i);
         }
         assert_eq!(shape[max_dim as usize - 1], 6);
     }
