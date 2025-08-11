@@ -2369,15 +2369,15 @@ public class SqlOptimiser implements Mutable {
                 if (whereClauseArgs.get(0).type != CONSTANT || whereClauseArgs.get(1).type != CONSTANT) {
                     return false;
                 }
-                String whereClauseColumn = whereClauseArgs.get(2).token.toString();
-                int dot = whereClauseArgs.get(2).token.toString().indexOf('.');
-                String whereClauseColumnName = whereClauseColumn.substring(dot + 1);
+                CharSequence whereClauseColumn = whereClauseArgs.get(2).token;
+                int dot = Chars.indexOf(whereClauseArgs.get(2).token, '.');
+                String whereClauseColumnName = Chars.toString(whereClauseColumn, dot + 1, whereClauseColumn.length());
                 //check with column in between clause should be of master table
                 if (dot != -1) {
-                    String whereClauseAlias = whereClauseColumn.substring(0, dot);
-                    String masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token.toString() :
-                            targetModel.getTableNameExpr().token.toString();
-                    if (!whereClauseAlias.equals(masterTableAlias) ||
+                    String whereClauseAlias = Chars.toString(whereClauseColumn, 0, dot);
+                    CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
+                            targetModel.getTableNameExpr().token;
+                    if (!Chars.equals(whereClauseAlias, masterTableAlias) ||
                             !targetModel.getAliasToColumnMap().contains(whereClauseColumnName))
                         return false;
                 }
@@ -2392,28 +2392,28 @@ public class SqlOptimiser implements Mutable {
                 ExpressionNode rhs = whereClause.rhs;
                 if (rhs.type == CONSTANT) {
                     //if rhs is constant, then lhs should be of master table
-                    String lhsColumn = lhs.token.toString();
-                    int dotIndex = lhsColumn.indexOf('.');
-                    String lhsColumnName = lhsColumn.substring(dotIndex + 1);
+                    CharSequence lhsColumn = lhs.token;
+                    int dotIndex = Chars.indexOf(lhsColumn, '.');
+                    String lhsColumnName = Chars.toString(lhsColumn, dotIndex + 1, lhsColumn.length());
                     if (dotIndex != -1) {
-                        String lhsAlias = lhsColumn.substring(0, dotIndex);
-                        String masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token.toString() :
-                                targetModel.getTableNameExpr().token.toString();
-                        if (!lhsAlias.equals(masterTableAlias) ||
+                        String lhsAlias = Chars.toString(lhsColumn, 0, dotIndex);
+                        CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
+                                targetModel.getTableNameExpr().token;
+                        if (!Chars.equals(lhsAlias, masterTableAlias) ||
                                 !targetModel.getAliasToColumnMap().contains(lhsColumnName)) {
                             return false;
                         }
                     }
                 } else if (lhs.type == CONSTANT) {
                     //if lhs is constant, then rhs should be of master table
-                    String rhsColumn = rhs.token.toString();
-                    int dotIndex = rhsColumn.indexOf('.');
-                    String rhsColumnName = rhsColumn.substring(dotIndex + 1);
+                    CharSequence rhsColumn = rhs.token;
+                    int dotIndex = Chars.indexOf(rhsColumn, '.');
+                    String rhsColumnName = Chars.toString(rhsColumn, dotIndex + 1, rhsColumn.length());
                     if (dotIndex != -1) {
-                        String rhsAlias = rhsColumn.substring(0, dotIndex);
-                        String masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token.toString() :
-                                targetModel.getTableNameExpr().token.toString();
-                        if (!rhsAlias.equals(masterTableAlias) ||
+                        String rhsAlias = Chars.toString(rhsColumn, 0, dotIndex);
+                        CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
+                                targetModel.getTableNameExpr().token;
+                        if (!Chars.equals(rhsAlias, masterTableAlias) ||
                                 !targetModel.getAliasToColumnMap().contains(rhsColumnName)) {
                             return false;
                         }
@@ -2712,16 +2712,16 @@ public class SqlOptimiser implements Mutable {
 
             for (int i = 0; i < targetModel.getOrderBy().size(); i++) {
                 isOrderByPresent = true;
-                String orderByColumn = targetModel.getOrderBy().get(i).token.toString();
-                int dot = orderByColumn.indexOf('.');
+                CharSequence orderByColumn = targetModel.getOrderBy().get(i).token;
+                int dot = Chars.indexOf(orderByColumn, '.');
                 if (dot != -1) {
-                    String orderByAlias = orderByColumn.substring(0, dot);
-                    String masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token.toString() :
-                            targetModel.getTableNameExpr().token.toString();
-                    if (!orderByAlias.equals(masterTableAlias))
+                    String orderByAlias = Chars.toString(orderByColumn, 0, dot);
+                    CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
+                            targetModel.getTableNameExpr().token;
+                    if (!Chars.equals(orderByAlias, masterTableAlias))
                         return false;
                 }
-                String orderByColumnName = orderByColumn.substring(dot + 1);
+                String orderByColumnName = Chars.toString(orderByColumn, dot + 1, orderByColumn.length());
                 //if any order by column is from slave table, then order optimisation will not be applied
                 if (!targetModel.getAliasToColumnMap().contains(orderByColumnName)) {
                     return false;
