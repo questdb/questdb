@@ -80,7 +80,7 @@ public final class Nanos {
         return nanos + minutes * MINUTE_NANOS;
     }
 
-    public static long addMonths(final long nanos, int months) {
+    public static long addMonths(long nanos, int months) {
         if (months == 0) {
             return nanos;
         }

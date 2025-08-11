@@ -27,8 +27,8 @@ package io.questdb.std.datetime;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.TimeZoneRulesMicros;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.TimeZoneRulesMicros;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.datetime.millitime.TimeZoneRulesMillis;
 import io.questdb.std.datetime.nanotime.Nanos;
@@ -41,9 +41,9 @@ import java.util.Map;
 
 public class TimeZoneRuleFactory {
     public static final TimeZoneRuleFactory INSTANCE = new TimeZoneRuleFactory();
-    public static final int RESOLUTION_NANOS = 2;
     public static final int RESOLUTION_MICROS = 1;
     public static final int RESOLUTION_MILLIS = 0;
+    public static final int RESOLUTION_NANOS = 2;
     private final ObjList<TimeZoneRules> ruleList = new ObjList<>();
     private final CharSequenceIntHashMap ruleMap = new CharSequenceIntHashMap();
 

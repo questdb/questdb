@@ -190,15 +190,6 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGetTableFlagResolver() throws Exception {
-        assertMemoryLeak(() -> {
-            final TableFlagResolver tableFlagResolver = engine.getTableFlagResolver();
-            assertTrue(tableFlagResolver.isSystem(engine.getConfiguration().getSystemTableNamePrefix() + ".tableName"));
-            assertTrue(tableFlagResolver.isPublic(TelemetryTask.TABLE_NAME));
-        });
-    }
-
-    @Test
     public void testExpiry() throws Exception {
         assertMemoryLeak(() -> {
             class MyListener implements PoolListener {
@@ -243,6 +234,15 @@ public class CairoEngineTest extends AbstractCairoTest {
 
                 Assert.assertEquals(2, listener.count);
             }
+        });
+    }
+
+    @Test
+    public void testGetTableFlagResolver() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableFlagResolver tableFlagResolver = engine.getTableFlagResolver();
+            assertTrue(tableFlagResolver.isSystem(engine.getConfiguration().getSystemTableNamePrefix() + ".tableName"));
+            assertTrue(tableFlagResolver.isPublic(TelemetryTask.TABLE_NAME));
         });
     }
 

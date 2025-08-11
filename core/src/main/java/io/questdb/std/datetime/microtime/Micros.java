@@ -88,7 +88,7 @@ public final class Micros {
         return micros + minutes * MINUTE_MICROS;
     }
 
-    public static long addMonths(final long micros, int months) {
+    public static long addMonths(long micros, int months) {
         if (months == 0) {
             return micros;
         }
