@@ -92,7 +92,7 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                                 "file SYMBOL, " + // 3
                                 "phase SYMBOL, " + // 4
                                 "status SYMBOL, " + // 5
-                                "message VARCHAR," + // 6
+                                "message VARCHAR, " + // 6
                                 "errors LONG" + // 7
                                 ") timestamp(ts) PARTITION BY DAY\n" +
                                 "TTL " + logRetentionDays + " DAYS WAL;"
@@ -177,6 +177,9 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
         if (cursor > -1) {
             task = requestQueue.get(cursor);
             try {
+                if (serialExporter == null) {
+                    this.serialExporter = new SerialParquetExporter(engine, path);
+                }
                 serialExporter.of(
                         task,
                         copyContext.getCircuitBreaker(),
@@ -193,12 +196,15 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                     updateStatus(CopyExportRequestTask.PHASE_DROPPING_TEMP_TABLE, CopyExportRequestTask.STATUS_FINISHED, task.getTableName(), Long.MIN_VALUE);
                 }
                 if (task.getSuspendEvent() != null) {
-                    updateStatus(CopyExportRequestTask.PHASE_SIGNALLING_EXP, CopyExportRequestTask.STATUS_STARTED, null, Long.MIN_VALUE);
+                    updateStatus(CopyExportRequestTask.PHASE_SIGNALLING_EXP, CopyExportRequestTask.STATUS_STARTED,
+                            "sending signal to waiting thread [fd=" + task.getSuspendEvent().getFd() + ']', Long.MIN_VALUE);
                     task.getSuspendEvent().trigger();
-                    updateStatus(CopyExportRequestTask.PHASE_SIGNALLING_EXP, CopyExportRequestTask.STATUS_FINISHED, null, Long.MIN_VALUE);
+                    updateStatus(CopyExportRequestTask.PHASE_SIGNALLING_EXP, CopyExportRequestTask.STATUS_FINISHED,
+                            "signal sent", Long.MIN_VALUE);
                 }
                 updateStatus(CopyExportRequestTask.PHASE_NONE, CopyExportRequestTask.STATUS_FINISHED, null, Long.MIN_VALUE);
             } catch (CopyExportException e) {
+
                 updateStatus(
                         CopyExportRequestTask.PHASE_NONE,
                         e.isCancelled() ? CopyExportRequestTask.STATUS_CANCELLED : CopyExportRequestTask.STATUS_FAILED,

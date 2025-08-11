@@ -24,21 +24,35 @@
 
 package io.questdb.griffin.engine.table.parquet;
 
+import io.questdb.griffin.SqlException;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 
 public class ParquetCompression {
-    private static final LowerCaseCharSequenceIntHashMap compressionCodecNames = new LowerCaseCharSequenceIntHashMap();
-    public static int COMPRESSION_BROTLI = 4;
-    public static int COMPRESSION_GZIP = 2;
-    public static int COMPRESSION_LZ4 = 5;
-    public static int COMPRESSION_LZ4_RAW = 7;
-    public static int COMPRESSION_LZO = 3;
-    public static int COMPRESSION_SNAPPY = 1;
-    public static int COMPRESSION_UNCOMPRESSED = 0;
-    public static int COMPRESSION_ZSTD = 6;
+    private static final IntObjHashMap<CharSequence> codecToNameMap = new IntObjHashMap<>();
+    private static final LowerCaseCharSequenceIntHashMap nameToCodecMap = new LowerCaseCharSequenceIntHashMap();
+    public static int COMPRESSION_UNCOMPRESSED = 0; // 0
+    public static int COMPRESSION_SNAPPY = COMPRESSION_UNCOMPRESSED + 1; // 1
+    public static int COMPRESSION_GZIP = COMPRESSION_SNAPPY + 1; // 2
+    public static int COMPRESSION_LZO = COMPRESSION_GZIP + 1; // 3
+    public static int COMPRESSION_BROTLI = COMPRESSION_LZO + 1; // 4
+    public static int COMPRESSION_LZ4 = COMPRESSION_BROTLI + 1; // 5
+    public static int COMPRESSION_ZSTD = COMPRESSION_LZ4 + 1; // 6
+    public static int COMPRESSION_LZ4_RAW = COMPRESSION_ZSTD + 1; // 7
+    public static int COMPRESSION_DEFAULT = COMPRESSION_LZ4_RAW;
+    static int MAX_ENUM_INT = COMPRESSION_LZ4_RAW + 1;
+
+    public static void addCodecNamesToException(SqlException e) {
+        for (int i = 0, n = MAX_ENUM_INT; i < n; i++) {
+            e.put(codecToNameMap.get(i));
+            if (i + 1 != n) {
+                e.put(", ");
+            }
+        }
+    }
 
     public static int getCompressionCodec(CharSequence name) {
-        return compressionCodecNames.get(name);
+        return nameToCodecMap.get(name);
     }
 
     public static long packCompressionCodecLevel(int compression, long level) {
@@ -46,13 +60,23 @@ public class ParquetCompression {
     }
 
     static {
-        compressionCodecNames.put("uncompressed", COMPRESSION_UNCOMPRESSED);
-        compressionCodecNames.put("zstd", COMPRESSION_ZSTD);
-        compressionCodecNames.put("lz4", COMPRESSION_LZ4);
-        compressionCodecNames.put("gzip", COMPRESSION_GZIP);
-        compressionCodecNames.put("lz4_raw", COMPRESSION_LZ4_RAW);
-        compressionCodecNames.put("lzo", COMPRESSION_LZO);
-        compressionCodecNames.put("snappy", COMPRESSION_SNAPPY);
-        compressionCodecNames.put("brotli", COMPRESSION_BROTLI);
+        nameToCodecMap.put("uncompressed", COMPRESSION_UNCOMPRESSED);
+        nameToCodecMap.put("zstd", COMPRESSION_ZSTD);
+        nameToCodecMap.put("lz4", COMPRESSION_LZ4);
+        nameToCodecMap.put("gzip", COMPRESSION_GZIP);
+        nameToCodecMap.put("lz4_raw", COMPRESSION_LZ4_RAW);
+        nameToCodecMap.put("lzo", COMPRESSION_LZO);
+        nameToCodecMap.put("snappy", COMPRESSION_SNAPPY);
+        nameToCodecMap.put("brotli", COMPRESSION_BROTLI);
+        nameToCodecMap.put("default", COMPRESSION_LZ4_RAW);
+
+        codecToNameMap.put(COMPRESSION_UNCOMPRESSED, "uncompressed");
+        codecToNameMap.put(COMPRESSION_ZSTD, "zstd");
+        codecToNameMap.put(COMPRESSION_LZ4, "lz4");
+        codecToNameMap.put(COMPRESSION_GZIP, "gzip");
+        codecToNameMap.put(COMPRESSION_LZ4_RAW, "lz4_raw");
+        codecToNameMap.put(COMPRESSION_LZO, "lzo");
+        codecToNameMap.put(COMPRESSION_SNAPPY, "snappy");
+        codecToNameMap.put(COMPRESSION_BROTLI, "brotli");
     }
 }

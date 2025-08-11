@@ -173,6 +173,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceShardCount;
     private final int cairoSQLCopyIdSupplier;
     private final boolean cairoSqlColumnAliasExpressionEnabled;
+    private final String cairoSqlCopyExportRoot;
     private final int cairoSqlCopyLogRetentionDays;
     private final int cairoSqlCopyQueueCapacity;
     private final String cairoSqlCopyRoot;
@@ -838,6 +839,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             tmpRoot = new File(installRoot, TMP_DIRECTORY).getAbsolutePath();
         }
 
+
         String configuredCairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, "import");
         if (!Chars.empty(configuredCairoSqlCopyRoot)) {
             if (new File(configuredCairoSqlCopyRoot).isAbsolute()) {
@@ -860,6 +862,23 @@ public class PropServerConfiguration implements ServerConfiguration {
         } else {
             this.cairoSqlCopyRoot = null;
             this.cairoSqlCopyWorkRoot = null;
+        }
+
+        // todo: config tests
+        String configuredCairoSqlCopyExportRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT, "export");
+        if (!Chars.empty(configuredCairoSqlCopyExportRoot)) {
+            if (new File(configuredCairoSqlCopyExportRoot).isAbsolute()) {
+                this.cairoSqlCopyExportRoot = configuredCairoSqlCopyExportRoot;
+            } else {
+                if (absDbDir) {
+                    this.cairoSqlCopyExportRoot = rootSubdir(this.dbRoot, configuredCairoSqlCopyExportRoot); // ../import
+                } else {
+                    this.cairoSqlCopyExportRoot = new File(installRoot, configuredCairoSqlCopyExportRoot).getAbsolutePath();
+                }
+            }
+
+        } else {
+            this.cairoSqlCopyExportRoot = null;
         }
 
 
@@ -1720,7 +1739,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.partitionEncoderParquetVersion = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_VERSION, ParquetVersion.PARQUET_VERSION_V1);
         this.partitionEncoderParquetStatisticsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, true);
-        this.partitionEncoderParquetCompressionCodec = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, ParquetCompression.COMPRESSION_UNCOMPRESSED);
+        this.partitionEncoderParquetCompressionCodec = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, ParquetCompression.COMPRESSION_DEFAULT);
         this.partitionEncoderParquetCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, 0);
         this.partitionEncoderParquetRowGroupSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
         this.partitionEncoderParquetDataPageSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, Numbers.SIZE_1MB);
@@ -3328,6 +3347,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlCopyBufferSize() {
             return sqlCopyBufferSize;
+        }
+
+        @Override
+        public CharSequence getSqlCopyExportRoot() {
+            return cairoSqlCopyExportRoot;
         }
 
         @Override

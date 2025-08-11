@@ -176,6 +176,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 .put(']');
     }
 
+    public static CairoException tableIsEmpty(CharSequence tableName) {
+        return nonCritical().put("table is empty [table=").put(tableName).put(']');
+    }
+
     public static CairoException txnApplyBlockError(TableToken tableToken) {
         return critical(TXN_BLOCK_APPLY_FAILED)
                 .put("sorting transaction block failed, need to be re-run in 1 by 1 apply mode [dirName=").put(tableToken.getDirName())

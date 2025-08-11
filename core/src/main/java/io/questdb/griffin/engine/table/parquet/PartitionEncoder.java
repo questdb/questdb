@@ -87,7 +87,7 @@ public class PartitionEncoder {
         }
     }
 
-    public static void populateFromTableReader(TableReader tableReader, PartitionDescriptor descriptor, int partitionIndex) {
+    public static void populateFromTableReader(TableReader tableReader, PartitionDescriptor descriptor, int partitionIndex) throws CairoException {
         final long partitionSize = tableReader.openPartition(partitionIndex);
         assert partitionSize != 0;
         final int timestampIndex = tableReader.getMetadata().getTimestampIndex();
@@ -105,6 +105,13 @@ public class PartitionEncoder {
 
                 final int primaryIndex = TableReader.getPrimaryColumnIndex(columnBase, i);
                 final MemoryR primaryMem = tableReader.getColumn(primaryIndex);
+
+                if (primaryMem == null) {
+                    throw CairoException.critical(CairoException.ERRNO_FILE_DOES_NOT_EXIST)
+                            .put("could not map primary mem for column [table=").put(metadata.getTableToken())
+                            .put(", primaryIndex=").put(primaryIndex)
+                            .put(']');
+                }
 
                 if (ColumnType.isSymbol(columnType)) {
                     SymbolMapReader symbolMapReader = tableReader.getSymbolMapReader(i);

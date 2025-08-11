@@ -781,6 +781,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public CharSequence getSqlCopyExportRoot() {
+        return null;
+    }
+
+    @Override
     public CharSequence getSqlCopyInputRoot() {
         return null;
     }

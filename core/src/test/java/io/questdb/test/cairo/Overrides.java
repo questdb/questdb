@@ -52,6 +52,7 @@ public class Overrides {
     private final Properties defaultProperties = new Properties();
     private final Properties properties = new Properties();
     private boolean changed = true;
+    private String copyImportRoot;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;

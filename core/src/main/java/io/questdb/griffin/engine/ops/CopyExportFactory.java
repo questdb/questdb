@@ -124,6 +124,14 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     tableName = exportIdSink.toString();
                 }
 
+                assert tableName != null;
+
+                // sanity check that the table exists.
+                // TOCTOU - but we don't pass the table token, just fail early
+                if (executionContext.getTableToken(tableName) == null) {
+                    throw SqlException.tableDoesNotExist(0, tableName);
+                }
+
                 exportIdSink.clear();
                 Numbers.appendHex(exportIdSink, copyID, true);
                 record.setValue(exportIdSink);
@@ -154,7 +162,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         } else {
             exportIdSink.clear();
             Numbers.appendHex(exportIdSink, activeCopyID, true);
-            throw SqlException.$(0, "Another export request is in progress. ")
+            throw SqlException.$(0, "another export request is in progress. ")
                     .put("[activeExportId=")
                     .put(exportIdSink)
                     .put(']');
@@ -180,7 +188,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
         if (model.getTableName() != null) {
             this.tableName = GenericLexer.unquote(model.getTableName()).toString();
-            
+
         } else {
             assert model.getSelectText() != null;
         }

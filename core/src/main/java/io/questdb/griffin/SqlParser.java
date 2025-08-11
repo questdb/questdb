@@ -754,10 +754,6 @@ public class SqlParser {
     }
 
     private ExecutionModel parseCopy(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
-        if (Chars.isBlank(configuration.getSqlCopyInputRoot())) {
-            throw SqlException.$(lexer.lastTokenPosition(), "COPY is disabled ['cairo.sql.copy.root' is not set?]");
-        }
-
         @Nullable ExpressionNode target = null;
         @Nullable String selectText = null;
         CharSequence tok = tok(lexer, "copy source");
@@ -804,6 +800,9 @@ public class SqlParser {
             }
 
             if (isFromKeyword(tok)) {
+                if (Chars.isBlank(configuration.getSqlCopyInputRoot())) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "COPY is disabled ['cairo.sql.copy.root' is not set?]");
+                }
                 if (selectText != null) {
                     throw SqlException.$(startOfSelect, "subqueries are not supported for `COPY-FROM`");
                 }
@@ -876,6 +875,10 @@ public class SqlParser {
             }
 
             if (isToKeyword(tok)) {
+                if (Chars.isBlank(configuration.getSqlCopyExportRoot())) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "COPY is disabled ['cairo.sql.copy.export.root' is not set?]");
+                }
+
                 tok = optTok(lexer);
                 if (tok != null && isWithKeyword(tok)) {
                     tok = tok(lexer, "copy option");
@@ -901,11 +904,17 @@ public class SqlParser {
                                 break;
                             case CopyModel.COPY_OPTION_SIZE_LIMIT:
                                 // todo: parse human readable size
-                                throw new UnsupportedOperationException();
+                                throw SqlException.$(lexer.lastTokenPosition(), "size limit is not yet supported");
                             case CopyModel.COPY_OPTION_COMPRESSION_CODEC:
-                                ExpressionNode codecExpr = expectLiteral(lexer);
-                                int codec = ParquetCompression.getCompressionCodec(codecExpr.token);
-                                model.setCompressionCodec(codec);
+                                try {
+                                    ExpressionNode codecExpr = expectLiteral(lexer);
+                                    int codec = ParquetCompression.getCompressionCodec(codecExpr.token);
+                                    model.setCompressionCodec(codec);
+                                } catch (SqlException e) {
+                                    SqlException _e = SqlException.$(e.getPosition(), "invalid compression codec, expected one of: ");
+                                    ParquetCompression.addCodecNamesToException(_e);
+                                    throw _e;
+                                }
                                 break;
                             case CopyModel.COPY_OPTION_COMPRESSION_LEVEL:
                                 model.setCompressionLevel(expectInt(lexer));
