@@ -91,28 +91,6 @@ public class MicrosFormatUtils {
         sink.put(val);
     }
 
-    public static void append00000000(@NotNull CharSink<?> sink, int val) {
-        int v = Math.abs(val);
-        if (v < 10) {
-            sink.putAscii("00000000");
-        } else if (v < 100) {
-            sink.putAscii("0000000");
-        } else if (v < 1000) {
-            sink.putAscii("000000");
-        } else if (v < 10000) {
-            sink.putAscii("00000");
-        } else if (v < 100000) {
-            sink.putAscii("0000");
-        } else if (v < 1000000) {
-            sink.putAscii("000");
-        } else if (v < 10000000) {
-            sink.putAscii("00");
-        } else if (v < 100000000) {
-            sink.putAscii('0');
-        }
-        sink.put(val);
-    }
-
     public static void appendAmPm(@NotNull CharSink<?> sink, int hour, @NotNull DateLocale locale) {
         if (hour < 12) {
             sink.putAscii(locale.getAMPM(0));
@@ -312,34 +290,6 @@ public class MicrosFormatUtils {
         }
 
         return outMicros;
-    }
-
-    // YYYY-MM-DD
-    public static void formatDashYYYYMMDD(@NotNull CharSink<?> sink, long micros) {
-        int y = Micros.getYear(micros);
-        boolean l = CommonUtils.isLeapYear(y);
-        int m = Micros.getMonthOfYear(micros, y, l);
-        Numbers.append(sink, y);
-        append0(sink.putAscii('-'), m);
-        append0(sink.putAscii('-'), Micros.getDayOfMonth(micros, y, m, l));
-    }
-
-    // YYYY-MM
-    public static void formatYYYYMM(@NotNull CharSink<?> sink, long micros) {
-        int y = Micros.getYear(micros);
-        int m = Micros.getMonthOfYear(micros, y, CommonUtils.isLeapYear(y));
-        Numbers.append(sink, y);
-        append0(sink.putAscii('-'), m);
-    }
-
-    // YYYYMMDD
-    public static void formatYYYYMMDD(@NotNull CharSink<?> sink, long micros) {
-        int y = Micros.getYear(micros);
-        boolean l = CommonUtils.isLeapYear(y);
-        int m = Micros.getMonthOfYear(micros, y, l);
-        Numbers.append(sink, y);
-        append0(sink, m);
-        append0(sink, Micros.getDayOfMonth(micros, y, m, l));
     }
 
     public static long getReferenceYear() {

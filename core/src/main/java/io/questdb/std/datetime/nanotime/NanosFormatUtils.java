@@ -307,34 +307,6 @@ public class NanosFormatUtils {
         throw NumericException.INSTANCE;
     }
 
-    // YYYY-MM-DD
-    public static void formatDashYYYYMMDD(@NotNull CharSink<?> sink, long nanos) {
-        int y = Nanos.getYear(nanos);
-        boolean l = Nanos.isLeapYear(y);
-        int m = Nanos.getMonthOfYear(nanos, y, l);
-        Numbers.append(sink, y);
-        append0(sink.putAscii('-'), m);
-        append0(sink.putAscii('-'), Nanos.getDayOfMonth(nanos, y, m, l));
-    }
-
-    // YYYY-MM
-    public static void formatYYYYMM(@NotNull CharSink<?> sink, long millis) {
-        int y = Nanos.getYear(millis);
-        int m = Nanos.getMonthOfYear(millis, y, Nanos.isLeapYear(y));
-        Numbers.append(sink, y);
-        append0(sink.putAscii('-'), m);
-    }
-
-    // YYYYMMDD
-    public static void formatYYYYMMDD(@NotNull CharSink<?> sink, long micros) {
-        int y = Nanos.getYear(micros);
-        boolean l = Nanos.isLeapYear(y);
-        int m = Nanos.getMonthOfYear(micros, y, l);
-        Numbers.append(sink, y);
-        append0(sink, m);
-        append0(sink, Nanos.getDayOfMonth(micros, y, m, l));
-    }
-
     public static long getReferenceYear() {
         return referenceYear;
     }

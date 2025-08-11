@@ -350,24 +350,6 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testFormatCalDate1() throws Exception {
-        MicrosFormatUtils.formatDashYYYYMMDD(sink, MicrosFormatUtils.parseTimestamp("2008-05-10T12:31:02.008Z"));
-        TestUtils.assertEquals("2008-05-10", sink);
-    }
-
-    @Test
-    public void testFormatCalDate2() throws Exception {
-        MicrosFormatUtils.formatYYYYMM(sink, MicrosFormatUtils.parseTimestamp("2008-05-10T12:31:02.008Z"));
-        TestUtils.assertEquals("2008-05", sink);
-    }
-
-    @Test
-    public void testFormatCalDate3() throws Exception {
-        MicrosFormatUtils.formatYYYYMMDD(sink, MicrosFormatUtils.parseTimestamp("2008-05-10T12:31:02.008Z"));
-        TestUtils.assertEquals("20080510", sink);
-    }
-
-    @Test
     public void testFormatDateTime() throws Exception {
         assertTrue("2014-11-30T12:34:55.332Z");
         assertTrue("2008-03-15T11:22:30.500Z");
