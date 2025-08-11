@@ -130,7 +130,9 @@ class AsyncTopKRecordCursor implements RecordCursor {
 
     @Override
     public void toTop() {
-        chainCursor.toTop();
+        if (isChainBuilt && chainCursor != null) {
+            chainCursor.toTop();
+        }
     }
 
     private void buildChain() {
