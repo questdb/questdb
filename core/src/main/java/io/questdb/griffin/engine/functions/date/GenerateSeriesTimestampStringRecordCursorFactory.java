@@ -44,7 +44,7 @@ import io.questdb.std.ThreadLocal;
 public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGenerateSeriesRecordCursorFactory {
     private static final RecordMetadata METADATA_MICROS;
     private static final RecordMetadata METADATA_NANOS;
-    private static final io.questdb.std.ThreadLocal<GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod> tlSampleByUnit = new ThreadLocal<>(GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod::new);
+    private static final ThreadLocal<GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod> tlSampleByUnit = new ThreadLocal<>(GenerateSeriesTimestampStringRecordCursor.GenerateSeriesPeriod::new);
     private final TimestampDriver timestampDriver;
     private GenerateSeriesTimestampStringRecordCursor cursor;
 
@@ -145,23 +145,17 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
             super.of(executionContext);
             this.start = timestampDriver.from(startFunc.getTimestamp(null), ColumnType.getTimestampType(startFunc.getType()));
             this.end = timestampDriver.from(endFunc.getTimestamp(null), ColumnType.getTimestampType(endFunc.getType()));
-
             final CharSequence stepStr = stepFunc.getStrA(null);
-
             GenerateSeriesPeriod sbu = tlSampleByUnit.get();
-
             sbu.parse(stepStr, stepPosition);
-
             this.adder = timestampDriver.getAddMethod(sbu.unit);
-
             if (this.adder == null) {
                 throwInvalidPeriod(stepStr, stepPosition);
             }
 
             unit = sbu.unit;
-
-            if (sbu.stride == 0) {
-                throw SqlException.$(stepPosition, "stride cannot be zero");
+            if (adder.add(0, sbu.stride) == 0) {
+                throw SqlException.$(stepPosition, "step cannot be zero");
             }
 
             stride = sbu.stride;
@@ -326,9 +320,6 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
 
                 return true;
             }
-
-
-            // todo: when nanosecond PR is fleshed out, either fold this into it, or move validation etc. to this class
         }
 
         private class GenerateSeriesTimestampStringRecord implements Record {

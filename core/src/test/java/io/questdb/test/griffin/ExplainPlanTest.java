@@ -166,6 +166,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -184,6 +185,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         testMicrosClock = StationaryMicrosClock.INSTANCE;
+        testNanoClock = StationaryNanosClock.INSTANCE;
         AbstractCairoTest.setUpStatic();
     }
 
