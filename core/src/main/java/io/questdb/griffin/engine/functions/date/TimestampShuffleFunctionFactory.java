@@ -94,7 +94,5 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
         public void toTop() {
             rnd.reset();
         }
-
-
     }
 }
