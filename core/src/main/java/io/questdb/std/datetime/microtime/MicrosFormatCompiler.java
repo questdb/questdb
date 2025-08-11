@@ -42,7 +42,7 @@ import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
-public class TimestampFormatCompiler {
+public class MicrosFormatCompiler {
     static final int OP_AM_PM = 14;
     static final int OP_DAY_GREEDY = 139;
     static final int OP_DAY_NAME_LONG = 12;
@@ -151,7 +151,7 @@ public class TimestampFormatCompiler {
     private final GenericLexer lexer = new GenericLexer(2048);
     private final IntList ops = new IntList();
 
-    public TimestampFormatCompiler() {
+    public MicrosFormatCompiler() {
         for (int i = 0, n = opList.size(); i < n; i++) {
             lexer.defineSymbol(opList.getQuick(i));
         }
@@ -306,152 +306,152 @@ public class TimestampFormatCompiler {
             int op = ops.getQuick(i);
             switch (op) {
                 // AM/PM
-                case TimestampFormatCompiler.OP_AM_PM:
+                case MicrosFormatCompiler.OP_AM_PM:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
                     asm.aload(FA_LOCAL_LOCALE);
                     asm.invokeStatic(appendAmPmIndex);
                     break;
                 // MICROS3
-                case TimestampFormatCompiler.OP_MICROS_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_MICROS_GREEDY3:
+                case MicrosFormatCompiler.OP_MICROS_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_MICROS_GREEDY3:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_MILLIS_MICROS]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
                 // MICROS6 & NANOS9 are formatted the same
-                case TimestampFormatCompiler.OP_MICROS_GREEDY6:
-                case TimestampFormatCompiler.OP_NANOS_GREEDY9:
+                case MicrosFormatCompiler.OP_MICROS_GREEDY6:
+                case MicrosFormatCompiler.OP_NANOS_GREEDY9:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_SECOND_MICROS]);
                     asm.invokeStatic(append00000Index);
                     break;
-                case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
+                case MicrosFormatCompiler.OP_MICROS_THREE_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_MILLIS_MICROS]);
                     asm.invokeStatic(append00Index);
                     break;
                 // NANOS
-                case TimestampFormatCompiler.OP_NANOS_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_NANOS_GREEDY:
+                case MicrosFormatCompiler.OP_NANOS_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_NANOS_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iconst(0);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-                case TimestampFormatCompiler.OP_NANOS_THREE_DIGITS:
+                case MicrosFormatCompiler.OP_NANOS_THREE_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iconst(0);
                     asm.invokeStatic(append00Index);
                     break;
                 // MILLIS
-                case TimestampFormatCompiler.OP_MILLIS_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_MILLIS_GREEDY:
+                case MicrosFormatCompiler.OP_MILLIS_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_MILLIS_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_SECOND_MILLIS]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-                case TimestampFormatCompiler.OP_MILLIS_THREE_DIGITS:
+                case MicrosFormatCompiler.OP_MILLIS_THREE_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_SECOND_MILLIS]);
                     asm.invokeStatic(append00Index);
                     break;
                 // SECOND
-                case TimestampFormatCompiler.OP_SECOND_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_SECOND_GREEDY:
+                case MicrosFormatCompiler.OP_SECOND_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_SECOND_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_SECOND]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-                case TimestampFormatCompiler.OP_SECOND_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_SECOND_TWO_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_SECOND]);
                     asm.invokeStatic(append0Index);
                     break;
                 // MINUTE
-                case TimestampFormatCompiler.OP_MINUTE_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_MINUTE_GREEDY:
+                case MicrosFormatCompiler.OP_MINUTE_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_MINUTE_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_MINUTE]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-                case TimestampFormatCompiler.OP_MINUTE_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_MINUTE_TWO_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_MINUTE]);
                     asm.invokeStatic(append0Index);
                     break;
                 // HOUR (0-11)
-                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_HOUR_12_GREEDY:
+                case MicrosFormatCompiler.OP_HOUR_12_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_HOUR_12_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
                     asm.invokeStatic(appendHour12Index);
                     break;
 
-                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_HOUR_12_TWO_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
                     asm.invokeStatic(appendHour12PaddedIndex);
                     break;
 
                 // HOUR (1-12)
-                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
-                case TimestampFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
                     asm.invokeStatic(appendHour121Index);
                     break;
 
-                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
                     asm.invokeStatic(appendHour121PaddedIndex);
                     break;
                 // HOUR (0-23)
-                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_HOUR_24_GREEDY:
+                case MicrosFormatCompiler.OP_HOUR_24_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_HOUR_24_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_HOUR_24_TWO_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
                     asm.invokeStatic(append0Index);
                     break;
 
                 // HOUR (1 - 24)
-                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
-                case TimestampFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
                     asm.invokeStatic(appendHour241Index);
                     break;
 
-                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
                     asm.invokeStatic(appendHour241PaddedIndex);
                     break;
                 // DAY
-                case TimestampFormatCompiler.OP_DAY_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_DAY_GREEDY:
+                case MicrosFormatCompiler.OP_DAY_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_DAY_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_DAY]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-                case TimestampFormatCompiler.OP_DAY_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_DAY_TWO_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_DAY]);
                     asm.invokeStatic(append0Index);
                     break;
-                case TimestampFormatCompiler.OP_DAY_NAME_LONG:
+                case MicrosFormatCompiler.OP_DAY_NAME_LONG:
                     asm.aload(FA_LOCAL_SINK);
                     asm.aload(FA_LOCAL_LOCALE);
                     asm.iload(fmtAttributeIndex[FA_DAY_OF_WEEK]);
@@ -459,7 +459,7 @@ public class TimestampFormatCompiler {
                     asm.invokeInterface(sinkPutStrIndex, 1);
                     asm.pop();
                     break;
-                case TimestampFormatCompiler.OP_DAY_NAME_SHORT:
+                case MicrosFormatCompiler.OP_DAY_NAME_SHORT:
                     asm.aload(FA_LOCAL_SINK);
                     asm.aload(FA_LOCAL_LOCALE);
                     asm.iload(fmtAttributeIndex[FA_DAY_OF_WEEK]);
@@ -467,43 +467,43 @@ public class TimestampFormatCompiler {
                     asm.invokeInterface(sinkPutStrIndex, 1);
                     asm.pop();
                     break;
-                case TimestampFormatCompiler.OP_DAY_OF_WEEK:
+                case MicrosFormatCompiler.OP_DAY_OF_WEEK:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_DAY_OF_WEEK]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-                case TimestampFormatCompiler.OP_DAY_OF_YEAR:
+                case MicrosFormatCompiler.OP_DAY_OF_YEAR:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_DAY_OF_YEAR]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-                case TimestampFormatCompiler.OP_ISO_WEEK_OF_YEAR:
+                case MicrosFormatCompiler.OP_ISO_WEEK_OF_YEAR:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_ISO_WEEK_OF_YEAR]);
                     asm.invokeStatic(append0Index);
                     break;
-                case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
+                case MicrosFormatCompiler.OP_WEEK_OF_YEAR:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_WEEK_OF_YEAR]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
                 // MONTH
-                case TimestampFormatCompiler.OP_MONTH_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_MONTH_GREEDY:
+                case MicrosFormatCompiler.OP_MONTH_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_MONTH_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_MONTH]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-                case TimestampFormatCompiler.OP_MONTH_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_MONTH_TWO_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_MONTH]);
                     asm.invokeStatic(append0Index);
                     break;
-                case TimestampFormatCompiler.OP_MONTH_SHORT_NAME:
+                case MicrosFormatCompiler.OP_MONTH_SHORT_NAME:
                     asm.aload(FA_LOCAL_SINK);
                     asm.aload(FA_LOCAL_LOCALE);
                     asm.iload(fmtAttributeIndex[FA_MONTH]);
@@ -513,7 +513,7 @@ public class TimestampFormatCompiler {
                     asm.invokeInterface(sinkPutStrIndex, 1);
                     asm.pop();
                     break;
-                case TimestampFormatCompiler.OP_MONTH_LONG_NAME:
+                case MicrosFormatCompiler.OP_MONTH_LONG_NAME:
                     asm.aload(FA_LOCAL_SINK);
                     asm.aload(FA_LOCAL_LOCALE);
                     asm.iload(fmtAttributeIndex[FA_MONTH]);
@@ -524,38 +524,38 @@ public class TimestampFormatCompiler {
                     asm.pop();
                     break;
                 // YEAR
-                case TimestampFormatCompiler.OP_YEAR_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_YEAR_GREEDY:
+                case MicrosFormatCompiler.OP_YEAR_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_YEAR_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
                     asm.invokeStatic(appendYearIndex);
                     break;
-                case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_YEAR_TWO_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
                     asm.iconst(100);
                     asm.irem();
                     asm.invokeStatic(appendYear0Index);
                     break;
-                case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
+                case MicrosFormatCompiler.OP_YEAR_THREE_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
                     asm.iconst(1000);
                     asm.irem();
                     asm.invokeStatic(appendYear00Index);
                     break;
-                case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
+                case MicrosFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
                     asm.invokeStatic(appendYear000Index);
                     break;
-                case TimestampFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
+                case MicrosFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_ISO_YEAR]);
                     asm.invokeStatic(appendYear000Index);
                     break;
                 // ERA
-                case TimestampFormatCompiler.OP_ERA:
+                case MicrosFormatCompiler.OP_ERA:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
                     asm.aload(FA_LOCAL_LOCALE);
@@ -563,13 +563,13 @@ public class TimestampFormatCompiler {
                     break;
 
                 // TIMEZONE
-                case TimestampFormatCompiler.OP_TIME_ZONE_SHORT:
-                case TimestampFormatCompiler.OP_TIME_ZONE_GMT_BASED:
-                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_1:
-                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_2:
-                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_3:
-                case TimestampFormatCompiler.OP_TIME_ZONE_LONG:
-                case TimestampFormatCompiler.OP_TIME_ZONE_RFC_822:
+                case MicrosFormatCompiler.OP_TIME_ZONE_SHORT:
+                case MicrosFormatCompiler.OP_TIME_ZONE_GMT_BASED:
+                case MicrosFormatCompiler.OP_TIME_ZONE_ISO_8601_1:
+                case MicrosFormatCompiler.OP_TIME_ZONE_ISO_8601_2:
+                case MicrosFormatCompiler.OP_TIME_ZONE_ISO_8601_3:
+                case MicrosFormatCompiler.OP_TIME_ZONE_LONG:
+                case MicrosFormatCompiler.OP_TIME_ZONE_RFC_822:
                     asm.aload(FA_LOCAL_SINK);
                     asm.aload(FA_LOCAL_TIMEZONE);
                     asm.invokeInterface(sinkPutStrIndex, 1);
@@ -1560,18 +1560,18 @@ public class TimestampFormatCompiler {
         for (int i = 0, n = ops.size(); i < n; i++) {
             switch (ops.getQuick(i)) {
                 // AM/PM
-                case TimestampFormatCompiler.OP_AM_PM:
+                case MicrosFormatCompiler.OP_AM_PM:
                     attributes |= (1 << FA_HOUR);
                     break;
                 // MICROS
-                case TimestampFormatCompiler.OP_MICROS_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_MICROS_GREEDY3:
-                case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
+                case MicrosFormatCompiler.OP_MICROS_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_MICROS_GREEDY3:
+                case MicrosFormatCompiler.OP_MICROS_THREE_DIGITS:
                     attributes |= (1 << FA_MILLIS_MICROS);
                     break;
                 // formatting method for MICROS6 and NANOS9 is the same
-                case TimestampFormatCompiler.OP_MICROS_GREEDY6:
-                case TimestampFormatCompiler.OP_NANOS_GREEDY9:
+                case MicrosFormatCompiler.OP_MICROS_GREEDY6:
+                case MicrosFormatCompiler.OP_NANOS_GREEDY9:
                     attributes |= (1 << FA_SECOND_MICROS);
                     break;
 
@@ -1579,86 +1579,86 @@ public class TimestampFormatCompiler {
                 // have nanos, therefore we do not need to store value on stack, it is constant 0
 
                 // MILLIS
-                case TimestampFormatCompiler.OP_MILLIS_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_MILLIS_GREEDY:
-                case TimestampFormatCompiler.OP_MILLIS_THREE_DIGITS:
+                case MicrosFormatCompiler.OP_MILLIS_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_MILLIS_GREEDY:
+                case MicrosFormatCompiler.OP_MILLIS_THREE_DIGITS:
                     attributes |= (1 << FA_SECOND_MILLIS);
                     break;
                 // SECOND
-                case TimestampFormatCompiler.OP_SECOND_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_SECOND_GREEDY:
-                case TimestampFormatCompiler.OP_SECOND_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_SECOND_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_SECOND_GREEDY:
+                case MicrosFormatCompiler.OP_SECOND_TWO_DIGITS:
                     attributes |= (1 << FA_SECOND);
                     break;
                 // MINUTE
-                case TimestampFormatCompiler.OP_MINUTE_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_MINUTE_GREEDY:
-                case TimestampFormatCompiler.OP_MINUTE_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_MINUTE_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_MINUTE_GREEDY:
+                case MicrosFormatCompiler.OP_MINUTE_TWO_DIGITS:
                     attributes |= (1 << FA_MINUTE);
                     break;
                 // HOUR
-                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_HOUR_12_GREEDY:
-                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS:
-                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
-                case TimestampFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
-                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
-                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_HOUR_24_GREEDY:
-                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS:
-                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
-                case TimestampFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
-                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_12_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_HOUR_12_GREEDY:
+                case MicrosFormatCompiler.OP_HOUR_12_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_24_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_HOUR_24_GREEDY:
+                case MicrosFormatCompiler.OP_HOUR_24_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
                     attributes |= (1 << FA_HOUR);
                     break;
 
                 // DAY OF MONTH
-                case TimestampFormatCompiler.OP_DAY_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_DAY_GREEDY:
-                case TimestampFormatCompiler.OP_DAY_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_DAY_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_DAY_GREEDY:
+                case MicrosFormatCompiler.OP_DAY_TWO_DIGITS:
                     attributes |= (1 << FA_DAY);
                     attributes |= (1 << FA_MONTH);
                     attributes |= (1 << FA_YEAR);
                     attributes |= (1 << FA_LEAP);
                     break;
                 // DAY OF WEEK
-                case TimestampFormatCompiler.OP_DAY_NAME_LONG:
-                case TimestampFormatCompiler.OP_DAY_NAME_SHORT:
-                case TimestampFormatCompiler.OP_DAY_OF_WEEK:
+                case MicrosFormatCompiler.OP_DAY_NAME_LONG:
+                case MicrosFormatCompiler.OP_DAY_NAME_SHORT:
+                case MicrosFormatCompiler.OP_DAY_OF_WEEK:
                     attributes |= (1 << FA_DAY_OF_WEEK);
                     break;
-                case TimestampFormatCompiler.OP_DAY_OF_YEAR:
+                case MicrosFormatCompiler.OP_DAY_OF_YEAR:
                     attributes |= (1 << FA_DAY_OF_YEAR);
                     break;
-                case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
+                case MicrosFormatCompiler.OP_WEEK_OF_YEAR:
                     attributes |= (1 << FA_WEEK_OF_YEAR);
                     break;
-                case TimestampFormatCompiler.OP_ISO_WEEK_OF_YEAR:
+                case MicrosFormatCompiler.OP_ISO_WEEK_OF_YEAR:
                     attributes |= (1 << FA_ISO_WEEK_OF_YEAR);
                     break;
                 // MONTH
-                case TimestampFormatCompiler.OP_MONTH_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_MONTH_GREEDY:
-                case TimestampFormatCompiler.OP_MONTH_TWO_DIGITS:
-                case TimestampFormatCompiler.OP_MONTH_SHORT_NAME:
-                case TimestampFormatCompiler.OP_MONTH_LONG_NAME:
+                case MicrosFormatCompiler.OP_MONTH_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_MONTH_GREEDY:
+                case MicrosFormatCompiler.OP_MONTH_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_MONTH_SHORT_NAME:
+                case MicrosFormatCompiler.OP_MONTH_LONG_NAME:
                     attributes |= (1 << FA_MONTH);
                     attributes |= (1 << FA_YEAR);
                     attributes |= (1 << FA_LEAP);
                     break;
                 // YEAR
-                case TimestampFormatCompiler.OP_YEAR_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_YEAR_GREEDY:
-                case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
-                case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
-                case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
+                case MicrosFormatCompiler.OP_YEAR_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_YEAR_GREEDY:
+                case MicrosFormatCompiler.OP_YEAR_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_YEAR_THREE_DIGITS:
+                case MicrosFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     attributes |= (1 << FA_YEAR);
                     break;
-                case TimestampFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
+                case MicrosFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
                     attributes |= (1 << FA_ISO_YEAR);
                     break;
                 // ERA
-                case TimestampFormatCompiler.OP_ERA:
+                case MicrosFormatCompiler.OP_ERA:
                     attributes |= (1 << FA_YEAR);
                     break;
                 default:

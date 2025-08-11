@@ -32,8 +32,8 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.ex.BytecodeException;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -50,7 +50,7 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public class TimestampFormatCompilerTest {
 
-    private static final TimestampFormatCompiler compiler = new TimestampFormatCompiler();
+    private static final MicrosFormatCompiler compiler = new MicrosFormatCompiler();
     private final static DateFormat REFERENCE = compiler.compile(CommonUtils.USEC_UTC_PATTERN);
     private static final DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getLocale("en-GB");
     private final static StringSink sink = new StringSink();
@@ -834,13 +834,13 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testOperationUniqueness() {
 
-        Assert.assertTrue(TimestampFormatCompiler.getOpCount() > 0);
+        Assert.assertTrue(MicrosFormatCompiler.getOpCount() > 0);
 
         IntHashSet codeSet = new IntHashSet();
         CharSequenceHashSet nameSet = new CharSequenceHashSet();
-        for (int i = 0, n = TimestampFormatCompiler.getOpCount(); i < n; i++) {
-            String name = TimestampFormatCompiler.getOpName(i);
-            int code = TimestampFormatCompiler.getOpCode(name);
+        for (int i = 0, n = MicrosFormatCompiler.getOpCount(); i < n; i++) {
+            String name = MicrosFormatCompiler.getOpName(i);
+            int code = MicrosFormatCompiler.getOpCode(name);
             Assert.assertTrue(codeSet.add(code));
             Assert.assertTrue(nameSet.add(name));
         }

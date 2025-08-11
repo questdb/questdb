@@ -423,7 +423,7 @@ public class MicrosFormatUtils {
     static {
         updateReferenceYear(Os.currentTimeMicros());
 
-        final TimestampFormatCompiler compiler = new TimestampFormatCompiler();
+        final MicrosFormatCompiler compiler = new MicrosFormatCompiler();
         PG_TIMESTAMP_FORMAT = compiler.compile("y-MM-dd HH:mm:ss.SSSUUU");
         PG_TIMESTAMP_TIME_Z_FORMAT = compiler.compile("y-MM-dd HH:mm:ssz");
         NANOS_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUNNNz");

@@ -73,8 +73,8 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -4550,7 +4550,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     void verifyTimestampPartitions(MemoryARW vmem) {
         int i;
-        TimestampFormatCompiler compiler = new TimestampFormatCompiler();
+        MicrosFormatCompiler compiler = new MicrosFormatCompiler();
         DateFormat fmt = compiler.compile("yyyy-MM-dd");
         DateLocale enGb = DateLocaleFactory.INSTANCE.getLocale("en-gb");
 

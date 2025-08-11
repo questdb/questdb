@@ -31,7 +31,7 @@ import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.datetime.nanotime.NanosFormatCompiler;
 import io.questdb.std.datetime.nanotime.NanosFormatUtils;
@@ -785,13 +785,13 @@ public class NanosFormatCompilerTest {
     @Test
     public void testOperationUniqueness() {
 
-        Assert.assertTrue(TimestampFormatCompiler.getOpCount() > 0);
+        Assert.assertTrue(MicrosFormatCompiler.getOpCount() > 0);
 
         IntHashSet codeSet = new IntHashSet();
         CharSequenceHashSet nameSet = new CharSequenceHashSet();
-        for (int i = 0, n = TimestampFormatCompiler.getOpCount(); i < n; i++) {
-            String name = TimestampFormatCompiler.getOpName(i);
-            int code = TimestampFormatCompiler.getOpCode(name);
+        for (int i = 0, n = MicrosFormatCompiler.getOpCount(); i < n; i++) {
+            String name = MicrosFormatCompiler.getOpName(i);
+            int code = MicrosFormatCompiler.getOpCode(name);
             Assert.assertTrue(codeSet.add(code));
             Assert.assertTrue(nameSet.add(name));
         }

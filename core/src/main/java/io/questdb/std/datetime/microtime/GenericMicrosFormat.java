@@ -63,7 +63,7 @@ public class GenericMicrosFormat extends AbstractDateFormat {
             int op = compiledOps.getQuick(i);
             switch (op) {
                 // AM/PM
-                case TimestampFormatCompiler.OP_AM_PM:
+                case MicrosFormatCompiler.OP_AM_PM:
                     if (hour == -1) {
                         hour = Micros.getHourOfDay(micros);
                     }
@@ -71,23 +71,23 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     break;
 
                 // MICROS
-                case TimestampFormatCompiler.OP_MICROS_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_MICROS_GREEDY3:
+                case MicrosFormatCompiler.OP_MICROS_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_MICROS_GREEDY3:
                     if (micros0 == -1) {
                         micros0 = Micros.getMicrosOfMilli(micros);
                     }
                     sink.put(micros0);
                     break;
 
-                case TimestampFormatCompiler.OP_MICROS_GREEDY6:
-                case TimestampFormatCompiler.OP_NANOS_GREEDY9:
+                case MicrosFormatCompiler.OP_MICROS_GREEDY6:
+                case MicrosFormatCompiler.OP_NANOS_GREEDY9:
                     if (micros0 == -1) {
                         micros0 = Micros.getMicrosOfSecond(micros);
                     }
                     MicrosFormatUtils.append00000(sink, micros0);
                     break;
 
-                case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
+                case MicrosFormatCompiler.OP_MICROS_THREE_DIGITS:
                     if (micros0 == -1) {
                         micros0 = Micros.getMicrosOfMilli(micros);
                     }
@@ -95,15 +95,15 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     break;
 
                 // MILLIS
-                case TimestampFormatCompiler.OP_MILLIS_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_MILLIS_GREEDY:
+                case MicrosFormatCompiler.OP_MILLIS_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_MILLIS_GREEDY:
                     if (millis == -1) {
                         millis = Micros.getMillisOfSecond(micros);
                     }
                     sink.put(millis);
                     break;
 
-                case TimestampFormatCompiler.OP_MILLIS_THREE_DIGITS:
+                case MicrosFormatCompiler.OP_MILLIS_THREE_DIGITS:
                     if (millis == -1) {
                         millis = Micros.getMillisOfSecond(micros);
                     }
@@ -111,25 +111,25 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     break;
 
                 // NANOS
-                case TimestampFormatCompiler.OP_NANOS_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_NANOS_GREEDY:
+                case MicrosFormatCompiler.OP_NANOS_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_NANOS_GREEDY:
                     sink.put(0);
                     break;
 
-                case TimestampFormatCompiler.OP_NANOS_THREE_DIGITS:
+                case MicrosFormatCompiler.OP_NANOS_THREE_DIGITS:
                     MicrosFormatUtils.append00(sink, 0);
                     break;
 
                 // SECOND
-                case TimestampFormatCompiler.OP_SECOND_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_SECOND_GREEDY:
+                case MicrosFormatCompiler.OP_SECOND_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_SECOND_GREEDY:
                     if (second == -1) {
                         second = Micros.getSecondOfMinute(micros);
                     }
                     sink.put(second);
                     break;
 
-                case TimestampFormatCompiler.OP_SECOND_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_SECOND_TWO_DIGITS:
                     if (second == -1) {
                         second = Micros.getSecondOfMinute(micros);
                     }
@@ -137,15 +137,15 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     break;
 
                 // MINUTE
-                case TimestampFormatCompiler.OP_MINUTE_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_MINUTE_GREEDY:
+                case MicrosFormatCompiler.OP_MINUTE_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_MINUTE_GREEDY:
                     if (minute == -1) {
                         minute = Micros.getMinuteOfHour(micros);
                     }
                     sink.put(minute);
                     break;
 
-                case TimestampFormatCompiler.OP_MINUTE_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_MINUTE_TWO_DIGITS:
                     if (minute == -1) {
                         minute = Micros.getMinuteOfHour(micros);
                     }
@@ -154,15 +154,15 @@ public class GenericMicrosFormat extends AbstractDateFormat {
 
 
                 // HOUR (0-11)
-                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_HOUR_12_GREEDY:
+                case MicrosFormatCompiler.OP_HOUR_12_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_HOUR_12_GREEDY:
                     if (hour == -1) {
                         hour = Micros.getHourOfDay(micros);
                     }
                     MicrosFormatUtils.appendHour12(sink, hour);
                     break;
 
-                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_HOUR_12_TWO_DIGITS:
                     if (hour == -1) {
                         hour = Micros.getHourOfDay(micros);
                     }
@@ -170,15 +170,15 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     break;
 
                 // HOUR (1-12)
-                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
-                case TimestampFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
                     if (hour == -1) {
                         hour = Micros.getHourOfDay(micros);
                     }
                     MicrosFormatUtils.appendHour121(sink, hour);
                     break;
 
-                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
                     if (hour == -1) {
                         hour = Micros.getHourOfDay(micros);
                     }
@@ -186,15 +186,15 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     break;
 
                 // HOUR (0-23)
-                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_HOUR_24_GREEDY:
+                case MicrosFormatCompiler.OP_HOUR_24_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_HOUR_24_GREEDY:
                     if (hour == -1) {
                         hour = Micros.getHourOfDay(micros);
                     }
                     sink.put(hour);
                     break;
 
-                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_HOUR_24_TWO_DIGITS:
                     if (hour == -1) {
                         hour = Micros.getHourOfDay(micros);
                     }
@@ -202,15 +202,15 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     break;
 
                 // HOUR (1 - 24)
-                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
-                case TimestampFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
                     if (hour == -1) {
                         hour = Micros.getHourOfDay(micros);
                     }
                     MicrosFormatUtils.appendHour241(sink, hour);
                     break;
 
-                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
                     if (hour == -1) {
                         hour = Micros.getHourOfDay(micros);
                     }
@@ -218,8 +218,8 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     break;
 
                 // DAY
-                case TimestampFormatCompiler.OP_DAY_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_DAY_GREEDY:
+                case MicrosFormatCompiler.OP_DAY_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_DAY_GREEDY:
                     if (day == -1) {
                         if (year == Integer.MIN_VALUE) {
                             year = Micros.getYear(micros);
@@ -234,7 +234,7 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     }
                     sink.put(day);
                     break;
-                case TimestampFormatCompiler.OP_DAY_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_DAY_TWO_DIGITS:
                     if (day == -1) {
                         if (year == Integer.MIN_VALUE) {
                             year = Micros.getYear(micros);
@@ -250,39 +250,39 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     MicrosFormatUtils.append0(sink, day);
                     break;
 
-                case TimestampFormatCompiler.OP_DAY_NAME_LONG:
+                case MicrosFormatCompiler.OP_DAY_NAME_LONG:
                     if (dayOfWeek == -1) {
                         dayOfWeek = Micros.getDayOfWeekSundayFirst(micros);
                     }
                     sink.put(locale.getWeekday(dayOfWeek));
                     break;
 
-                case TimestampFormatCompiler.OP_DAY_NAME_SHORT:
+                case MicrosFormatCompiler.OP_DAY_NAME_SHORT:
                     if (dayOfWeek == -1) {
                         dayOfWeek = Micros.getDayOfWeekSundayFirst(micros);
                     }
                     sink.put(locale.getShortWeekday(dayOfWeek));
                     break;
 
-                case TimestampFormatCompiler.OP_DAY_OF_WEEK:
+                case MicrosFormatCompiler.OP_DAY_OF_WEEK:
                     if (dayOfWeek == -1) {
                         dayOfWeek = Micros.getDayOfWeekSundayFirst(micros);
                     }
                     sink.put(dayOfWeek);
                     break;
-                case TimestampFormatCompiler.OP_DAY_OF_YEAR:
+                case MicrosFormatCompiler.OP_DAY_OF_YEAR:
                     sink.put(Micros.getDayOfYear(micros));
                     break;
-                case TimestampFormatCompiler.OP_ISO_WEEK_OF_YEAR:
+                case MicrosFormatCompiler.OP_ISO_WEEK_OF_YEAR:
                     MicrosFormatUtils.append0(sink, Micros.getWeek(micros));
                     break;
-                case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
+                case MicrosFormatCompiler.OP_WEEK_OF_YEAR:
                     sink.put(Micros.getWeekOfYear(micros));
                     break;
 
                 // MONTH
-                case TimestampFormatCompiler.OP_MONTH_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_MONTH_GREEDY:
+                case MicrosFormatCompiler.OP_MONTH_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_MONTH_GREEDY:
                     if (month == -1) {
                         if (year == Integer.MIN_VALUE) {
                             year = Micros.getYear(micros);
@@ -293,7 +293,7 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     }
                     sink.put(month);
                     break;
-                case TimestampFormatCompiler.OP_MONTH_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_MONTH_TWO_DIGITS:
                     if (month == -1) {
                         if (year == Integer.MIN_VALUE) {
                             year = Micros.getYear(micros);
@@ -305,7 +305,7 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     MicrosFormatUtils.append0(sink, month);
                     break;
 
-                case TimestampFormatCompiler.OP_MONTH_SHORT_NAME:
+                case MicrosFormatCompiler.OP_MONTH_SHORT_NAME:
                     if (month == -1) {
                         if (year == Integer.MIN_VALUE) {
                             year = Micros.getYear(micros);
@@ -316,7 +316,7 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     }
                     sink.put(locale.getShortMonth(month - 1));
                     break;
-                case TimestampFormatCompiler.OP_MONTH_LONG_NAME:
+                case MicrosFormatCompiler.OP_MONTH_LONG_NAME:
                     if (month == -1) {
                         if (year == Integer.MIN_VALUE) {
                             year = Micros.getYear(micros);
@@ -329,36 +329,36 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     break;
 
                 // YEAR
-                case TimestampFormatCompiler.OP_YEAR_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_YEAR_GREEDY:
+                case MicrosFormatCompiler.OP_YEAR_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_YEAR_GREEDY:
                     if (year == Integer.MIN_VALUE) {
                         year = Micros.getYear(micros);
                         leap = CommonUtils.isLeapYear(year);
                     }
                     MicrosFormatUtils.appendYear(sink, year);
                     break;
-                case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_YEAR_TWO_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Micros.getYear(micros);
                         leap = CommonUtils.isLeapYear(year);
                     }
                     MicrosFormatUtils.appendYear0(sink, year % 100);
                     break;
-                case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
+                case MicrosFormatCompiler.OP_YEAR_THREE_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Micros.getYear(micros);
                         leap = CommonUtils.isLeapYear(year);
                     }
                     MicrosFormatUtils.appendYear00(sink, year % 1000);
                     break;
-                case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
+                case MicrosFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Micros.getYear(micros);
                         leap = CommonUtils.isLeapYear(year);
                     }
                     MicrosFormatUtils.appendYear000(sink, year);
                     break;
-                case TimestampFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
+                case MicrosFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Micros.getIsoYear(micros);
                     }
@@ -366,7 +366,7 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     break;
 
                 // ERA
-                case TimestampFormatCompiler.OP_ERA:
+                case MicrosFormatCompiler.OP_ERA:
                     if (year == Integer.MIN_VALUE) {
                         year = Micros.getYear(micros);
                         leap = CommonUtils.isLeapYear(year);
@@ -375,13 +375,13 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     break;
 
                 // TIMEZONE
-                case TimestampFormatCompiler.OP_TIME_ZONE_SHORT:
-                case TimestampFormatCompiler.OP_TIME_ZONE_GMT_BASED:
-                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_1:
-                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_2:
-                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_3:
-                case TimestampFormatCompiler.OP_TIME_ZONE_LONG:
-                case TimestampFormatCompiler.OP_TIME_ZONE_RFC_822:
+                case MicrosFormatCompiler.OP_TIME_ZONE_SHORT:
+                case MicrosFormatCompiler.OP_TIME_ZONE_GMT_BASED:
+                case MicrosFormatCompiler.OP_TIME_ZONE_ISO_8601_1:
+                case MicrosFormatCompiler.OP_TIME_ZONE_ISO_8601_2:
+                case MicrosFormatCompiler.OP_TIME_ZONE_ISO_8601_3:
+                case MicrosFormatCompiler.OP_TIME_ZONE_LONG:
+                case MicrosFormatCompiler.OP_TIME_ZONE_RFC_822:
                     sink.put(timeZoneName);
                     break;
 
@@ -422,101 +422,101 @@ public class GenericMicrosFormat extends AbstractDateFormat {
             switch (op) {
 
                 // AM/PM
-                case TimestampFormatCompiler.OP_AM_PM:
+                case MicrosFormatCompiler.OP_AM_PM:
                     l = locale.matchAMPM(in, pos, hi);
                     hourType = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;
 
                 // MICROS
-                case TimestampFormatCompiler.OP_MICROS_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_MICROS_ONE_DIGIT:
                     MicrosFormatUtils.assertRemaining(pos, hi);
                     micros = Numbers.parseInt(in, pos, ++pos);
                     break;
 
-                case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
+                case MicrosFormatCompiler.OP_MICROS_THREE_DIGITS:
                     MicrosFormatUtils.assertRemaining(pos + 2, hi);
                     micros = Numbers.parseInt(in, pos, pos += 3);
                     break;
 
-                case TimestampFormatCompiler.OP_MICROS_GREEDY3:
+                case MicrosFormatCompiler.OP_MICROS_GREEDY3:
                     l = Numbers.parseInt000Greedy(in, pos, hi);
                     micros = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;
 
-                case TimestampFormatCompiler.OP_MICROS_GREEDY6:
+                case MicrosFormatCompiler.OP_MICROS_GREEDY6:
                     l = Numbers.parseLong000000Greedy(in, pos, hi);
                     micros = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;
 
-                case TimestampFormatCompiler.OP_NANOS_GREEDY9:
+                case MicrosFormatCompiler.OP_NANOS_GREEDY9:
                     l = Micros.parseNanosAsMicrosGreedy(in, pos, hi);
                     micros = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;
 
                 // NANOS - ignoring parsed values
-                case TimestampFormatCompiler.OP_NANOS_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_NANOS_ONE_DIGIT:
                     MicrosFormatUtils.assertRemaining(pos++, hi);
                     break;
 
-                case TimestampFormatCompiler.OP_NANOS_THREE_DIGITS:
+                case MicrosFormatCompiler.OP_NANOS_THREE_DIGITS:
                     MicrosFormatUtils.assertRemaining(pos + 2, hi);
                     pos += 3;
                     break;
 
-                case TimestampFormatCompiler.OP_NANOS_GREEDY:
+                case MicrosFormatCompiler.OP_NANOS_GREEDY:
                     pos += Numbers.decodeHighInt(Numbers.parseIntSafely(in, pos, hi));
                     break;
 
                 // MILLIS
-                case TimestampFormatCompiler.OP_MILLIS_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_MILLIS_ONE_DIGIT:
                     MicrosFormatUtils.assertRemaining(pos, hi);
                     millis = Numbers.parseInt(in, pos, ++pos);
                     break;
 
-                case TimestampFormatCompiler.OP_MILLIS_THREE_DIGITS:
+                case MicrosFormatCompiler.OP_MILLIS_THREE_DIGITS:
                     MicrosFormatUtils.assertRemaining(pos + 2, hi);
                     millis = Numbers.parseInt(in, pos, pos += 3);
                     break;
 
-                case TimestampFormatCompiler.OP_MILLIS_GREEDY:
+                case MicrosFormatCompiler.OP_MILLIS_GREEDY:
                     l = Numbers.parseInt000Greedy(in, pos, hi);
                     millis = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;
 
                 // SECOND
-                case TimestampFormatCompiler.OP_SECOND_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_SECOND_ONE_DIGIT:
                     MicrosFormatUtils.assertRemaining(pos, hi);
                     second = Numbers.parseInt(in, pos, ++pos);
                     break;
 
-                case TimestampFormatCompiler.OP_SECOND_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_SECOND_TWO_DIGITS:
                     MicrosFormatUtils.assertRemaining(pos + 1, hi);
                     second = Numbers.parseInt(in, pos, pos += 2);
                     break;
 
-                case TimestampFormatCompiler.OP_SECOND_GREEDY:
+                case MicrosFormatCompiler.OP_SECOND_GREEDY:
                     l = Numbers.parseIntSafely(in, pos, hi);
                     second = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;
 
                 // MINUTE
-                case TimestampFormatCompiler.OP_MINUTE_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_MINUTE_ONE_DIGIT:
                     MicrosFormatUtils.assertRemaining(pos, hi);
                     minute = Numbers.parseInt(in, pos, ++pos);
                     break;
 
-                case TimestampFormatCompiler.OP_MINUTE_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_MINUTE_TWO_DIGITS:
                     MicrosFormatUtils.assertRemaining(pos + 1, hi);
                     minute = Numbers.parseInt(in, pos, pos += 2);
                     break;
 
-                case TimestampFormatCompiler.OP_MINUTE_GREEDY:
+                case MicrosFormatCompiler.OP_MINUTE_GREEDY:
                     l = Numbers.parseIntSafely(in, pos, hi);
                     minute = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
@@ -536,8 +536,8 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                 //
                 // 11   | 11
                 // This means that in both the 0-11 and 1-12 systems, we can use the same parsing logic and later treat 12 as if it were 0.
-                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_12_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
                     MicrosFormatUtils.assertRemaining(pos, hi);
                     hour = Numbers.parseInt(in, pos, ++pos);
                     if (hourType == CommonUtils.HOUR_24) {
@@ -545,8 +545,8 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     }
                     break;
 
-                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS:
-                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_12_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
                     MicrosFormatUtils.assertRemaining(pos + 1, hi);
                     hour = Numbers.parseInt(in, pos, pos += 2);
                     if (hourType == CommonUtils.HOUR_24) {
@@ -554,8 +554,8 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     }
                     break;
 
-                case TimestampFormatCompiler.OP_HOUR_12_GREEDY:
-                case TimestampFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_12_GREEDY:
+                case MicrosFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
                     l = Numbers.parseIntSafely(in, pos, hi);
                     hour = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
@@ -565,54 +565,54 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                     break;
 
                 // HOUR
-                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_24_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
                     MicrosFormatUtils.assertRemaining(pos, hi);
                     hour = Numbers.parseInt(in, pos, ++pos);
                     break;
-                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS:
-                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_24_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
                     MicrosFormatUtils.assertRemaining(pos + 1, hi);
                     hour = Numbers.parseInt(in, pos, pos += 2);
                     break;
-                case TimestampFormatCompiler.OP_HOUR_24_GREEDY:
-                case TimestampFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
+                case MicrosFormatCompiler.OP_HOUR_24_GREEDY:
+                case MicrosFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
                     l = Numbers.parseIntSafely(in, pos, hi);
                     hour = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;
 
                 // DAY
-                case TimestampFormatCompiler.OP_DAY_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_DAY_ONE_DIGIT:
                     MicrosFormatUtils.assertRemaining(pos, hi);
                     day = Numbers.parseInt(in, pos, ++pos);
                     break;
-                case TimestampFormatCompiler.OP_DAY_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_DAY_TWO_DIGITS:
                     MicrosFormatUtils.assertRemaining(pos + 1, hi);
                     day = Numbers.parseInt(in, pos, pos += 2);
                     break;
-                case TimestampFormatCompiler.OP_DAY_GREEDY:
+                case MicrosFormatCompiler.OP_DAY_GREEDY:
                     l = Numbers.parseIntSafely(in, pos, hi);
                     day = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;
 
-                case TimestampFormatCompiler.OP_DAY_NAME_LONG:
-                case TimestampFormatCompiler.OP_DAY_NAME_SHORT:
+                case MicrosFormatCompiler.OP_DAY_NAME_LONG:
+                case MicrosFormatCompiler.OP_DAY_NAME_SHORT:
                     l = locale.matchWeekday(in, pos, hi);
                     // ignore weekday
                     pos += Numbers.decodeHighInt(l);
                     break;
-                case TimestampFormatCompiler.OP_DAY_OF_YEAR:
-                case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
+                case MicrosFormatCompiler.OP_DAY_OF_YEAR:
+                case MicrosFormatCompiler.OP_WEEK_OF_YEAR:
                     l = Numbers.parseIntSafely(in, pos, hi);
                     pos += Numbers.decodeHighInt(l);
                     break;
-                case TimestampFormatCompiler.OP_ISO_WEEK_OF_YEAR:
+                case MicrosFormatCompiler.OP_ISO_WEEK_OF_YEAR:
                     MicrosFormatUtils.assertRemaining(pos + 1, hi);
                     week = Numbers.parseInt(in, pos, pos += 2);
                     break;
-                case TimestampFormatCompiler.OP_DAY_OF_WEEK:
+                case MicrosFormatCompiler.OP_DAY_OF_WEEK:
                     MicrosFormatUtils.assertRemaining(pos, hi);
                     // ignore weekday
                     Numbers.parseInt(in, pos, ++pos);
@@ -620,22 +620,22 @@ public class GenericMicrosFormat extends AbstractDateFormat {
 
                 // MONTH
 
-                case TimestampFormatCompiler.OP_MONTH_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_MONTH_ONE_DIGIT:
                     MicrosFormatUtils.assertRemaining(pos, hi);
                     month = Numbers.parseInt(in, pos, ++pos);
                     break;
-                case TimestampFormatCompiler.OP_MONTH_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_MONTH_TWO_DIGITS:
                     MicrosFormatUtils.assertRemaining(pos + 1, hi);
                     month = Numbers.parseInt(in, pos, pos += 2);
                     break;
-                case TimestampFormatCompiler.OP_MONTH_GREEDY:
+                case MicrosFormatCompiler.OP_MONTH_GREEDY:
                     l = Numbers.parseIntSafely(in, pos, hi);
                     month = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;
 
-                case TimestampFormatCompiler.OP_MONTH_SHORT_NAME:
-                case TimestampFormatCompiler.OP_MONTH_LONG_NAME:
+                case MicrosFormatCompiler.OP_MONTH_SHORT_NAME:
+                case MicrosFormatCompiler.OP_MONTH_LONG_NAME:
                     l = locale.matchMonth(in, pos, hi);
                     month = Numbers.decodeLowInt(l) + 1;
                     pos += Numbers.decodeHighInt(l);
@@ -643,20 +643,20 @@ public class GenericMicrosFormat extends AbstractDateFormat {
 
                 // YEAR
 
-                case TimestampFormatCompiler.OP_YEAR_ONE_DIGIT:
+                case MicrosFormatCompiler.OP_YEAR_ONE_DIGIT:
                     MicrosFormatUtils.assertRemaining(pos, hi);
                     year = Numbers.parseInt(in, pos, ++pos);
                     break;
-                case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
+                case MicrosFormatCompiler.OP_YEAR_TWO_DIGITS:
                     MicrosFormatUtils.assertRemaining(pos + 1, hi);
                     year = MicrosFormatUtils.adjustYear(Numbers.parseInt(in, pos, pos += 2));
                     break;
-                case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
+                case MicrosFormatCompiler.OP_YEAR_THREE_DIGITS:
                     MicrosFormatUtils.assertRemaining(pos + 2, hi);
                     year = Numbers.parseInt(in, pos, pos += 3);
                     break;
-                case TimestampFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
-                case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
+                case MicrosFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
+                case MicrosFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     if (pos < hi && in.charAt(pos) == '-') {
                         MicrosFormatUtils.assertRemaining(pos + 4, hi);
                         year = -Numbers.parseInt(in, pos + 1, pos += 5);
@@ -665,27 +665,27 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                         year = Numbers.parseInt(in, pos, pos += 4);
                     }
                     break;
-                case TimestampFormatCompiler.OP_YEAR_GREEDY:
+                case MicrosFormatCompiler.OP_YEAR_GREEDY:
                     l = MicrosFormatUtils.parseYearGreedy(in, pos, hi);
                     year = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;
 
                 // ERA
-                case TimestampFormatCompiler.OP_ERA:
+                case MicrosFormatCompiler.OP_ERA:
                     l = locale.matchEra(in, pos, hi);
                     era = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;
 
                 // TIMEZONE
-                case TimestampFormatCompiler.OP_TIME_ZONE_SHORT:
-                case TimestampFormatCompiler.OP_TIME_ZONE_GMT_BASED:
-                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_1:
-                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_2:
-                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_3:
-                case TimestampFormatCompiler.OP_TIME_ZONE_LONG:
-                case TimestampFormatCompiler.OP_TIME_ZONE_RFC_822:
+                case MicrosFormatCompiler.OP_TIME_ZONE_SHORT:
+                case MicrosFormatCompiler.OP_TIME_ZONE_GMT_BASED:
+                case MicrosFormatCompiler.OP_TIME_ZONE_ISO_8601_1:
+                case MicrosFormatCompiler.OP_TIME_ZONE_ISO_8601_2:
+                case MicrosFormatCompiler.OP_TIME_ZONE_ISO_8601_3:
+                case MicrosFormatCompiler.OP_TIME_ZONE_LONG:
+                case MicrosFormatCompiler.OP_TIME_ZONE_RFC_822:
 
                     l = Dates.parseOffset(in, pos, hi);
                     if (l == Long.MIN_VALUE) {
