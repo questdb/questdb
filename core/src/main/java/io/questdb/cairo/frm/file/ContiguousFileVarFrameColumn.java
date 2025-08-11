@@ -45,7 +45,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     private static final Log LOG = LogFactory.getLog(ContiguousFileFixFrameColumn.class);
     private static final int MEMORY_TAG = MemoryTag.MMAP_TABLE_WRITER;
     private final FilesFacade ff;
-    private final long fileOpts;
+    private final int fileOpts;
     private final boolean mixedIOFlag;
     private long appendOffsetRowCount = -1;
     private long auxFd = -1;

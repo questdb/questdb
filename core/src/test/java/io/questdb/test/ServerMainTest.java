@@ -167,7 +167,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     final ServerMain serverMain = new ServerMain(getServerMainArgs());
-                    final SqlExecutionContext executionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1, 1)
+                    final SqlExecutionContext executionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 0)
             ) {
                 serverMain.start();
 
@@ -314,17 +314,18 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.max.symbol.not.equals.count\tQDB_CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT\t100\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.page.frame.max.rows\tQDB_CAIRO_SQL_PAGE_FRAME_MAX_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.page.frame.min.rows\tQDB_CAIRO_SQL_PAGE_FRAME_MIN_ROWS\t100000\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.parallel.filter.enabled\tQDB_CAIRO_SQL_PARALLEL_FILTER_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.filter.enabled\tQDB_CAIRO_SQL_PARALLEL_FILTER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.filter.pretouch.enabled\tQDB_CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.filter.pretouch.threshold\tQDB_CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD\t0.05\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.parallel.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.topk.enabled\tQDB_CAIRO_SQL_PARALLEL_TOPK_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.merge.shard.queue.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_MERGE_SHARD_QUEUE_CAPACITY\t4\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.sharding.threshold\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.presize.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.presize.max.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_CAPACITY\t100000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.presize.max.heap.size\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_HEAP_SIZE\t1073741824\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.work.stealing.threshold\tQDB_CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD\t16\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.parallel.read.parquet.enabled\tQDB_CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.read.parquet.enabled\tQDB_CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parquet.frame.cache.capacity\tQDB_CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY\t3\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.rename.table.model.pool.capacity\tQDB_CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY\t16\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.sampleby.page.size\tQDB_CAIRO_SQL_SAMPLEBY_PAGE_SIZE\t0\tdefault\tfalse\tfalse\n" +
@@ -356,6 +357,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.system.wal.writer.data.append.page.size\tQDB_CAIRO_SYSTEM_WAL_WRITER_DATA_APPEND_PAGE_SIZE\t262144\tdefault\tfalse\tfalse\n" +
                                     "cairo.system.wal.writer.event.append.page.size\tQDB_CAIRO_SYSTEM_WAL_WRITER_EVENT_APPEND_PAGE_SIZE\t16384\tdefault\tfalse\tfalse\n" +
                                     "cairo.system.writer.data.append.page.size\tQDB_CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE\t262144\tdefault\tfalse\tfalse\n" +
+                                    "cairo.symbol.table.append.page.size\tQDB_CAIRO_SYMBOL_TABLE_APPEND_PAGE_SIZE\t262144\tdefault\tfalse\tfalse\n" +
                                     "cairo.table.registry.auto.reload.frequency\tQDB_CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY\t500\tdefault\tfalse\tfalse\n" +
                                     "cairo.table.registry.compaction.threshold\tQDB_CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD\t30\tdefault\tfalse\tfalse\n" +
                                     "cairo.vector.aggregate.queue.capacity\tQDB_CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
@@ -406,6 +408,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.busy.retry.maximum.wait.before.retry\tQDB_HTTP_BUSY_RETRY_MAXIMUM_WAIT_BEFORE_RETRY\t1000\tdefault\tfalse\tfalse\n" +
                                     "http.connection.pool.initial.capacity\tQDB_HTTP_CONNECTION_POOL_INITIAL_CAPACITY\t4\tdefault\tfalse\tfalse\n" +
                                     "http.connection.string.pool.capacity\tQDB_HTTP_CONNECTION_STRING_POOL_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
+                                    "http.net.accept.loop.timeout\tQDB_HTTP_NET_ACCEPT_LOOP_TIMEOUT\t500\tdefault\tfalse\tfalse\n" +
                                     "http.enabled\tQDB_HTTP_ENABLED\ttrue\tconf\tfalse\tfalse\n" +
                                     "http.frozen.clock\tQDB_HTTP_FROZEN_CLOCK\ttrue\tconf\tfalse\tfalse\n" +
                                     "http.health.check.authentication.required\tQDB_HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED\ttrue\tdefault\tfalse\tfalse\n" +
@@ -427,8 +430,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.min.net.connection.timeout\tQDB_HTTP_MIN_NET_CONNECTION_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
                                     "http.min.net.idle.connection.timeout\tQDB_HTTP_MIN_NET_IDLE_CONNECTION_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
                                     "http.min.net.queued.connection.timeout\tQDB_HTTP_MIN_NET_QUEUED_CONNECTION_TIMEOUT\t5000\tdefault\tfalse\tfalse\n" +
+                                    "http.min.net.accept.loop.timeout\tQDB_HTTP_MIN_NET_ACCEPT_LOOP_TIMEOUT\t500\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.affinity\tQDB_HTTP_MIN_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
-                                    "http.min.worker.count\tQDB_HTTP_MIN_WORKER_COUNT\t1\tconf\tfalse\tfalse\n" +
+                                    "http.min.worker.count\tQDB_HTTP_MIN_WORKER_COUNT\t1\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.haltOnError\tQDB_HTTP_MIN_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.sleep.threshold\tQDB_HTTP_MIN_WORKER_SLEEP_THRESHOLD\t100\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.sleep.timeout\tQDB_HTTP_MIN_WORKER_SLEEP_TIMEOUT\t50\tdefault\tfalse\tfalse\n" +
@@ -475,7 +479,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.text.utf8.sink.size\tQDB_HTTP_TEXT_UTF8_SINK_SIZE\t4096\tdefault\tfalse\tfalse\n" +
                                     "http.version\tQDB_HTTP_VERSION\tHTTP/1.1\tdefault\tfalse\tfalse\n" +
                                     "http.worker.affinity\tQDB_HTTP_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
-                                    "http.worker.count\tQDB_HTTP_WORKER_COUNT\t1\tconf\tfalse\tfalse\n" +
+                                    "http.worker.count\tQDB_HTTP_WORKER_COUNT\t0\tdefault\tfalse\tfalse\n" +
                                     "http.worker.haltOnError\tQDB_HTTP_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.worker.sleep.threshold\tQDB_HTTP_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "http.worker.sleep.timeout\tQDB_HTTP_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
@@ -519,13 +523,14 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.tcp.net.connection.timeout\tQDB_LINE_TCP_NET_CONNECTION_TIMEOUT\t0\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.net.idle.timeout\tQDB_LINE_TCP_NET_IDLE_TIMEOUT\t0\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.net.queued.timeout\tQDB_LINE_TCP_NET_QUEUED_TIMEOUT\t5000\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.net.accept.loop.timeout\tQDB_LINE_TCP_NET_ACCEPT_LOOP_TIMEOUT\t500\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.symbol.cache.wait.before.reload\tQDB_LINE_TCP_SYMBOL_CACHE_WAIT_BEFORE_RELOAD\t500000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.timestamp\tQDB_LINE_TCP_TIMESTAMP\tn\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.undocumented.string.to.char.cast.allowed\tQDB_LINE_TCP_UNDOCUMENTED_STRING_TO_CHAR_CAST_ALLOWED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.halt.on.error\tQDB_LINE_TCP_WRITER_HALT_ON_ERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.queue.capacity\tQDB_LINE_TCP_WRITER_QUEUE_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.affinity\tQDB_LINE_TCP_WRITER_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
-                                    "line.tcp.writer.worker.count\tQDB_LINE_TCP_WRITER_WORKER_COUNT\t1\tconf\tfalse\tfalse\n" +
+                                    "line.tcp.writer.worker.count\tQDB_LINE_TCP_WRITER_WORKER_COUNT\t0\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.sleep.threshold\tQDB_LINE_TCP_WRITER_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.nap.threshold\tQDB_LINE_TCP_WRITER_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.yield.threshold\tQDB_LINE_TCP_WRITER_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
@@ -543,12 +548,13 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.udp.unicast\tQDB_LINE_UDP_UNICAST\tfalse\tdefault\tfalse\tfalse\n" +
                                     "metrics.enabled\tQDB_METRICS_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
                                     "cairo.mat.view.enabled\tQDB_CAIRO_MAT_VIEW_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
-                                    "cairo.mat.view.min.refresh.interval\tQDB_CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL\t60000000\tdefault\tfalse\ttrue\n" +
                                     "cairo.mat.view.max.refresh.retries\tQDB_CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES\t10\tdefault\tfalse\ttrue\n" +
                                     "cairo.mat.view.refresh.oom.retry.timeout\tQDB_CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT\t200\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.insert.as.select.batch.size\tQDB_CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE\t1000000\tdefault\tfalse\ttrue\n" +
                                     "cairo.mat.view.rows.per.query.estimate\tQDB_CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE\t1000000\tdefault\tfalse\ttrue\n" +
                                     "cairo.mat.view.parallel.sql.enabled\tQDB_CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.mat.view.max.refresh.intervals\tQDB_CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS\t100\tdefault\tfalse\ttrue\n" +
+                                    "cairo.mat.view.refresh.intervals.update.period\tQDB_CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD\t15000\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.nap.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.affinity\tQDB_MAT_VIEW_REFRESH_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.sleep.timeout\tQDB_MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
@@ -579,6 +585,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.net.connection.timeout\tQDB_PG_NET_CONNECTION_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
                                     "pg.net.idle.timeout\tQDB_PG_NET_IDLE_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
                                     "pg.net.connection.sndbuf\tQDB_PG_NET_CONNECTION_SNDBUF\t-1\tdefault\tfalse\tfalse\n" +
+                                    "pg.net.accept.loop.timeout\tQDB_PG_NET_ACCEPT_LOOP_TIMEOUT\t500\tdefault\tfalse\tfalse\n" +
                                     "pg.net.send.buf.size\tQDB_PG_NET_SEND_BUF_SIZE\t-1\tdefault\tfalse\tfalse\n" +
                                     "pg.net.connection.rcvbuf\tQDB_PG_NET_CONNECTION_RCVBUF\t-1\tdefault\tfalse\tfalse\n" +
                                     "pg.net.recv.buf.size\tQDB_PG_NET_RECV_BUF_SIZE\t-1\tdefault\tfalse\tfalse\n" +
@@ -598,7 +605,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.update.cache.row.count\tQDB_PG_UPDATE_CACHE_ROW_COUNT\t4\tdefault\tfalse\tfalse\n" +
                                     "pg.user\tQDB_PG_USER\tadmin\tdefault\tfalse\ttrue\n" +
                                     "pg.worker.affinity\tQDB_PG_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
-                                    "pg.worker.count\tQDB_PG_WORKER_COUNT\t1\tconf\tfalse\tfalse\n" +
+                                    "pg.worker.count\tQDB_PG_WORKER_COUNT\t0\tdefault\tfalse\tfalse\n" +
                                     "pg.worker.sleep.threshold\tQDB_PG_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "pg.worker.nap.threshold\tQDB_PG_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "pg.worker.yield.threshold\tQDB_PG_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
@@ -609,13 +616,18 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "ram.usage.limit.bytes\tQDB_RAM_USAGE_LIMIT_BYTES\t0\tdefault\tfalse\tfalse\n" +
                                     "ram.usage.limit.percent\tQDB_RAM_USAGE_LIMIT_PERCENT\t90\tdefault\tfalse\tfalse\n" +
                                     "readonly\tQDB_READONLY\tfalse\tdefault\tfalse\tfalse\n" +
-                                    "shared.worker.affinity\tQDB_SHARED_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "shared.worker.count\tQDB_SHARED_WORKER_COUNT\t2\tconf\tfalse\tfalse\n" +
                                     "shared.worker.haltOnError\tQDB_SHARED_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "shared.worker.sleep.threshold\tQDB_SHARED_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "shared.worker.sleep.timeout\tQDB_SHARED_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
                                     "shared.worker.nap.threshold\tQDB_SHARED_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "shared.worker.yield.threshold\tQDB_SHARED_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
+                                    "shared.network.worker.affinity\tQDB_SHARED_NETWORK_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
+                                    "shared.network.worker.count\tQDB_SHARED_NETWORK_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
+                                    "shared.query.worker.affinity\tQDB_SHARED_QUERY_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
+                                    "shared.query.worker.count\tQDB_SHARED_QUERY_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
+                                    "shared.write.worker.affinity\tQDB_SHARED_WRITE_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
+                                    "shared.write.worker.count\tQDB_SHARED_WRITE_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
                                     "table.type.conversion.enabled\tQDB_TABLE_TYPE_CONVERSION_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "telemetry.disable.completely\tQDB_TELEMETRY_DISABLE_COMPLETELY\ttrue\tconf\tfalse\tfalse\n" +
                                     "telemetry.enabled\tQDB_TELEMETRY_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
@@ -670,7 +682,10 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.pipeline.capacity\tQDB_PG_PIPELINE_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
                                     "query.within.latest.by.optimisation.enabled\tQDB_QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.preferences.string.pool.capacity\tQDB_CAIRO_PREFERENCES_STRING_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
-                                    "http.settings.readonly\tQDB_HTTP_SETTINGS_READONLY\tfalse\tdefault\tfalse\tfalse\n"
+                                    "http.settings.readonly\tQDB_HTTP_SETTINGS_READONLY\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.column.alias.expression.enabled\tQDB_CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.column.alias.generated.max.size\tQDB_CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE\t64\tdefault\tfalse\tfalse\n" +
+                                    "cairo.file.descriptor.cache.enabled\tQDB_CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED\ttrue\tdefault\tfalse\tfalse"
                     )
                             .split("\n");
 

@@ -22,36 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.table;
+package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.DataID;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.UuidConstant;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class VirtualFunctionDirectSymbolRecordCursor extends AbstractVirtualFunctionRecordCursor {
-
-    public VirtualFunctionDirectSymbolRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
-        super(functions, supportsRandomAccess);
+public class CurrentDataIdFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "current_data_id()";
     }
 
     @Override
-    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
-        if (baseCursor != null) {
-            baseCursor.calculateSize(circuitBreaker, counter);
-        } else {
-            RecordCursor.calculateSize(this, circuitBreaker, counter);
-        }
+    public boolean isRuntimeConstant() {
+        return true;
     }
 
     @Override
-    public void skipRows(Counter rowCount) throws DataUnavailableException {
-        if (baseCursor != null) {
-            baseCursor.skipRows(rowCount);
-        } else {
-            RecordCursor.skipRows(this, rowCount);
-        }
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        DataID id = sqlExecutionContext.getCairoEngine().getDataID();
+        return new UuidConstant(id.getLo(), id.getHi());
     }
 }

@@ -55,6 +55,11 @@ public class SingleValueRecordCursor implements RecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return 0;
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
         throw new UnsupportedOperationException();
     }

@@ -67,7 +67,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
             case ColumnType.GEOSHORT:
                 return new RndShortFunction(type);
             case ColumnType.GEOINT:
-                return new RndIntFunction(type);
+                return new RndGeoIntFunction(type);
             default:
                 return new RndLongFunction(type);
         }
@@ -99,17 +99,22 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isRandom() {
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_geohash(").val(bits).val(')');
         }
     }
 
-    private static class RndIntFunction extends GeoIntFunction implements Function {
+    private static class RndGeoIntFunction extends GeoIntFunction implements Function {
 
         private final int bits;
         private Rnd rnd;
 
-        public RndIntFunction(int type) {
+        public RndGeoIntFunction(int type) {
             super(type);
             this.bits = ColumnType.getGeoHashBits(type);
         }
@@ -131,6 +136,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isRandom() {
             return true;
         }
 
@@ -171,6 +181,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isRandom() {
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_geohash(").val(bits).val(')');
         }
@@ -198,6 +213,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isRandom() {
             return true;
         }
 

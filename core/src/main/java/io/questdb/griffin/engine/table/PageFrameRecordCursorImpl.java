@@ -64,10 +64,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
-        if (!areCursorsPrepared) {
-            rowCursorFactory.prepareCursor(frameCursor);
-            areCursorsPrepared = true;
-        }
+        prepareRowCursorFactory();
 
         if (!frameCursor.supportsSizeCalculation() || filter != null || rowCursorFactory.isUsingIndex()) {
             while (hasNext()) {
@@ -93,11 +90,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
-        if (!areCursorsPrepared) {
-            rowCursorFactory.prepareCursor(frameCursor);
-            areCursorsPrepared = true;
-        }
-
+        prepareRowCursorFactory();
         try {
             if (rowCursor != null && rowCursor.hasNext()) {
                 final int frameIndex = frameCount - 1;
@@ -147,6 +140,11 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return RecordCursor.fromBool(areCursorsPrepared);
+    }
+
+    @Override
     public long size() {
         return entityCursor ? frameCursor.size() : -1;
     }
@@ -157,10 +155,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             return;
         }
 
-        if (!areCursorsPrepared) {
-            rowCursorFactory.prepareCursor(frameCursor);
-            areCursorsPrepared = true;
-        }
+        prepareRowCursorFactory();
 
         if (filter != null || rowCursorFactory.isUsingIndex()) {
             while (rowCount.get() > 0 && hasNext()) {
@@ -170,18 +165,18 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             return;
         }
 
-        long skipToPosition = rowCount.get();
+        long skipTarget = rowCount.get();
         PageFrame pageFrame;
-        while ((pageFrame = frameCursor.next()) != null) {
+        while ((pageFrame = frameCursor.next(skipTarget)) != null) {
             frameAddressCache.add(frameCount++, pageFrame);
 
             long frameSize = pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
-            if (frameSize > skipToPosition) {
-                rowCount.dec(skipToPosition);
+            if (frameSize > skipTarget) {
+                rowCount.dec(skipTarget);
                 break;
             }
             rowCount.dec(frameSize);
-            skipToPosition -= frameSize;
+            skipTarget -= frameSize;
         }
 
         final int frameIndex = frameCount - 1;
@@ -193,7 +188,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             recordA.init(frameMemory);
             recordA.setRowIndex(0);
             rowCursor = rowCursorFactory.getCursor(pageFrame, frameMemory);
-            rowCursor.jumpTo(skipToPosition);
+            rowCursor.jumpTo(skipTarget);
         }
     }
 
@@ -207,9 +202,15 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         if (filter != null) {
             filter.toTop();
         }
-        areCursorsPrepared = false;
         rowCursor = null;
         isSkipped = false;
         super.toTop();
+    }
+
+    private void prepareRowCursorFactory() {
+        if (!areCursorsPrepared) {
+            rowCursorFactory.prepareCursor(frameCursor);
+            areCursorsPrepared = true;
+        }
     }
 }

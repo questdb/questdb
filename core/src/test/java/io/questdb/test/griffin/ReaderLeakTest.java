@@ -170,6 +170,11 @@ public class ReaderLeakTest extends AbstractCairoTest {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             base.recordAt(record, atRowId);
         }

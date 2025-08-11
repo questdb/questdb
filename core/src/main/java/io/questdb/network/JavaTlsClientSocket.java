@@ -33,7 +33,14 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-import javax.net.ssl.*;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLEngine;
+import javax.net.ssl.SSLEngineResult;
+import javax.net.ssl.SSLException;
+import javax.net.ssl.SSLParameters;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.X509TrustManager;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -41,7 +48,11 @@ import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
-import java.security.*;
+import java.security.KeyManagementException;
+import java.security.KeyStore;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 
@@ -284,7 +295,7 @@ public final class JavaTlsClientSocket implements Socket {
     }
 
     @Override
-    public int startTlsSession(CharSequence peerName) {
+    public void startTlsSession(CharSequence peerName) throws TlsSessionInitFailedException {
         assert state == STATE_PLAINTEXT;
         prepareInternalBuffers();
         try {
@@ -318,22 +329,21 @@ public final class JavaTlsClientSocket implements Socket {
                                 while (written < bufferLimit) {
                                     int n = delegate.send(wrapOutputBufferPtr + written, bufferLimit - written);
                                     if (n < 0) {
-                                        return n;
+                                        throw TlsSessionInitFailedException.instance("socket write error");
                                     }
                                     written += n;
                                 }
                                 wrapOutputBuffer.clear();
                                 break;
                             case CLOSED:
-                                log.error().$("server closed connection unexpectedly").$();
-                                return -1;
+                                throw TlsSessionInitFailedException.instance("server closed connection unexpectedly");
                         }
                         break;
                     }
                     case NEED_UNWRAP: {
                         int n = readFromSocket();
                         if (n < 0) {
-                            return n;
+                            throw TlsSessionInitFailedException.instance("socket read error");
                         }
                         SSLEngineResult result = sslEngine.unwrap(unwrapInputBuffer, unwrapOutputBuffer);
                         handshakeStatus = result.getHandshakeStatus();
@@ -347,8 +357,7 @@ public final class JavaTlsClientSocket implements Socket {
                                 // good, let's see what we need to do next
                                 break;
                             case CLOSED:
-                                log.error().$("server closed connection unexpectedly").$();
-                                return -1;
+                                throw TlsSessionInitFailedException.instance("server closed connection unexpectedly");
                         }
                     }
                     break;
@@ -362,11 +371,9 @@ public final class JavaTlsClientSocket implements Socket {
             unwrapOutputBuffer.clear();
             wrapOutputBuffer.clear();
             state = STATE_TLS;
-            return 0;
         } catch (KeyManagementException | NoSuchAlgorithmException | KeyStoreException | IOException |
                  CertificateException e) {
-            log.error().$("could not start SSL session").$(e).$();
-            return -1;
+            throw TlsSessionInitFailedException.instance("TLS session creation failed [error=").put(e.getMessage()).put(']');
         }
     }
 

@@ -27,6 +27,7 @@ package io.questdb.test;
 import io.questdb.Bootstrap;
 import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropServerConfiguration;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlExecutionContext;
@@ -187,13 +188,8 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println(LINE_UDP_RECEIVE_BUFFER_SIZE + "=" + ILP_BUFFER_SIZE);
             writer.println(HTTP_FROZEN_CLOCK + "=true");
 
-            // configure worker pools
+            // Do not configure worker pools, use default values, e.g. 3 shared pools
             writer.println(SHARED_WORKER_COUNT + "=2");
-            writer.println(HTTP_WORKER_COUNT + "=1");
-            writer.println(HTTP_MIN_WORKER_COUNT + "=1");
-            writer.println(PG_WORKER_COUNT + "=1");
-            writer.println(LINE_TCP_WRITER_WORKER_COUNT + "=1");
-            writer.println(LINE_TCP_IO_WORKER_COUNT + "=" + ILP_WORKER_COUNT);
 
             // extra
             if (extra != null) {
@@ -276,6 +272,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     protected static Bootstrap newBootstrapWithEnvVariables(Map<String, String> envs) {
         Map<String, String> env = new HashMap<>(System.getenv());
         env.putAll(envs);
+        env.put(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getEnvVarName(), "false");
         return new Bootstrap(
                 new PropBootstrapConfiguration() {
                     @Override

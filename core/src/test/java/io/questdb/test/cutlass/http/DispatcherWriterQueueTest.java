@@ -107,7 +107,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withAlterTableMaxWaitTimeout(50_000)
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         if (Utf8s.endsWithAscii(name, "default/s.v") || Utf8s.endsWithAscii(name, "default\\s.v")) {
                             alterAckReceived.await();
                             disconnectLatch.countDown();
@@ -163,7 +163,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withAlterTableMaxWaitTimeout(50_000)
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         if (Utf8s.endsWithAscii(name, "/default/s.v") || Utf8s.endsWithAscii(name, "default\\s.v")) {
                             alterAckReceived.await();
                         }
@@ -199,7 +199,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         if (Utf8s.endsWithAscii(name, "/default/s.v") || Utf8s.endsWithAscii(name, "\\default\\s.v")) {
                             alterAckReceived.await();
                             Os.sleep(500);
@@ -371,7 +371,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withAlterTableStartWaitTimeout(30_000)
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         if (Utf8s.endsWithAscii(name, "x.d.1")) {
                             disconnectLatch.countDown();
                         }
@@ -643,7 +643,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withAlterTableMaxWaitTimeout(50_000L)
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         if (Utf8s.endsWithAscii(name, "default/ts.d.2") || Utf8s.endsWithAscii(name, "default\\ts.d.2")) {
                             updateAckReceived.await();
                         }

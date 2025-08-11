@@ -26,8 +26,17 @@ package io.questdb.cairo.arr;
 
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 
 public interface FlatArrayView {
+
+    default long appendPlainDoubleValue(long addr, int offset, int length) {
+        for (int i = offset, n = offset + length; i < n; i++) {
+            Unsafe.getUnsafe().putDouble(addr, getDoubleAtAbsIndex(i));
+            addr += Double.BYTES;
+        }
+        return addr;
+    }
 
     /**
      * Appends a block of elements from this flat array to the supplied memory
@@ -120,7 +129,8 @@ public interface FlatArrayView {
     }
 
     /**
-     * Counts the number of finite numbers within a block of this flat array.
+     * Counts the number of non-null numbers within a block of this
+     * flat array of DOUBLE.
      *
      * @param offset the starting offset of the block (in elements)
      * @param length the number of elements in the block
@@ -128,8 +138,25 @@ public interface FlatArrayView {
     default int countDouble(int offset, int length) {
         int count = 0;
         for (int i = offset, n = offset + length; i < n; i++) {
-            double v = getDoubleAtAbsIndex(i);
-            if (!Double.isNaN(v)) {
+            if (Numbers.isFinite(getDoubleAtAbsIndex(i))) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Counts the number of non-null numbers within a block of this
+     * flat array of LONG.
+     *
+     * @param offset the starting offset of the block (in elements)
+     * @param length the number of elements in the block
+     */
+    default int countLong(int offset, int length) {
+        int count = 0;
+        for (int i = offset, n = offset + length; i < n; i++) {
+            double v = getLongAtAbsIndex(i);
+            if (v != Numbers.LONG_NULL) {
                 count++;
             }
         }
@@ -167,18 +194,55 @@ public interface FlatArrayView {
     }
 
     /**
+     * Returns the maximum element in the selected range of this flat array.
+     * If the range is empty, or it doesn't contain any finite elements, returns NaN.
+     */
+    default double maxDouble(int offset, int length) {
+        double max = Double.NEGATIVE_INFINITY;
+        for (int i = offset, n = offset + length; i < n; i++) {
+            double v = getDoubleAtAbsIndex(i);
+            if (Numbers.isFinite(v) && v > max) {
+                max = v;
+            }
+        }
+        return Numbers.isFinite(max) ? max : Double.NaN;
+    }
+
+    /**
+     * Returns the minimum element in the selected range of this flat array.
+     * If the range is empty, or it doesn't contain any finite elements, returns NaN.
+     */
+    default double minDouble(int offset, int length) {
+        double min = Double.POSITIVE_INFINITY;
+        for (int i = offset, n = offset + length; i < n; i++) {
+            double v = getDoubleAtAbsIndex(i);
+            if (Numbers.isFinite(v) && v < min) {
+                min = v;
+            }
+        }
+        return Numbers.isFinite(min) ? min : Double.NaN;
+    }
+
+    /**
      * Computes the average of the block of elements in this flat array.
+     * Uses Kahan summation.
      *
      * @param offset the starting offset of the block (in elements)
      * @param length the number of elements in the block
      */
     default double sumDouble(int offset, int length) {
-        //TODO: the naive summing algo doesn't compensate for accumulated error
-        double sum = 0d;
+        double sum = Double.NaN;
+        double compensation = 0d;
         for (int i = offset, n = offset + length; i < n; i++) {
             double v = getDoubleAtAbsIndex(i);
-            if (!Double.isNaN(v)) {
-                sum += v;
+            if (Numbers.isFinite(v)) {
+                if (compensation == 0d && Numbers.isNull(sum)) {
+                    sum = 0d;
+                }
+                final double y = v - compensation;
+                final double t = sum + y;
+                compensation = t - sum - y;
+                sum = t;
             }
         }
         return sum;

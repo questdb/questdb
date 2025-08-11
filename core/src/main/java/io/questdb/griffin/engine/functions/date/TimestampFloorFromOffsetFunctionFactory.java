@@ -90,7 +90,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final CharSequence unitStr = args.getQuick(0).getStrA(null);
-        final int stride = Timestamps.getStrideMultiple(unitStr);
+        final int stride = Timestamps.getStrideMultiple(unitStr, argPositions.getQuick(0));
         final char unit = Timestamps.getStrideUnit(unitStr, argPositions.getQuick(0));
         final int unitPos = argPositions.getQuick(0);
         final Function timestampFunc = args.getQuick(1);

@@ -104,6 +104,11 @@ public class GenerateSeriesLongRecordCursorFactory extends AbstractGenerateSerie
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             ((GenerateSeriesLongRecord) record).curr = start + step * (atRowId - 1);
         }

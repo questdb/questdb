@@ -53,6 +53,7 @@ import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -99,14 +100,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private long lastAttemptSeqTxn;
     private long lastCommittedRows;
 
-    public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount) {
+    public ApplyWal2TableJob(CairoEngine engine, int sharedQueryWorkerCount) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
         this.engine = engine;
         walTelemetry = engine.getTelemetryWal();
         walTelemetryFacade = walTelemetry.isEnabled() ? this::doStoreWalTelemetry : this::storeWalTelemetryNoop;
         telemetry = engine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoOp;
-        operationExecutor = new OperationExecutor(engine, workerCount, sharedWorkerCount);
+        operationExecutor = new OperationExecutor(engine, sharedQueryWorkerCount);
         CairoConfiguration configuration = engine.getConfiguration();
         microClock = configuration.getMicrosecondClock();
         walEventReader = new WalEventReader(configuration.getFilesFacade());
@@ -569,7 +570,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         txnDetails.getMatViewRefreshTimestamp(s),
                                         false,
                                         null,
-                                        txnDetails.getMatViewPeriodHi(s)
+                                        txnDetails.getMatViewPeriodHi(s),
+                                        // Mat view data commit means that cached intervals were applied and should be evicted.
+                                        null,
+                                        -1
                                 );
                             } catch (CairoException e) {
                                 LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
@@ -621,7 +625,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             info.getLastRefreshTimestamp(),
                             info.isInvalid(),
                             info.getInvalidationReason(),
-                            info.getLastPeriodHi()
+                            info.getLastPeriodHi(),
+                            info.getRefreshIntervals(),
+                            info.getRefreshIntervalsBaseTxn()
                     );
                 } catch (CairoException e) {
                     LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
@@ -741,7 +747,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             long lastRefreshTimestamp,
             boolean invalid,
             @Nullable CharSequence invalidationReason,
-            long lastPeriodHi
+            long lastPeriodHi,
+            @Nullable LongList refreshIntervals,
+            long refreshIntervalsBaseTxn
     ) {
         try (BlockFileWriter stateWriter = mvStateWriter) {
             stateWriter.of(tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
@@ -751,6 +759,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     invalid,
                     invalidationReason,
                     lastPeriodHi,
+                    refreshIntervals,
+                    refreshIntervalsBaseTxn,
                     stateWriter
             );
         }

@@ -62,6 +62,11 @@ class PgProcCatalogueCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return 0;
+    }
+
+    @Override
     public void toTop() {
         row = -1;
     }
@@ -97,6 +102,11 @@ class PgProcCatalogueCursor implements NoRandomAccessRecordCursor {
         }
 
         @Override
+        public float getFloat(int col) {
+            return 0;
+        }
+
+        @Override
         public int getInt(int col) {
             switch (col) {
                 case 0: // oid (of type proc)
@@ -129,11 +139,6 @@ class PgProcCatalogueCursor implements NoRandomAccessRecordCursor {
                     return 0;
             }
             throw new UnsupportedOperationException("not a short col: " + col);
-        }
-
-        @Override
-        public float getFloat(int col) {
-            return 0;
         }
 
         @Override

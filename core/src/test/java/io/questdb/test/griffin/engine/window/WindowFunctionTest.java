@@ -382,13 +382,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // cross-check with re-write using aggregate functions
             assertSql(
                     expected,
-                    " select max(ts) as ts, avg(j) as avg, sum(j::double) as sum, last(j::double) as first_value, " +
-                            "last_not_null(j::double) as first_value_ignore_nulls," +
-                            "first(j::double) as last_value, first_not_null(j::double) as last_value_ignore_nulls," +
-                            "count(*) as count, count(j::double) as count1, count(s) as count2, count(d) as count3, count(c) as count4, " +
-                            "max(j::double) as max, min(j::double) as min " +
+                    " select" +
+                            " max(ts) as ts," +
+                            " avg(j) as avg," +
+                            " sum(j::double) as sum," +
+                            " last(j::double) as first_value," +
+                            " last_not_null(j::double) as first_value_ignore_nulls," +
+                            " first(j::double) as last_value," +
+                            " first_not_null(j::double) as last_value_ignore_nulls," +
+                            " count(*) as count," +
+                            " count(j::double) as count1," +
+                            " count(s) as count2," +
+                            " count(d) as count3," +
+                            " count(c) as count4," +
+                            " max(j::double) as max," +
+                            " min(j::double) as min " +
                             "from " +
-                            "( select ts, i, j, s, d, c, row_number() over (order by ts desc) as rn from tab order by ts desc) " +
+                            "(select" +
+                            " ts, i, j, s, d, c," +
+                            " row_number() over (order by ts desc) as rn" +
+                            " from tab order by ts desc" +
+                            ") " +
                             "where rn between 1 and 80001 "
             );
 
@@ -4977,7 +4991,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "), index(s) timestamp(ts) partition by month",
                 null,
                 false,
-                true
+                false
         );
     }
 

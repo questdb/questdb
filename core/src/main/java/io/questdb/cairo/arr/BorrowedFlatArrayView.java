@@ -40,6 +40,12 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
     private long ptr;
     private int size;
 
+    public long appendPlainDoubleValue(long addr, int offset, int length) {
+        long size = (long) length * Double.BYTES;
+        Vect.memcpy(addr, this.ptr + (long) offset * Double.BYTES, size);
+        return addr + size;
+    }
+
     @Override
     public void appendToMemFlat(MemoryA mem, int offset, int length) {
         assert ptr != 0;
@@ -118,6 +124,6 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
 
     @Override
     public double sumDouble(int offset, int length) {
-        return Vect.sumDouble(this.ptr + (long) offset * Double.BYTES, length);
+        return Vect.sumDoubleKahan(this.ptr + (long) offset * Double.BYTES, length);
     }
 }

@@ -128,6 +128,11 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public long size() {
             return tableBucket.size();
         }

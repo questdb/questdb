@@ -27,8 +27,16 @@ package io.questdb.cairo;
 import io.questdb.std.Vect;
 
 /**
- * Searches designated timestamp values in a table partition.
- * Used in time interval intrinsics.
+ * Interface for efficiently searching and accessing timestamp values within QuestDB table partitions.
+ *
+ * <p>This interface provides methods for binary searching timestamp values and retrieving min/max
+ * timestamps both from partition metadata (approximate) and actual column data (exact). It is primarily
+ * used by QuestDB's time interval intrinsics to quickly locate relevant data ranges without scanning
+ * entire partitions.</p>
+ *
+ * <p>Implementations must support binary search operations on timestamp columns with scan direction
+ * {@link io.questdb.std.Vect#BIN_SEARCH_SCAN_DOWN}, returning positive indices that represent the
+ * position of values equal to or less than the search target.</p>
  */
 public interface TimestampFinder {
 
@@ -46,9 +54,52 @@ public interface TimestampFinder {
      */
     long findTimestamp(long value, long rowLo, long rowHi);
 
-    long maxTimestamp();
+    /**
+     * Max partition timestamp that can be determined from partition metadata, without having to read the
+     * timestamp column data.
+     *
+     * @return max timestamp as inferred from partition name and metadata
+     */
+    long maxTimestampApproxFromMetadata();
 
-    long minTimestamp();
+    /**
+     * Max partition timestamp as read from the timestamp column data. This method must only be called after
+     * prepare() was invoked.
+     *
+     * @return max timestamp value from timestamp column
+     * @see #prepare()
+     */
+    long maxTimestampExact();
 
+    /**
+     * Min partition timestamp that can be determined from partition metadata, without having to read the
+     * timestamp column data.
+     *
+     * @return min timestamp as inferred from partition name and metadata
+     */
+    long minTimestampApproxFromMetadata();
+
+    /**
+     * Min partition timestamp as read from the timestamp column data. This method must only be called after
+     * prepare() was invoked.
+     *
+     * @return min timestamp value from timestamp column
+     * @see #prepare()
+     */
+    long minTimestampExact();
+
+    /**
+     * Ensures timestamp column is ready to be read. Must be called before accessing exact timestamp methods
+     * or retrieving timestamp values at specific row indices.
+     */
+    void prepare();
+
+    /**
+     * Retrieves the timestamp value at the specified row index within the partition.
+     *
+     * @param rowIndex the row index to get the timestamp from
+     * @return timestamp value at the given row index
+     * @see #prepare()
+     */
     long timestampAt(long rowIndex);
 }
