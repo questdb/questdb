@@ -832,10 +832,10 @@ public class UnionAllCastTest extends AbstractCairoTest {
         testUnionAll(
                 "a\n" +
                         "-9.4826336E8\n" +
-                        "1.32644723E9\n" +
+                        "1.3264472E9\n" +
                         "5.9285965E8\n" +
-                        "1.86872371E9\n" +
-                        "-8.4753107E8\n" +
+                        "1.8687237E9\n" +
+                        "-8.475311E8\n" +
                         "0.66077775\n" +
                         "0.80432236\n" +
                         "0.22463012\n" +
@@ -855,9 +855,9 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "0.08438319\n" +
                         "0.20447439\n" +
                         "0.93446046\n" +
-                        "4.6895921E15\n" +
+                        "4.689592E15\n" +
                         "4.7299965E15\n" +
-                        "7.7465361E18\n" +
+                        "7.746536E18\n" +
                         "-6.9459217E18\n" +
                         "8.2601883E18\n",
                 "create table x as (select rnd_float() a from long_sequence(5))",
