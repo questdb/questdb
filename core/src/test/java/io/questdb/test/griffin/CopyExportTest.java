@@ -32,7 +32,6 @@ import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SynchronizedJob;
-import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -109,11 +108,9 @@ public class CopyExportTest extends AbstractCairoTest {
                     runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet row_group_size 2147483647", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
-                    assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
-                                        "test_table\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
-                    });
+                    assertEventually(() -> assertSql("file\tstatus\n" +
+                                    "test_table\tfinished\n",
+                            "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1"));
 
 
             testCopyExport(stmt, test);
@@ -131,11 +128,9 @@ public class CopyExportTest extends AbstractCairoTest {
                     runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet row_group_size 1", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
-                    assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
-                                        "test_table\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
-                    });
+                    assertEventually(() -> assertSql("file\tstatus\n" +
+                                    "test_table\tfinished\n",
+                            "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1"));
 
             testCopyExport(stmt, test);
         });
@@ -152,11 +147,9 @@ public class CopyExportTest extends AbstractCairoTest {
                     runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet row_group_size -1", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
-                    assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
-                                        "test_table\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
-                    });
+                    assertEventually(() -> assertSql("file\tstatus\n" +
+                                    "test_table\tfinished\n",
+                            "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1"));
 
             testCopyExport(stmt, test);
         });
@@ -173,11 +166,9 @@ public class CopyExportTest extends AbstractCairoTest {
                     runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet row_group_size 0", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
-                    assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
-                                        "test_table\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
-                    });
+                    assertEventually(() -> assertSql("file\tstatus\n" +
+                                    "test_table\tfinished\n",
+                            "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1"));
 
             testCopyExport(stmt, test);
         });
@@ -192,11 +183,9 @@ public class CopyExportTest extends AbstractCairoTest {
                     runAndFetchCopyExportID("copy empty_table to 'output15' with format parquet", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
-                    assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
-                                        "output15\tfailed\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
-                    });
+                    assertEventually(() -> assertSql("file\tstatus\n" +
+                                    "output15\tfailed\n",
+                            "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1"));
 
             testCopyExport(stmt, test);
         });
@@ -433,7 +422,7 @@ public class CopyExportTest extends AbstractCairoTest {
                     "true, 42, 1000, 100000, 1000000L, 3.14f, 2.718, 'hello world', 'symbol1', '2023-06-15T14:30:00.000Z'" +
                     ")");
 
-            String exportId = runAndFetchCopyExportID("copy comprehensive_types to 'async_types' with format parquet " +
+            runAndFetchCopyExportID("copy comprehensive_types to 'async_types' with format parquet " +
                     "parquet_version 2 data_page_size 2048", sqlExecutionContext);
         };
 
@@ -463,7 +452,7 @@ public class CopyExportTest extends AbstractCairoTest {
             }
             execute(insertQuery.toString());
 
-            String exportId = runAndFetchCopyExportID("copy large_dataset to 'async_large' with format parquet " +
+            runAndFetchCopyExportID("copy large_dataset to 'async_large' with format parquet " +
                     "row_group_size 100 compression_codec snappy", sqlExecutionContext);
         };
 
@@ -491,7 +480,7 @@ public class CopyExportTest extends AbstractCairoTest {
             execute("create table test_table (id int, name string, value double)");
             execute("insert into test_table values (1, 'alpha', 1.1), (2, 'beta', 2.2), (3, 'gamma', 3.3)");
 
-            String exportId = runAndFetchCopyExportID("copy test_table to 'async_output1' with format parquet " +
+            runAndFetchCopyExportID("copy test_table to 'async_output1' with format parquet " +
                     "compression_codec gzip row_group_size 2000 statistics_enabled true", sqlExecutionContext);
         };
 
@@ -656,19 +645,17 @@ public class CopyExportTest extends AbstractCairoTest {
             runAndFetchCopyExportID("copy test_table to 'output1' with format parquet", sqlExecutionContext);
         };
 
-        CopyExportRunnable test = () -> {
-            assertEventually(() -> {
-                // Verify export completed successfully
-                String query = "select status from '" + configuration.getSystemTableNamePrefix() + "copy_export_log' limit -1";
-                assertSql("status\nfinished\n", query);
+        CopyExportRunnable test = () -> assertEventually(() -> {
+            // Verify export completed successfully
+            String query = "select status from '" + configuration.getSystemTableNamePrefix() + "copy_export_log' limit -1";
+            assertSql("status\nfinished\n", query);
 
-                // Verify exported data can be read back and matches original
-                assertSql("x\ty\tz\n" +
-                                "1\t100\thello\n" +
-                                "2\t200\tworld\n",
-                        "select * from read_parquet('" + exportRoot + "/output1/default.parquet') order by x");
-            });
-        };
+            // Verify exported data can be read back and matches original
+            assertSql("x\ty\tz\n" +
+                            "1\t100\thello\n" +
+                            "2\t200\tworld\n",
+                    "select * from read_parquet('" + exportRoot + "/output1/default.parquet') order by x");
+        });
 
         testCopyExport(statement, test);
     }
@@ -796,12 +783,10 @@ public class CopyExportTest extends AbstractCairoTest {
             execute("create table test_table (x int, y string, z double)");
             execute("insert into test_table values (1, 'hello', 1.5), (2, 'world', 2.5)");
 
-            CopyExportRunnable stmt = () -> {
-                runAndFetchCopyExportID("copy test_table to 'output13' with format parquet " +
-                        "compression_codec gzip compression_level 6 " +
-                        "row_group_size 5000 data_page_size 8192 " +
-                        "statistics_enabled true parquet_version 2", sqlExecutionContext);
-            };
+            CopyExportRunnable stmt = () -> runAndFetchCopyExportID("copy test_table to 'output13' with format parquet " +
+                    "compression_codec gzip compression_level 6 " +
+                    "row_group_size 5000 data_page_size 8192 " +
+                    "statistics_enabled true parquet_version 2", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
@@ -1007,19 +992,6 @@ public class CopyExportTest extends AbstractCairoTest {
             }
             return null;
         }
-    }
-
-    protected void waitForExportToComplete(String exportId) throws Exception {
-        assertEventually(() -> {
-            try {
-                String query = "select status from '" + configuration.getSystemTableNamePrefix() + "copy_export_log' where id = '" + exportId + "' limit -1";
-                String status = getOne(query);
-                assertTrue(Chars.equals("finished", status));
-            } catch (SqlException e) {
-                throw new AssertionError(e);
-            }
-
-        });
     }
 
     @FunctionalInterface
