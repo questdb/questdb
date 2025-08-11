@@ -112,7 +112,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     @Test
     public void testBadInterval() throws Exception {
         assertException(
-                "select b, sum(a), k from x sample by 1min",
+                "select b, sum(a), k from x sample by 1hour",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -123,7 +123,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 37,
-                "Invalid unit: 1min"
+                "Invalid unit: 1hour"
         );
     }
 
@@ -5639,7 +5639,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
             assertPlanNoLeakCheck(query, "Sample By\n" +
                     "  fill: null\n" +
-                    "  range: (timestamp_floor('day',now()),null)\n" +
+                    "  range: (timestamp_floor('day',now()),)\n" +
                     "  values: [count(*)]\n" +
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
