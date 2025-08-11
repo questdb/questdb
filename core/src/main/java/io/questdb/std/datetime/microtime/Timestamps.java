@@ -360,9 +360,6 @@ public final class Timestamps {
     }
 
     public static long floorMM(long micros, int stride, long offset) {
-        if (micros < offset) {
-            return offset;
-        }
         final long monthsDiff = getMonthsBetween(micros, offset);
         final long monthsToAdd = monthsDiff - (monthsDiff % stride);
         return addMonths(offset, (int) monthsToAdd);
