@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -44,36 +45,53 @@ import io.questdb.griffin.engine.SingleValueRecordCursor;
  */
 public class CopyCancelFactory extends AbstractRecordCursorFactory {
 
+    private static final int EXPORT_STATUS_INDEX = 5;
+    private static final int IMPORT_STATUS_INDEX = 5;
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
-    private static final int STATUS_INDEX = 5;
-    private final RecordCursorFactory baseFactory;
     private final long cancelCopyID;
     private final String cancelCopyIDStr;
-    private final CopyImportContext copyContext;
+    private final CopyExportContext copyExportContext;
+    private final CopyImportContext copyImportContext;
+    private final RecordCursorFactory exportBaseFactory;
+    private final RecordCursorFactory importBaseFactory;
     private final CopyCancelRecord record = new CopyCancelRecord();
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
     private CharSequence status;
 
     public CopyCancelFactory(
-            CopyImportContext copyContext,
+            CopyImportContext copyImportContext,
+            CopyExportContext copyExportContext,
             long cancelCopyID,
             String cancelCopyIDStr,
-            RecordCursorFactory baseFactory
+            RecordCursorFactory importBaseFactory,
+            RecordCursorFactory exportBaseFactory
     ) {
         super(METADATA);
-        this.copyContext = copyContext;
+        this.copyImportContext = copyImportContext;
+        this.copyExportContext = copyExportContext;
         this.cancelCopyID = cancelCopyID;
         this.cancelCopyIDStr = cancelCopyIDStr;
-        this.baseFactory = baseFactory;
+        this.importBaseFactory = importBaseFactory;
+        this.exportBaseFactory = exportBaseFactory;
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final AtomicBooleanCircuitBreaker circuitBreaker = copyContext.getCircuitBreaker();
-        final long activeCopyID = copyContext.getActiveImportID();
+        final long activeImportCopyID = copyImportContext.getActiveImportID();
+        final long activeExportCopyID = copyExportContext.getActiveExportID();
 
-        if (activeCopyID == cancelCopyID && cancelCopyID != CopyImportContext.INACTIVE_COPY_ID) {
-            copyContext.getImportOriginatorSecurityContext().authorizeCopyCancel(executionContext.getSecurityContext());
+        if (activeImportCopyID == cancelCopyID && cancelCopyID != CopyImportContext.INACTIVE_COPY_ID) {
+            final AtomicBooleanCircuitBreaker circuitBreaker = copyImportContext.getCircuitBreaker();
+            copyImportContext.getImportOriginatorSecurityContext().authorizeCopyCancel(executionContext.getSecurityContext());
+            circuitBreaker.cancel();
+            // Cancelled active import, probably :)
+            // This action is async and there is no guarantee that target table does not exist
+            // to determine if COPY has stopped the client has to wait for status table to
+            // be updated.
+            status = "cancelled";
+        } else if (activeExportCopyID == cancelCopyID && cancelCopyID != CopyExportContext.INACTIVE_COPY_ID) {
+            final AtomicBooleanCircuitBreaker circuitBreaker = copyExportContext.getCircuitBreaker();
+            copyExportContext.getExportOriginatorSecurityContext().authorizeCopyCancel(executionContext.getSecurityContext());
             circuitBreaker.cancel();
             // Cancelled active import, probably :)
             // This action is async and there is no guarantee that target table does not exist
@@ -81,13 +99,21 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
             // be updated.
             status = "cancelled";
         } else {
-            try (RecordCursor c = baseFactory.getCursor(executionContext)) {
-                Record rec = c.getRecord();
+            try (RecordCursor importCursor = importBaseFactory.getCursor(executionContext)) {
+                Record rec = importCursor.getRecord();
                 // should be one row
-                if (c.hasNext()) {
-                    status = rec.getSymA(STATUS_INDEX);
+                if (importCursor.hasNext()) {
+                    status = rec.getSymA(IMPORT_STATUS_INDEX);
                 } else {
-                    status = "unknown";
+                    try (RecordCursor exportCursor = exportBaseFactory.getCursor(executionContext)) {
+                        rec = exportCursor.getRecord();
+                        // should be one row
+                        if (exportCursor.hasNext()) {
+                            status = rec.getSymA(EXPORT_STATUS_INDEX);
+                        } else {
+                            status = "unknown";
+                        }
+                    }
                 }
             }
         }
@@ -107,7 +133,8 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        baseFactory.close();
+        importBaseFactory.close();
+        exportBaseFactory.close();
         super._close();
     }
 

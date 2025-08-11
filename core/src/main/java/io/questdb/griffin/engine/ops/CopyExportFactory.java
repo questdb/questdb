@@ -40,6 +40,7 @@ import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.SingleValueRecordCursor;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -118,7 +119,12 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
                     if (this.selectText != null) {
                         // need to create a temp table which we will use for the export
-                        createTempTable(copyID, executionContext); //
+
+                        // we need a new execution context that uses our circuit breaker, so copy cancel will apply
+                        // to the query
+                        SqlExecutionContextImpl queryExecutionContext = new SqlExecutionContextImpl(executionContext.getCairoEngine(), 1);
+                        queryExecutionContext.with(circuitBreaker);
+                        createTempTable(copyID, queryExecutionContext);
                         exportIdSink.clear();
                         exportIdSink.put("copy.");
                         Numbers.appendHex(exportIdSink, copyID, true);

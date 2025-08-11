@@ -118,9 +118,12 @@ public class SerialParquetExporter implements Closeable {
                 // empty table
                 throw CairoException.tableDoesNotExist(tableName);
             } else {
-
                 try (PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
                     for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                        if (circuitBreaker.checkIfTripped()) {
+                            LOG.errorW().$("copy was cancelled [copyId=").$(task.getCopyID()).$(']').$();
+                            throw CairoException.queryCancelled();
+                        }
                         final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
 
                         if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {

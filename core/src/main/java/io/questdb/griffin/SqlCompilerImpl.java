@@ -2235,14 +2235,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } catch (NumericException e) {
             throw SqlException.$(0, "copy cancel ID format is invalid: '").put(cancelCopyIDStr).put('\'');
         }
+
         return new CopyCancelFactory(
                 engine.getCopyImportContext(),
+                engine.getCopyExportContext(),
                 cancelCopyID,
                 cancelCopyIDStr,
                 query()
                         .$("select * from '")
                         .$(engine.getConfiguration().getSystemTableNamePrefix())
                         .$("text_import_log' where id = '")
+                        .$(cancelCopyIDStr)
+                        .$("' limit -1")
+                        .compile(executionContext).getRecordCursorFactory(),
+                query()
+                        .$("select * from '")
+                        .$(engine.getConfiguration().getSystemTableNamePrefix())
+                        .$("copy_export_log' where id = '")
                         .$(cancelCopyIDStr)
                         .$("' limit -1")
                         .compile(executionContext).getRecordCursorFactory()

@@ -33,8 +33,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -96,7 +98,68 @@ public class CopyExportTest extends AbstractCairoTest {
         );
     }
 
-    // Edge case tests for boundary values
+    @Test
+    public void testCopyExportCancel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE IF NOT EXISTS \"" +
+                    "sys.text_import_log" +
+                    "\" (" +
+                    "ts timestamp, " + // 0
+                    "id string, " + // 1
+                    "table_name symbol, " + // 2
+                    "file symbol, " + // 3
+                    "phase symbol, " + // 4
+                    "status symbol, " + // 5
+                    "message string," + // 6
+                    "rows_handled long," + // 7
+                    "rows_imported long," + // 8
+                    "errors long" + // 9
+                    ") timestamp(ts) partition by DAY BYPASS WAL");
+
+            execute("CREATE TABLE IF NOT EXISTS \"" +
+                    "sys.copy_export_log"
+                    + "\" (" +
+                    "ts TIMESTAMP, " + // 0
+                    "id VARCHAR, " + // 1
+                    "table_name SYMBOL, " + // 2
+                    "file SYMBOL, " + // 3
+                    "phase SYMBOL, " + // 4
+                    "status SYMBOL, " + // 5
+                    "message VARCHAR, " + // 6
+                    "errors LONG" + // 7
+                    ") timestamp(ts) PARTITION BY DAY\n" +
+                    "TTL 3 DAYS WAL;"
+            );
+            drainWalQueue();
+            Thread starter = new Thread(() -> {
+                try {
+                    runAndFetchCopyExportID("copy (generate_series(0, '9999-01-01', '1U')) TO 'very_large_table' WITH FORMAT PARQUET;", sqlExecutionContext);
+                } catch (SqlException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+            Thread finisher = new Thread(() -> {
+                long copyID = engine.getCopyExportContext().getActiveExportID();
+                StringSink sink = new StringSink();
+                Numbers.appendHex(sink, copyID, true);
+                String copyIDStr = sink.toString();
+                sink.clear();
+                sink.put("COPY '").put(copyIDStr).put("' CANCEL;");
+                try {
+                    assertSql("id\tstatus\n" +
+                            copyIDStr + "\tcancelled\n", sink);
+                } catch (SqlException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+            starter.start();
+            Thread.sleep(500);
+            finisher.start();
+            starter.join();
+            finisher.join();
+        });
+    }
+
     @Test
     public void testCopyParquetBoundaryValuesMaxRowGroupSize() throws Exception {
         assertMemoryLeak(() -> {
@@ -156,7 +219,7 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyParquetBoundaryValues_ZeroRowGroupSize() throws Exception {
+    public void testCopyParquetBoundaryValuesZeroRowGroupSize() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
             execute("insert into test_table values (0, 1)");
@@ -275,7 +338,7 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyParquetSyntaxError_InvalidCompressionLevel() throws Exception {
+    public void testCopyParquetSyntaxErrorInvalidCompressionLevel() throws Exception {
         assertException(
                 "copy test_table to 'output' with format parquet compression_level 'invalid'",
                 66,
@@ -284,7 +347,7 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyParquetSyntaxError_InvalidDataPageSize() throws Exception {
+    public void testCopyParquetSyntaxErrorInvalidDataPageSize() throws Exception {
         assertException(
                 "copy test_table to 'output' with format parquet data_page_size 'invalid'",
                 63,
@@ -293,7 +356,7 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyParquetSyntaxError_InvalidFormat() throws Exception {
+    public void testCopyParquetSyntaxErrorInvalidFormat() throws Exception {
         assertException(
                 "copy test_table to 'output' with format invalid",
                 40,
@@ -302,7 +365,7 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyParquetSyntaxError_InvalidOptionName() throws Exception {
+    public void testCopyParquetSyntaxErrorInvalidOptionName() throws Exception {
         assertException(
                 "copy test_table to 'output' with format parquet invalid_option 'value'",
                 48,
@@ -311,7 +374,7 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyParquetSyntaxError_InvalidParquetVersion() throws Exception {
+    public void testCopyParquetSyntaxErrorInvalidParquetVersion() throws Exception {
         assertException(
                 "copy test_table to 'output' with format parquet parquet_version 'invalid'",
                 64,
@@ -320,7 +383,7 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyParquetSyntaxError_InvalidRowGroupSize() throws Exception {
+    public void testCopyParquetSyntaxErrorInvalidRowGroupSize() throws Exception {
         assertException(
                 "copy test_table to 'output' with format parquet row_group_size 'invalid'",
                 63,
@@ -329,7 +392,7 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyParquetSyntaxError_InvalidStatisticsValue() throws Exception {
+    public void testCopyParquetSyntaxErrorInvalidStatisticsValue() throws Exception {
         assertException(
                 "copy test_table to 'output' with format parquet statistics_enabled 'invalid'",
                 67,
@@ -338,7 +401,7 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyParquetSyntaxError_MissingFormat() throws Exception {
+    public void testCopyParquetSyntaxErrorMissingFormat() throws Exception {
         assertException(
                 "copy test_table to 'output' with parquet",
                 33,
@@ -347,7 +410,7 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyParquetSyntaxError_MissingOptionValue() throws Exception {
+    public void testCopyParquetSyntaxErrorMissingOptionValue() throws Exception {
         assertException(
                 "copy test_table to 'output' with format parquet compression_codec",
                 65,
@@ -403,7 +466,7 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyParquetWithAsyncMonitoring_AllDataTypes() throws Exception {
+    public void testCopyParquetWithAsyncMonitoringAllDataTypes() throws Exception {
         CopyExportRunnable statement = () -> {
             execute("create table comprehensive_types (" +
                     "bool_col boolean, " +
@@ -441,7 +504,7 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyParquetWithAsyncMonitoring_LargeDataset() throws Exception {
+    public void testCopyParquetWithAsyncMonitoringLargeDataset() throws Exception {
         CopyExportRunnable statement = () -> {
             execute("create table large_dataset (id int, data string)");
 
@@ -475,7 +538,7 @@ public class CopyExportTest extends AbstractCairoTest {
 
     // Additional tests using async export monitoring pattern
     @Test
-    public void testCopyParquetWithAsyncMonitoring_MultipleOptions() throws Exception {
+    public void testCopyParquetWithAsyncMonitoringMultipleOptions() throws Exception {
         CopyExportRunnable statement = () -> {
             execute("create table test_table (id int, name string, value double)");
             execute("insert into test_table values (1, 'alpha', 1.1), (2, 'beta', 2.2), (3, 'gamma', 3.3)");
