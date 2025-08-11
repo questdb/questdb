@@ -215,7 +215,7 @@ public class TimestampFormatCompiler {
 
         // make last operation "greedy"
         makeLastOpGreedy(ops);
-        return generic ? new GenericTimestampFormat(ops, delimiters) : compile(ops, delimiters);
+        return generic ? new GenericMicrosFormat(ops, delimiters) : compile(ops, delimiters);
     }
 
     private static void addOp(String op, int opDayTwoDigits) {

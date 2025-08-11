@@ -37,11 +37,11 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class GenericTimestampFormat extends AbstractDateFormat {
+public class GenericMicrosFormat extends AbstractDateFormat {
     private final IntList compiledOps;
     private final ObjList<String> delimiters;
 
-    public GenericTimestampFormat(IntList compiledOps, ObjList<String> delimiters) {
+    public GenericMicrosFormat(IntList compiledOps, ObjList<String> delimiters) {
         this.compiledOps = compiledOps;
         this.delimiters = delimiters;
     }
