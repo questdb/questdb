@@ -40,7 +40,6 @@ import static io.questdb.std.datetime.CommonUtils.DAYS_PER_MONTH;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public final class Micros {
-
     public static final long DAY_MICROS = 86_400_000_000L; // 24 * 60 * 60 * 1000 * 1000L
     public static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
     public static final long DAY_SECONDS = 86400;
@@ -64,6 +63,7 @@ public final class Micros {
     private static final long[] MAX_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long YEAR_MICROS_LEAP = 366 * DAY_MICROS;
+    public static final int EPOCH_YEAR_0 = getYear(0);
 
     private Micros() {
     }
@@ -381,9 +381,8 @@ public final class Micros {
     }
 
     public static long floorMM(long micros, int stride) {
-        final int origin = getYear(0);
         long m = (getMonthsBetween(0, micros) / stride) * stride;
-        int y = (int) (origin + m / 12);
+        int y = (int) (EPOCH_YEAR_0 + m / 12);
         int mm = (int) (m % 12);
         boolean l = CommonUtils.isLeapYear(y);
         return yearMicros(y, l) + (mm > 0 ? monthOfYearMicros(mm, l) : 0);
@@ -518,8 +517,7 @@ public final class Micros {
     }
 
     public static long floorYYYY(long micros, int stride) {
-        final int origin = getYear(0);
-        final int y = origin + ((getYear(micros) - origin) / stride) * stride;
+        final int y = EPOCH_YEAR_0 + ((getYear(micros) - EPOCH_YEAR_0) / stride) * stride;
         return yearMicros(y, CommonUtils.isLeapYear(y));
     }
 

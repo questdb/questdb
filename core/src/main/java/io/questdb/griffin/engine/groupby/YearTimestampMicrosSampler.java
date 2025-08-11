@@ -80,7 +80,7 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
     @Override
     public long round(long value) {
         int y = Micros.getYear(value);
-        y = y - y % stepYears;
+        y = Micros.EPOCH_YEAR_0 + ((y - Micros.EPOCH_YEAR_0) / stepYears) * stepYears;
         return Micros.toMicros(
                 y,
                 CommonUtils.isLeapYear(y),

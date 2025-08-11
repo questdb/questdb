@@ -43,7 +43,6 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_NANOS;
 import static io.questdb.std.datetime.microtime.Micros.*;
 
 public final class Nanos {
-
     public static final long DAY_NANOS = 86_400_000_000_000L; // 24 * 60 * 60 * 1000 * 1000L
     public static final long AVG_YEAR_NANOS = (long) (365.2425 * DAY_NANOS);
     public static final long HOUR_NANOS = 3_600_000_000_000L;
@@ -56,6 +55,7 @@ public final class Nanos {
     public static final long YEAR_NANOS_NONLEAP = 365 * DAY_NANOS;
     private static final int DAYS_0000_TO_1970 = 719527;
     private static final long YEAR_NANOS_LEAP = 366 * DAY_NANOS;
+    public static final int EPOCH_YEAR_0 = getYear(0);
 
     private Nanos() {
     }

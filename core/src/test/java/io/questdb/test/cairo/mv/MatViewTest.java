@@ -2731,6 +2731,45 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHugeSampleByInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE Samples (" +
+                            "  Time TIMESTAMP," +
+                            "  DeviceId INT," +
+                            "  Register SYMBOL INDEX," +
+                            "  Value DOUBLE" +
+                            ") timestamp(Time) PARTITION BY MONTH WAL " +
+                            "DEDUP UPSERT KEYS(Time, DeviceId, Register);"
+            );
+            execute(
+                    "CREATE MATERIALIZED VIEW Samples_latest AS" +
+                            "  SELECT" +
+                            "    Time as UnixEpoch," +
+                            "    last(Time) AS Time," +
+                            "    DeviceId," +
+                            "    Register," +
+                            "    last(Value) AS Value" +
+                            "  FROM" +
+                            "    Samples" +
+                            "  SAMPLE BY 1000y;"
+            );
+            execute("INSERT INTO Samples (Time, DeviceId, Register, Value) VALUES ('2025-08-08T12:57:07.388314Z', 1, 'hello', 123);");
+
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "UnixEpoch\tTime\tDeviceId\tRegister\tValue\n" +
+                            "1970-01-01T00:00:00.000000Z\t2025-08-08T12:57:07.388314Z\t1\thello\t123.0\n",
+                    "Samples_latest",
+                    "UnixEpoch",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testImmediatePeriodMatView() throws Exception {
         testPeriodRefresh("immediate", null, true);
     }
@@ -4142,8 +4181,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             final String expected = "ts\tuid\tamount\n" +
-                    "2000-01-01T00:00:00.000000Z\tbar\t103.21\n" +
-                    "2000-01-01T00:00:00.000000Z\tfoo\t1.321\n";
+                    "2020-01-01T00:00:00.000000Z\tbar\t103.21\n" +
+                    "2020-01-01T00:00:00.000000Z\tfoo\t1.321\n";
             final String viewSql = "with starting_point as ( " +
                     "  select ts from aux_start_date " +
                     "  union " +
@@ -4157,7 +4196,7 @@ public class MatViewTest extends AbstractCairoTest {
                     ") " +
                     "select ts, uid, first(amount) as amount " +
                     "from latest_query " +
-                    "sample by 100y";
+                    "sample by 10y";
             assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewSql, "ts");
 
             execute("create materialized view exchanges_100y as (" + viewSql + ") partition by year");
