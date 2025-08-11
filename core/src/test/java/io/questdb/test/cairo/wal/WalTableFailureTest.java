@@ -56,7 +56,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -534,14 +534,14 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             int dropPartitions = 5;
             for (int i = 0; i < dropPartitions; i++) {
-                long ts = initialTs + i * Timestamps.DAY_MICROS;
-                tempPath.concat(Timestamps.toString(ts).substring(0, 10)).$();
+                long ts = initialTs + i * Micros.DAY_MICROS;
+                tempPath.concat(Micros.toString(ts).substring(0, 10)).$();
                 Assert.assertTrue(ff.rmdir(tempPath));
                 tempPath.of(root).concat(tableName);
             }
 
             execute("alter table " + tableName.getTableName() + " drop partition WHERE ts <= '"
-                    + Timestamps.toString(initialTs + (dropPartitions - 3) * Timestamps.DAY_MICROS) + "'");
+                    + Micros.toString(initialTs + (dropPartitions - 3) * Micros.DAY_MICROS) + "'");
 
             drainWalQueue();
 
@@ -557,7 +557,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             execute("alter table " + tableName.getTableName() + " drop partition WHERE ts <= '"
-                    + Timestamps.toString(initialTs + dropPartitions * Timestamps.DAY_MICROS) + "'");
+                    + Micros.toString(initialTs + dropPartitions * Micros.DAY_MICROS) + "'");
 
             drainWalQueue();
 
@@ -719,8 +719,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             int dropPartitions = 5;
             for (int i = 0; i < dropPartitions; i++) {
-                long ts = initialTs + i * Timestamps.DAY_MICROS;
-                tempPath.concat(Timestamps.toString(ts).substring(0, 10)).$();
+                long ts = initialTs + i * Micros.DAY_MICROS;
+                tempPath.concat(Micros.toString(ts).substring(0, 10)).$();
                 Assert.assertTrue(ff.rmdir(tempPath));
                 tempPath.of(root).concat(tableName);
             }

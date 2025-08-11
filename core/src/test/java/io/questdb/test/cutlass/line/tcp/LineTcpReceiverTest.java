@@ -61,8 +61,8 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -256,7 +256,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 final int expectedNumOfRows = numOfRows / 2;
                 // usually the data will be in the table by the time we get here but
                 // if it is not we will wait for it in a loop
-                long maxWaitIters = 60 * Timestamps.SECOND_MILLIS / 100;
+                long maxWaitIters = 60 * Micros.SECOND_MILLIS / 100;
                 for (int i = 0; i < maxWaitIters && reader.getTransientRowCount() < expectedNumOfRows; i++) {
                     Os.sleep(100);
                     mayDrainWalQueue();
@@ -572,7 +572,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     lineTcpSender
                             .metric("table")
                             .tag("tag=2", "value=\\2")
-                            .$(Timestamps.DAY_MICROS * 1000L);
+                            .$(Micros.DAY_MICROS * 1000L);
                     lineTcpSender.flush();
                 }
             });
@@ -682,12 +682,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     lineTcpSender
                             .metric("table")
                             .tag("tag/2", "value=\2") // Invalid column name, last line is not saved
-                            .$(Timestamps.DAY_MICROS * 1000L);
+                            .$(Micros.DAY_MICROS * 1000L);
                     // Repeat
                     lineTcpSender
                             .metric("table")
                             .tag("tag/2", "value=\2") // Invalid column name, last line is not saved
-                            .$(Timestamps.DAY_MICROS * 1000L);
+                            .$(Micros.DAY_MICROS * 1000L);
                     lineTcpSender.flush();
                 }
             });
@@ -1592,7 +1592,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     lineTcpSender
                             .metric("table")
                             .tag("tag/2", "value=\2") // Invalid column name, last line is not saved
-                            .$(Timestamps.DAY_MICROS * 1000L);
+                            .$(Micros.DAY_MICROS * 1000L);
                     lineTcpSender.flush();
                 }
             });
@@ -2001,7 +2001,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         });
 
         send(lineData, "dummy", WAIT_NO_WAIT);
-        releaseLatch.await(10 * Timestamps.SECOND_MICROS * 1000L);
+        releaseLatch.await(10 * Micros.SECOND_MICROS * 1000L);
     }
 
     private void shutdownReceiverWhileSenderIsSendingData(WorkerPool ioPool, WorkerPool writerPool) throws SqlException {

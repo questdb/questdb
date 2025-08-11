@@ -63,7 +63,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
@@ -496,13 +496,13 @@ public class FuzzRunner {
     }
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start) {
-        long end = start + partitionCount * Timestamps.DAY_MICROS;
+        long end = start + partitionCount * Micros.DAY_MICROS;
         return generateTransactions(tableName, rnd, start, end);
     }
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd) throws NumericException {
         long start = MicrosTimestampDriver.floor("2022-02-24T17");
-        long end = start + partitionCount * Timestamps.DAY_MICROS;
+        long end = start + partitionCount * Micros.DAY_MICROS;
         return generateTransactions(tableName, rnd, start, end);
     }
 
@@ -663,7 +663,7 @@ public class FuzzRunner {
                         "select ts from " + tableName + " order by ts limit 1",
                         sink,
                         "ts\n" +
-                                Timestamps.toUSecString(reader.getMinTimestamp())
+                                Micros.toUSecString(reader.getMinTimestamp())
                                 + "\n"
                 );
             }
@@ -675,7 +675,7 @@ public class FuzzRunner {
                         "select ts from " + tableName + " order by ts limit -1",
                         sink,
                         "ts\n" +
-                                Timestamps.toUSecString(reader.getMaxTimestamp())
+                                Micros.toUSecString(reader.getMaxTimestamp())
                                 + "\n"
                 );
             }
@@ -758,7 +758,7 @@ public class FuzzRunner {
                         if (i > 0) {
                             sink.put(" and");
                         }
-                        sink.put(" (ts not between '" + Timestamps.toUSecString(lo) + "' and '" + Timestamps.toUSecString(hi) + "')");
+                        sink.put(" (ts not between '" + Micros.toUSecString(lo) + "' and '" + Micros.toUSecString(hi) + "')");
                     }
                 }
             }

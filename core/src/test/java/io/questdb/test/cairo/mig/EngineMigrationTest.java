@@ -44,8 +44,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -440,7 +440,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "select " +
                         " x" +
                         ", rnd_symbol('a', 'b', 'c', null) m" +
-                        ", timestamp_sequence('1970-01-05T02:30', " + Timestamps.HOUR_MICROS + "L) ts" +
+                        ", timestamp_sequence('1970-01-05T02:30', " + Micros.HOUR_MICROS + "L) ts" +
                         ", rnd_symbol('a', 'b', 'c', null)" +
                         ", rnd_str()" +
                         " from long_sequence(10),"
@@ -450,7 +450,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "select " +
                         " x" +
                         ", rnd_symbol('a', 'b', 'c', null) m" +
-                        ", timestamp_sequence('1970-01-01T01:30', " + Timestamps.HOUR_MICROS + "L) ts" +
+                        ", timestamp_sequence('1970-01-01T01:30', " + Micros.HOUR_MICROS + "L) ts" +
                         ", rnd_symbol('a', 'b', 'c', null)" +
                         ", rnd_str()" +
                         " from long_sequence(36)"
@@ -467,7 +467,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "select " +
                         " x" +
                         ", rnd_symbol('a', 'b', 'c', null) m" +
-                        ", timestamp_sequence('1970-01-05T04:25', " + Timestamps.HOUR_MICROS + "L) ts" +
+                        ", timestamp_sequence('1970-01-05T04:25', " + Micros.HOUR_MICROS + "L) ts" +
                         ", rnd_symbol('a', 'b', 'c', null)" +
                         ", rnd_str()" +
                         " from long_sequence(10),"
@@ -477,7 +477,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "select " +
                         " x" +
                         ", rnd_symbol('a', 'b', 'c', null) m" +
-                        ", timestamp_sequence('1970-01-01T01:27', " + Timestamps.HOUR_MICROS + "L) ts" +
+                        ", timestamp_sequence('1970-01-01T01:27', " + Micros.HOUR_MICROS + "L) ts" +
                         ", rnd_symbol('a', 'b', 'c', null)" +
                         ", rnd_str()" +
                         " from long_sequence(36)"
@@ -1768,7 +1768,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                 "select " +
                 " x" +
                 ", rnd_symbol('a', 'b', 'c', null) m" +
-                ", timestamp_sequence('1970-01-01T01', " + Timestamps.HOUR_MICROS + "L) ts" +
+                ", timestamp_sequence('1970-01-01T01', " + Micros.HOUR_MICROS + "L) ts" +
                 " from long_sequence(96)," +
                 "), index(m) timestamp(ts) partition by DAY", "t_col_top_ooo_day");
 
@@ -1777,7 +1777,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "select " +
                         " x" +
                         ", rnd_symbol('a', 'b', 'c', null) m" +
-                        ", timestamp_sequence('1970-01-01T01', " + Timestamps.HOUR_MICROS + "L) ts" +
+                        ", timestamp_sequence('1970-01-01T01', " + Micros.HOUR_MICROS + "L) ts" +
                         " from long_sequence(96)," +
                         "), index(m) timestamp(ts) partition by DAY WAL",
                 "t_col_top_ooo_day_wal"

@@ -40,7 +40,7 @@ import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_NANOS;
-import static io.questdb.std.datetime.microtime.Timestamps.*;
+import static io.questdb.std.datetime.microtime.Micros.*;
 
 public final class Nanos {
 

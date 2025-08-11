@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.datetime.CommonUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
@@ -46,7 +46,7 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
 
     @Override
     public long getApproxBucketSize() {
-        return Timestamps.YEAR_MICROS_NONLEAP * stepYears;
+        return Micros.YEAR_MICROS_NONLEAP * stepYears;
     }
 
     @Override
@@ -79,9 +79,9 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        int y = Timestamps.getYear(value);
+        int y = Micros.getYear(value);
         y = y - y % stepYears;
-        return Timestamps.toMicros(
+        return Micros.toMicros(
                 y,
                 CommonUtils.isLeapYear(y),
                 startDay,
@@ -96,15 +96,15 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
 
     @Override
     public void setStart(long timestamp) {
-        final int y = Timestamps.getYear(timestamp);
+        final int y = Micros.getYear(timestamp);
         final boolean leap = CommonUtils.isLeapYear(y);
-        this.startMonth = Timestamps.getMonthOfYear(timestamp, y, leap);
-        this.startDay = Timestamps.getDayOfMonth(timestamp, y, startMonth, leap);
-        this.startHour = Timestamps.getHourOfDay(timestamp);
-        this.startMin = Timestamps.getMinuteOfHour(timestamp);
-        this.startSec = Timestamps.getSecondOfMinute(timestamp);
-        this.startMillis = Timestamps.getMillisOfSecond(timestamp);
-        this.startMicros = Timestamps.getMicrosOfMilli(timestamp);
+        this.startMonth = Micros.getMonthOfYear(timestamp, y, leap);
+        this.startDay = Micros.getDayOfMonth(timestamp, y, startMonth, leap);
+        this.startHour = Micros.getHourOfDay(timestamp);
+        this.startMin = Micros.getMinuteOfHour(timestamp);
+        this.startSec = Micros.getSecondOfMinute(timestamp);
+        this.startMillis = Micros.getMillisOfSecond(timestamp);
+        this.startMicros = Micros.getMicrosOfMilli(timestamp);
     }
 
     @Override
@@ -116,16 +116,16 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
         if (numYears == 0) {
             return timestamp;
         }
-        final int y = Timestamps.getYear(timestamp);
+        final int y = Micros.getYear(timestamp);
         final boolean leap = CommonUtils.isLeapYear(y + numYears);
         final int maxDay = Math.min(startDay, CommonUtils.getDaysPerMonth(startMonth, leap)) - 1;
-        return Timestamps.yearMicros(y + numYears, leap)
-                + Timestamps.monthOfYearMicros(startMonth, leap)
-                + maxDay * Timestamps.DAY_MICROS
-                + startHour * Timestamps.HOUR_MICROS
-                + startMin * Timestamps.MINUTE_MICROS
-                + startSec * Timestamps.SECOND_MICROS
-                + startMillis * Timestamps.MILLI_MICROS
+        return Micros.yearMicros(y + numYears, leap)
+                + Micros.monthOfYearMicros(startMonth, leap)
+                + maxDay * Micros.DAY_MICROS
+                + startHour * Micros.HOUR_MICROS
+                + startMin * Micros.MINUTE_MICROS
+                + startSec * Micros.SECOND_MICROS
+                + startMillis * Micros.MILLI_MICROS
                 + startMicros;
     }
 }

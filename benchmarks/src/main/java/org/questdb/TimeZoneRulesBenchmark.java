@@ -29,7 +29,7 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Mode;
@@ -74,7 +74,7 @@ public class TimeZoneRulesBenchmark {
     @Benchmark
     public long testGetLocalOffset() {
         long s = 0;
-        for (long ts = initialTs, maxTs = initialTs + ITERATIONS * Timestamps.SECOND_MICROS; ts < maxTs; ts += Timestamps.SECOND_MICROS) {
+        for (long ts = initialTs, maxTs = initialTs + ITERATIONS * Micros.SECOND_MICROS; ts < maxTs; ts += Micros.SECOND_MICROS) {
             s += rules.getLocalOffset(ts);
         }
         return s;
@@ -83,7 +83,7 @@ public class TimeZoneRulesBenchmark {
     @Benchmark
     public long testGetOffset() {
         long s = 0;
-        for (long ts = initialTs, maxTs = initialTs + ITERATIONS * Timestamps.SECOND_MICROS; ts < maxTs; ts += Timestamps.SECOND_MICROS) {
+        for (long ts = initialTs, maxTs = initialTs + ITERATIONS * Micros.SECOND_MICROS; ts < maxTs; ts += Micros.SECOND_MICROS) {
             s += rules.getOffset(ts);
         }
         return s;

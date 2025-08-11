@@ -49,8 +49,8 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.LongList;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
@@ -262,7 +262,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                     ",('jpyusd', 103.21, '2024-09-12T23:02')"
                     );
                     // tick timer job to enqueue caching task
-                    testClock.micros.addAndGet(Timestamps.MINUTE_MICROS);
+                    testClock.micros.addAndGet(Micros.MINUTE_MICROS);
                     drainMatViewTimerQueue(timerJob);
                     drainWalAndMatViewQueues(refreshJob, main1.getEngine());
 
@@ -838,7 +838,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 }
             }
 
-            testClock.micros.addAndGet(Timestamps.HOUR_MICROS);
+            testClock.micros.addAndGet(Micros.HOUR_MICROS);
             try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
                 assertSql(
                         main2,
@@ -888,7 +888,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             final String startStr = "2024-12-12T00:00:00.000000Z";
             final long start = MicrosFormatUtils.parseUTCTimestamp(startStr);
             // Set the clock to an earlier timestamp.
-            final TestMicroClock testClock = new TestMicroClock(start - Timestamps.DAY_MICROS);
+            final TestMicroClock testClock = new TestMicroClock(start - Micros.DAY_MICROS);
 
             // Timer refresh should not kick in during the first server start.
             final String firstExpected = "sym\tprice\tts\n";

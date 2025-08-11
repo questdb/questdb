@@ -34,7 +34,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 
-import static io.questdb.std.datetime.microtime.Timestamps.DAY_MICROS;
+import static io.questdb.std.datetime.microtime.Micros.DAY_MICROS;
 
 public class FuzzTransactionGenerator {
     private static final int MAX_COLUMNS = 200;

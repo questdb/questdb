@@ -56,7 +56,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -365,7 +365,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 }
             }
             Overrides overrides = node1.getConfigurationOverrides();
-            overrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, Timestamps.MINUTE_MICROS);
+            overrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, Micros.MINUTE_MICROS);
             drainWalQueue();
 
             assertSql("count\n" + rowCount + "\n", "select count(*) from " + tableName);
@@ -1480,35 +1480,35 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
                 Assert.assertEquals(0, txReader.getLagTxnCount());
                 Assert.assertEquals(0, txReader.getLagRowCount());
-                Assert.assertEquals("2022-02-24T00:00:00.000Z", Timestamps.toString(txReader.getMaxTimestamp()));
+                Assert.assertEquals("2022-02-24T00:00:00.000Z", Micros.toString(txReader.getMaxTimestamp()));
 
                 runApplyOnce(token);
                 txReader.unsafeLoadAll();
 
                 Assert.assertEquals(0, txReader.getLagTxnCount());
                 Assert.assertEquals(0, txReader.getLagRowCount());
-                Assert.assertEquals("2022-02-24T01:00:00.000Z", Timestamps.toString(txReader.getMaxTimestamp()));
+                Assert.assertEquals("2022-02-24T01:00:00.000Z", Micros.toString(txReader.getMaxTimestamp()));
 
                 runApplyOnce(token);
                 txReader.unsafeLoadAll();
 
                 Assert.assertEquals(0, txReader.getLagTxnCount());
                 Assert.assertEquals(0, txReader.getLagRowCount());
-                Assert.assertEquals("2022-02-24T02:00:00.000Z", Timestamps.toString(txReader.getMaxTimestamp()));
+                Assert.assertEquals("2022-02-24T02:00:00.000Z", Micros.toString(txReader.getMaxTimestamp()));
 
                 runApplyOnce(token);
                 txReader.unsafeLoadAll();
 
                 Assert.assertEquals(1, txReader.getLagTxnCount());
                 Assert.assertEquals(1, txReader.getLagRowCount());
-                Assert.assertEquals("2022-02-24T02:00:00.000Z", Timestamps.toString(txReader.getMaxTimestamp()));
+                Assert.assertEquals("2022-02-24T02:00:00.000Z", Micros.toString(txReader.getMaxTimestamp()));
 
                 runApplyOnce(token);
                 txReader.unsafeLoadAll();
 
                 Assert.assertEquals(0, txReader.getLagTxnCount());
                 Assert.assertEquals(0, txReader.getLagRowCount());
-                Assert.assertEquals("2022-02-24T03:00:00.000Z", Timestamps.toString(txReader.getMaxTimestamp()));
+                Assert.assertEquals("2022-02-24T03:00:00.000Z", Micros.toString(txReader.getMaxTimestamp()));
             }
         });
     }
@@ -1954,8 +1954,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 Assert.assertEquals(1, txReader.getLagTxnCount());
                 Assert.assertEquals(1, txReader.getLagRowCount());
                 Assert.assertTrue(txReader.isLagOrdered());
-                Assert.assertEquals("2022-02-24T01:00:00.000Z", Timestamps.toString(txReader.getLagMinTimestamp()));
-                Assert.assertEquals("2022-02-24T01:00:00.000Z", Timestamps.toString(txReader.getLagMaxTimestamp()));
+                Assert.assertEquals("2022-02-24T01:00:00.000Z", Micros.toString(txReader.getLagMinTimestamp()));
+                Assert.assertEquals("2022-02-24T01:00:00.000Z", Micros.toString(txReader.getLagMaxTimestamp()));
 
                 runApplyOnce(token);
                 txReader.unsafeLoadAll();

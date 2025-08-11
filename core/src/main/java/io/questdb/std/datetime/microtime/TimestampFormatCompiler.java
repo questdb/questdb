@@ -1386,7 +1386,7 @@ public class TimestampFormatCompiler {
         int parseIntSafelyIndex = asm.poolMethod(Numbers.class, "parseIntSafely", "(Ljava/lang/CharSequence;II)J");
         int parseInt000GreedyIndex = asm.poolMethod(Numbers.class, "parseInt000Greedy", "(Ljava/lang/CharSequence;II)J");
         int parseLong000000GreedyIndex = asm.poolMethod(Numbers.class, "parseLong000000Greedy", "(Ljava/lang/CharSequence;II)J");
-        int parseNanosAsMicrosGreedyIndex = asm.poolMethod(Timestamps.class, "parseNanosAsMicrosGreedy", "(Ljava/lang/CharSequence;II)J");
+        int parseNanosAsMicrosGreedyIndex = asm.poolMethod(Micros.class, "parseNanosAsMicrosGreedy", "(Ljava/lang/CharSequence;II)J");
         int decodeLenIndex = asm.poolMethod(Numbers.class, "decodeHighInt", "(J)I");
         int decodeIntIndex = asm.poolMethod(Numbers.class, "decodeLowInt", "(J)I");
         int parseIntIndex = asm.poolMethod(Numbers.class, "parseInt", "(Ljava/lang/CharSequence;II)I");
@@ -1415,21 +1415,21 @@ public class TimestampFormatCompiler {
         int appendYearIndex = asm.poolMethod(MicrosFormatUtils.class, "appendYear", "(Lio/questdb/std/str/CharSink;I)V");
 
         int parseOffsetIndex = asm.poolMethod(Dates.class, "parseOffset", "(Ljava/lang/CharSequence;II)J");
-        int getYearIndex = asm.poolMethod(Timestamps.class, "getYear", "(J)I");
-        int getIsoYearIndex = asm.poolMethod(Timestamps.class, "getIsoYear", "(J)I");
+        int getYearIndex = asm.poolMethod(Micros.class, "getYear", "(J)I");
+        int getIsoYearIndex = asm.poolMethod(Micros.class, "getIsoYear", "(J)I");
         int isLeapYearIndex = asm.poolMethod(CommonUtils.class, "isLeapYear", "(I)Z");
-        int getMonthOfYearIndex = asm.poolMethod(Timestamps.class, "getMonthOfYear", "(JIZ)I");
-        int getDayOfMonthIndex = asm.poolMethod(Timestamps.class, "getDayOfMonth", "(JIIZ)I");
-        int getHourOfDayIndex = asm.poolMethod(Timestamps.class, "getHourOfDay", "(J)I");
-        int getMinuteOfHourIndex = asm.poolMethod(Timestamps.class, "getMinuteOfHour", "(J)I");
-        int getSecondOfMinuteIndex = asm.poolMethod(Timestamps.class, "getSecondOfMinute", "(J)I");
-        int getMillisOfSecondIndex = asm.poolMethod(Timestamps.class, "getMillisOfSecond", "(J)I");
-        int getMicrosOfMilliIndex = asm.poolMethod(Timestamps.class, "getMicrosOfMilli", "(J)I");
-        int getMicrosOfSecondIndex = asm.poolMethod(Timestamps.class, "getMicrosOfSecond", "(J)I");
-        int getDayOfWeekIndex = asm.poolMethod(Timestamps.class, "getDayOfWeekSundayFirst", "(J)I");
-        int getDayOfYearIndex = asm.poolMethod(Timestamps.class, "getDayOfYear", "(J)I");
-        int getWeekIndex = asm.poolMethod(Timestamps.class, "getWeek", "(J)I");
-        int getWeekOfYearIndex = asm.poolMethod(Timestamps.class, "getWeekOfYear", "(J)I");
+        int getMonthOfYearIndex = asm.poolMethod(Micros.class, "getMonthOfYear", "(JIZ)I");
+        int getDayOfMonthIndex = asm.poolMethod(Micros.class, "getDayOfMonth", "(JIIZ)I");
+        int getHourOfDayIndex = asm.poolMethod(Micros.class, "getHourOfDay", "(J)I");
+        int getMinuteOfHourIndex = asm.poolMethod(Micros.class, "getMinuteOfHour", "(J)I");
+        int getSecondOfMinuteIndex = asm.poolMethod(Micros.class, "getSecondOfMinute", "(J)I");
+        int getMillisOfSecondIndex = asm.poolMethod(Micros.class, "getMillisOfSecond", "(J)I");
+        int getMicrosOfMilliIndex = asm.poolMethod(Micros.class, "getMicrosOfMilli", "(J)I");
+        int getMicrosOfSecondIndex = asm.poolMethod(Micros.class, "getMicrosOfSecond", "(J)I");
+        int getDayOfWeekIndex = asm.poolMethod(Micros.class, "getDayOfWeekSundayFirst", "(J)I");
+        int getDayOfYearIndex = asm.poolMethod(Micros.class, "getDayOfYear", "(J)I");
+        int getWeekIndex = asm.poolMethod(Micros.class, "getWeek", "(J)I");
+        int getWeekOfYearIndex = asm.poolMethod(Micros.class, "getWeekOfYear", "(J)I");
 
         int sinkPutIntIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(I)Lio/questdb/std/str/CharSink;");
         int sinkPutStrIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(Ljava/lang/CharSequence;)Lio/questdb/std/str/CharSink;");

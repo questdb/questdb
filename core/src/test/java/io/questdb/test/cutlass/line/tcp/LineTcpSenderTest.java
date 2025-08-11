@@ -45,9 +45,9 @@ import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
@@ -646,12 +646,12 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .at(tsMicros / 1000, ChronoUnit.MILLIS);
                 sender.table("mytable")
                         .stringColumn("unit", "s")
-                        .timestampColumn("ts", tsMicros / Timestamps.SECOND_MICROS, ChronoUnit.SECONDS)
-                        .at(tsMicros / Timestamps.SECOND_MICROS, ChronoUnit.SECONDS);
+                        .timestampColumn("ts", tsMicros / Micros.SECOND_MICROS, ChronoUnit.SECONDS)
+                        .at(tsMicros / Micros.SECOND_MICROS, ChronoUnit.SECONDS);
                 sender.table("mytable")
                         .stringColumn("unit", "m")
-                        .timestampColumn("ts", tsMicros / Timestamps.MINUTE_MICROS, ChronoUnit.MINUTES)
-                        .at(tsMicros / Timestamps.MINUTE_MICROS, ChronoUnit.MINUTES);
+                        .timestampColumn("ts", tsMicros / Micros.MINUTE_MICROS, ChronoUnit.MINUTES)
+                        .at(tsMicros / Micros.MINUTE_MICROS, ChronoUnit.MINUTES);
                 sender.flush();
             }
 

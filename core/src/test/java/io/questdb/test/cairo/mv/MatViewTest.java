@@ -57,8 +57,8 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -665,7 +665,7 @@ public class MatViewTest extends AbstractCairoTest {
             execute("alter materialized view price_1h set refresh every 1m start '" + start + "';");
             drainQueues();
             // we need timers to tick
-            currentMicros += Timestamps.MINUTE_MICROS;
+            currentMicros += Micros.MINUTE_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
@@ -731,7 +731,7 @@ public class MatViewTest extends AbstractCairoTest {
             execute("alter materialized view price_1h set refresh every 1m start '" + start + "';");
             drainQueues();
             // we need timers to tick
-            currentMicros += Timestamps.MINUTE_MICROS;
+            currentMicros += Micros.MINUTE_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
@@ -3767,7 +3767,7 @@ public class MatViewTest extends AbstractCairoTest {
                         "price_1h_" + i + " order by sym"
                 );
 
-                currentMicros += Timestamps.SECOND_MICROS;
+                currentMicros += Micros.SECOND_MICROS;
             }
 
             // Drop all mat views. All timers should be removed as well.
@@ -3777,7 +3777,7 @@ public class MatViewTest extends AbstractCairoTest {
                 dropNthTimerMatView(i);
             }
 
-            currentMicros += Timestamps.DAY_MICROS;
+            currentMicros += Micros.DAY_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
@@ -4699,7 +4699,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-12T03:01')" +
                             ",('jpyusd', 103.21, '2024-09-12T23:02')"
             );
-            currentMicros += 6 * Timestamps.SECOND_MICROS;
+            currentMicros += 6 * Micros.SECOND_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
@@ -4809,7 +4809,7 @@ public class MatViewTest extends AbstractCairoTest {
             Assert.assertEquals(-1, viewState.getRefreshIntervalsBaseTxn());
             Assert.assertEquals(0, viewState.getRefreshIntervals().size());
 
-            currentMicros += 11 * Timestamps.SECOND_MICROS;
+            currentMicros += 11 * Micros.SECOND_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
@@ -5514,7 +5514,7 @@ public class MatViewTest extends AbstractCairoTest {
                 null,
                 "2024-12-12T12:00:01.000000Z",
                 "2024-12-12T13:00:01.000000Z",
-                2 * Timestamps.HOUR_MICROS
+                2 * Micros.HOUR_MICROS
         );
     }
 
@@ -5524,7 +5524,7 @@ public class MatViewTest extends AbstractCairoTest {
                 "Europe/London",
                 "2024-12-12T12:00:01.000000Z",
                 "2024-12-12T13:00:01.000000Z",
-                2 * Timestamps.HOUR_MICROS
+                2 * Micros.HOUR_MICROS
         );
     }
 
@@ -5534,7 +5534,7 @@ public class MatViewTest extends AbstractCairoTest {
                 null,
                 "2024-12-12T12:00:00.000000Z",
                 "2024-12-12T12:00:00.000000Z",
-                Timestamps.HOUR_MICROS
+                Micros.HOUR_MICROS
         );
     }
 
@@ -5544,7 +5544,7 @@ public class MatViewTest extends AbstractCairoTest {
                 "Europe/London",
                 "2024-12-12T12:00:00.000000Z",
                 "2024-12-12T12:00:00.000000Z",
-                Timestamps.HOUR_MICROS
+                Micros.HOUR_MICROS
         );
     }
 
@@ -5568,7 +5568,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
 
-            currentMicros = start + 61 * Timestamps.SECOND_MICROS;
+            currentMicros = start + 61 * Micros.SECOND_MICROS;
             final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
             drainMatViewTimerQueue(timerJob);
             drainQueues();
@@ -5579,7 +5579,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "price_1h_0 order by sym"
             );
 
-            currentMicros = start + Timestamps.HOUR_MICROS;
+            currentMicros = start + Micros.HOUR_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
@@ -5643,7 +5643,7 @@ public class MatViewTest extends AbstractCairoTest {
                 "2024-12-12T00:00:00.000000Z",
                 "2d",
                 "2024-12-11T00:00:00.000000Z",
-                Timestamps.HOUR_MICROS,
+                Micros.HOUR_MICROS,
                 23
         );
     }
@@ -5655,7 +5655,7 @@ public class MatViewTest extends AbstractCairoTest {
                 "2024-12-12T00:00:00.000000Z",
                 "2d",
                 "2024-12-11T00:00:00.000000Z",
-                Timestamps.HOUR_MICROS,
+                Micros.HOUR_MICROS,
                 23
         );
     }
@@ -5667,7 +5667,7 @@ public class MatViewTest extends AbstractCairoTest {
                 "2024-12-12T01:30:00.000000Z",
                 "30m",
                 "2024-12-12T01:00:00.000000Z",
-                Timestamps.MINUTE_MICROS,
+                Micros.MINUTE_MICROS,
                 29
         );
     }
@@ -5679,7 +5679,7 @@ public class MatViewTest extends AbstractCairoTest {
                 "2024-12-12T01:30:00.000000Z",
                 "30m",
                 "2024-12-12T01:45:00.000000Z",
-                Timestamps.MINUTE_MICROS,
+                Micros.MINUTE_MICROS,
                 14
         );
     }
@@ -5691,7 +5691,7 @@ public class MatViewTest extends AbstractCairoTest {
                 "2024-12-12T01:30:00.000000Z",
                 "30m",
                 "2024-12-12T01:00:00.000000Z",
-                Timestamps.MINUTE_MICROS,
+                Micros.MINUTE_MICROS,
                 29
         );
     }
@@ -5703,7 +5703,7 @@ public class MatViewTest extends AbstractCairoTest {
                 "2024-12-12T01:30:00.000000Z",
                 "30m",
                 "2024-12-12T01:45:00.000000Z",
-                Timestamps.MINUTE_MICROS,
+                Micros.MINUTE_MICROS,
                 14
         );
     }
@@ -5743,7 +5743,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             // Tick the timer once again, this time with no new transaction.
-            currentMicros += 2 * Timestamps.HOUR_MICROS;
+            currentMicros += 2 * Micros.HOUR_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
@@ -5754,7 +5754,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             // Do more timer ticks.
-            currentMicros += 2 * Timestamps.HOUR_MICROS;
+            currentMicros += 2 * Micros.HOUR_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
@@ -5911,7 +5911,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-11T12:01')" +
                             ",('jpyusd', 103.21, '2024-09-11T12:02')"
             );
-            currentMicros += 6 * Timestamps.SECOND_MICROS;
+            currentMicros += 6 * Micros.SECOND_MICROS;
 
             drainMatViewTimerQueue(timerJob);
             drainQueues();
@@ -5970,7 +5970,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-11T12:01')" +
                             ",('jpyusd', 103.21, '2024-09-11T12:02')"
             );
-            currentMicros += 6 * Timestamps.SECOND_MICROS;
+            currentMicros += 6 * Micros.SECOND_MICROS;
 
             drainMatViewTimerQueue(timerJob);
 
@@ -6130,7 +6130,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             // no refresh should happen even if we move the clock one day ahead
-            currentMicros += Timestamps.DAY_MICROS;
+            currentMicros += Micros.DAY_MICROS;
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
@@ -6192,7 +6192,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ",('jpyusd', 103.21, '2020-12-12T12:02')" +
                             ",('jpyusd', 1.321, '2020-12-12T13:02')"
             );
-            currentMicros += 2 * Timestamps.DAY_MICROS;
+            currentMicros += 2 * Micros.DAY_MICROS;
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -6597,7 +6597,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     private void testTimerMatViewBigJumps(String timeZone, String start, String initialClock, long clockJump) throws Exception {
         assertMemoryLeak(() -> {
-            final TimeZoneRules tzRules = timeZone != null ? Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone) : null;
+            final TimeZoneRules tzRules = timeZone != null ? Micros.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone) : null;
 
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -6675,7 +6675,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     private void testTimerMatViewSmallJumps(String timeZone, String start, String every, String initialClock, long clockJump, int ticksBeforeRefresh) throws Exception {
         assertMemoryLeak(() -> {
-            final TimeZoneRules tzRules = timeZone != null ? Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone) : null;
+            final TimeZoneRules tzRules = timeZone != null ? Micros.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone) : null;
             final int interval = CommonUtils.getStrideMultiple(every, 0);
             final char unit = CommonUtils.getStrideUnit(every, -1);
             final String unitStr = MatViewsFunctionFactory.getIntervalUnit(unit);

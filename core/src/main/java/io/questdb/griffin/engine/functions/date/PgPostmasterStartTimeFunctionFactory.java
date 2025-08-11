@@ -34,7 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 
 public class PgPostmasterStartTimeFunctionFactory implements FunctionFactory {
 
@@ -43,7 +43,7 @@ public class PgPostmasterStartTimeFunctionFactory implements FunctionFactory {
     private static final TimestampFunction FUNC = new TimestampFunction(ColumnType.TIMESTAMP_MICRO) {
         @Override
         public long getTimestamp(Record rec) {
-            return Timestamps.STARTUP_TIMESTAMP;
+            return Micros.STARTUP_TIMESTAMP;
         }
 
         @Override

@@ -37,8 +37,8 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
@@ -349,7 +349,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                                 executionContext
                         );
                         drainWalQueue();
-                        testClock.micros.addAndGet(rnd.nextInt(10) * Timestamps.MINUTE_MICROS);
+                        testClock.micros.addAndGet(rnd.nextInt(10) * Micros.MINUTE_MICROS);
                     }
                 } catch (Exception e) {
                     e.printStackTrace(System.out);
@@ -369,7 +369,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             writer.join();
 
             // do a big jump forward in time to make sure that all rows are in complete periods
-            testClock.micros.addAndGet(Timestamps.HOUR_MICROS);
+            testClock.micros.addAndGet(Micros.HOUR_MICROS);
             drainMatViewTimerQueue(timerJob);
             drainWalAndMatViewQueues();
 
@@ -488,7 +488,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                         );
                         drainWalQueue();
                         drainMatViewTimerQueue(timerJob);
-                        testClock.micros.addAndGet(rnd.nextInt(10) * Timestamps.MINUTE_MICROS);
+                        testClock.micros.addAndGet(rnd.nextInt(10) * Micros.MINUTE_MICROS);
                     }
                 } catch (Exception e) {
                     e.printStackTrace(System.out);
@@ -688,10 +688,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final long clockJump;
         switch (lengthUnit) {
             case 'm':
-                clockJump = length * Timestamps.MINUTE_MICROS;
+                clockJump = length * Micros.MINUTE_MICROS;
                 break;
             case 'h':
-                clockJump = length * Timestamps.HOUR_MICROS;
+                clockJump = length * Micros.HOUR_MICROS;
                 break;
             default:
                 throw new IllegalStateException("unexpected unit: " + lengthUnit);
@@ -771,10 +771,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final long clockJump;
         switch (intervalUnit) {
             case 'm':
-                clockJump = interval * Timestamps.MINUTE_MICROS;
+                clockJump = interval * Micros.MINUTE_MICROS;
                 break;
             case 'h':
-                clockJump = interval * Timestamps.HOUR_MICROS;
+                clockJump = interval * Micros.HOUR_MICROS;
                 break;
             default:
                 throw new IllegalStateException("unexpected unit: " + intervalUnit);

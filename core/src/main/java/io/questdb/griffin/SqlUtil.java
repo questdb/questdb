@@ -52,7 +52,7 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.fastdouble.FastFloatParser;
@@ -265,11 +265,11 @@ public class SqlUtil {
                 case 's': // seconds
                     return interval;
                 case 'm': // minutes
-                    return interval * Timestamps.MINUTE_SECONDS;
+                    return interval * Micros.MINUTE_SECONDS;
                 case 'h': // hours
-                    return interval * Timestamps.HOUR_SECONDS;
+                    return interval * Micros.HOUR_SECONDS;
                 case 'd': // days
-                    return interval * Timestamps.DAY_SECONDS;
+                    return interval * Micros.DAY_SECONDS;
                 default:
                     break;
             }

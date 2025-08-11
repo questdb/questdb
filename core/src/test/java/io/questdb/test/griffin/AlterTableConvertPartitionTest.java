@@ -31,7 +31,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.Overrides;
@@ -215,7 +215,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " to_long128(rnd_long(), rnd_long()) a_long128," +
                             " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
                             " timestamp_sequence(500000000000, 600)::" + timestampTypeName + " a_ts," +
-                            " timestamp_sequence(400000000000, " + Timestamps.DAY_MICROS / 12 + ")::" + timestampTypeName + " designated_ts" +
+                            " timestamp_sequence(400000000000, " + Micros.DAY_MICROS / 12 + ")::" + timestampTypeName + " designated_ts" +
                             " from long_sequence(" + rows + ")), index(a_symbol) timestamp(designated_ts) partition by month"
             );
 
@@ -237,7 +237,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     "create table " + tableName + " as (select" +
                             " x id," +
                             " rnd_symbol('a','b','c') a_symbol," +
-                            " timestamp_sequence(400000000000, " + Timestamps.DAY_MICROS * 5 + ")::" + timestampTypeName + " designated_ts" +
+                            " timestamp_sequence(400000000000, " + Micros.DAY_MICROS * 5 + ")::" + timestampTypeName + " designated_ts" +
                             " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month"
             );
 
@@ -293,7 +293,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " to_long128(rnd_long(), rnd_long()) a_long128," +
                             " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
                             " timestamp_sequence(500000000000, 600)::" + timestampTypeName + " a_ts," +
-                            " timestamp_sequence(400000000000, " + Timestamps.DAY_MICROS / 12 + ")::" + timestampTypeName + " designated_ts" +
+                            " timestamp_sequence(400000000000, " + Micros.DAY_MICROS / 12 + ")::" + timestampTypeName + " designated_ts" +
                             " from long_sequence(" + rows + ")), index(a_symbol) timestamp(designated_ts) partition by month"
             );
 

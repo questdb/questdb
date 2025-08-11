@@ -35,7 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.mp.Sequence;
 import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -425,7 +425,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     @Test
     public void testPurgeHandlesLogPartitionChange() throws Exception {
         assertMemoryLeak(() -> {
-            setCurrentMicros(Timestamps.DAY_MICROS * 30);
+            setCurrentMicros(Micros.DAY_MICROS * 30);
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 execute("create table up_part_o3 as" +
                         " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L)::" + timestampTypeName + " ts," +
@@ -452,7 +452,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 }
             }
 
-            setCurrentMicros(Timestamps.DAY_MICROS * 32);
+            setCurrentMicros(Micros.DAY_MICROS * 32);
             try (Path path = new Path()) {
                 String[] partitions = new String[]{"1970-01-03.1", "1970-01-04.1", "1970-01-05"};
                 assertFilesExist(partitions, path, "up_part_o3", "", true);

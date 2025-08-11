@@ -51,7 +51,7 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
@@ -104,7 +104,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             ObjList<FuzzTransaction> transactions = new ObjList<>();
             Rnd rnd = generateRandomAndProps();
             try {
-                long initialDelta = Timestamps.MINUTE_MICROS * 15;
+                long initialDelta = Micros.MINUTE_MICROS * 15;
                 int initialCount = 4 * 24 * 5;
                 generateInsertsTransactions(
                         transactions,
@@ -225,7 +225,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             ObjList<FuzzTransaction> transactions = new ObjList<>();
             Rnd rnd = generateRandomAndProps();
             try {
-                long initialDelta = Timestamps.MINUTE_MICROS * 15;
+                long initialDelta = Micros.MINUTE_MICROS * 15;
                 int initialCount = 4 * 24 * 5;
                 int initialDuplicates = 2 + rnd.nextInt(5);
                 generateInsertsTransactions(
@@ -281,7 +281,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
             ObjList<FuzzTransaction> transactions = new ObjList<>();
             Rnd rnd = generateRandomAndProps();
-            long initialDelta = Timestamps.MINUTE_MICROS * 15;
+            long initialDelta = Micros.MINUTE_MICROS * 15;
             int initialCount = 2 * 24 * 5;
             generateInsertsTransactions(
                     transactions,
@@ -542,7 +542,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         for (int i = 0; i < foundSymbols.length; i++) {
             if (!foundSymbols[i]) {
                 CharSequence symbol = symbols[i];
-                Assert.fail("Symbol '" + symbol + "' not found for timestamp " + Timestamps.toUSecString(timestamp));
+                Assert.fail("Symbol '" + symbol + "' not found for timestamp " + Micros.toUSecString(timestamp));
             }
             foundSymbols[i] = false;
         }
@@ -798,7 +798,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
         for (int i = 0; i < inserts; i++) {
             long fromTs = minTs + rnd.nextLong(maxTs - minTs);
-            long toTs = (long) (fromTs + Timestamps.DAY_MICROS * Math.pow(1.2, rnd.nextDouble()));
+            long toTs = (long) (fromTs + Micros.DAY_MICROS * Math.pow(1.2, rnd.nextDouble()));
 
             String insertSql = "insert into " + tableNameDedup +
                     " select * from " + tableNameDedup +
@@ -817,7 +817,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     private void runDedupWithShiftAndStep(Rnd rnd, String tableName, int colType) {
         ObjList<FuzzTransaction> transactions = new ObjList<>();
         try {
-            long initialDelta = Timestamps.MINUTE_MICROS * 15;
+            long initialDelta = Micros.MINUTE_MICROS * 15;
             int rndCount = rnd.nextInt(10);
             int strLen = 4 + rnd.nextInt(20);
             List<String> distinctSymbols = Arrays.stream(generateSymbols(rnd, 1 + rndCount, strLen, tableName)).distinct()
@@ -847,10 +847,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             maybeConvertToParquet(tableName);
 
             transactions.clear();
-            long shift = rnd.nextLong(4 * 24 * 5) * Timestamps.MINUTE_MICROS * 15 +
-                    rnd.nextLong(15) * Timestamps.MINUTE_MICROS;
+            long shift = rnd.nextLong(4 * 24 * 5) * Micros.MINUTE_MICROS * 15 +
+                    rnd.nextLong(15) * Micros.MINUTE_MICROS;
             long from = parseFloorPartialTimestamp("2020-02-24") + shift;
-            long delta = Timestamps.MINUTE_MICROS;
+            long delta = Micros.MINUTE_MICROS;
             int count = rnd.nextInt(48) * 60;
             int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
             generateInsertsTransactions(
@@ -907,7 +907,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     timestampColumnName = readerMetadata.getColumnName(readerMetadata.getTimestampIndex());
 
                     long start = MicrosTimestampDriver.floor("2022-02-24T23:59:59");
-                    long end = start + 2 * Timestamps.SECOND_MICROS;
+                    long end = start + 2 * Micros.SECOND_MICROS;
                     transactions = generateSet(rnd, sequencerMetadata, readerMetadata, start, end, tableNameWalNoDedup);
                     comaSeparatedUpsertCols = toCommaSeparatedString(readerMetadata, upsertKeyIndexes);
                 }
@@ -980,7 +980,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             }
 
             long start = MicrosTimestampDriver.floor("2022-02-24T17");
-            long end = start + fuzzer.partitionCount * Timestamps.DAY_MICROS;
+            long end = start + fuzzer.partitionCount * Micros.DAY_MICROS;
             ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameDedup, rnd, start, end);
 
             try {
@@ -1053,7 +1053,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     private void testDedupWithRandomShiftAndStepAndColumnTops(Rnd rnd, short columType, String tableName) throws SqlException {
         ObjList<FuzzTransaction> transactions = new ObjList<>();
         try {
-            long initialDelta = Timestamps.MINUTE_MICROS * 15;
+            long initialDelta = Micros.MINUTE_MICROS * 15;
 
             int initialDuplicates = 1 + rnd.nextInt(1);
             long startTimestamp = parseFloorPartialTimestamp("2020-02-24T04:30");
@@ -1111,10 +1111,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             applyWal(transactions, tableName, 1, rnd);
 
             transactions.clear();
-            long shift = (startCount > 0 ? rnd.nextLong(startCount) : 0) * Timestamps.MINUTE_MICROS * 15 +
-                    rnd.nextLong(15) * Timestamps.MINUTE_MICROS;
+            long shift = (startCount > 0 ? rnd.nextLong(startCount) : 0) * Micros.MINUTE_MICROS * 15 +
+                    rnd.nextLong(15) * Micros.MINUTE_MICROS;
             long from = startTimestamp + shift;
-            long delta = Timestamps.MINUTE_MICROS;
+            long delta = Micros.MINUTE_MICROS;
             int count = rnd.nextInt(48) * 60;
             int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
             generateInsertsTransactions(
@@ -1247,7 +1247,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 try {
                     long timestamp = rec.getTimestamp(0);
                     int commit = rec.getInt(1);
-                    if (timestamp >= (fromTimestamp - Timestamps.MINUTE_MICROS * 5) || started) {
+                    if (timestamp >= (fromTimestamp - Micros.MINUTE_MICROS * 5) || started) {
                         // Keep printing whole insert time range, regardless of the failures
                         started = true;
                         sink.putISODate(timestamp).put(',').put(commit);
@@ -1273,16 +1273,16 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                             }
                             int symbolIndex = symbolSet.get(sym);
                             if (symbolIndex < 0) {
-                                Assert.fail("Unknown symbol found: timestamp " + Timestamps.toUSecString(timestamp) + ", symbol '" + sym + "'");
+                                Assert.fail("Unknown symbol found: timestamp " + Micros.toUSecString(timestamp) + ", symbol '" + sym + "'");
                             }
                             if (foundSymbols[symbolIndex]) {
-                                Assert.fail("Duplicate timestamp " + Timestamps.toUSecString(timestamp) + " for symbol '" + sym + "'");
+                                Assert.fail("Duplicate timestamp " + Micros.toUSecString(timestamp) + " for symbol '" + sym + "'");
                             }
                             foundSymbols[symbolIndex] = true;
                         } else {
                             if (timestamp == lastTimestamp) {
                                 if (++dups > existingDups) {
-                                    Assert.fail("Duplicate timestamp " + Timestamps.toUSecString(timestamp));
+                                    Assert.fail("Duplicate timestamp " + Micros.toUSecString(timestamp));
                                 }
                             } else {
                                 dups = 1;
@@ -1291,21 +1291,21 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
                         if (timestamp < lastTimestamp) {
                             Assert.fail("Out of order timestamp " +
-                                    Timestamps.toUSecString(lastTimestamp) +
+                                    Micros.toUSecString(lastTimestamp) +
                                     " followed by " +
-                                    Timestamps.toUSecString(timestamp)
+                                    Micros.toUSecString(timestamp)
                             );
                         }
 
                         if ((timestamp - fromTimestamp) % delta == 0) {
-                            Assert.assertEquals("expected commit at timestamp " + Timestamps.toUSecString(timestamp), 2, commit);
+                            Assert.assertEquals("expected commit at timestamp " + Micros.toUSecString(timestamp), 2, commit);
                         }
 
                         Assert.assertTrue("commit must be 1 or 2", commit > 0);
                     }
                     lastTimestamp = timestamp;
 
-                    if (timestamp > (toTimestamp + Timestamps.MINUTE_MICROS * 5)) {
+                    if (timestamp > (toTimestamp + Micros.MINUTE_MICROS * 5)) {
                         break;
                     }
                 } catch (AssertionError e) {

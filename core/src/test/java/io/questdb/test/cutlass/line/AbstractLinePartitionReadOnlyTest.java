@@ -51,7 +51,7 @@ public class AbstractLinePartitionReadOnlyTest extends AbstractBootstrapTest {
     protected static final long futurePartitionTs; // nanos
     protected static final String lastPartitionName = "2022-12-11";
     protected static final long lastPartitionTs; // nanos
-    protected static final long lineTsStep = TimeUnit.MILLISECONDS.toNanos(1L); // min resolution of Timestamps.toString(long)
+    protected static final long lineTsStep = TimeUnit.MILLISECONDS.toNanos(1L); // min resolution of Micros.toString(long)
     protected static final String secondPartitionName = "2022-12-09";
     protected static final long secondPartitionTs; // nanos
 

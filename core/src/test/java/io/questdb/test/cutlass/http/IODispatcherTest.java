@@ -118,7 +118,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.Clock;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.datetime.nanotime.StationaryNanosClock;
@@ -9891,7 +9891,7 @@ public class IODispatcherTest extends AbstractTest {
                             );
                         } catch (Throwable e) {
                             LOG.critical().$(e).$();
-                            System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
+                            System.out.println("erm: " + index + ", ts=" + Micros.toString(Os.currentTimeMicros()));
                             throw e;
                         }
                     }

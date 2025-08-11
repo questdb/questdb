@@ -35,7 +35,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8String;
@@ -252,7 +252,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                     "from long_sequence(5000)";
 
             checkRecoverVarIndex(createAlterInsertSql,
-                    tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.DAY, tablePath, Timestamps.DAY_MICROS * 11, 1L),
+                    tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.DAY, tablePath, Micros.DAY_MICROS * 11, 1L),
                     rebuildIndex -> rebuildIndex.reindexColumn("str2", ColumnType.TIMESTAMP));
         });
     }

@@ -32,8 +32,8 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -85,10 +85,10 @@ public class TimestampFinderTest extends AbstractCairoTest {
                     if (--ticks == 0) {
                         if (duplicatesPerTick > 1) {
                             // we want to be in control of the number of duplicates
-                            timestamp += (rnd.nextLong(1) + 1) * Timestamps.MINUTE_MICROS;
+                            timestamp += (rnd.nextLong(1) + 1) * Micros.MINUTE_MICROS;
                         } else {
                             // extra duplicates are fine
-                            timestamp += rnd.nextLong(2) * Timestamps.MINUTE_MICROS;
+                            timestamp += rnd.nextLong(2) * Micros.MINUTE_MICROS;
                         }
                         ticks = duplicatesPerTick;
                     }
@@ -149,7 +149,7 @@ public class TimestampFinderTest extends AbstractCairoTest {
 
                 final long start = System.nanoTime();
                 long calls = 0;
-                for (long ts = minTimestamp - Timestamps.MINUTE_MICROS; ts < maxTimestamp + Timestamps.MINUTE_MICROS; ts += Timestamps.MINUTE_MICROS) {
+                for (long ts = minTimestamp - Micros.MINUTE_MICROS; ts < maxTimestamp + Micros.MINUTE_MICROS; ts += Micros.MINUTE_MICROS) {
                     // full partition
                     Assert.assertEquals(
                             oracleFinder.findTimestamp(ts, 0, 1000 - 1),

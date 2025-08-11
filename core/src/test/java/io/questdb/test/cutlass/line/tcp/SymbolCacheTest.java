@@ -54,8 +54,8 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -102,7 +102,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                         columnsAdded.incrementAndGet();
 
                         for (int rowNum = 0; rowNum < rowsAdded; rowNum++) {
-                            TableWriter.Row row = writer.newRow((i * rowsAdded + rowNum) * Timestamps.SECOND_MICROS);
+                            TableWriter.Row row = writer.newRow((i * rowsAdded + rowNum) * Micros.SECOND_MICROS);
                             String value = "val" + (i * rowsAdded + rowNum);
                             for (int col = 1; col < colCount; col++) {
                                 if (rnd.nextBoolean()) {

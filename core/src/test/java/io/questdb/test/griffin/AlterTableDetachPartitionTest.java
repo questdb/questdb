@@ -48,8 +48,8 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8StringSink;
@@ -1141,7 +1141,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         start.await();
                         while (isLive.get()) {
                             try (TableWriter writer = getWriter(tableName)) {
-                                long partitionTimestamp = (rnd.nextInt() % writer.getPartitionCount()) * Timestamps.DAY_MICROS;
+                                long partitionTimestamp = (rnd.nextInt() % writer.getPartitionCount()) * Micros.DAY_MICROS;
                                 if (!detachedPartitionTimestamps.contains(partitionTimestamp)) {
                                     writer.detachPartition(partitionTimestamp);
                                     detachedCount.incrementAndGet();

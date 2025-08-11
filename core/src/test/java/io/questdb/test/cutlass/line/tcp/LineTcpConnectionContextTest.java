@@ -34,7 +34,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -1811,7 +1811,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testNoTimestamp() throws Exception {
         Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
         String table = "notimestamp";
-        timestampTicks = Timestamps.DAY_MICROS;
+        timestampTicks = Micros.DAY_MICROS;
         runInContext(() -> {
             recvBuffer =
                     table + ",platform=APP val=1\n" +

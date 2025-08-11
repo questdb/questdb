@@ -84,7 +84,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -120,17 +120,17 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void apply1RowCommits1Writer() throws Exception {
-        testApply1RowCommitManyWriters(Timestamps.SECOND_MICROS, 1_000_000, 1);
+        testApply1RowCommitManyWriters(Micros.SECOND_MICROS, 1_000_000, 1);
     }
 
     @Test
     public void apply1RowCommitsManyWriters() throws Exception {
-        testApply1RowCommitManyWriters(Timestamps.SECOND_MICROS, 1_000_000, 16);
+        testApply1RowCommitManyWriters(Micros.SECOND_MICROS, 1_000_000, 16);
     }
 
     @Test
     public void apply1RowCommitsManyWritersExceedsBlockSortRanges() throws Exception {
-        testApply1RowCommitManyWriters(Timestamps.YEAR_10000 / 300, 265, 16);
+        testApply1RowCommitManyWriters(Micros.YEAR_10000 / 300, 265, 16);
     }
 
     @Test
@@ -1069,7 +1069,7 @@ public class WalWriterTest extends AbstractCairoTest {
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");
             long startTs = MicrosTimestampDriver.floor("2022-02-24");
-            long tsIncrement = Timestamps.MINUTE_MICROS;
+            long tsIncrement = Micros.MINUTE_MICROS;
 
             long ts = startTs;
             int totalRows = 2000;
@@ -1122,7 +1122,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
                     assertSql(
                             "count\tmin\tmax\n" +
-                                    (c + 1) * totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsIncrement) + "\n", "select count(*), min(ts), max(ts) from sm"
+                                    (c + 1) * totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Micros.toUSecString(ts - tsIncrement) + "\n", "select count(*), min(ts), max(ts) from sm"
                     );
                     assertSqlCursors("sm", "select * from sm order by id");
                     assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
@@ -4425,7 +4425,7 @@ public class WalWriterTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertSql(
                     "count\tmin\tmax\n" +
-                            totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsStep) + "\n", "select count(*), min(ts), max(ts) from sm"
+                            totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Micros.toUSecString(ts - tsStep) + "\n", "select count(*), min(ts), max(ts) from sm"
             );
             assertSqlCursors("sm", "select * from sm order by id");
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");

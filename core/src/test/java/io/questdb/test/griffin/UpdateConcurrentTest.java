@@ -39,7 +39,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -189,7 +189,7 @@ public class UpdateConcurrentTest extends AbstractCairoTest {
                             Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
 
                             try (OperationFuture fut = cc.execute(eventSubSequence.get())) {
-                                fut.await(10 * Timestamps.SECOND_MILLIS);
+                                fut.await(10 * Micros.SECOND_MILLIS);
                             }
                             current.incrementAndGet();
                         }

@@ -288,27 +288,27 @@ public class MicrosFormatUtils {
 
         // calculate year, month, and day of ISO week
         if (week != -1) {
-            long firstDayOfIsoWeekMicros = Timestamps.yearMicros(year, CommonUtils.isLeapYear(year)) +
-                    (week - 1) * Timestamps.WEEK_MICROS +
-                    CommonUtils.getIsoYearDayOffset(year) * Timestamps.DAY_MICROS;
-            month = Timestamps.getMonthOfYear(firstDayOfIsoWeekMicros);
+            long firstDayOfIsoWeekMicros = Micros.yearMicros(year, CommonUtils.isLeapYear(year)) +
+                    (week - 1) * Micros.WEEK_MICROS +
+                    CommonUtils.getIsoYearDayOffset(year) * Micros.DAY_MICROS;
+            month = Micros.getMonthOfYear(firstDayOfIsoWeekMicros);
             year += (week == 1 && CommonUtils.getIsoYearDayOffset(year) < 0) ? -1 : 0;
-            day = Timestamps.getDayOfMonth(firstDayOfIsoWeekMicros, year, month, CommonUtils.isLeapYear(year));
+            day = Micros.getDayOfMonth(firstDayOfIsoWeekMicros, year, month, CommonUtils.isLeapYear(year));
         }
 
-        long outMicros = Timestamps.yearMicros(year, leap)
-                + Timestamps.monthOfYearMicros(month, leap)
-                + (long) (day - 1) * Timestamps.DAY_MICROS
-                + (long) hour * Timestamps.HOUR_MICROS
-                + (long) minute * Timestamps.MINUTE_MICROS
-                + (long) second * Timestamps.SECOND_MICROS
-                + (long) millis * Timestamps.MILLI_MICROS
+        long outMicros = Micros.yearMicros(year, leap)
+                + Micros.monthOfYearMicros(month, leap)
+                + (long) (day - 1) * Micros.DAY_MICROS
+                + (long) hour * Micros.HOUR_MICROS
+                + (long) minute * Micros.MINUTE_MICROS
+                + (long) second * Micros.SECOND_MICROS
+                + (long) millis * Micros.MILLI_MICROS
                 + micros;
 
         if (timezone > -1) {
             outMicros -= locale.getZoneRules(timezone, RESOLUTION_MICROS).getOffset(outMicros, year);
         } else if (offsetMinutes > Long.MIN_VALUE) {
-            outMicros -= offsetMinutes * Timestamps.MINUTE_MICROS;
+            outMicros -= offsetMinutes * Micros.MINUTE_MICROS;
         }
 
         return outMicros;
@@ -316,30 +316,30 @@ public class MicrosFormatUtils {
 
     // YYYY-MM-DD
     public static void formatDashYYYYMMDD(@NotNull CharSink<?> sink, long micros) {
-        int y = Timestamps.getYear(micros);
+        int y = Micros.getYear(micros);
         boolean l = CommonUtils.isLeapYear(y);
-        int m = Timestamps.getMonthOfYear(micros, y, l);
+        int m = Micros.getMonthOfYear(micros, y, l);
         Numbers.append(sink, y);
         append0(sink.putAscii('-'), m);
-        append0(sink.putAscii('-'), Timestamps.getDayOfMonth(micros, y, m, l));
+        append0(sink.putAscii('-'), Micros.getDayOfMonth(micros, y, m, l));
     }
 
     // YYYY-MM
     public static void formatYYYYMM(@NotNull CharSink<?> sink, long micros) {
-        int y = Timestamps.getYear(micros);
-        int m = Timestamps.getMonthOfYear(micros, y, CommonUtils.isLeapYear(y));
+        int y = Micros.getYear(micros);
+        int m = Micros.getMonthOfYear(micros, y, CommonUtils.isLeapYear(y));
         Numbers.append(sink, y);
         append0(sink.putAscii('-'), m);
     }
 
     // YYYYMMDD
     public static void formatYYYYMMDD(@NotNull CharSink<?> sink, long micros) {
-        int y = Timestamps.getYear(micros);
+        int y = Micros.getYear(micros);
         boolean l = CommonUtils.isLeapYear(y);
-        int m = Timestamps.getMonthOfYear(micros, y, l);
+        int m = Micros.getMonthOfYear(micros, y, l);
         Numbers.append(sink, y);
         append0(sink, m);
-        append0(sink, Timestamps.getDayOfMonth(micros, y, m, l));
+        append0(sink, Micros.getDayOfMonth(micros, y, m, l));
     }
 
     public static long getReferenceYear() {
@@ -407,7 +407,7 @@ public class MicrosFormatUtils {
     public static void updateReferenceYear(long micros) {
         referenceYear = micros;
 
-        int referenceYear = Timestamps.getYear(micros);
+        int referenceYear = Micros.getYear(micros);
         int centuryOffset = referenceYear % 100;
         thisCenturyLimit = centuryOffset + 20;
         if (thisCenturyLimit > 100) {
@@ -417,7 +417,7 @@ public class MicrosFormatUtils {
             thisCenturyLow = referenceYear - centuryOffset;
         }
         prevCenturyLow = thisCenturyLow - 100;
-        newYear = Timestamps.endOfYear(referenceYear);
+        newYear = Micros.endOfYear(referenceYear);
     }
 
     static {

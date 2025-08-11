@@ -33,7 +33,7 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.ex.BytecodeException;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -57,7 +57,7 @@ public class TimestampFormatCompilerTest {
 
     @BeforeClass
     public static void setUp() {
-        MicrosFormatUtils.updateReferenceYear(Timestamps.toMicros(1997, 1, 1, 0, 0));
+        MicrosFormatUtils.updateReferenceYear(Micros.toMicros(1997, 1, 1, 0, 0));
     }
 
     @Test
@@ -620,7 +620,7 @@ public class TimestampFormatCompilerTest {
     public void testGreedyYear2() throws Exception {
         long referenceYear = MicrosFormatUtils.getReferenceYear();
         try {
-            MicrosFormatUtils.updateReferenceYear(Timestamps.toMicros(2015, 1, 20, 0, 0));
+            MicrosFormatUtils.updateReferenceYear(Micros.toMicros(2015, 1, 20, 0, 0));
             assertThat("y-MM", "1564-03-01T00:00:00.000Z", "1564-03");
             assertThat("y-MM", "2006-03-01T00:00:00.000Z", "06-03");
             assertThat("y-MM", "2055-03-01T00:00:00.000Z", "55-03");
@@ -1071,10 +1071,10 @@ public class TimestampFormatCompilerTest {
 
     private void assertThat(String pattern, String expected, String input, DateLocale locale) throws NumericException {
         DateFormat format = get(pattern);
-        TestUtils.assertEquals(expected, Timestamps.toString(format.parse(input, locale)));
+        TestUtils.assertEquals(expected, Micros.toString(format.parse(input, locale)));
 
         DateFormat compiled = compiler.compile(pattern);
-        TestUtils.assertEquals(expected, Timestamps.toString(compiled.parse(input, locale)));
+        TestUtils.assertEquals(expected, Micros.toString(compiled.parse(input, locale)));
     }
 
     private void testAgainstJavaReferenceImpl(String pattern) throws Exception {

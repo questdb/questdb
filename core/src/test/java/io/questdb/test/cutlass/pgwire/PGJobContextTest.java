@@ -66,8 +66,8 @@ import io.questdb.std.ObjectFactory;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -180,7 +180,7 @@ public class PGJobContextTest extends BasePGTest {
     /**
      * When set to true, tests or sections of tests that are don't work with the WAL are skipped.
      */
-    private static final long DAY_MICROS = Timestamps.HOUR_MICROS * 24L;
+    private static final long DAY_MICROS = Micros.HOUR_MICROS * 24L;
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
     private static final int count = 200;
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
@@ -206,7 +206,7 @@ public class PGJobContextTest extends BasePGTest {
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
         formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
         final Stream<Object[]> dates = LongStream.rangeClosed(0, count - 1)
-                .map(i -> i * Timestamps.HOUR_MICROS / 1000L)
+                .map(i -> i * Micros.HOUR_MICROS / 1000L)
                 .mapToObj(ts -> new Object[]{ts * 1000L, formatter.format(new java.util.Date(ts))});
         datesArr = dates.collect(Collectors.toList());
         stringTypeName = ColumnType.nameOf(ColumnType.STRING);
@@ -8527,7 +8527,7 @@ nodejs code:
             }
 
             try (PreparedStatement statement = connection.prepareStatement("INSERT INTO xts VALUES(now())")) {
-                for (long micros = 0; micros < 200 * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS) {
+                for (long micros = 0; micros < 200 * Micros.HOUR_MICROS; micros += Micros.HOUR_MICROS) {
                     setCurrentMicros(micros);
                     statement.execute();
                 }
@@ -8552,7 +8552,7 @@ nodejs code:
             }
 
             try (PreparedStatement statement = connection.prepareStatement("INSERT INTO xts VALUES(systimestamp())")) {
-                for (long micros = 0; micros < 200 * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS) {
+                for (long micros = 0; micros < 200 * Micros.HOUR_MICROS; micros += Micros.HOUR_MICROS) {
                     setCurrentMicros(micros);
                     statement.execute();
                 }
@@ -10220,7 +10220,7 @@ create table tab as (
                 statement.executeQuery();
                 try (ResultSet rs = statement.executeQuery()) {
                     String expected = datesArr.stream()
-                            .filter(arr -> (long) arr[0] < Timestamps.HOUR_MICROS * 24)
+                            .filter(arr -> (long) arr[0] < Micros.HOUR_MICROS * 24)
                             .map(arr -> arr[1] + "\n")
                             .collect(Collectors.joining());
 
@@ -10236,7 +10236,7 @@ create table tab as (
                 statement.executeQuery();
                 try (ResultSet rs = statement.executeQuery()) {
                     String expected = datesArr.stream()
-                            .filter(arr -> (long) arr[0] >= Timestamps.HOUR_MICROS * 24)
+                            .filter(arr -> (long) arr[0] >= Micros.HOUR_MICROS * 24)
                             .map(arr -> arr[1] + "\n")
                             .collect(Collectors.joining());
 
@@ -10309,7 +10309,7 @@ create table tab as (
                 statement.executeQuery();
                 try (ResultSet rs = statement.executeQuery()) {
                     String expected = datesArr.stream()
-                            .filter(arr -> (long) arr[0] < Timestamps.HOUR_MICROS * 24)
+                            .filter(arr -> (long) arr[0] < Micros.HOUR_MICROS * 24)
                             .map(arr -> arr[1] + "\n")
                             .collect(Collectors.joining());
 
@@ -10325,7 +10325,7 @@ create table tab as (
                 statement.executeQuery();
                 try (ResultSet rs = statement.executeQuery()) {
                     String expected = datesArr.stream()
-                            .filter(arr -> (long) arr[0] >= Timestamps.HOUR_MICROS * 24)
+                            .filter(arr -> (long) arr[0] >= Micros.HOUR_MICROS * 24)
                             .map(arr -> arr[1] + "\n")
                             .collect(Collectors.joining());
 
@@ -12343,7 +12343,7 @@ create table tab as (
                 "select ts FROM xts WHERE ts <= dateadd('d', -1, ?) and ts >= dateadd('d', -2, ?)")
         ) {
             ResultSet rs = null;
-            for (long micros = 0; micros < count * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS * 7) {
+            for (long micros = 0; micros < count * Micros.HOUR_MICROS; micros += Micros.HOUR_MICROS * 7) {
                 sink.clear();
                 // constructor requires millis
                 Timestamp ts = new Timestamp(micros / 1000L);

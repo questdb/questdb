@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
@@ -540,7 +540,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             final int count = 32;
             final int skip = 48;
             final int iterations = 10;
-            final long hour = Timestamps.HOUR_MICROS;
+            final long hour = Micros.HOUR_MICROS;
 
             String createStmt = "create table xts (ts Timestamp) timestamp(ts) partition by DAY";
             execute(createStmt);
@@ -616,7 +616,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
 
             List<Object[]> datesArr = dates.collect(Collectors.toList());
 
-            final long hour = Timestamps.HOUR_MICROS;
+            final long hour = Micros.HOUR_MICROS;
             final long day = 24 * hour;
             compareNowRange("select * FROM xts WHERE ts >= '1970' and ts <= '2021'", datesArr, ts -> true);
 
@@ -736,7 +736,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             execute("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by DAY");
             execute("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.DAY_MICROS + ") FROM long_sequence(5)");
+                    Micros.DAY_MICROS + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2022-11-20T00:00:00.000000Z\n" +
@@ -759,7 +759,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             execute("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by MONTH");
             execute("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.DAY_MICROS * 30 + ") FROM long_sequence(5)");
+                    Micros.DAY_MICROS * 30 + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2022-12-19T00:00:00.000000Z\n" +
@@ -782,7 +782,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             execute("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by WEEK");
             execute("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.WEEK_MICROS + ") FROM long_sequence(5)");
+                    Micros.WEEK_MICROS + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2022-11-26T00:00:00.000000Z\n" +
@@ -805,7 +805,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             execute("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by YEAR");
             execute("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
-                    Timestamps.DAY_MICROS * 365 + ") FROM long_sequence(5)");
+                    Micros.DAY_MICROS * 365 + ") FROM long_sequence(5)");
             String expected = "seq_num\ttimestamp\n" +
                     "1\t2022-11-19T00:00:00.000000Z\n" +
                     "2\t2023-11-19T00:00:00.000000Z\n" +

@@ -56,8 +56,8 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.GcUtf8String;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -1103,7 +1103,7 @@ public class LogFactoryTest {
         final int extraFiles = 2;
         String fileTemplate = "mylog-${date:yyyy-MM-dd}.log";
         String extraFilePrefix = "mylog-test";
-        long speed = Timestamps.HOUR_MICROS;
+        long speed = Micros.HOUR_MICROS;
 
         final MicrosecondClock clock = new TestMicrosecondClock(
                 MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"),
@@ -1147,7 +1147,7 @@ public class LogFactoryTest {
                         } finally {
                             Files.close(fd);
                         }
-                        Files.setLastModified(path.$(), clock.getTicks() / 1000 - (i + 1) * 24 * Timestamps.HOUR_MICROS / 1000);
+                        Files.setLastModified(path.$(), clock.getTicks() / 1000 - (i + 1) * 24 * Micros.HOUR_MICROS / 1000);
                     }
                 }
             }

@@ -27,7 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.tools.TestUtils;
@@ -60,7 +60,7 @@ public class RemovePartitionTest extends AbstractCairoTest {
 
                 long timestampToDelete = 0;
                 for (int i = 0; i < 10; i++) {
-                    writer.removePartition(timestampToDelete + (i * Timestamps.DAY_MICROS));
+                    writer.removePartition(timestampToDelete + (i * Micros.DAY_MICROS));
                 }
                 writer.commit();
 

@@ -31,7 +31,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Utf8Sequence;
 
 public class CommonUtils {
@@ -147,7 +147,7 @@ public class CommonUtils {
      * @return difference in the days from the start of the year (January 1st) and the first ISO week
      */
     public static int getIsoYearDayOffset(int year) {
-        int dayOfTheWeekOfEndOfPreviousYear = Timestamps.getDayOfTheWeekOfEndOfYear(year - 1);
+        int dayOfTheWeekOfEndOfPreviousYear = Micros.getDayOfTheWeekOfEndOfYear(year - 1);
         return ((dayOfTheWeekOfEndOfPreviousYear <= 3) ? 0 : 7) - dayOfTheWeekOfEndOfPreviousYear;
     }
 
@@ -191,7 +191,7 @@ public class CommonUtils {
     }
 
     public static int getWeeks(int y) {
-        if (Timestamps.getDayOfTheWeekOfEndOfYear(y) == 4 || Timestamps.getDayOfTheWeekOfEndOfYear(y - 1) == 3) {
+        if (Micros.getDayOfTheWeekOfEndOfYear(y) == 4 || Micros.getDayOfTheWeekOfEndOfYear(y - 1) == 3) {
             return 53;
         }
         return 52;
@@ -211,7 +211,7 @@ public class CommonUtils {
 
     public static long microsToNanos(long micros) {
         try {
-            return micros == Numbers.LONG_NULL ? Numbers.LONG_NULL : Math.multiplyExact(micros, Timestamps.MICRO_NANOS);
+            return micros == Numbers.LONG_NULL ? Numbers.LONG_NULL : Math.multiplyExact(micros, Micros.MICRO_NANOS);
         } catch (ArithmeticException e) {
             throw ImplicitCastException.inconvertibleValue(micros, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO);
         }
@@ -289,12 +289,12 @@ public class CommonUtils {
                 }
                 return DAY_HOURS * value;
             case PartitionBy.WEEK:
-                int maxWeeks = Integer.MAX_VALUE / Timestamps.WEEK_DAYS / DAY_HOURS;
+                int maxWeeks = Integer.MAX_VALUE / Micros.WEEK_DAYS / DAY_HOURS;
                 if (value > maxWeeks) {
                     throw SqlException.$(tokenPos, "value out of range: ")
                             .put(value).put(" weeks. Max value: ").put(maxWeeks).put(" weeks");
                 }
-                return Timestamps.WEEK_DAYS * DAY_HOURS * value;
+                return Micros.WEEK_DAYS * DAY_HOURS * value;
             case PartitionBy.MONTH:
                 return -value;
             case PartitionBy.YEAR:

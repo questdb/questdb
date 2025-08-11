@@ -40,7 +40,7 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.std.datetime.microtime.Timestamps.HOUR_MICROS;
+import static io.questdb.std.datetime.microtime.Micros.HOUR_MICROS;
 
 public class ReaderReloadTest extends AbstractCairoTest {
 

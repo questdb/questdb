@@ -74,7 +74,7 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -258,7 +258,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 int i = 0;
                 while (columnsAdded.get() < totalColAddCount && exceptions.isEmpty()) {
                     try (TableWriter writer = getWriter(token)) {
-                        TableWriter.Row row = writer.newRow((i++) * Timestamps.HOUR_MICROS);
+                        TableWriter.Row row = writer.newRow((i++) * Micros.HOUR_MICROS);
                         row.append();
                         writer.commit();
                         insertCount.incrementAndGet();
@@ -2074,7 +2074,7 @@ public class TableWriterTest extends AbstractCairoTest {
         try (TableWriter writer = newOffPoolWriter(configuration, model.getName())) {
             // Add 46 rows in partition 2020-07-13T00
             long ts = MicrosTimestampDriver.floor("2020-07-13");
-            long increment = Timestamps.SECOND_MICROS;
+            long increment = Micros.SECOND_MICROS;
             int rows = 46;
             for (int i = 0; i < rows; i++) {
                 TableWriter.Row row = writer.newRow(ts);
@@ -2095,7 +2095,7 @@ public class TableWriterTest extends AbstractCairoTest {
             row.append();
 
             // Add 1 row out of order in partition 2020-07-13T01
-            row = writer.newRow(ts + Timestamps.HOUR_MICROS);
+            row = writer.newRow(ts + Micros.HOUR_MICROS);
             row.putLong256(0, 2, 2, 2, 2);
             row.append();
 
@@ -3023,7 +3023,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     final ObjList<String> timestampsReported = new ObjList<>();
                     try (TableWriter w = getWriter(tableToken)) {
                         w.setExtensionListener(
-                                timestamp -> timestampsReported.add(Timestamps.toString(timestamp))
+                                timestamp -> timestampsReported.add(Micros.toString(timestamp))
                         );
 
                         TableWriter.Row r = w.newRow(MicrosFormatUtils.parseTimestamp("2022-03-10T10:11:00.000000Z"));
@@ -3221,14 +3221,14 @@ public class TableWriterTest extends AbstractCairoTest {
         AbstractCairoTest.create(model);
         try (TableWriter writer = newOffPoolWriter(configuration, tango)) {
             writer.newRow(1).append();
-            writer.newRow(Timestamps.HOUR_MICROS + 1).append();
+            writer.newRow(Micros.HOUR_MICROS + 1).append();
             writer.commit();
         }
         assertSql("ts\n" +
                 "1970-01-01T00:00:00.000001Z\n" +
                 "1970-01-01T01:00:00.000001Z\n", "tango");
         try (TableWriter writer = newOffPoolWriter(configuration, tango)) {
-            writer.newRow(2 * Timestamps.HOUR_MICROS + 1).append();
+            writer.newRow(2 * Micros.HOUR_MICROS + 1).append();
             writer.enforceTtl();
             writer.commit();
         }

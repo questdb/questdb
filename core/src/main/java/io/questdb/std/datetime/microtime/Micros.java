@@ -39,7 +39,7 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.std.datetime.CommonUtils.DAYS_PER_MONTH;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
-public final class Timestamps {
+public final class Micros {
 
     public static final long DAY_MICROS = 86_400_000_000L; // 24 * 60 * 60 * 1000 * 1000L
     public static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
@@ -65,7 +65,7 @@ public final class Timestamps {
     private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long YEAR_MICROS_LEAP = 366 * DAY_MICROS;
 
-    private Timestamps() {
+    private Micros() {
     }
 
     public static long addDays(long micros, int days) {
@@ -92,7 +92,7 @@ public final class Timestamps {
         if (months == 0) {
             return micros;
         }
-        int y = Timestamps.getYear(micros);
+        int y = Micros.getYear(micros);
         boolean l = CommonUtils.isLeapYear(y);
         int m = getMonthOfYear(micros, y, l);
         int _y;
@@ -126,25 +126,25 @@ public final class Timestamps {
     public static long addPeriod(long lo, char type, int period) {
         switch (type) {
             case 'u':
-                return Timestamps.addMicros(lo, period);
+                return Micros.addMicros(lo, period);
             case 'T':
-                return Timestamps.addMillis(lo, period);
+                return Micros.addMillis(lo, period);
             case 's':
-                return Timestamps.addSeconds(lo, period);
+                return Micros.addSeconds(lo, period);
             case 'm':
-                return Timestamps.addMinutes(lo, period);
+                return Micros.addMinutes(lo, period);
             case 'h':
-                return Timestamps.addHours(lo, period);
+                return Micros.addHours(lo, period);
             case 'd':
-                return Timestamps.addDays(lo, period);
+                return Micros.addDays(lo, period);
             case 'w':
-                return Timestamps.addWeeks(lo, period);
+                return Micros.addWeeks(lo, period);
             case 'M':
-                return Timestamps.addMonths(lo, period);
+                return Micros.addMonths(lo, period);
             case 'y':
-                return Timestamps.addYears(lo, period);
+                return Micros.addYears(lo, period);
             case 'n':
-                return Timestamps.addNanos(lo, period);
+                return Micros.addNanos(lo, period);
             default:
                 return Numbers.LONG_NULL;
         }
@@ -486,7 +486,7 @@ public final class Timestamps {
     public static long floorWW(long micros, int stride) {
         // Epoch 1 Jan 1970 is a Thursday.
         // Shift 3 days to find offset in the week.
-        long weekOffset = (micros + Timestamps.DAY_MICROS * 3) % (stride * WEEK_MICROS);
+        long weekOffset = (micros + Micros.DAY_MICROS * 3) % (stride * WEEK_MICROS);
         if (weekOffset < 0) {
             // Floor value must be always below or equal to the original value.
             // If offset is negative, we need to add stride to it so that the result is
@@ -548,7 +548,7 @@ public final class Timestamps {
             century++;
         }
 
-        if (micros >= Timestamps.FIRST_CENTURY_MICROS) {
+        if (micros >= Micros.FIRST_CENTURY_MICROS) {
             return century;
         }
         return century - 1;
@@ -711,7 +711,7 @@ public final class Timestamps {
     }
 
     public static int getMonthOfYear(long micros) {
-        final int y = Timestamps.getYear(micros);
+        final int y = Micros.getYear(micros);
         final boolean leap = CommonUtils.isLeapYear(y);
         return getMonthOfYear(micros, y, leap);
     }
@@ -773,25 +773,25 @@ public final class Timestamps {
     public static long getPeriodBetween(char type, long start, long end) {
         switch (type) {
             case 'n':
-                return Timestamps.getNanosBetween(start, end);
+                return Micros.getNanosBetween(start, end);
             case 'u':
-                return Timestamps.getMicrosBetween(start, end);
+                return Micros.getMicrosBetween(start, end);
             case 'T':
-                return Timestamps.getMillisBetween(start, end);
+                return Micros.getMillisBetween(start, end);
             case 's':
-                return Timestamps.getSecondsBetween(start, end);
+                return Micros.getSecondsBetween(start, end);
             case 'm':
-                return Timestamps.getMinutesBetween(start, end);
+                return Micros.getMinutesBetween(start, end);
             case 'h':
-                return Timestamps.getHoursBetween(start, end);
+                return Micros.getHoursBetween(start, end);
             case 'd':
-                return Timestamps.getDaysBetween(start, end);
+                return Micros.getDaysBetween(start, end);
             case 'w':
-                return Timestamps.getWeeksBetween(start, end);
+                return Micros.getWeeksBetween(start, end);
             case 'M':
-                return Timestamps.getMonthsBetween(start, end);
+                return Micros.getMonthsBetween(start, end);
             case 'y':
-                return Timestamps.getYearsBetween(start, end);
+                return Micros.getYearsBetween(start, end);
             default:
                 return Numbers.LONG_NULL;
         }

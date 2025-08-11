@@ -55,7 +55,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -14524,8 +14524,8 @@ public class SampleByTest extends AbstractCairoTest {
                                 row.putDouble(0, 42);
                                 row.putDouble(1, 42);
                                 row.putSym(2, (char) ('a' + i % 3));
-                                ts += Timestamps.SECOND_MICROS;
-                                row.putLong(3, ts / Timestamps.MILLI_MICROS);
+                                ts += Micros.SECOND_MICROS;
+                                row.putLong(3, ts / Micros.MILLI_MICROS);
                                 row.append();
                                 if ((i % batchSize) == 0) {
                                     writer.commit();

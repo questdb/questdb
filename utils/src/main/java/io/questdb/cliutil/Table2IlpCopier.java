@@ -30,8 +30,8 @@ import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.Timestamps;
 
 import java.sql.*;
 import java.time.temporal.ChronoUnit;
@@ -71,7 +71,7 @@ public class Table2IlpCopier {
 
                                 if (totalSentLines % 10000 == 0) {
                                     long end = microsecondClock.getTicks();
-                                    long linesPerSec = 10000 * Timestamps.SECOND_MICROS / (end - start);
+                                    long linesPerSec = 10000 * Micros.SECOND_MICROS / (end - start);
                                     System.out.println(totalSentLines + " lines, " + linesPerSec + " lines/sec");
                                     start = microsecondClock.getTicks();
                                 }
