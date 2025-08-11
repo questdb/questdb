@@ -39,7 +39,7 @@ use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 
-use super::util::{ArrayStats, BinaryMaxMinStats};
+use super::util::ArrayStats;
 use crate::allocator::AcVec;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
@@ -457,14 +457,12 @@ pub fn array_to_raw_page(
 
     let definition_levels_byte_length = buffer.len();
 
-    let mut stats = BinaryMaxMinStats::new(&primitive_type);
-
     match encoding {
         Encoding::Plain => {
-            encode_raw_plain_streaming(aux, &raw_parser, &mut buffer, &mut stats);
+            encode_raw_plain_streaming(aux, &raw_parser, &mut buffer);
         }
         Encoding::DeltaLengthByteArray => {
-            encode_raw_delta_streaming(aux, &raw_parser, null_count, &mut buffer, &mut stats);
+            encode_raw_delta_streaming(aux, &raw_parser, null_count, &mut buffer);
         }
         _ => {
             return Err(fmt_err!(
@@ -475,13 +473,14 @@ pub fn array_to_raw_page(
     };
 
     let null_count = column_top + null_count;
+    let stats = ArrayStats::new(null_count);
     build_plain_page(
         buffer,
         num_rows,
         null_count,
         definition_levels_byte_length,
         if options.write_statistics {
-            Some(stats.into_parquet_stats(null_count))
+            Some(stats.into_parquet_stats())
         } else {
             None
         },
@@ -535,26 +534,16 @@ fn encode_raw_delta_streaming(
 
 // Legacy functions kept for compatibility (now unused)
 #[allow(dead_code)]
-fn encode_raw_plain(
-    arr_slices: &[Option<&[u8]>],
-    buffer: &mut Vec<u8>,
-    stats: &mut BinaryMaxMinStats,
-) {
+fn encode_raw_plain(arr_slices: &[Option<&[u8]>], buffer: &mut Vec<u8>) {
     for arr in arr_slices.iter().filter_map(|&option| option) {
         let len = (arr.len() as u32).to_le_bytes();
         buffer.extend_from_slice(&len);
         buffer.extend_from_slice(arr);
-        stats.update(arr);
     }
 }
 
 #[allow(dead_code)]
-fn encode_raw_delta(
-    arr_slices: &[Option<&[u8]>],
-    null_count: usize,
-    buffer: &mut Vec<u8>,
-    stats: &mut BinaryMaxMinStats,
-) {
+fn encode_raw_delta(arr_slices: &[Option<&[u8]>], null_count: usize, buffer: &mut Vec<u8>) {
     let lengths = arr_slices
         .iter()
         .filter_map(|&option| option)
@@ -563,7 +552,6 @@ fn encode_raw_delta(
     delta_bitpacked::encode(lengths, buffer);
     for arr in arr_slices.iter().filter_map(|&option| option) {
         buffer.extend_from_slice(arr);
-        stats.update(arr);
     }
 }
 
@@ -750,7 +738,6 @@ pub fn calculate_array_shape(
 
                 // Reset counts for dimensions deeper than repetition level
                 counts[rep_level..max_rep_level].fill(0);
-
                 // Increment count at the deepest level
                 counts[max_rep_level - 1] += 1;
 
@@ -1029,7 +1016,6 @@ mod tests {
 
         // Add elements at deepest level
         rep_levels.extend(std::iter::repeat_n(max_dim, 5));
-
         calculate_array_shape(&mut shape, max_dim, &rep_levels);
 
         // Should have shape [1,1,1,...,1,6] with 6 at the deepest level

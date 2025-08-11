@@ -1294,6 +1294,13 @@ fn decode_array_page<T: DataPageSlicer>(
     let max_rep_level = page.descriptor.max_rep_level;
     let max_def_level = page.descriptor.max_def_level;
 
+    if max_rep_level > ARRAY_NDIMS_LIMIT as i16 {
+        return Err(fmt_err!(
+            Unsupported,
+            "too large number of array dimensions {max_rep_level}"
+        ));
+    }
+
     let mut levels_iter = LevelsIterator::try_new(
         page.num_values(),
         max_rep_level,
