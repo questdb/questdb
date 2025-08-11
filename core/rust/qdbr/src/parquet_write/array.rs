@@ -173,10 +173,7 @@ pub fn array_to_page(
     options: WriteOptions,
     encoding: Encoding,
 ) -> ParquetResult<Page> {
-    assert!(
-        mem::size_of::<ArrayAuxEntry>() == 16,
-        "size_of(ArrayAuxEntry) is not 16"
-    );
+    assert_eq!(size_of::<ArrayAuxEntry>(), 16, "size_of(ArrayAuxEntry) is not 16");
 
     if dim > ARRAY_NDIMS_LIMIT {
         return Err(fmt_err!(
@@ -382,10 +379,7 @@ pub fn array_to_raw_page(
     primitive_type: PrimitiveType,
     encoding: Encoding,
 ) -> ParquetResult<Page> {
-    assert!(
-        mem::size_of::<ArrayAuxEntry>() == 16,
-        "size_of(ArrayAuxEntry) is not 16"
-    );
+    assert_eq!(size_of::<ArrayAuxEntry>(), 16, "size_of(ArrayAuxEntry) is not 16");
 
     let num_rows = column_top + aux.len();
     let mut buffer = vec![];
@@ -598,23 +592,79 @@ pub fn calculate_array_shape(
     }
 
     let max_rep_level = max_rep_level as usize;
+    debug_assert!(max_rep_level <= ARRAY_NDIMS_LIMIT);
+    
     let mut counts = [0_u32; ARRAY_NDIMS_LIMIT];
-    for &rep_level in rep_levels {
-        let rep_level = std::cmp::max(rep_level, 1) as usize;
-        // Reset counts for dimensions deeper than repetition level
-        for dim in counts.iter_mut().take(max_rep_level).skip(rep_level) {
-            *dim = 0;
+    
+    // Common case optimization for small dimensions
+    if max_rep_level <= 4 {
+        // Unrolled version for common small dimensions
+        for &rep_level in rep_levels {
+            let rep_level = rep_level.max(1) as usize;
+            
+            // Reset counts - unrolled for small dimensions
+            match max_rep_level {
+                2 => {
+                    if rep_level < 2 { counts[1] = 0; }
+                }
+                3 => {
+                    if rep_level < 3 { counts[2] = 0; }
+                    if rep_level < 2 { counts[1] = 0; }
+                }
+                4 => {
+                    if rep_level < 4 { counts[3] = 0; }
+                    if rep_level < 3 { counts[2] = 0; }
+                    if rep_level < 2 { counts[1] = 0; }
+                }
+                _ => {
+                    counts[rep_level] = 0;
+                }
+            }
+            
+            // Always increment the deepest level
+            counts[max_rep_level - 1] += 1;
+            
+            // Update shape - unrolled for better performance
+            for i in 0..max_rep_level {
+                let count = counts[i];
+                shape[i] = shape[i].max(count);
+            }
+            
+            // Increment intermediate dimensions
+            if rep_level > 0 {
+                for dim in (rep_level - 1)..(max_rep_level - 1) {
+                    counts[dim] += 1;
+                    shape[dim] = shape[dim].max(counts[dim]);
+                }
+            }
         }
-        // Increment count at the deepest level (where actual values are)
-        counts[max_rep_level - 1] += 1;
-        // Update shape with maximum counts seen so far
-        for dim in 0..max_rep_level {
-            shape[dim] = std::cmp::max(shape[dim], counts[dim]);
-        }
-        // If this is not the first element, increment deeper dimension counts
-        for dim in rep_level - 1..max_rep_level - 1 {
-            counts[dim] += 1;
-            shape[dim] = std::cmp::max(shape[dim], counts[dim]);
+    } else {
+        // General case for higher dimensions
+        const CHUNK_SIZE: usize = 64;
+        
+        for chunk in rep_levels.chunks(CHUNK_SIZE) {
+            for &rep_level in chunk {
+                let rep_level = rep_level.max(1) as usize;
+                
+                // Reset counts for dimensions deeper than repetition level
+                for dim in rep_level..max_rep_level {
+                    counts[dim] = 0;
+                }
+                
+                // Increment count at the deepest level
+                counts[max_rep_level - 1] += 1;
+                
+                // Update shape with branchless max
+                for dim in 0..max_rep_level {
+                    shape[dim] = shape[dim].max(counts[dim]);
+                }
+                
+                // Increment deeper dimension counts
+                for dim in (rep_level - 1)..(max_rep_level - 1) {
+                    counts[dim] += 1;
+                    shape[dim] = shape[dim].max(counts[dim]);
+                }
+            }
         }
     }
 }
@@ -816,6 +866,83 @@ mod tests {
         let rep_levels = vec![0, 3, 3, 2, 3, 3];
         calculate_array_shape(&mut shape, 3, &rep_levels);
         assert_eq!(shape[0..3], [1_u32, 2, 3]);
+    }
+
+    #[test]
+    fn test_calculate_array_shape_edge_cases() {
+        // Test single element array
+        let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
+        calculate_array_shape(&mut shape, 1, &[0]);
+        assert_eq!(shape[0], 1);
+        
+        // Test jagged 2D array - [[1,2,3], [4,5]]
+        let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
+        let rep_levels = vec![0, 2, 2, 1, 2];
+        calculate_array_shape(&mut shape, 2, &rep_levels);
+        assert_eq!(shape[0], 2); // 2 sub-arrays
+        assert_eq!(shape[1], 3); // max 3 elements in a sub-array
+        
+        // Test with all zeros (multiple new records)
+        let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
+        let rep_levels = vec![0, 0, 0];
+        calculate_array_shape(&mut shape, 1, &rep_levels);
+        assert_eq!(shape[0], 3); // three separate single-element arrays, max size is 3
+        
+        // Test large repetition levels
+        let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
+        let rep_levels = vec![0, 5, 5, 5, 5];
+        calculate_array_shape(&mut shape, 5, &rep_levels);
+        assert_eq!(shape[0..5], [1_u32, 1, 1, 1, 5]);
+    }
+
+    #[test]
+    fn test_calculate_array_shape_large_array() {
+        // Test performance with larger array (over CHUNK_SIZE)
+        let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
+        let mut rep_levels = vec![0]; // start with new record
+        for _ in 0..100 {
+            rep_levels.push(1); // continue in same array
+        }
+        calculate_array_shape(&mut shape, 1, &rep_levels);
+        assert_eq!(shape[0], 101);
+        
+        // Test 2D array with multiple chunks
+        let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
+        let mut rep_levels = vec![];
+        for i in 0..10 {
+            if i > 0 {
+                rep_levels.push(1); // new sub-array
+            } else {
+                rep_levels.push(0); // new record
+            }
+            for _ in 0..15 {
+                rep_levels.push(2); // elements in sub-array
+            }
+        }
+        calculate_array_shape(&mut shape, 2, &rep_levels);
+        assert_eq!(shape[0], 10); // 10 sub-arrays
+        assert_eq!(shape[1], 16); // 16 elements per sub-array (including first)
+    }
+
+    #[test]
+    fn test_calculate_array_shape_max_dimensions() {
+        // Test near maximum dimensionality
+        let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
+        let max_dim = 10_u32; // use 10 dimensions for testing
+        let mut rep_levels = vec![0]; // new record
+        
+        // Add elements at deepest level
+        for _ in 0..5 {
+            rep_levels.push(max_dim);
+        }
+        
+        calculate_array_shape(&mut shape, max_dim, &rep_levels);
+        
+        // Should have shape [1,1,1,...,1,6] with 6 at the deepest level
+        for i in 0..(max_dim as usize - 1) {
+            assert_eq!(shape[i], 1, "dimension {} should be 1", i);
+        }
+        assert_eq!(shape[max_dim as usize - 1], 6);
     }
 
     fn assert_levels_iter(

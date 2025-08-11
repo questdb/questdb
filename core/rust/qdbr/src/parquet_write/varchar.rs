@@ -57,7 +57,7 @@ pub fn varchar_to_page(
     encoding: Encoding,
 ) -> ParquetResult<Page> {
     assert!(
-        mem::size_of::<AuxEntryInlined>() == 16 && mem::size_of::<AuxEntrySplit>() == 16,
+        size_of::<AuxEntryInlined>() == 16 && size_of::<AuxEntrySplit>() == 16,
         "size_of(AuxEntryInlined) or size_of(AuxEntrySplit) is not 16"
     );
 
