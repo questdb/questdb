@@ -640,6 +640,14 @@ public final class Nanos {
         }
     }
 
+    public static int getMicrosOfSecond(long nanos) {
+        if (nanos > -1) {
+            return (int) ((nanos / MICRO_NANOS) % SECOND_MICROS);
+        } else {
+            return (int) (SECOND_MICROS - 1 + (int) (((nanos + 1) / MICRO_NANOS) % SECOND_MICROS));
+        }
+    }
+
     // Years in the 1900s are in the second millennium. The third millennium started January 1, 2001.
     public static int getMillennium(long nanos) {
         int year = getYear(nanos);

@@ -285,6 +285,14 @@ public interface TimestampDriver {
     long getMicrosOfMinute(long timestamp);
 
     /**
+     * Gets the microseconds within the second from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the microseconds within the second, or Numbers.INT_NULL if timestamp is null
+     */
+    int getMicrosOfSecond(long timestamp);
+
+    /**
      * Gets the millennium from a timestamp value.
      *
      * @param timestamp the timestamp value

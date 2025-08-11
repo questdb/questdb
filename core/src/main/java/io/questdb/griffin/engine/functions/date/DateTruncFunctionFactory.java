@@ -48,12 +48,20 @@ public class DateTruncFunctionFactory implements FunctionFactory {
         int timestampType = ColumnType.getTimestampType(innerFunction.getType());
         if (kind == null) {
             throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
+        } else if (isTimeUnit(kind, "nanosecond")) {
+            // optimize, nothing to truncate
+            if (timestampType == ColumnType.TIMESTAMP_NANO) {
+                return innerFunction;
+            }
+            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "nanosecond", timestampType);
         } else if (isTimeUnit(kind, "microsecond")) {
-            // timestamps are in microseconds internally, there is nothing to truncate
-            return innerFunction;
+            // optimize, nothing to truncate
+            if (timestampType == ColumnType.TIMESTAMP_MICRO) {
+                return innerFunction;
+            }
+            return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "microsecond", timestampType);
         } else if (isTimeUnit(kind, "millisecond")) {
             return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "millisecond", timestampType);
-
         } else if (isTimeUnit(kind, "second")) {
             return new TimestampFloorFunctions.TimestampFloorFunction(innerFunction, "second", timestampType);
         } else if (isTimeUnit(kind, "minute")) {

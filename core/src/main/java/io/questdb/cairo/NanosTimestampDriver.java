@@ -545,6 +545,14 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public int getMicrosOfSecond(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Nanos.getMicrosOfSecond(timestamp);
+    }
+
+    @Override
     public int getMillennium(long timestamp) {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;
