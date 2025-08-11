@@ -793,13 +793,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        AsOf Join Fast Scan\n" +
                             "            Radix sort light\n" +
                             "              keys: [timestamp]\n" +
-                            "                Sort light lo: 5\n" +
+                            "                Async Top K lo: 5 workers: 1\n" +
+                            "                  filter: price='184.0'\n" +
                             "                  keys: [price, size, timestamp]\n" +
-                            "                    Async Filter workers: 1\n" +
-                            "                      filter: price='184.0'\n" +
-                            "                        PageFrame\n" +
-                            "                            Row forward scan\n" +
-                            "                            Frame forward scan on: trades\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: trades\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: order_book\n"
@@ -837,13 +836,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "          filter: bid_price=189.4\n" +
                             "            Radix sort light\n" +
                             "              keys: [timestamp]\n" +
-                            "                Sort light lo: 6\n" +
+                            "                Async JIT Top K lo: 6 workers: 1\n" +
+                            "                  filter: price=184.0\n" +
                             "                  keys: [size, price]\n" +
-                            "                    Async JIT Filter workers: 1\n" +
-                            "                      filter: price=184.0\n" +
-                            "                        PageFrame\n" +
-                            "                            Row forward scan\n" +
-                            "                            Frame forward scan on: trades\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: trades\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: order_book\n"

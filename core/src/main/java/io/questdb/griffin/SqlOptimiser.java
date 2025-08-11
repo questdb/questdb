@@ -2361,67 +2361,62 @@ public class SqlOptimiser implements Mutable {
 
         boolean evaluateLhs = findIfValidWhereClauseForASOFJoinOptimisation(whereClause.lhs, targetModel);
         boolean evaluateRhs = findIfValidWhereClauseForASOFJoinOptimisation(whereClause.rhs, targetModel);
-        String clauseType = whereClause.token.toString();
-        switch (clauseType) {
-            case "between":
-                ObjList<ExpressionNode> whereClauseArgs = whereClause.args;
-                //if between clause is present, then both the values should be constant
-                if (whereClauseArgs.get(0).type != CONSTANT || whereClauseArgs.get(1).type != CONSTANT) {
+        CharSequence clauseType = whereClause.token;
+        if (Chars.equals(clauseType, "between")) {
+            ObjList<ExpressionNode> whereClauseArgs = whereClause.args;
+            //if between clause is present, then both the values should be constant
+            if (whereClauseArgs.get(0).type != CONSTANT || whereClauseArgs.get(1).type != CONSTANT) {
+                return false;
+            }
+            CharSequence whereClauseColumn = whereClauseArgs.get(2).token;
+            int dot = Chars.indexOf(whereClauseArgs.get(2).token, '.');
+            String whereClauseColumnName = Chars.toString(whereClauseColumn, dot + 1, whereClauseColumn.length());
+            //check with column in between clause should be of master table
+            if (dot != -1) {
+                String whereClauseAlias = Chars.toString(whereClauseColumn, 0, dot);
+                CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
+                        targetModel.getTableNameExpr().token;
+                if (!Chars.equals(whereClauseAlias, masterTableAlias) ||
+                        !targetModel.getAliasToColumnMap().contains(whereClauseColumnName))
                     return false;
-                }
-                CharSequence whereClauseColumn = whereClauseArgs.get(2).token;
-                int dot = Chars.indexOf(whereClauseArgs.get(2).token, '.');
-                String whereClauseColumnName = Chars.toString(whereClauseColumn, dot + 1, whereClauseColumn.length());
-                //check with column in between clause should be of master table
-                if (dot != -1) {
-                    String whereClauseAlias = Chars.toString(whereClauseColumn, 0, dot);
+            }
+        } else if (Chars.equals(clauseType, "and") || Chars.equals(clauseType, "or")) {
+            return evaluateLhs && evaluateRhs;
+        } else {
+            ExpressionNode lhs = whereClause.lhs;
+            ExpressionNode rhs = whereClause.rhs;
+            if (rhs.type == CONSTANT) {
+                //if rhs is constant, then lhs should be of master table
+                CharSequence lhsColumn = lhs.token;
+                int dotIndex = Chars.indexOf(lhsColumn, '.');
+                String lhsColumnName = Chars.toString(lhsColumn, dotIndex + 1, lhsColumn.length());
+                if (dotIndex != -1) {
+                    String lhsAlias = Chars.toString(lhsColumn, 0, dotIndex);
                     CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
                             targetModel.getTableNameExpr().token;
-                    if (!Chars.equals(whereClauseAlias, masterTableAlias) ||
-                            !targetModel.getAliasToColumnMap().contains(whereClauseColumnName))
+                    if (!Chars.equals(lhsAlias, masterTableAlias) ||
+                            !targetModel.getAliasToColumnMap().contains(lhsColumnName)) {
                         return false;
-                }
-                break;
-            case "and":
-                return evaluateLhs && evaluateRhs;
-            case "or":
-                return evaluateLhs && evaluateRhs;
-            //case in or normal equality clause
-            default:
-                ExpressionNode lhs = whereClause.lhs;
-                ExpressionNode rhs = whereClause.rhs;
-                if (rhs.type == CONSTANT) {
-                    //if rhs is constant, then lhs should be of master table
-                    CharSequence lhsColumn = lhs.token;
-                    int dotIndex = Chars.indexOf(lhsColumn, '.');
-                    String lhsColumnName = Chars.toString(lhsColumn, dotIndex + 1, lhsColumn.length());
-                    if (dotIndex != -1) {
-                        String lhsAlias = Chars.toString(lhsColumn, 0, dotIndex);
-                        CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
-                                targetModel.getTableNameExpr().token;
-                        if (!Chars.equals(lhsAlias, masterTableAlias) ||
-                                !targetModel.getAliasToColumnMap().contains(lhsColumnName)) {
-                            return false;
-                        }
-                    }
-                } else if (lhs.type == CONSTANT) {
-                    //if lhs is constant, then rhs should be of master table
-                    CharSequence rhsColumn = rhs.token;
-                    int dotIndex = Chars.indexOf(rhsColumn, '.');
-                    String rhsColumnName = Chars.toString(rhsColumn, dotIndex + 1, rhsColumn.length());
-                    if (dotIndex != -1) {
-                        String rhsAlias = Chars.toString(rhsColumn, 0, dotIndex);
-                        CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
-                                targetModel.getTableNameExpr().token;
-                        if (!Chars.equals(rhsAlias, masterTableAlias) ||
-                                !targetModel.getAliasToColumnMap().contains(rhsColumnName)) {
-                            return false;
-                        }
                     }
                 }
-                //if both lhs and rhs are not constant, then it is not eligible for ASOF join optimisation
-                else
-                    return false;
+            } else if (lhs.type == CONSTANT) {
+                //if lhs is constant, then rhs should be of master table
+                CharSequence rhsColumn = rhs.token;
+                int dotIndex = Chars.indexOf(rhsColumn, '.');
+                String rhsColumnName = Chars.toString(rhsColumn, dotIndex + 1, rhsColumn.length());
+                if (dotIndex != -1) {
+                    String rhsAlias = Chars.toString(rhsColumn, 0, dotIndex);
+                    CharSequence masterTableAlias = targetModel.getAlias() != null ? targetModel.getAlias().token :
+                            targetModel.getTableNameExpr().token;
+                    if (!Chars.equals(rhsAlias, masterTableAlias) ||
+                            !targetModel.getAliasToColumnMap().contains(rhsColumnName)) {
+                        return false;
+                    }
+                }
+            }
+            //if both lhs and rhs are not constant, then it is not eligible for ASOF join optimisation
+            else
+                return false;
         }
         return true;
     }
@@ -4494,9 +4489,9 @@ public class SqlOptimiser implements Mutable {
     }
 
     // Rewrite:
-    // sum(x*10) into sum(x) * 10, etc.
-    // sum(x+10) into sum(x) + count(x)*10
-    // sum(x-10) into sum(x) - count(x)*10
+// sum(x*10) into sum(x) * 10, etc.
+// sum(x+10) into sum(x) + count(x)*10
+// sum(x-10) into sum(x) - count(x)*10
     private ExpressionNode rewriteAggregate(ExpressionNode agg, QueryModel model) {
         if (agg == null) {
             return null;
@@ -4533,8 +4528,8 @@ public class SqlOptimiser implements Mutable {
     }
 
     // This rewrite should be invoked before the select rewrite!
-    // Rewrites the following:
-    // select count(constant) ... -> select count() ...
+// Rewrites the following:
+// select count(constant) ... -> select count() ...
     private void rewriteCount(QueryModel model) {
         if (model == null) {
             return;
@@ -4738,7 +4733,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     // push aggregate function calls to group by model, replace key column expressions with group by aliases
-    // raise error if raw column usage doesn't match one of expressions on group by list
+// raise error if raw column usage doesn't match one of expressions on group by list
     private ExpressionNode rewriteGroupBySelectExpression(
             final @Transient ExpressionNode topLevelNode,
             QueryModel groupByModel,
@@ -6873,7 +6868,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     // the intent is to either validate top-level columns in select columns or replace them with function calls
-    // if columns do not exist
+// if columns do not exist
     private void rewriteTopLevelLiteralsToFunctions(QueryModel model) {
         final QueryModel nested = model.getNestedModel();
         if (nested != null) {
