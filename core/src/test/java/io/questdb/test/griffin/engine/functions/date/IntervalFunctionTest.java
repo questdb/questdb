@@ -30,13 +30,12 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class IntervalFunctionTest extends AbstractCairoTest {
@@ -127,7 +126,6 @@ public class IntervalFunctionTest extends AbstractCairoTest {
         testIntrinsics1(ColumnType.TIMESTAMP_MICRO);
     }
 
-    @Ignore
     @Test
     public void testIntrinsics2() throws Exception {
         testIntrinsics1(ColumnType.TIMESTAMP_NANO);
@@ -136,7 +134,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     @Test
     public void testIntrinsics3() throws Exception {
         assertMemoryLeak(() -> {
-            setCurrentMicros(Timestamps.DAY_MICROS);
+            setCurrentMicros(MicrosTimestampDriver.INSTANCE.fromDays(1));
             execute("CREATE TABLE x as (select x::timestamp ts from long_sequence(10)) timestamp(ts) PARTITION BY DAY WAL;");
             drainWalQueue();
 
@@ -189,6 +187,61 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntrinsics4() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.INSTANCE.fromDays(1));
+            execute("CREATE TABLE x as (select x::timestamp_ns ts from long_sequence(10)) timestamp(ts) PARTITION BY DAY WAL;");
+            drainWalQueue();
+
+            assertSql(
+                    "ts\n" +
+                            "1970-01-01T00:00:00.000000001Z\n" +
+                            "1970-01-01T00:00:00.000000002Z\n" +
+                            "1970-01-01T00:00:00.000000003Z\n" +
+                            "1970-01-01T00:00:00.000000004Z\n" +
+                            "1970-01-01T00:00:00.000000005Z\n" +
+                            "1970-01-01T00:00:00.000000006Z\n" +
+                            "1970-01-01T00:00:00.000000007Z\n" +
+                            "1970-01-01T00:00:00.000000008Z\n" +
+                            "1970-01-01T00:00:00.000000009Z\n" +
+                            "1970-01-01T00:00:00.000000010Z\n",
+                    "select * from x where ts in yesterday()"
+            );
+            assertPlanNoLeakCheck(
+                    "select * from x where ts in yesterday()",
+                    "PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            "      intervals: [(\"1970-01-01T00:00:00.000000000Z\",\"1970-01-01T23:59:59.999999999Z\")]\n"
+            );
+
+            assertSql(
+                    "ts\n",
+                    "select * from x where ts in today()"
+            );
+            assertPlanNoLeakCheck(
+                    "select * from x where ts in today()",
+                    "PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            "      intervals: [(\"1970-01-02T00:00:00.000000000Z\",\"1970-01-02T23:59:59.999999999Z\")]\n"
+            );
+
+            assertSql(
+                    "ts\n",
+                    "select * from x where ts in tomorrow()"
+            );
+            assertPlanNoLeakCheck(
+                    "select * from x where ts in tomorrow()",
+                    "PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            "      intervals: [(\"1970-01-03T00:00:00.000000000Z\",\"1970-01-03T23:59:59.999999999Z\")]\n"
+            );
+        });
+    }
+
+    @Test
     public void testIntrinsicsAllVirtual() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
@@ -211,6 +264,16 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     public void testIntrinsicsNonPartitioned() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (k int, ts timestamp);");
+            assertPlanNoLeakCheck(
+                    "select * from x where ts in today() or ts in tomorrow() or ts in yesterday();",
+                    "Async Filter workers: 1\n" +
+                            "  filter: ((ts in today() or ts in tomorrow()) or ts in yesterday()) [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n"
+            );
+
+            execute("create table x1 (k int, ts timestamp_ns);");
             assertPlanNoLeakCheck(
                     "select * from x where ts in today() or ts in tomorrow() or ts in yesterday();",
                     "Async Filter workers: 1\n" +
@@ -249,7 +312,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testNonConstantTimezone() throws Exception {
-        setCurrentMicros(7 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-08T01:00:00.000000Z
+        setCurrentMicros(MicrosTimestampDriver.INSTANCE.fromDays(7) + MicrosTimestampDriver.INSTANCE.fromHours(1)); // 1970-01-08T01:00:00.000000Z
         assertMemoryLeak(() -> {
             execute("create table x as (select 'Europe/Sofia' tz from long_sequence(1))");
 
@@ -315,17 +378,17 @@ public class IntervalFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testToday1() throws Exception {
-        assertMemoryLeak(() -> {
-            long todayStart = today(sqlExecutionContext.getNow(ColumnType.TIMESTAMP_MICRO));
-            long todayEnd = tomorrow(sqlExecutionContext.getNow(ColumnType.TIMESTAMP_MICRO)) - 1;
-            final Interval interval = new Interval(todayStart, todayEnd);
-            assertSql("today\n" + intervalAsString(interval, ColumnType.INTERVAL_TIMESTAMP_MICRO) + "\n", "select today()");
-        });
+        testToday(ColumnType.TIMESTAMP_MICRO);
+    }
+
+    @Test
+    public void testToday2() throws Exception {
+        testToday(ColumnType.TIMESTAMP_NANO);
     }
 
     @Test
     public void testTodayWithTimezone() throws Exception {
-        setCurrentMicros(Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-02T01:00:00.000000Z
+        setCurrentMicros(MicrosTimestampDriver.INSTANCE.fromDays(1) + MicrosTimestampDriver.INSTANCE.fromHours(1)); // 1970-01-02T01:00:00.000000Z
         assertMemoryLeak(() -> {
             String expected = "today\n" +
                     "('1970-01-02T00:00:00.000Z', '1970-01-02T23:59:59.999Z')\n";
@@ -366,17 +429,17 @@ public class IntervalFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testTomorrow() throws Exception {
-        assertMemoryLeak(() -> {
-            long tomorrowStart = tomorrow(sqlExecutionContext.getNow(ColumnType.TIMESTAMP_MICRO));
-            long tomorrowEnd = Timestamps.addDays(tomorrowStart, 1) - 1;
-            final Interval interval = new Interval(tomorrowStart, tomorrowEnd);
-            assertSql("tomorrow\n" + intervalAsString(interval, ColumnType.INTERVAL_TIMESTAMP_MICRO) + "\n", "select tomorrow()");
-        });
+        testTomorrow(ColumnType.TIMESTAMP_MICRO);
+    }
+
+    @Test
+    public void testTomorrow2() throws Exception {
+        testTomorrow(ColumnType.TIMESTAMP_NANO);
     }
 
     @Test
     public void testTomorrowWithTimezone() throws Exception {
-        setCurrentMicros(2 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-03T01:00:00.000000Z
+        setCurrentMicros(MicrosTimestampDriver.INSTANCE.fromDays(2) + MicrosTimestampDriver.INSTANCE.fromHours(1)); // 1970-01-03T01:00:00.000000Z
         assertMemoryLeak(() -> {
             String expected = "tomorrow\n" +
                     "('1970-01-04T00:00:00.000Z', '1970-01-04T23:59:59.999Z')\n";
@@ -416,18 +479,18 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testYesterday() throws Exception {
-        assertMemoryLeak(() -> {
-            long yesterdayStart = yesterday(sqlExecutionContext.getNow(ColumnType.TIMESTAMP_MICRO));
-            long yesterdayEnd = today(sqlExecutionContext.getNow(ColumnType.TIMESTAMP_MICRO)) - 1;
-            final Interval interval = new Interval(yesterdayStart, yesterdayEnd);
-            assertSql("yesterday\n" + intervalAsString(interval, ColumnType.INTERVAL_TIMESTAMP_MICRO) + "\n", "select yesterday()");
-        });
+    public void testYesterday1() throws Exception {
+        testYesterday(ColumnType.TIMESTAMP_MICRO);
+    }
+
+    @Test
+    public void testYesterday2() throws Exception {
+        testYesterday(ColumnType.TIMESTAMP_NANO);
     }
 
     @Test
     public void testYesterdayWithTimezone() throws Exception {
-        setCurrentMicros(7 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-08T01:00:00.000000Z
+        setCurrentMicros(MicrosTimestampDriver.INSTANCE.fromDays(7) + MicrosTimestampDriver.INSTANCE.fromHours(1)); // 1970-01-08T01:00:00.000000Z
         assertMemoryLeak(() -> {
             String expected = "yesterday\n" +
                     "('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\n";
@@ -489,16 +552,16 @@ public class IntervalFunctionTest extends AbstractCairoTest {
         return sink.toString();
     }
 
-    private static long today(long nowMicros) {
-        return Timestamps.floorDD(nowMicros);
+    private static long today(TimestampDriver driver, long nowMicros) {
+        return driver.dayStart(nowMicros, 0);
     }
 
-    private static long tomorrow(long nowMicros) {
-        return Timestamps.floorDD(Timestamps.addDays(nowMicros, 1));
+    private static long tomorrow(TimestampDriver driver, long nowMicros) {
+        return driver.dayStart(nowMicros, 1);
     }
 
-    private static long yesterday(long nowMicros) {
-        return Timestamps.floorDD(Timestamps.addDays(nowMicros, -1));
+    private static long yesterday(TimestampDriver driver, long nowMicros) {
+        return driver.dayStart(nowMicros, -1);
     }
 
     private void buildInPlan(TimestampDriver driver, StringSink sink, long lo, long hi) {
@@ -517,13 +580,14 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     private void testIntrinsics1(int columnType) throws Exception {
         assertMemoryLeak(() -> {
             String timestampTypeName = ColumnType.nameOf(columnType);
+            TimestampDriver driver = ColumnType.getTimestampDriver(columnType);
             executeWithRewriteTimestamp("CREATE TABLE x (ts #TIMESTAMP) timestamp(ts) PARTITION BY DAY WAL;", timestampTypeName);
             // should have interval scans despite use of function
             // due to optimisation step to convert it to a constant
-            long today = today(sqlExecutionContext.getNow(columnType));
-            long tomorrow = tomorrow(sqlExecutionContext.getNow(columnType));
-            long yesterday = yesterday(sqlExecutionContext.getNow(columnType));
-            TimestampDriver driver = ColumnType.getTimestampDriver(columnType);
+            long today = today(driver, sqlExecutionContext.getNow(columnType));
+            long tomorrow = tomorrow(driver, sqlExecutionContext.getNow(columnType));
+            long yesterday = yesterday(driver, sqlExecutionContext.getNow(columnType));
+
             long tomorrowAndOne = driver.addDays(tomorrow, 1);
             long todayAndOne = driver.addDays(today, 1);
 
@@ -575,6 +639,36 @@ public class IntervalFunctionTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"
             );
+        });
+    }
+
+    private void testToday(int timestampType) throws Exception {
+        assertMemoryLeak(() -> {
+            TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            long todayStart = today(driver, sqlExecutionContext.getNow(timestampType));
+            long todayEnd = tomorrow(driver, sqlExecutionContext.getNow(timestampType)) - 1;
+            final Interval interval = new Interval(todayStart, todayEnd);
+            assertSql("today\n" + intervalAsString(interval, IntervalUtils.getIntervalType(timestampType)) + "\n", "select today()");
+        });
+    }
+
+    private void testTomorrow(int timestampType) throws Exception {
+        assertMemoryLeak(() -> {
+            TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            long tomorrowStart = tomorrow(driver, sqlExecutionContext.getNow(timestampType));
+            long tomorrowEnd = driver.addDays(tomorrowStart, 1) - 1;
+            final Interval interval = new Interval(tomorrowStart, tomorrowEnd);
+            assertSql("tomorrow\n" + intervalAsString(interval, IntervalUtils.getIntervalType(timestampType)) + "\n", "select tomorrow()");
+        });
+    }
+
+    private void testYesterday(int timestampType) throws Exception {
+        assertMemoryLeak(() -> {
+            TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            long yesterdayStart = yesterday(driver, sqlExecutionContext.getNow(timestampType));
+            long yesterdayEnd = today(driver, sqlExecutionContext.getNow(timestampType)) - 1;
+            final Interval interval = new Interval(yesterdayStart, yesterdayEnd);
+            assertSql("yesterday\n" + intervalAsString(interval, IntervalUtils.getIntervalType(timestampType)) + "\n", "select yesterday()");
         });
     }
 }
