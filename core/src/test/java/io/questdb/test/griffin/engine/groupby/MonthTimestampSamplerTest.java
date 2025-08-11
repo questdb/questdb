@@ -105,24 +105,35 @@ public class MonthTimestampSamplerTest {
 
     @Test
     public void testRound() throws NumericException {
-        MonthTimestampSampler sampler = new MonthTimestampSampler(1);
-
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
                 "2014-01-01T00:00:00.000000Z",
                 "2014-02-12T12:12:12.123456Z",
+                "2014-02-12T12:12:12.123456Z",
+                "2024-11-12T12:12:12.123456Z",
         };
         final String[] rounded = new String[]{
                 "2013-12-01T00:00:00.000000Z",
                 "2014-01-01T00:00:00.000000Z",
                 "2014-02-01T00:00:00.000000Z",
+                "2014-01-01T00:00:00.000000Z",
+                "2024-11-01T00:00:00.000000Z",
+        };
+        final int[] strides = new int[]{
+                1,
+                1,
+                1,
+                3,
+                10
         };
         Assert.assertEquals(src.length, rounded.length);
+        Assert.assertEquals(src.length, strides.length);
 
         for (int i = 0; i < src.length; i++) {
-            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
-            long roundedTs = sampler.round(ts);
-            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(rounded[i]), roundedTs);
+            final MonthTimestampSampler sampler = new MonthTimestampSampler(strides[i]);
+            final long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
+            final long roundedTs = sampler.round(ts);
+            Assert.assertEquals(rounded[i], TimestampFormatUtils.parseUTCTimestamp(rounded[i]), roundedTs);
         }
     }
 

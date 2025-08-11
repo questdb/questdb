@@ -65,12 +65,12 @@ public class MonthTimestampSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        int y = Timestamps.getYear(value);
+        final int y = Timestamps.getYear(value);
         final boolean leap = Timestamps.isLeapYear(y);
-        int m = Timestamps.getMonthOfYear(value, y, leap);
+        final int m = Timestamps.getMonthOfYear(value, y, leap);
         // target month
-        int nextMonth = ((m - 1) / stepMonths) * stepMonths + 1;
-        int d = startDay > 0 ? startDay : 1;
+        final int nextMonth = ((m - 1) / stepMonths) * stepMonths + 1;
+        final int d = startDay > 0 ? startDay : 1;
         return toMicros(y, leap, d, nextMonth, startHour, startMin, startSec, startMillis, startMicros);
     }
 

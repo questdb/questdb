@@ -43,7 +43,6 @@ import java.time.temporal.ChronoUnit;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public final class Timestamps {
-
     public static final long DAY_MICROS = 86400000000L; // 24 * 60 * 60 * 1000 * 1000L
     public static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
     private static final long HALF_YEAR_MICROS = AVG_YEAR_MICROS / 2;
@@ -86,6 +85,7 @@ public final class Timestamps {
     private static final long[] MAX_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long YEAR_MICROS_LEAP = 366 * DAY_MICROS;
+    public static final int EPOCH_YEAR_0 = getYear(0);
     private static final int YEAR_MONTHS = 12;
 
     private Timestamps() {
@@ -360,15 +360,17 @@ public final class Timestamps {
     }
 
     public static long floorMM(long micros, int stride, long offset) {
+        if (micros < offset) {
+            return offset;
+        }
         final long monthsDiff = getMonthsBetween(micros, offset);
         final long monthsToAdd = monthsDiff - (monthsDiff % stride);
         return addMonths(offset, (int) monthsToAdd);
     }
 
     public static long floorMM(long micros, int stride) {
-        final int origin = getYear(0);
         long m = (getMonthsBetween(0, micros) / stride) * stride;
-        int y = (int) (origin + m / 12);
+        int y = (int) (EPOCH_YEAR_0 + m / 12);
         int mm = (int) (m % 12);
         boolean l = isLeapYear(y);
         return yearMicros(y, l) + (mm > 0 ? monthOfYearMicros(mm, l) : 0);
@@ -472,8 +474,7 @@ public final class Timestamps {
     }
 
     public static long floorYYYY(long micros, int stride) {
-        final int origin = getYear(0);
-        final int y = origin + ((getYear(micros) - origin) / stride) * stride;
+        final int y = EPOCH_YEAR_0 + ((getYear(micros) - EPOCH_YEAR_0) / stride) * stride;
         return yearMicros(y, isLeapYear(y));
     }
 

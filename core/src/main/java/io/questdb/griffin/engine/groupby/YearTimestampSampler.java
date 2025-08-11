@@ -65,7 +65,7 @@ public class YearTimestampSampler implements TimestampSampler {
     @Override
     public long round(long value) {
         int y = Timestamps.getYear(value);
-        y = y - y % stepYears;
+        y = Timestamps.EPOCH_YEAR_0 + ((y - Timestamps.EPOCH_YEAR_0) / stepYears) * stepYears;
         return Timestamps.toMicros(
                 y,
                 Timestamps.isLeapYear(y),

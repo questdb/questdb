@@ -47,7 +47,6 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 import static io.questdb.std.datetime.microtime.TimestampFormatUtils.parseHTTP;
 
 public class TimestampsTest {
-
     private final StringSink sink = new StringSink();
 
     @Before
@@ -323,30 +322,15 @@ public class TimestampsTest {
 
     @Test
     public void testFloorYYYYEpoch() throws Exception {
-        long micros = TimestampFormatUtils.parseTimestamp("1975-05-12T23:45:51.045Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros, 3));
-        TestUtils.assertEquals("1973-01-01T00:00:00.000Z", sink);
-
-        sink.clear();
-        micros = TimestampFormatUtils.parseTimestamp("1975-05-12T23:45:51.045Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros, 3));
-        TestUtils.assertEquals("1973-01-01T00:00:00.000Z", sink);
-
-        sink.clear();
-        micros = TimestampFormatUtils.parseTimestamp("1970-05-12T23:45:51.045Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros, 3));
-        TestUtils.assertEquals("1970-01-01T00:00:00.000Z", sink);
-
-        sink.clear();
-        micros = TimestampFormatUtils.parseTimestamp("1968-05-12T23:45:51.045Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros, 3));
-        TestUtils.assertEquals("1970-01-01T00:00:00.000Z", sink);
-
-        sink.clear();
-        micros = TimestampFormatUtils.parseTimestamp("1967-05-12T23:45:51.045Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros, 3));
-        TestUtils.assertEquals("1967-01-01T00:00:00.000Z", sink);
-
+        testFloorYYYYEpoch("1975-01-01T00:00:00.000Z", 1, "1975-01-01T00:00:00.000Z");
+        testFloorYYYYEpoch("1975-05-12T23:45:51.045Z", 1, "1975-01-01T00:00:00.000Z");
+        testFloorYYYYEpoch("1975-05-12T23:45:51.045Z", 3, "1973-01-01T00:00:00.000Z");
+        testFloorYYYYEpoch("1970-05-12T23:45:51.045Z", 3, "1970-01-01T00:00:00.000Z");
+        testFloorYYYYEpoch("1968-05-12T23:45:51.045Z", 3, "1970-01-01T00:00:00.000Z");
+        testFloorYYYYEpoch("1967-05-12T23:45:51.045Z", 3, "1967-01-01T00:00:00.000Z");
+        testFloorYYYYEpoch("1967-05-12T23:45:51.045Z", 10, "1970-01-01T00:00:00.000Z");
+        testFloorYYYYEpoch("1987-05-12T23:45:51.045Z", 10, "1980-01-01T00:00:00.000Z");
+        testFloorYYYYEpoch("2025-05-12T23:45:51.045Z", 1000, "1970-01-01T00:00:00.000Z");
     }
 
     @Test
@@ -881,6 +865,30 @@ public class TimestampsTest {
             TimestampFormatUtils.parseTimestamp(s);
             Assert.fail("Expected exception");
         } catch (NumericException ignore) {
+        }
+    }
+
+    private void testFloorYYYYEpoch(String timestamp, int stride, String expected) throws Exception {
+        final long micros = TimestampFormatUtils.parseTimestamp(timestamp);
+
+        sink.clear();
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros, stride));
+        TestUtils.assertEquals(expected, sink);
+
+        if (micros >= 0) {
+            sink.clear();
+            TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros, stride, 0));
+            TestUtils.assertEquals(expected, sink);
+
+            if (stride == 1) {
+                sink.clear();
+                TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros));
+                TestUtils.assertEquals(expected, sink);
+
+                sink.clear();
+                TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros, 0L));
+                TestUtils.assertEquals(expected, sink);
+            }
         }
     }
 }

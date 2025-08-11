@@ -106,23 +106,34 @@ public class MicroTimestampSamplerTest {
 
     @Test
     public void testRound() throws NumericException {
-        MicroTimestampSampler sampler = new MicroTimestampSampler(Timestamps.HOUR_MICROS);
-
         final String[] src = new String[]{
+                "1967-12-31T01:11:42.123456Z",
                 "2013-12-31T00:00:00.000000Z",
                 "2014-01-01T01:12:12.000001Z",
                 "2014-02-12T12:12:12.123456Z",
+                "2014-02-12T12:12:12.123456Z",
         };
         final String[] rounded = new String[]{
+                "1967-12-31T01:00:00.000000Z",
                 "2013-12-31T00:00:00.000000Z",
                 "2014-01-01T01:00:00.000000Z",
                 "2014-02-12T12:00:00.000000Z",
+                "2014-02-12T12:12:00.000000Z",
+        };
+        final long[] strides = new long[]{
+                Timestamps.HOUR_MICROS,
+                Timestamps.HOUR_MICROS,
+                Timestamps.HOUR_MICROS,
+                Timestamps.HOUR_MICROS,
+                Timestamps.MINUTE_MICROS,
         };
         Assert.assertEquals(src.length, rounded.length);
+        Assert.assertEquals(src.length, strides.length);
 
         for (int i = 0; i < src.length; i++) {
-            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
-            long roundedTs = sampler.round(ts);
+            final MicroTimestampSampler sampler = new MicroTimestampSampler(strides[i]);
+            final long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
+            final long roundedTs = sampler.round(ts);
             Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(rounded[i]), roundedTs);
         }
     }
