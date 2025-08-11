@@ -56,7 +56,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.GcUtf8String;
 import io.questdb.std.str.Path;
@@ -573,7 +573,7 @@ public class LogFactoryTest {
         String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
         String expectedLogFile = base + "mylog-2015-05-03.log";
 
-        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1, MicrosTimestampDriver.floor("2019-12-31"));
+        final MicrosecondClock clock = new TestMicrosecondClock(MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1, MicrosTimestampDriver.floor("2019-12-31"));
 
         try (Path path = new Path()) {
             // create rogue file that would be in a way of logger rolling existing files
@@ -661,7 +661,7 @@ public class LogFactoryTest {
         String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
         String expectedLogFile = base + "mylog-2015-05-03.log";
         try (LogFactory factory = new LogFactory()) {
-            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T11:35:00.000Z"), 1, MicrosTimestampDriver.floor("2015-05-04"));
+            final MicrosecondClock clock = new TestMicrosecondClock(MicrosFormatUtils.parseTimestamp("2015-05-03T11:35:00.000Z"), 1, MicrosTimestampDriver.floor("2015-05-04"));
 
             factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
                 LogRollingFileWriter w = new LogRollingFileWriter(TestFilesFacadeImpl.INSTANCE, clock, ring, seq, level);
@@ -690,7 +690,7 @@ public class LogFactoryTest {
 
             String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
 
-            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1, MicrosTimestampDriver.floor("2015-05-04"));
+            final MicrosecondClock clock = new TestMicrosecondClock(MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1, MicrosTimestampDriver.floor("2015-05-04"));
 
             try (Path path = new Path()) {
 
@@ -971,7 +971,7 @@ public class LogFactoryTest {
         final String logFile = temp.getRoot().getAbsolutePath() + Files.SEPARATOR + "mylog-${date:yyyy-MM-dd}.log";
 
         final MicrosecondClock clock = new TestMicrosecondClock(
-                TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"),
+                MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"),
                 1,
                 MicrosTimestampDriver.floor("2019-12-31")
         );
@@ -1106,7 +1106,7 @@ public class LogFactoryTest {
         long speed = Timestamps.HOUR_MICROS;
 
         final MicrosecondClock clock = new TestMicrosecondClock(
-                TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"),
+                MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"),
                 speed,
                 MicrosTimestampDriver.floor("2019-12-31")
         );
@@ -1245,7 +1245,7 @@ public class LogFactoryTest {
             String mustContain
     ) throws NumericException {
         final MicrosecondClock clock = new TestMicrosecondClock(
-                TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"),
+                MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"),
                 speed,
                 MicrosTimestampDriver.floor("2019-12-31")
         );

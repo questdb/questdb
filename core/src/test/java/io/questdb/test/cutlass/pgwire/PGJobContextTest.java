@@ -66,7 +66,7 @@ import io.questdb.std.ObjectFactory;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.Clock;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -5274,7 +5274,7 @@ if __name__ == "__main__":
 
 
             try (final PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?, ?, ?, ?)")) {
-                long micros = TimestampFormatUtils.parseTimestamp("2011-04-11T14:40:54.998821Z");
+                long micros = MicrosFormatUtils.parseTimestamp("2011-04-11T14:40:54.998821Z");
                 for (int i = 0; i < 90; i++) {
                     insert.setInt(1, i);
                     // DATE as jdbc's DATE
@@ -5642,7 +5642,7 @@ if __name__ == "__main__":
             String[] values = {"TrUE", null, "", "false", "true", "banana", "22"};
 
             try (PreparedStatement insert = connection.prepareStatement("insert into booleans values (cast(? as boolean), ?)")) {
-                long micros = TimestampFormatUtils.parseTimestamp("2022-04-19T18:50:00.998666Z");
+                long micros = MicrosFormatUtils.parseTimestamp("2022-04-19T18:50:00.998666Z");
                 for (int i = 0; i < 30; i++) {
                     insert.setString(1, values[rand.nextInt(values.length)]);
                     insert.setTimestamp(2, new Timestamp(micros / 1000L));
@@ -5776,7 +5776,7 @@ if __name__ == "__main__":
                     "INSERT INTO x VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
             String date = "2011-04-11";
             String time = "14:40:54.998821";
-            long micros = TimestampFormatUtils.parseTimestamp(date + "T" + time + "Z");
+            long micros = MicrosFormatUtils.parseTimestamp(date + "T" + time + "Z");
             for (int i = 0; i < 10_000; i++) {
                 insert.setInt(1, i);
                 // DATE as jdbc's DATE
@@ -7265,7 +7265,7 @@ nodejs code:
                     "2019-02-11 13:48:11.124016\n" +
                     "2019-02-11 13:48:11.124017\n";
 
-            long ts = TimestampFormatUtils.parseUTCTimestamp("2019-02-11T13:48:11.123998Z");
+            long ts = MicrosFormatUtils.parseUTCTimestamp("2019-02-11T13:48:11.123998Z");
             for (int i = 0; i < 20; i++) {
                 statement.setLong(1, ts + i);
                 statement.execute();
@@ -11116,7 +11116,7 @@ create table tab as (
                 // timestamp WITH microsecond precision, and we massage it to extract two
                 // numbers that can be used to create a java.sql.Timestamp.
                 // -> microsecond precision is kept
-                long questdbTs = TimestampFormatUtils.parseTimestamp("2021-09-27T16:45:03.202345Z");
+                long questdbTs = MicrosFormatUtils.parseTimestamp("2021-09-27T16:45:03.202345Z");
                 long time = questdbTs / 1000;
                 int nanos = (int) (questdbTs - (int) (questdbTs / 1e6) * 1e6) * 1000;
                 assertEquals(1632761103202345L, questdbTs);

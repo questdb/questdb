@@ -28,7 +28,7 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -147,13 +147,13 @@ public class OrderByNegativeLimitFuzzTest extends AbstractCairoTest {
 
         if (nPartitions == 0) {
             // We stay before the first partitions
-            final long start = TimestampFormatUtils.parseTimestamp("2000-01-01") + rnd.nextLong(7 * 24 * 60 * 60) * Timestamps.SECOND_MICROS;
+            final long start = MicrosFormatUtils.parseTimestamp("2000-01-01") + rnd.nextLong(7 * 24 * 60 * 60) * Timestamps.SECOND_MICROS;
             final long end = start + rnd.nextLong(7 * 24 * 60 * 60) * Timestamps.SECOND_MICROS;
             return "ts >= " + start + " AND ts <= " + end;
         }
 
         // We span over a year, with a partition per day so keep things in this interval
-        final long min = TimestampFormatUtils.parseTimestamp("2024-01-01");
+        final long min = MicrosFormatUtils.parseTimestamp("2024-01-01");
         final long max = (N_PARTITIONS - nPartitions) * Timestamps.DAY_MICROS;
         final long start = min + (max == 0L ? 0 : rnd.nextLong(max));
         final long end = start + nPartitions * Timestamps.DAY_MICROS + rnd.nextLong(Timestamps.DAY_MICROS) - 1;

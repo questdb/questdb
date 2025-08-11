@@ -1015,7 +1015,7 @@ public final class Timestamps {
 
     public static String toString(long micros) {
         Utf16Sink sink = Misc.getThreadLocalSink();
-        TimestampFormatUtils.appendDateTime(sink, micros);
+        MicrosFormatUtils.appendDateTime(sink, micros);
         return sink.toString();
     }
 
@@ -1044,7 +1044,7 @@ public final class Timestamps {
 
     public static String toUSecString(long micros) {
         Utf16Sink sink = Misc.getThreadLocalSink();
-        TimestampFormatUtils.appendDateTimeUSec(sink, micros);
+        MicrosFormatUtils.appendDateTimeUSec(sink, micros);
         return sink.toString();
     }
 

@@ -43,7 +43,7 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -630,7 +630,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
                     copyPartitionToAttachable(srcTableToken, "2022-08-01", dstTableToken.getDirName(), "2022-08-01");
 
-                    long timestamp = TimestampFormatUtils.parseTimestamp("2022-08-01T00:00:00.000z");
+                    long timestamp = MicrosFormatUtils.parseTimestamp("2022-08-01T00:00:00.000z");
                     long txn;
                     try (TableWriter writer = getWriter(dst.getName())) {
                         txn = writer.getTxn();
@@ -714,9 +714,9 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     copyPartitionToAttachable(srcTableToken, "2022-08-01", dstTableToken.getDirName(), "2022-08-01");
 
                     // Add 1 row without commit
-                    long timestamp = TimestampFormatUtils.parseTimestamp("2022-08-01T00:00:00.000z");
+                    long timestamp = MicrosFormatUtils.parseTimestamp("2022-08-01T00:00:00.000z");
                     try (TableWriter writer = getWriter(dst.getName())) {
-                        long insertTs = TimestampFormatUtils.parseTimestamp("2022-08-01T23:59:59.999z");
+                        long insertTs = MicrosFormatUtils.parseTimestamp("2022-08-01T23:59:59.999z");
                         TableWriter.Row row = writer.newRow(insertTs + 1000L);
                         row.putLong(0, 1L);
                         row.putInt(1, 1);
@@ -1115,7 +1115,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
                 try (TableWriter writer = getWriter(dst.getTableName())) {
                     // remove 2020-01-09 partition from dst table
-                    long timestamp = TimestampFormatUtils.parseTimestamp("2020-01-09T00:00:00.000z");
+                    long timestamp = MicrosFormatUtils.parseTimestamp("2020-01-09T00:00:00.000z");
                     writer.removePartition(timestamp);
                     // at this point dst table has only 1 partition: 2020-01-10  and it has 1 row
 
@@ -1300,7 +1300,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         long timestamp = 0;
         for (String partition : partitionList) {
             int limit = hi == -1 ? partition.length() : hi;
-            long ts = TimestampFormatUtils.parseTimestamp(partition.substring(0, limit)
+            long ts = MicrosFormatUtils.parseTimestamp(partition.substring(0, limit)
                     + (src.getPartitionBy() == PartitionBy.YEAR ? "-01-01" : "")
                     + (src.getPartitionBy() == PartitionBy.MONTH ? "-01" : "")
                     + "T23:59:59.999z");

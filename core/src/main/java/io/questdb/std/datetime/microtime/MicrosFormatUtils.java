@@ -39,7 +39,7 @@ import org.jetbrains.annotations.TestOnly;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
-public class TimestampFormatUtils {
+public class MicrosFormatUtils {
     public static final DateFormat DAY_FORMAT;
     public static final DateFormat GREEDY_MILLIS1_UTC_FORMAT;
     public static final DateFormat GREEDY_MILLIS2_UTC_FORMAT;

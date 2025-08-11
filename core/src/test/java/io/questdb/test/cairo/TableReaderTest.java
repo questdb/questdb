@@ -52,7 +52,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -2506,14 +2506,14 @@ public class TableReaderTest extends AbstractCairoTest {
             ) {
                 // Create and cancel row to ensure partition entry and NULL max timestamp
                 // this used to trigger a problem with very last reload of the reader.
-                writer.newRow(TimestampFormatUtils.parseTimestamp("2016-03-02T10:00:00.000000Z")).cancel();
+                writer.newRow(MicrosFormatUtils.parseTimestamp("2016-03-02T10:00:00.000000Z")).cancel();
 
                 // before adding any data add column
                 writer.addColumn("xyz", ColumnType.SYMBOL);
 
                 Assert.assertTrue(reader.reload());
 
-                TableWriter.Row row = writer.newRow(TimestampFormatUtils.parseTimestamp("2016-03-02T10:00:00.000000Z"));
+                TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp("2016-03-02T10:00:00.000000Z"));
                 row.append();
                 writer.commit();
 
@@ -2594,7 +2594,7 @@ public class TableReaderTest extends AbstractCairoTest {
             final Rnd rnd = new Rnd();
 
             try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
-                long timestamp = TimestampFormatUtils.parseUTCTimestamp("2019-01-31T10:00:00.000001Z");
+                long timestamp = MicrosFormatUtils.parseUTCTimestamp("2019-01-31T10:00:00.000001Z");
                 long timestampStep = 500;
 
                 for (int i = 0; i < N; i++) {
@@ -2700,7 +2700,7 @@ public class TableReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             int N = 100;
             int N_PARTITIONS = 5;
-            long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
+            long timestampUs = MicrosFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
             long stride = 100;
             int bandStride = 1000;
             int totalCount = 0;
@@ -2835,7 +2835,7 @@ public class TableReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             int N = 100;
             int N_PARTITIONS = 5;
-            long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
+            long timestampUs = MicrosFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
             long stride = 100;
             int bandStride = 1000;
             int totalCount = 0;
@@ -3068,7 +3068,7 @@ public class TableReaderTest extends AbstractCairoTest {
             AbstractCairoTest.create(model);
 
             int N = 1000;
-            long ts = TimestampFormatUtils.parseTimestamp("2018-01-06T10:00:00.000Z");
+            long ts = MicrosFormatUtils.parseTimestamp("2018-01-06T10:00:00.000Z");
             final Rnd rnd = new Rnd();
             try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 sink.clear();
@@ -3936,7 +3936,7 @@ public class TableReaderTest extends AbstractCairoTest {
             new Thread(() -> {
                 try {
                     startBarrier.await();
-                    long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
+                    long timestampUs = MicrosFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
                     try (TableWriter writer = newOffPoolWriter(configuration, "w")) {
                         for (int i = 0; i < N; i++) {
                             TableWriter.Row row = writer.newRow(timestampUs);
@@ -4014,7 +4014,7 @@ public class TableReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
 
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            long ts = MicrosFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
 
             long blob = allocBlob();
             try {
@@ -4221,7 +4221,7 @@ public class TableReaderTest extends AbstractCairoTest {
             final String tableName = "table_by_" + PartitionBy.toString(partitionBy);
 
             int totalCount = 0;
-            long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
+            long timestampUs = MicrosFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
 
             // model table
             TableModel model = new TableModel(configuration, tableName, partitionBy).col("l", ColumnType.LONG).timestamp();
@@ -4286,7 +4286,7 @@ public class TableReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             int N = 100;
             int N_PARTITIONS = 5;
-            long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T10:00:00.000Z");
+            long timestampUs = MicrosFormatUtils.parseTimestamp("2017-12-11T10:00:00.000Z");
             long stride = 100;
             int bandStride = 1000;
             int totalCount = 0;
@@ -4355,7 +4355,7 @@ public class TableReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             int N = 100;
             int N_PARTITIONS = 5;
-            long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
+            long timestampUs = MicrosFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
             long stride = 100;
             int bandStride = 1000;
             int totalCount = 0;
@@ -4488,7 +4488,7 @@ public class TableReaderTest extends AbstractCairoTest {
     private void testTableCursor(long inc) throws NumericException {
         Rnd rnd = new Rnd();
         int N = 100;
-        long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z") / 1000;
+        long ts = MicrosFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z") / 1000;
         long blob = allocBlob();
         try {
             testAppend(rnd, configuration, ts, N, inc, blob, 0);

@@ -53,7 +53,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
@@ -106,7 +106,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
             long timestamp;
             final Rnd rnd = new Rnd();
             try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
-                timestamp = TimestampFormatUtils.parseTimestamp("1970-01-03T08:00:00.000Z");
+                timestamp = MicrosFormatUtils.parseTimestamp("1970-01-03T08:00:00.000Z");
 
                 TableWriter.Row row = writer.newRow(timestamp);
                 row.putInt(0, rnd.nextInt());

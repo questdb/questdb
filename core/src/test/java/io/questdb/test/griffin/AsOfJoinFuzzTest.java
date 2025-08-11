@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -191,7 +191,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         StringSink filter = new StringSink();
         if (exerciseIntervals) {
             int n = rnd.nextInt(5) + 1;
-            long baseTs = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
+            long baseTs = MicrosFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
             for (int i = 0; i < n; i++) {
                 if (i == 0) {
                     filter.put(" where ts between '");
@@ -202,9 +202,9 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 int endDays = startDays + rnd.nextInt(100) + 1;
                 long tsStart = baseTs + Timestamps.DAY_MICROS * startDays;
                 long tsEnd = baseTs + Timestamps.DAY_MICROS * endDays;
-                TimestampFormatUtils.appendDateTimeUSec(filter, tsStart);
+                MicrosFormatUtils.appendDateTimeUSec(filter, tsStart);
                 filter.put("' and '");
-                TimestampFormatUtils.appendDateTimeUSec(filter, tsEnd);
+                MicrosFormatUtils.appendDateTimeUSec(filter, tsEnd);
                 filter.put("'");
             }
         }

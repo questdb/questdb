@@ -32,7 +32,7 @@ import io.questdb.std.NumericException;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
-import static io.questdb.std.datetime.microtime.TimestampFormatUtils.parseUTCTimestamp;
+import static io.questdb.std.datetime.microtime.MicrosFormatUtils.parseUTCTimestamp;
 
 public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest {
 

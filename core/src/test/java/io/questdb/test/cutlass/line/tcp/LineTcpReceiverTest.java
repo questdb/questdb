@@ -61,7 +61,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -2149,7 +2149,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             sb.append('\t');
                             sender.field("temp", temp);
                             tsSink.clear();
-                            TimestampFormatUtils.appendDateTimeUSec(tsSink, ts);
+                            MicrosFormatUtils.appendDateTimeUSec(tsSink, ts);
                             sb.append(tsSink);
                             sb.append('\n');
                             sender.$(ts * 1000);

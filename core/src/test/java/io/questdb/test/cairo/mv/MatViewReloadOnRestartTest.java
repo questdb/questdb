@@ -49,7 +49,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.LongList;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractBootstrapTest;
@@ -716,7 +716,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     @Test
     public void testPeriodMatViewsReloadOnServerStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final long start = TimestampFormatUtils.parseUTCTimestamp("2024-12-12T00:00:00.000000Z");
+            final long start = MicrosFormatUtils.parseUTCTimestamp("2024-12-12T00:00:00.000000Z");
             final TestMicroClock testClock = new TestMicroClock(start);
 
             final String firstExpected = "sym\tprice\tts\n" +
@@ -781,7 +781,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testTimerMatViewsReloadOnServerStart1() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String startStr = "2024-12-12T00:00:00.000000Z";
-            final long start = TimestampFormatUtils.parseUTCTimestamp(startStr);
+            final long start = MicrosFormatUtils.parseUTCTimestamp(startStr);
             final TestMicroClock testClock = new TestMicroClock(start);
 
             final String firstExpected = "sym\tprice\tts\n" +
@@ -886,7 +886,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testTimerMatViewsReloadOnServerStart2() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String startStr = "2024-12-12T00:00:00.000000Z";
-            final long start = TimestampFormatUtils.parseUTCTimestamp(startStr);
+            final long start = MicrosFormatUtils.parseUTCTimestamp(startStr);
             // Set the clock to an earlier timestamp.
             final TestMicroClock testClock = new TestMicroClock(start - Timestamps.DAY_MICROS);
 

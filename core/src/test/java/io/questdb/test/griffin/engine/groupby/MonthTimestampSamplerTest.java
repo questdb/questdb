@@ -26,7 +26,7 @@ package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.griffin.engine.groupby.MonthTimestampMicrosSampler;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -51,9 +51,9 @@ public class MonthTimestampSamplerTest {
         Assert.assertEquals(src.length, next.length);
 
         for (int i = 0; i < src.length; i++) {
-            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
+            long ts = MicrosFormatUtils.parseUTCTimestamp(src[i]);
             long nextTs = sampler.nextTimestamp(ts);
-            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(next[i]), nextTs);
+            Assert.assertEquals(MicrosFormatUtils.parseUTCTimestamp(next[i]), nextTs);
         }
     }
 
@@ -74,9 +74,9 @@ public class MonthTimestampSamplerTest {
         Assert.assertEquals(src.length, next.length);
 
         for (int i = 0; i < src.length; i++) {
-            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
+            long ts = MicrosFormatUtils.parseUTCTimestamp(src[i]);
             long nextTs = sampler.nextTimestamp(ts, 3);
-            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(next[i]), nextTs);
+            Assert.assertEquals(MicrosFormatUtils.parseUTCTimestamp(next[i]), nextTs);
         }
     }
 
@@ -97,9 +97,9 @@ public class MonthTimestampSamplerTest {
         Assert.assertEquals(src.length, prev.length);
 
         for (int i = 0; i < src.length; i++) {
-            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
+            long ts = MicrosFormatUtils.parseUTCTimestamp(src[i]);
             long prevTs = sampler.previousTimestamp(ts);
-            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(prev[i]), prevTs);
+            Assert.assertEquals(MicrosFormatUtils.parseUTCTimestamp(prev[i]), prevTs);
         }
     }
 
@@ -120,9 +120,9 @@ public class MonthTimestampSamplerTest {
         Assert.assertEquals(src.length, rounded.length);
 
         for (int i = 0; i < src.length; i++) {
-            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
+            long ts = MicrosFormatUtils.parseUTCTimestamp(src[i]);
             long roundedTs = sampler.round(ts);
-            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(rounded[i]), roundedTs);
+            Assert.assertEquals(MicrosFormatUtils.parseUTCTimestamp(rounded[i]), roundedTs);
         }
     }
 
@@ -131,7 +131,7 @@ public class MonthTimestampSamplerTest {
         StringSink sink = new StringSink();
         MonthTimestampMicrosSampler sampler = new MonthTimestampMicrosSampler(6);
 
-        long timestamp = TimestampFormatUtils.parseUTCTimestamp("2018-11-16T15:00:00.000000Z");
+        long timestamp = MicrosFormatUtils.parseUTCTimestamp("2018-11-16T15:00:00.000000Z");
         sampler.setStart(timestamp);
 
         for (int i = 0; i < 20; i++) {

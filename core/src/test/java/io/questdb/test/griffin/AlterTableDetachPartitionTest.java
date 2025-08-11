@@ -48,7 +48,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -430,7 +430,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             renameDetachedToAttachable(tableName, timestampDay);
 
-            long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T22:00:00.000000Z");
+            long timestamp = MicrosFormatUtils.parseTimestamp(timestampDay + "T22:00:00.000000Z");
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
                 writer.addColumn("new_column", ColumnType.INT);
@@ -548,7 +548,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             // insert data, which will create the partition again
             engine.clear();
-            long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T09:59:59.999999Z");
+            long timestamp = MicrosFormatUtils.parseTimestamp(timestampDay + "T09:59:59.999999Z");
             try (TableWriter writer = getWriter(tableName)) {
                 TableWriter.Row row = writer.newRow(timestamp);
                 row.putLong(0, 137L);
@@ -678,7 +678,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
 
                     engine.clear();
-                    long timestamp = TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
+                    long timestamp = MicrosFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
                     try (TableWriter writer = getWriter(tableName)) {
                         AttachDetachStatus attachDetachStatus = writer.detachPartition(timestamp);
                         Assert.assertEquals(DETACH_ERR_COPY_META, attachDetachStatus);
@@ -1397,7 +1397,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 );
                 execute("INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName());
 
-                long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+                long timestamp = MicrosFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
                 try (TableWriter writer = getWriter(brokenTableName)) {
                     writer.detachPartition(timestamp);
                 }
@@ -1475,7 +1475,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 );
                 execute("INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName());
 
-                long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+                long timestamp = MicrosFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
                 try (TableWriter writer = getWriter(brokenTableName)) {
                     writer.detachPartition(timestamp);
                 }
@@ -1569,7 +1569,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 assertContent(expected, tableName);
                 assertContent(expected, brokenTableName);
 
-                long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+                long timestamp = MicrosFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
                 try (TableWriter writer = getWriter(brokenTableName)) {
                     writer.detachPartition(timestamp);
                 }
@@ -1653,7 +1653,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             );
 
             String timestampDay = "2022-06-02";
-            long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T22:00:00.000000Z");
+            long timestamp = MicrosFormatUtils.parseTimestamp(timestampDay + "T22:00:00.000000Z");
             Utf8StringSink utf8sink = new Utf8StringSink();
             utf8sink.put("33");
             try (TableWriter writer = getWriter(tableName)) {
@@ -1795,7 +1795,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             engine.clear();
             String timestampDay = "2022-06-01";
-            long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+            long timestamp = MicrosFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
                 writer.addColumn("new_column", ColumnType.INT);
@@ -1842,7 +1842,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             engine.clear();
             String timestampDay = "2022-06-01";
-            long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+            long timestamp = MicrosFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
             try (TableWriter writer = getWriter(tableName)) {
                 writer.detachPartition(timestamp);
                 // structural change
@@ -1889,7 +1889,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             engine.clear();
             String timestampDay = "2022-06-01";
-            long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+            long timestamp = MicrosFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
                 writer.addColumn("new_column", ColumnType.INT);
@@ -1941,14 +1941,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             engine.clear();
             String timestampDay = "2022-06-01";
-            long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+            long timestamp = MicrosFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
             try (TableWriter writer = getWriter(tableName)) {
                 writer.detachPartition(timestamp);
 
                 // structural change
                 writer.addColumn("new_column", ColumnType.INT);
 
-                TableWriter.Row row = writer.newRow(TimestampFormatUtils.parseTimestamp("2022-06-02T00:00:00.000000Z"));
+                TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp("2022-06-02T00:00:00.000000Z"));
                 row.putLong(0, 33L);
                 row.putInt(1, 33);
                 row.putInt(3, 333);
@@ -2018,8 +2018,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             // insert data, which will create the partition again
             engine.clear();
-            long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
-            long timestamp2 = TimestampFormatUtils.parseTimestamp("2022-06-01T09:59:59.999999Z");
+            long timestamp = MicrosFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+            long timestamp2 = MicrosFormatUtils.parseTimestamp("2022-06-01T09:59:59.999999Z");
             try (TableWriter writer = getWriter(tableName)) {
 
                 TableWriter.Row row = writer.newRow(timestamp2);
@@ -2297,7 +2297,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 }
             };
             engine.clear(); // to recreate the writer with the new ff
-            long timestamp = TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
+            long timestamp = MicrosFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
             try (TableWriter writer = getWriter(tableName)) {
                 AttachDetachStatus attachDetachStatus = writer.detachPartition(timestamp);
                 Assert.assertEquals(DETACH_ERR_COPY_META, attachDetachStatus);

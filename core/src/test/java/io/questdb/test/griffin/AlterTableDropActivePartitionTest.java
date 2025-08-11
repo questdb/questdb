@@ -38,7 +38,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
@@ -560,13 +560,13 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                             TableReader reader1 = getReader(tableName);
                             TableWriter writer = getWriter(tableName)
                     ) {
-                        long lastTs = TimestampFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
+                        long lastTs = MicrosFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
 
                         TableWriter.Row row = writer.newRow(lastTs);
                         row.putInt(0, 100); // will be removed
                         row.append();
 
-                        row = writer.newRow(TimestampFormatUtils.parseTimestamp("2023-10-12T00:00:03.000000Z")); // earlier timestamp
+                        row = writer.newRow(MicrosFormatUtils.parseTimestamp("2023-10-12T00:00:03.000000Z")); // earlier timestamp
                         row.putInt(0, 50);
                         row.append();
 
@@ -618,17 +618,17 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                                 "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
                                 "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
                         try (TableWriter writer = getWriter(tableName)) {
-                            long lastTs = TimestampFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
+                            long lastTs = MicrosFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
 
                             TableWriter.Row row = writer.newRow(lastTs); // expected to be lost
                             row.putInt(0, 100);
                             row.append();
 
-                            row = writer.newRow(TimestampFormatUtils.parseTimestamp("2023-10-10T00:00:07.000000Z")); // expected to survive
+                            row = writer.newRow(MicrosFormatUtils.parseTimestamp("2023-10-10T00:00:07.000000Z")); // expected to survive
                             row.putInt(0, 50);
                             row.append();
 
-                            row = writer.newRow(TimestampFormatUtils.parseTimestamp("2023-10-12T10:00:03.000000Z")); // expected to be lost
+                            row = writer.newRow(MicrosFormatUtils.parseTimestamp("2023-10-12T10:00:03.000000Z")); // expected to be lost
                             row.putInt(0, 75);
                             row.append();
 
@@ -687,9 +687,9 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                                 TableReader reader1 = getReader(tableName);
                                 TableWriter writer = getWriter(tableName)
                         ) {
-                            long lastTs = TimestampFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
+                            long lastTs = MicrosFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
 
-                            TableWriter.Row row = writer.newRow(TimestampFormatUtils.parseTimestamp("2023-10-12T00:00:03.000000Z")); // earlier timestamp
+                            TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp("2023-10-12T00:00:03.000000Z")); // earlier timestamp
                             row.putInt(0, 50);
                             row.append();
 
@@ -860,8 +860,8 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                     try {
                         createTableX(tableName, TableHeader); // empty table
                         try (TableWriter writer = getWriter(tableName)) {
-                            long lastTs = TimestampFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
-                            long o3Ts = TimestampFormatUtils.parseTimestamp("2023-10-14T23:59:59.999999Z"); // o3 previous day
+                            long lastTs = MicrosFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
+                            long o3Ts = MicrosFormatUtils.parseTimestamp("2023-10-14T23:59:59.999999Z"); // o3 previous day
 
                             TableWriter.Row row = writer.newRow(lastTs); // will not survive, as it belongs in the active partition
                             row.putInt(0, 100);
@@ -894,8 +894,8 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                     try {
                         createTableX(tableName, TableHeader); // empty table
                         try (TableWriter writer = getWriter(tableName)) {
-                            long prevTs = TimestampFormatUtils.parseTimestamp("2023-10-14T23:59:59.999999Z"); // previous day
-                            long lastTs = TimestampFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
+                            long prevTs = MicrosFormatUtils.parseTimestamp("2023-10-14T23:59:59.999999Z"); // previous day
+                            long lastTs = MicrosFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
 
                             TableWriter.Row row = writer.newRow(prevTs); // expected to survive
                             row.putInt(0, 300);

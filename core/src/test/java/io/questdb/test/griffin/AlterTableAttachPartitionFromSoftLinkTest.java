@@ -40,7 +40,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -57,8 +57,8 @@ import java.util.function.Function;
 public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTableAttachPartitionTest {
 
     // some tests begin with: Assume.assumeTrue(Os.type != Os.WINDOWS);
-    // in WINDOWS the user performing the tests needs to have the 'Create Symbolic Links' privilege. 
-    // this privilege is not granted by default. in addition, if User Account Control (UAC) is on, and 
+    // in WINDOWS the user performing the tests needs to have the 'Create Symbolic Links' privilege.
+    // this privilege is not granted by default. in addition, if User Account Control (UAC) is on, and
     // the user has administrator privileges, tests must 'Run as administrator'.
     // besides this, isSoftLink is not supported in WINDOWS
 
@@ -1212,11 +1212,10 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     static {
         try {
-            readOnlyPartitionTimestamp = TimestampFormatUtils.parseTimestamp(readOnlyPartitionName + "T00:00:00.000Z");
-            activePartitionTimestamp = TimestampFormatUtils.parseTimestamp(activePartitionName + "T00:00:00.000Z");
+            readOnlyPartitionTimestamp = MicrosFormatUtils.parseTimestamp(readOnlyPartitionName + "T00:00:00.000Z");
+            activePartitionTimestamp = MicrosFormatUtils.parseTimestamp(activePartitionName + "T00:00:00.000Z");
         } catch (NumericException impossible) {
             throw new RuntimeException(impossible);
         }
     }
 }
-

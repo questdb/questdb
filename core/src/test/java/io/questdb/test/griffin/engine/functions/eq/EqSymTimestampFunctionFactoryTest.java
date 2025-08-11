@@ -26,7 +26,7 @@ package io.questdb.test.griffin.engine.functions.eq;
 
 
 import io.questdb.griffin.SqlException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -136,7 +136,7 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
 
             String query = "select sym, t from x where sym = $1";
 
-            bindVariableService.setTimestamp(0, TimestampFormatUtils.parseTimestamp("1970-01-01T00:00:37.847040Z"));
+            bindVariableService.setTimestamp(0, MicrosFormatUtils.parseTimestamp("1970-01-01T00:00:37.847040Z"));
             assertQuery("sym\tt\n" +
                     "37847040\t1970-01-01T00:00:37.847040Z\n", query, "", true, false);
 

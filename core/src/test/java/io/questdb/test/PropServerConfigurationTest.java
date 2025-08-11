@@ -60,8 +60,8 @@ import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.StringSink;
@@ -1727,7 +1727,7 @@ public class PropServerConfigurationTest {
         properties.setProperty("log.timestamp.timezone", timezone);
         properties.setProperty("log.timestamp.locale", locale);
         properties.setProperty("log.timestamp.format", format);
-        long epoch = TimestampFormatUtils.parseTimestamp(timestamp);
+        long epoch = MicrosFormatUtils.parseTimestamp(timestamp);
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
         DateFormat timestampFormat = configuration.getCairoConfiguration().getLogTimestampFormat();
         DateLocale timestampLocale = configuration.getCairoConfiguration().getLogTimestampTimezoneLocale();

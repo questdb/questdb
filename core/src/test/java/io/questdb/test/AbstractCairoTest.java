@@ -102,8 +102,8 @@ import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.MutableUtf16Sink;
@@ -949,7 +949,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 sink.put(",");
             }
             sink.put("\n{ts: '");
-            TimestampFormatUtils.appendDateTime(sink, timestamp);
+            MicrosFormatUtils.appendDateTime(sink, timestamp);
             sink.put("', rowCount: ").put(rowCount);
             // Do not print name txn, it can be different in expected and actual table
             if (comparePartitionTxns) {
@@ -967,9 +967,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
         sink.put("\n], transientRowCount: ").put(txReader.getTransientRowCount());
         sink.put(", fixedRowCount: ").put(txReader.getFixedRowCount());
         sink.put(", minTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getMinTimestamp());
+        MicrosFormatUtils.appendDateTime(sink, txReader.getMinTimestamp());
         sink.put("', maxTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getMaxTimestamp());
+        MicrosFormatUtils.appendDateTime(sink, txReader.getMaxTimestamp());
         if (compareTruncateVersion) {
             sink.put("', dataVersion: ").put(txReader.getDataVersion());
         }
@@ -985,9 +985,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
         sink.put(", symbolColumnCount: ").put(txReader.getSymbolColumnCount());
         sink.put(", lagRowCount: ").put(txReader.getLagRowCount());
         sink.put(", lagMinTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getLagMinTimestamp());
+        MicrosFormatUtils.appendDateTime(sink, txReader.getLagMinTimestamp());
         sink.put("', lagMaxTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, txReader.getLagMaxTimestamp());
+        MicrosFormatUtils.appendDateTime(sink, txReader.getLagMaxTimestamp());
         sink.put("', lagTxnCount: ").put(txReader.getLagRowCount());
         sink.put(", lagOrdered: ").put(txReader.isLagOrdered());
         sink.put("}");
@@ -1464,9 +1464,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 if ((isAscending && timestamp > ts) || (!isAscending && timestamp < ts)) {
                     StringSink error = new StringSink();
                     error.put("record # ").put(c).put(" should have ").put(isAscending ? "bigger" : "smaller").put(" (or equal) timestamp than the row before. Values prior=");
-                    TimestampFormatUtils.appendDateTimeUSec(error, timestamp);
+                    MicrosFormatUtils.appendDateTimeUSec(error, timestamp);
                     error.put(" current=");
-                    TimestampFormatUtils.appendDateTimeUSec(error, ts);
+                    MicrosFormatUtils.appendDateTimeUSec(error, ts);
 
                     Assert.fail(error.toString());
                 }

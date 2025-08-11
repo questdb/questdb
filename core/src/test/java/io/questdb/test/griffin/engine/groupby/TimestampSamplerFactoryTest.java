@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -68,7 +68,7 @@ public class TimestampSamplerFactoryTest {
     @Test
     public void testMicros() throws NumericException, SqlException {
         final StringSink sink = new StringSink();
-        final long ts = TimestampFormatUtils.parseUTCTimestamp("2022-04-23T10:33:00.123456Z");
+        final long ts = MicrosFormatUtils.parseUTCTimestamp("2022-04-23T10:33:00.123456Z");
         final Rnd rand = new Rnd();
         for (int j = 0; j < 1000; j++) {
             final int k = rand.nextInt(1000001);
@@ -91,7 +91,7 @@ public class TimestampSamplerFactoryTest {
     @Test
     public void testMillis() throws NumericException, SqlException {
         final StringSink sink = new StringSink();
-        final long ts = TimestampFormatUtils.parseUTCTimestamp("2022-04-23T10:33:00.123456Z");
+        final long ts = MicrosFormatUtils.parseUTCTimestamp("2022-04-23T10:33:00.123456Z");
         for (int k = 0; k < 1001; k++) {
             final TimestampSampler sampler = createTimestampSampler(k, 'T', sink);
             final long bucketSize = Timestamps.MILLI_MICROS * (k == 0 ? 1 : k);
@@ -112,7 +112,7 @@ public class TimestampSamplerFactoryTest {
     @Test
     public void testMinutes() throws NumericException, SqlException {
         final StringSink sink = new StringSink();
-        final long ts = TimestampFormatUtils.parseUTCTimestamp("2022-04-23T10:33:00.123456Z");
+        final long ts = MicrosFormatUtils.parseUTCTimestamp("2022-04-23T10:33:00.123456Z");
         for (int k = 0; k < 61; k++) {
             final TimestampSampler sampler = createTimestampSampler(k, 'm', sink);
             final long bucketSize = Timestamps.MINUTE_MICROS * (k == 0 ? 1 : k);
@@ -167,7 +167,7 @@ public class TimestampSamplerFactoryTest {
     @Test
     public void testSeconds() throws NumericException, SqlException {
         final StringSink sink = new StringSink();
-        final long ts = TimestampFormatUtils.parseUTCTimestamp("2022-04-23T10:33:00.123456Z");
+        final long ts = MicrosFormatUtils.parseUTCTimestamp("2022-04-23T10:33:00.123456Z");
         for (int k = 0; k < 61; k++) {
             final TimestampSampler sampler = createTimestampSampler(k, 's', sink);
             final long bucketSize = Timestamps.SECOND_MICROS * (k == 0 ? 1 : k);

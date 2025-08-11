@@ -32,7 +32,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -70,7 +70,7 @@ public class TimestampFinderTest extends AbstractCairoTest {
             TableModel model = new TableModel(configuration, "x", PartitionBy.YEAR).timestamp();
             AbstractCairoTest.create(model);
 
-            final long minTimestamp = TimestampFormatUtils.parseTimestamp("1980-01-01T00:00:00.000Z");
+            final long minTimestamp = MicrosFormatUtils.parseTimestamp("1980-01-01T00:00:00.000Z");
             long maxTimestamp = minTimestamp;
             long timestamp = minTimestamp;
             try (
@@ -96,7 +96,7 @@ public class TimestampFinderTest extends AbstractCairoTest {
 
                 // write one more row, so that the active partition contains it;
                 // that's because we can't convert active partition to parquet
-                long newerTimestamp = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
+                long newerTimestamp = MicrosFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
                 oracleWriter.newRow(newerTimestamp).append();
                 writer.newRow(newerTimestamp).append();
 

@@ -67,7 +67,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     if (hour == -1) {
                         hour = Timestamps.getHourOfDay(micros);
                     }
-                    TimestampFormatUtils.appendAmPm(sink, hour, locale);
+                    MicrosFormatUtils.appendAmPm(sink, hour, locale);
                     break;
 
                 // MICROS
@@ -84,14 +84,14 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     if (micros0 == -1) {
                         micros0 = Timestamps.getMicrosOfSecond(micros);
                     }
-                    TimestampFormatUtils.append00000(sink, micros0);
+                    MicrosFormatUtils.append00000(sink, micros0);
                     break;
 
                 case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
                     if (micros0 == -1) {
                         micros0 = Timestamps.getMicrosOfMilli(micros);
                     }
-                    TimestampFormatUtils.append00(sink, micros0);
+                    MicrosFormatUtils.append00(sink, micros0);
                     break;
 
                 // MILLIS
@@ -107,7 +107,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     if (millis == -1) {
                         millis = Timestamps.getMillisOfSecond(micros);
                     }
-                    TimestampFormatUtils.append00(sink, millis);
+                    MicrosFormatUtils.append00(sink, millis);
                     break;
 
                 // NANOS
@@ -117,7 +117,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     break;
 
                 case TimestampFormatCompiler.OP_NANOS_THREE_DIGITS:
-                    TimestampFormatUtils.append00(sink, 0);
+                    MicrosFormatUtils.append00(sink, 0);
                     break;
 
                 // SECOND
@@ -133,7 +133,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     if (second == -1) {
                         second = Timestamps.getSecondOfMinute(micros);
                     }
-                    TimestampFormatUtils.append0(sink, second);
+                    MicrosFormatUtils.append0(sink, second);
                     break;
 
                 // MINUTE
@@ -149,7 +149,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     if (minute == -1) {
                         minute = Timestamps.getMinuteOfHour(micros);
                     }
-                    TimestampFormatUtils.append0(sink, minute);
+                    MicrosFormatUtils.append0(sink, minute);
                     break;
 
 
@@ -159,14 +159,14 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     if (hour == -1) {
                         hour = Timestamps.getHourOfDay(micros);
                     }
-                    TimestampFormatUtils.appendHour12(sink, hour);
+                    MicrosFormatUtils.appendHour12(sink, hour);
                     break;
 
                 case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS:
                     if (hour == -1) {
                         hour = Timestamps.getHourOfDay(micros);
                     }
-                    TimestampFormatUtils.appendHour12Padded(sink, hour);
+                    MicrosFormatUtils.appendHour12Padded(sink, hour);
                     break;
 
                 // HOUR (1-12)
@@ -175,14 +175,14 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     if (hour == -1) {
                         hour = Timestamps.getHourOfDay(micros);
                     }
-                    TimestampFormatUtils.appendHour121(sink, hour);
+                    MicrosFormatUtils.appendHour121(sink, hour);
                     break;
 
                 case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
                     if (hour == -1) {
                         hour = Timestamps.getHourOfDay(micros);
                     }
-                    TimestampFormatUtils.appendHour121Padded(sink, hour);
+                    MicrosFormatUtils.appendHour121Padded(sink, hour);
                     break;
 
                 // HOUR (0-23)
@@ -198,7 +198,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     if (hour == -1) {
                         hour = Timestamps.getHourOfDay(micros);
                     }
-                    TimestampFormatUtils.append0(sink, hour);
+                    MicrosFormatUtils.append0(sink, hour);
                     break;
 
                 // HOUR (1 - 24)
@@ -207,14 +207,14 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     if (hour == -1) {
                         hour = Timestamps.getHourOfDay(micros);
                     }
-                    TimestampFormatUtils.appendHour241(sink, hour);
+                    MicrosFormatUtils.appendHour241(sink, hour);
                     break;
 
                 case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
                     if (hour == -1) {
                         hour = Timestamps.getHourOfDay(micros);
                     }
-                    TimestampFormatUtils.appendHour241Padded(sink, hour);
+                    MicrosFormatUtils.appendHour241Padded(sink, hour);
                     break;
 
                 // DAY
@@ -247,7 +247,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
 
                         day = Timestamps.getDayOfMonth(micros, year, month, leap);
                     }
-                    TimestampFormatUtils.append0(sink, day);
+                    MicrosFormatUtils.append0(sink, day);
                     break;
 
                 case TimestampFormatCompiler.OP_DAY_NAME_LONG:
@@ -274,7 +274,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     sink.put(Timestamps.getDayOfYear(micros));
                     break;
                 case TimestampFormatCompiler.OP_ISO_WEEK_OF_YEAR:
-                    TimestampFormatUtils.append0(sink, Timestamps.getWeek(micros));
+                    MicrosFormatUtils.append0(sink, Timestamps.getWeek(micros));
                     break;
                 case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
                     sink.put(Timestamps.getWeekOfYear(micros));
@@ -302,7 +302,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
 
                         month = Timestamps.getMonthOfYear(micros, year, leap);
                     }
-                    TimestampFormatUtils.append0(sink, month);
+                    MicrosFormatUtils.append0(sink, month);
                     break;
 
                 case TimestampFormatCompiler.OP_MONTH_SHORT_NAME:
@@ -335,34 +335,34 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                         year = Timestamps.getYear(micros);
                         leap = CommonUtils.isLeapYear(year);
                     }
-                    TimestampFormatUtils.appendYear(sink, year);
+                    MicrosFormatUtils.appendYear(sink, year);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Timestamps.getYear(micros);
                         leap = CommonUtils.isLeapYear(year);
                     }
-                    TimestampFormatUtils.appendYear0(sink, year % 100);
+                    MicrosFormatUtils.appendYear0(sink, year % 100);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Timestamps.getYear(micros);
                         leap = CommonUtils.isLeapYear(year);
                     }
-                    TimestampFormatUtils.appendYear00(sink, year % 1000);
+                    MicrosFormatUtils.appendYear00(sink, year % 1000);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Timestamps.getYear(micros);
                         leap = CommonUtils.isLeapYear(year);
                     }
-                    TimestampFormatUtils.appendYear000(sink, year);
+                    MicrosFormatUtils.appendYear000(sink, year);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Timestamps.getIsoYear(micros);
                     }
-                    TimestampFormatUtils.appendYear000(sink, year);
+                    MicrosFormatUtils.appendYear000(sink, year);
                     break;
 
                 // ERA
@@ -371,7 +371,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                         year = Timestamps.getYear(micros);
                         leap = CommonUtils.isLeapYear(year);
                     }
-                    TimestampFormatUtils.appendEra(sink, year, locale);
+                    MicrosFormatUtils.appendEra(sink, year, locale);
                     break;
 
                 // TIMEZONE
@@ -430,12 +430,12 @@ public class GenericTimestampFormat extends AbstractDateFormat {
 
                 // MICROS
                 case TimestampFormatCompiler.OP_MICROS_ONE_DIGIT:
-                    TimestampFormatUtils.assertRemaining(pos, hi);
+                    MicrosFormatUtils.assertRemaining(pos, hi);
                     micros = Numbers.parseInt(in, pos, ++pos);
                     break;
 
                 case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
-                    TimestampFormatUtils.assertRemaining(pos + 2, hi);
+                    MicrosFormatUtils.assertRemaining(pos + 2, hi);
                     micros = Numbers.parseInt(in, pos, pos += 3);
                     break;
 
@@ -459,11 +459,11 @@ public class GenericTimestampFormat extends AbstractDateFormat {
 
                 // NANOS - ignoring parsed values
                 case TimestampFormatCompiler.OP_NANOS_ONE_DIGIT:
-                    TimestampFormatUtils.assertRemaining(pos++, hi);
+                    MicrosFormatUtils.assertRemaining(pos++, hi);
                     break;
 
                 case TimestampFormatCompiler.OP_NANOS_THREE_DIGITS:
-                    TimestampFormatUtils.assertRemaining(pos + 2, hi);
+                    MicrosFormatUtils.assertRemaining(pos + 2, hi);
                     pos += 3;
                     break;
 
@@ -473,12 +473,12 @@ public class GenericTimestampFormat extends AbstractDateFormat {
 
                 // MILLIS
                 case TimestampFormatCompiler.OP_MILLIS_ONE_DIGIT:
-                    TimestampFormatUtils.assertRemaining(pos, hi);
+                    MicrosFormatUtils.assertRemaining(pos, hi);
                     millis = Numbers.parseInt(in, pos, ++pos);
                     break;
 
                 case TimestampFormatCompiler.OP_MILLIS_THREE_DIGITS:
-                    TimestampFormatUtils.assertRemaining(pos + 2, hi);
+                    MicrosFormatUtils.assertRemaining(pos + 2, hi);
                     millis = Numbers.parseInt(in, pos, pos += 3);
                     break;
 
@@ -490,12 +490,12 @@ public class GenericTimestampFormat extends AbstractDateFormat {
 
                 // SECOND
                 case TimestampFormatCompiler.OP_SECOND_ONE_DIGIT:
-                    TimestampFormatUtils.assertRemaining(pos, hi);
+                    MicrosFormatUtils.assertRemaining(pos, hi);
                     second = Numbers.parseInt(in, pos, ++pos);
                     break;
 
                 case TimestampFormatCompiler.OP_SECOND_TWO_DIGITS:
-                    TimestampFormatUtils.assertRemaining(pos + 1, hi);
+                    MicrosFormatUtils.assertRemaining(pos + 1, hi);
                     second = Numbers.parseInt(in, pos, pos += 2);
                     break;
 
@@ -507,12 +507,12 @@ public class GenericTimestampFormat extends AbstractDateFormat {
 
                 // MINUTE
                 case TimestampFormatCompiler.OP_MINUTE_ONE_DIGIT:
-                    TimestampFormatUtils.assertRemaining(pos, hi);
+                    MicrosFormatUtils.assertRemaining(pos, hi);
                     minute = Numbers.parseInt(in, pos, ++pos);
                     break;
 
                 case TimestampFormatCompiler.OP_MINUTE_TWO_DIGITS:
-                    TimestampFormatUtils.assertRemaining(pos + 1, hi);
+                    MicrosFormatUtils.assertRemaining(pos + 1, hi);
                     minute = Numbers.parseInt(in, pos, pos += 2);
                     break;
 
@@ -538,7 +538,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                 // This means that in both the 0-11 and 1-12 systems, we can use the same parsing logic and later treat 12 as if it were 0.
                 case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT:
                 case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
-                    TimestampFormatUtils.assertRemaining(pos, hi);
+                    MicrosFormatUtils.assertRemaining(pos, hi);
                     hour = Numbers.parseInt(in, pos, ++pos);
                     if (hourType == CommonUtils.HOUR_24) {
                         hourType = CommonUtils.HOUR_AM;
@@ -547,7 +547,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
 
                 case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS:
                 case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
-                    TimestampFormatUtils.assertRemaining(pos + 1, hi);
+                    MicrosFormatUtils.assertRemaining(pos + 1, hi);
                     hour = Numbers.parseInt(in, pos, pos += 2);
                     if (hourType == CommonUtils.HOUR_24) {
                         hourType = CommonUtils.HOUR_AM;
@@ -567,12 +567,12 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                 // HOUR
                 case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT:
                 case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
-                    TimestampFormatUtils.assertRemaining(pos, hi);
+                    MicrosFormatUtils.assertRemaining(pos, hi);
                     hour = Numbers.parseInt(in, pos, ++pos);
                     break;
                 case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS:
                 case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
-                    TimestampFormatUtils.assertRemaining(pos + 1, hi);
+                    MicrosFormatUtils.assertRemaining(pos + 1, hi);
                     hour = Numbers.parseInt(in, pos, pos += 2);
                     break;
                 case TimestampFormatCompiler.OP_HOUR_24_GREEDY:
@@ -584,11 +584,11 @@ public class GenericTimestampFormat extends AbstractDateFormat {
 
                 // DAY
                 case TimestampFormatCompiler.OP_DAY_ONE_DIGIT:
-                    TimestampFormatUtils.assertRemaining(pos, hi);
+                    MicrosFormatUtils.assertRemaining(pos, hi);
                     day = Numbers.parseInt(in, pos, ++pos);
                     break;
                 case TimestampFormatCompiler.OP_DAY_TWO_DIGITS:
-                    TimestampFormatUtils.assertRemaining(pos + 1, hi);
+                    MicrosFormatUtils.assertRemaining(pos + 1, hi);
                     day = Numbers.parseInt(in, pos, pos += 2);
                     break;
                 case TimestampFormatCompiler.OP_DAY_GREEDY:
@@ -609,11 +609,11 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     pos += Numbers.decodeHighInt(l);
                     break;
                 case TimestampFormatCompiler.OP_ISO_WEEK_OF_YEAR:
-                    TimestampFormatUtils.assertRemaining(pos + 1, hi);
+                    MicrosFormatUtils.assertRemaining(pos + 1, hi);
                     week = Numbers.parseInt(in, pos, pos += 2);
                     break;
                 case TimestampFormatCompiler.OP_DAY_OF_WEEK:
-                    TimestampFormatUtils.assertRemaining(pos, hi);
+                    MicrosFormatUtils.assertRemaining(pos, hi);
                     // ignore weekday
                     Numbers.parseInt(in, pos, ++pos);
                     break;
@@ -621,11 +621,11 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                 // MONTH
 
                 case TimestampFormatCompiler.OP_MONTH_ONE_DIGIT:
-                    TimestampFormatUtils.assertRemaining(pos, hi);
+                    MicrosFormatUtils.assertRemaining(pos, hi);
                     month = Numbers.parseInt(in, pos, ++pos);
                     break;
                 case TimestampFormatCompiler.OP_MONTH_TWO_DIGITS:
-                    TimestampFormatUtils.assertRemaining(pos + 1, hi);
+                    MicrosFormatUtils.assertRemaining(pos + 1, hi);
                     month = Numbers.parseInt(in, pos, pos += 2);
                     break;
                 case TimestampFormatCompiler.OP_MONTH_GREEDY:
@@ -644,29 +644,29 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                 // YEAR
 
                 case TimestampFormatCompiler.OP_YEAR_ONE_DIGIT:
-                    TimestampFormatUtils.assertRemaining(pos, hi);
+                    MicrosFormatUtils.assertRemaining(pos, hi);
                     year = Numbers.parseInt(in, pos, ++pos);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
-                    TimestampFormatUtils.assertRemaining(pos + 1, hi);
-                    year = TimestampFormatUtils.adjustYear(Numbers.parseInt(in, pos, pos += 2));
+                    MicrosFormatUtils.assertRemaining(pos + 1, hi);
+                    year = MicrosFormatUtils.adjustYear(Numbers.parseInt(in, pos, pos += 2));
                     break;
                 case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
-                    TimestampFormatUtils.assertRemaining(pos + 2, hi);
+                    MicrosFormatUtils.assertRemaining(pos + 2, hi);
                     year = Numbers.parseInt(in, pos, pos += 3);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
                 case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     if (pos < hi && in.charAt(pos) == '-') {
-                        TimestampFormatUtils.assertRemaining(pos + 4, hi);
+                        MicrosFormatUtils.assertRemaining(pos + 4, hi);
                         year = -Numbers.parseInt(in, pos + 1, pos += 5);
                     } else {
-                        TimestampFormatUtils.assertRemaining(pos + 3, hi);
+                        MicrosFormatUtils.assertRemaining(pos + 3, hi);
                         year = Numbers.parseInt(in, pos, pos += 4);
                     }
                     break;
                 case TimestampFormatCompiler.OP_YEAR_GREEDY:
-                    l = TimestampFormatUtils.parseYearGreedy(in, pos, hi);
+                    l = MicrosFormatUtils.parseYearGreedy(in, pos, hi);
                     year = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;
@@ -702,17 +702,17 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     String delimiter = delimiters.getQuick(-op - 1);
                     len = delimiter.length();
                     if (len == 1) {
-                        TimestampFormatUtils.assertChar(delimiter.charAt(0), in, pos++, hi);
+                        MicrosFormatUtils.assertChar(delimiter.charAt(0), in, pos++, hi);
                     } else {
-                        pos = TimestampFormatUtils.assertString(delimiter, len, in, pos, hi);
+                        pos = MicrosFormatUtils.assertString(delimiter, len, in, pos, hi);
                     }
                     break;
             }
         }
 
-        TimestampFormatUtils.assertNoTail(pos, hi);
+        MicrosFormatUtils.assertNoTail(pos, hi);
 
-        return TimestampFormatUtils.compute(
+        return MicrosFormatUtils.compute(
                 locale,
                 era,
                 year,

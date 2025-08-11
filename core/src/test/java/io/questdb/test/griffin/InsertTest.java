@@ -46,7 +46,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
@@ -145,7 +145,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testGeoHash() throws Exception {
         final TimestampFunction timestampFunction = new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+            private long last = MicrosFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -199,7 +199,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertAllByDay() throws Exception {
         testBindVariableInsert(PartitionBy.DAY, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+            private long last = MicrosFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -211,7 +211,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertAllByDayUndefined() throws Exception {
         testBindVariableInsert(PartitionBy.DAY, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+            private long last = MicrosFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -223,7 +223,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertAllByDayUndefinedNoColumnSet() throws Exception {
         testBindVariableInsert(PartitionBy.DAY, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+            private long last = MicrosFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -235,7 +235,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertAllByDayUndefinedNoColumnSetWithNanoTs() throws Exception {
         testBindVariableInsert(PartitionBy.DAY, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+            private long last = MicrosFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -247,7 +247,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertAllByDayUndefinedWithNanoTs() throws Exception {
         testBindVariableInsert(PartitionBy.DAY, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+            private long last = MicrosFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -259,7 +259,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertAllByDayWithNanoTs() throws Exception {
         testBindVariableInsert(PartitionBy.DAY, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+            private long last = MicrosFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -271,7 +271,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertAllByMonth() throws Exception {
         testBindVariableInsert(PartitionBy.MONTH, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+            private long last = MicrosFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -283,7 +283,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertAllByMonthUndefined() throws Exception {
         testBindVariableInsert(PartitionBy.MONTH, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+            private long last = MicrosFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -295,7 +295,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertAllByMonthUndefinedNoColumnSet() throws Exception {
         testBindVariableInsert(PartitionBy.MONTH, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+            private long last = MicrosFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -307,7 +307,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertAllByMonthUndefinedNoColumnSetWithNanoTs() throws Exception {
         testBindVariableInsert(PartitionBy.MONTH, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+            private long last = MicrosFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -319,7 +319,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertAllByMonthUndefinedWithNanoTs() throws Exception {
         testBindVariableInsert(PartitionBy.MONTH, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+            private long last = MicrosFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -331,7 +331,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertAllByMonthWithNanoTs() throws Exception {
         testBindVariableInsert(PartitionBy.MONTH, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+            private long last = MicrosFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -373,7 +373,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertAllByWeek() throws Exception {
         testBindVariableInsert(PartitionBy.WEEK, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+            private long last = MicrosFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -385,7 +385,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertAllByWeekUndefined() throws Exception {
         testBindVariableInsert(PartitionBy.WEEK, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+            private long last = MicrosFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -397,7 +397,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertAllByWeekUndefinedNoColumnSet() throws Exception {
         testBindVariableInsert(PartitionBy.WEEK, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+            private long last = MicrosFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -409,7 +409,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertAllByYear() throws Exception {
         testBindVariableInsert(PartitionBy.YEAR, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+            private long last = MicrosFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {
@@ -421,7 +421,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertAllByYearUndefined() throws Exception {
         testBindVariableInsert(PartitionBy.YEAR, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+            private long last = MicrosFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
             @Override
             public long getTimestamp() {

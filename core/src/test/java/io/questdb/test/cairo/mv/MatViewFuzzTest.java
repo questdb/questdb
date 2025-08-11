@@ -37,7 +37,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -254,7 +254,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final int mins = 1 + rnd.nextInt(300);
         final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m " +
                 "align to calendar time zone 'Europe/Berlin'";
-        long start = TimestampFormatUtils.parseUTCTimestamp("2020-10-23T20:30:00.000000Z");
+        long start = MicrosFormatUtils.parseUTCTimestamp("2020-10-23T20:30:00.000000Z");
         testMvFuzz(rnd, tableName, start, mvName, viewSql);
     }
 
@@ -268,7 +268,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final int mins = 1 + rnd.nextInt(300);
         final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m " +
                 "align to calendar time zone 'Europe/Berlin'";
-        long start = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T00:59:00.000000Z");
+        long start = MicrosFormatUtils.parseUTCTimestamp("2021-03-28T00:59:00.000000Z");
         testMvFuzz(rnd, tableName, start, mvName, viewSql);
     }
 
@@ -282,7 +282,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final int mins = 1 + rnd.nextInt(300);
         final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m " +
                 "align to calendar time zone 'Europe/Berlin' with offset '00:15'";
-        long start = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T00:59:00.000000Z");
+        long start = MicrosFormatUtils.parseUTCTimestamp("2021-03-28T00:59:00.000000Z");
         testMvFuzz(rnd, tableName, start, mvName, viewSql);
     }
 
@@ -548,7 +548,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
     private static void createTimerMatView(String viewSql, String mvName, long start, int interval, char intervalUnit, boolean deferred) throws SqlException {
         sink.clear();
-        TimestampFormatUtils.appendDateTimeUSec(sink, start);
+        MicrosFormatUtils.appendDateTimeUSec(sink, start);
         execute("create materialized view " + mvName + " refresh every " + interval + intervalUnit + " " + (deferred ? "deferred" : "") + " start '" + sink + "' as (" + viewSql + ") partition by DAY");
     }
 

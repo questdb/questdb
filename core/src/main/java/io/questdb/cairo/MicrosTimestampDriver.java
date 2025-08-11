@@ -44,8 +44,8 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosFormatFactory;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -61,7 +61,7 @@ import static io.questdb.cairo.PartitionBy.*;
 import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
-import static io.questdb.std.datetime.microtime.TimestampFormatUtils.*;
+import static io.questdb.std.datetime.microtime.MicrosFormatUtils.*;
 
 public class MicrosTimestampDriver implements TimestampDriver {
     public static final TimestampDriver INSTANCE = new MicrosTimestampDriver();
@@ -247,12 +247,12 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public void append(CharSink<?> sink, long timestamp) {
-        TimestampFormatUtils.appendDateTimeUSec(sink, timestamp);
+        MicrosFormatUtils.appendDateTimeUSec(sink, timestamp);
     }
 
     @Override
     public void appendPGWireText(CharSink<?> sink, long timestamp) {
-        TimestampFormatUtils.PG_TIMESTAMP_FORMAT.format(timestamp, EN_LOCALE, null, sink);
+        MicrosFormatUtils.PG_TIMESTAMP_FORMAT.format(timestamp, EN_LOCALE, null, sink);
     }
 
     @Override
@@ -287,7 +287,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public boolean convertToVar(long fixedAddr, CharSink<?> sink) {
         long value = Unsafe.getUnsafe().getLong(fixedAddr);
         if (value != Numbers.LONG_NULL) {
-            TimestampFormatUtils.appendDateTimeUSec(sink, value);
+            MicrosFormatUtils.appendDateTimeUSec(sink, value);
             return true;
         }
         return false;
@@ -936,7 +936,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long parseAnyFormat(CharSequence token, int start, int len) throws NumericException {
-        return TimestampFormatUtils.tryParse(token, start, len);
+        return MicrosFormatUtils.tryParse(token, start, len);
     }
 
     @Override

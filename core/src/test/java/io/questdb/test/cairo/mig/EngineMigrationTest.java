@@ -44,7 +44,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -1683,7 +1683,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
             TableWriter.Row r;
 
             // insert day 1
-            long t = TimestampFormatUtils.parseTimestamp("2014-09-10T01:00:00.000000Z");
+            long t = MicrosFormatUtils.parseTimestamp("2014-09-10T01:00:00.000000Z");
             for (int i = 0; i < 100; i++) {
                 r = w.newRow(t);
                 r.putStr(0, null);
@@ -1693,7 +1693,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
             }
 
             // day 2
-            t = TimestampFormatUtils.parseTimestamp("2014-09-11T01:00:00.000000Z");
+            t = MicrosFormatUtils.parseTimestamp("2014-09-11T01:00:00.000000Z");
             for (int i = 0; i < 100; i++) {
                 r = w.newRow(t);
                 r.putStr(0, null);
@@ -1703,7 +1703,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
             }
 
             // O3
-            t = TimestampFormatUtils.parseTimestamp("2014-09-10T01:00:00.000000Z");
+            t = MicrosFormatUtils.parseTimestamp("2014-09-10T01:00:00.000000Z");
             r = w.newRow(t);
             r.putStr(0, null);
             r.putBin(1, null);
