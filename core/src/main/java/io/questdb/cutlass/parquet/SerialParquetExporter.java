@@ -87,7 +87,6 @@ public class SerialParquetExporter implements Closeable {
     }
 
     public void process(SecurityContext securityContext) {
-        int copyExportRootLength = copyExportRoot.length();
         statusReporter.report(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, CopyExportRequestTask.STATUS_STARTED, null, Long.MIN_VALUE);
 
         final String tableName = task.getTableName();
@@ -166,7 +165,6 @@ public class SerialParquetExporter implements Closeable {
                                 .$();
                     }
                 } catch (CairoException e) {
-                    reader.close();
                     LOG.errorW().$("could not populate table reader [msg=").$(e.getFlyweightMessage()).$(']').$();
                     throw CopyExportException.instance(CopyExportRequestTask.PHASE_CONVERTING_PARTITIONS, e.getFlyweightMessage(), e.getErrno());
                 }

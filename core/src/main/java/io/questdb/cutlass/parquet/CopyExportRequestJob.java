@@ -115,6 +115,7 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
         this.writer = Misc.free(this.writer);
         this.sqlExecutionContext = Misc.free(sqlExecutionContext);
         this.path = Misc.free(path);
+        this.copyContext.clear();
     }
 
     // todo: improve outputs so that they make more sense for parquet export
@@ -177,9 +178,6 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
         if (cursor > -1) {
             task = requestQueue.get(cursor);
             try {
-                if (serialExporter == null) {
-                    this.serialExporter = new SerialParquetExporter(engine, path);
-                }
                 serialExporter.of(
                         task,
                         copyContext.getCircuitBreaker(),
@@ -204,7 +202,6 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                 }
                 updateStatus(CopyExportRequestTask.PHASE_NONE, CopyExportRequestTask.STATUS_FINISHED, null, Long.MIN_VALUE);
             } catch (CopyExportException e) {
-
                 updateStatus(
                         CopyExportRequestTask.PHASE_NONE,
                         e.isCancelled() ? CopyExportRequestTask.STATUS_CANCELLED : CopyExportRequestTask.STATUS_FAILED,

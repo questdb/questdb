@@ -113,56 +113,62 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             if (processingCursor > -1) {
                 final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
 
-                long copyID = copyContext.assignActiveExportId(executionContext.getSecurityContext());
+                try {
+                    long copyID = copyContext.assignActiveExportId(executionContext.getSecurityContext());
 
-                if (this.selectText != null) {
-                    // need to create a temp table which we will use for the export
-                    createTempTable(copyID, executionContext); //
+                    if (this.selectText != null) {
+                        // need to create a temp table which we will use for the export
+                        createTempTable(copyID, executionContext); //
+                        exportIdSink.clear();
+                        exportIdSink.put("copy.");
+                        Numbers.appendHex(exportIdSink, copyID, true);
+                        tableName = exportIdSink.toString();
+                    }
+
+                    assert tableName != null;
+
+                    // sanity check that the table exists.
+                    // TOCTOU - but we don't pass the table token, just fail early
+                    if (executionContext.getTableToken(tableName) == null) {
+                        throw SqlException.tableDoesNotExist(0, tableName);
+                    }
+
                     exportIdSink.clear();
-                    exportIdSink.put("copy.");
                     Numbers.appendHex(exportIdSink, copyID, true);
-                    tableName = exportIdSink.toString();
+                    record.setValue(exportIdSink);
+
+                    task.of(
+                            executionContext.getSecurityContext(),
+                            copyID,
+                            tableName,
+                            fileName,
+                            sizeLimit,
+                            compressionCodec,
+                            compressionLevel,
+                            rowGroupSize,
+                            dataPageSize,
+                            statisticsEnabled,
+                            parquetVersion,
+                            suspendEvent
+                    );
+
+
+                    cursor.toTop();
+                    return cursor;
+                } catch (Throwable ex) {
+                    copyContext.clear();
+                    throw ex;
+                } finally {
+                    circuitBreaker.reset();
+                    copyRequestPubSeq.done(processingCursor);
                 }
-
-                assert tableName != null;
-
-                // sanity check that the table exists.
-                // TOCTOU - but we don't pass the table token, just fail early
-                if (executionContext.getTableToken(tableName) == null) {
-                    throw SqlException.tableDoesNotExist(0, tableName);
-                }
-
-                exportIdSink.clear();
-                Numbers.appendHex(exportIdSink, copyID, true);
-                record.setValue(exportIdSink);
-
-                task.of(
-                        executionContext.getSecurityContext(),
-                        copyID,
-                        tableName,
-                        fileName,
-                        sizeLimit,
-                        compressionCodec,
-                        compressionLevel,
-                        rowGroupSize,
-                        dataPageSize,
-                        statisticsEnabled,
-                        parquetVersion,
-                        suspendEvent
-                );
-
-                circuitBreaker.reset();
-                copyRequestPubSeq.done(processingCursor);
-
-                cursor.toTop();
-                return cursor;
             } else {
-                throw SqlException.$(0, "Unable to process the export request. Another export request may be in progress.");
+                throw SqlException.$(0, "unable to process the export request - another export may be in progress");
             }
         } else {
             exportIdSink.clear();
             Numbers.appendHex(exportIdSink, activeCopyID, true);
-            throw SqlException.$(0, "another export request is in progress. ")
+            throw SqlException.$(0, "another export request is in progress ")
                     .put("[activeExportId=")
                     .put(exportIdSink)
                     .put(']');

@@ -129,6 +129,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -673,6 +674,33 @@ public final class TestUtils {
 
     public static void assertEventually(EventualCode assertion) throws Exception {
         assertEventually(assertion, 30);
+    }
+
+    public static void assertEventually(EventualCode assertion, Set<Class<?>> exceptionTypesToCatch) throws Exception {
+        exceptionTypesToCatch.add(AssertionError.class);
+        assertEventually(assertion, 30, exceptionTypesToCatch);
+    }
+
+    public static void assertEventually(EventualCode assertion, int timeoutSeconds, Set<Class<?>> exceptionTypesToCatch) throws Exception {
+        long maxSleepingTimeMillis = 1000;
+        long nextSleepingTimeMillis = 10;
+        long startTime = System.nanoTime();
+        long deadline = startTime + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        for (; ; ) {
+            try {
+                assertion.run();
+                return;
+            } catch (Exception error) {
+                if (!exceptionTypesToCatch.contains(error.getClass())) {
+                    throw error;
+                }
+                if (System.nanoTime() >= deadline) {
+                    throw error;
+                }
+            }
+            Os.sleep(nextSleepingTimeMillis);
+            nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
+        }
     }
 
     public static void assertEventually(EventualCode assertion, int timeoutSeconds) throws Exception {
