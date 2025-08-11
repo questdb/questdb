@@ -414,19 +414,6 @@ public class SqlOptimiser implements Mutable {
         translatingModel.addBottomUpColumn(column);
     }
 
-    private void addColumnsToParentModelWhileCopy(QueryModel parent, QueryModel child) {
-        final ObjList<CharSequence> aliases = child.getAliasToColumnMap().keys();
-        for (int i = 0, n = aliases.size(); i < n; i++) {
-            final CharSequence alias = aliases.getQuick(i);
-            QueryColumn qc = child.getAliasToColumnMap().get(alias);
-            if (qc != null) {
-                QueryColumn newQc = queryColumnPool.next();
-                newQc.of(alias, qc.getAst());
-                parent.getBottomUpColumns().add(newQc);
-            }
-        }
-    }
-
     private QueryColumn addCursorFunctionAsCrossJoin(
             ExpressionNode node,
             @Nullable CharSequence alias,
