@@ -40,7 +40,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf16Sink;
@@ -58,7 +58,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private static final int DEFAULT_BUFFER_SIZE = 4 * 1024 * 1024;
     private static final int INITIAL_LOG_FILE_LIST_SIZE = 1024;
     private static final int INITIAL_LOG_FILE_NAME_SINK_SIZE = 64 * 1024;
-    private final Clock clock;
+    private final MicrosecondClock clock;
     private final FilesFacade ff;
     private final int level;
     private final TemplateParser locationParser = new TemplateParser();
@@ -105,7 +105,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     public LogRollingFileWriter(
             FilesFacade ff,
-            Clock clock,
+            MicrosecondClock clock,
             RingQueue<LogRecordUtf8Sink> ring,
             SCSequence subSeq,
             int level

@@ -284,7 +284,7 @@ public final class TestUtils {
                     throw new AssertionError(String.format(
                             "Row %d column %s[%s] %s. Expected %s but found %s",
                             rowIndex, metadataActual.getColumnName(timestampIndex), timestampType,
-                            "timestamp mismatch", driver.toString(tsL), driver.toUSecString(tsR)
+                            "timestamp mismatch", driver.toMSecString(tsL), driver.toUSecString(tsR)
                     ));
                 }
 
@@ -2043,7 +2043,7 @@ public final class TestUtils {
                     case ColumnType.TIMESTAMP:
                         TimestampDriver driver = ColumnType.getTimestampDriver(columnType);
                         if (rr.getTimestamp(i) != lr.getTimestamp(i)) {
-                            Assert.assertEquals(driver.toString(rr.getTimestamp(i)), driver.toString(lr.getTimestamp(i)));
+                            Assert.assertEquals(driver.toMSecString(rr.getTimestamp(i)), driver.toMSecString(lr.getTimestamp(i)));
                         }
                         break;
                     case ColumnType.DOUBLE:

@@ -187,10 +187,10 @@ public class PartitionByTest {
         long start = timestampDriver.fromDays(-366);
         for (int i = 0; i < 2 * 366; i++) {
             long timestamp = start + i * timestampDriver.fromDays(i);
-            String date = timestampDriver.toString(timestamp);
+            String date = timestampDriver.toMSecString(timestamp);
 
             long ceil = PartitionBy.getPartitionCeilMethod(timestampType, PartitionBy.WEEK).ceil(timestamp);
-            String ceilDate = timestampDriver.toString(ceil);
+            String ceilDate = timestampDriver.toMSecString(ceil);
             String message = "ceil(" + date + ")=" + ceilDate;
 
             Assert.assertEquals(message, 1, timestampDriver.getDayOfWeek(ceil));
@@ -310,10 +310,10 @@ public class PartitionByTest {
         long start = timestampDriver.fromDays(-366);
         for (int i = 0; i < 2 * 366; i++) {
             long timestamp = start + timestampDriver.fromDays(i);
-            String date = timestampDriver.toString(timestamp);
+            String date = timestampDriver.toMSecString(timestamp);
 
             long floor = PartitionBy.getPartitionFloorMethod(timestampType, PartitionBy.WEEK).floor(timestamp);
-            String floorDate = timestampDriver.toString(floor);
+            String floorDate = timestampDriver.toMSecString(floor);
             String message = "floor(" + date + ")=" + floorDate;
 
             Assert.assertEquals(message, 1, timestampDriver.getDayOfWeek(floor));

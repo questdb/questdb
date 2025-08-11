@@ -50,9 +50,25 @@ import static io.questdb.griffin.SqlUtil.castPGDates;
 
 public interface TimestampDriver {
 
+    long addDays(long timestamp, int days);
+
+    long addHours(long timestamp, int hours);
+
+    long addMicros(long timestamp, int micros);
+
+    long addMillis(long timestamp, int millis);
+
+    long addMinutes(long timestamp, int minutes);
+
     long addMonths(long timestamp, int months);
 
+    long addNanos(long timestamp, int nanos);
+
     long addPeriod(long lo, char type, int period);
+
+    long addSeconds(long timestamp, int seconds);
+
+    long addWeeks(long timestamp, int weeks);
 
     long addYears(long timestamp, int years);
 
@@ -308,6 +324,14 @@ public interface TimestampDriver {
      */
     int getMonthOfYear(long timestamp);
 
+    /**
+     * Gets the nanoseconds within the microsecond from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the nanoseconds within the millisecond (0-999), or Numbers.INT_NULL if timestamp is null
+     */
+    int getNanosOfMicros(long timestamp);
+
     PartitionAddMethod getPartitionAddMethod(int partitionBy);
 
     TimestampCeilMethod getPartitionCeilMethod(int partitionBy);
@@ -466,6 +490,8 @@ public interface TimestampDriver {
 
     long toHours(long timestamp);
 
+    String toMSecString(long timestamp);
+
     long toMicros(long timestamp);
 
     long toNanos(long timestamp);
@@ -473,8 +499,6 @@ public interface TimestampDriver {
     long toNanosScale();
 
     long toSeconds(long timestamp);
-
-    String toString(long timestamp);
 
     long toTimezone(long utcTimestamp, DateLocale locale, CharSequence timezone) throws NumericException;
 

@@ -27,13 +27,13 @@ package io.questdb.test.griffin.engine.functions.date;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class MicrosOfSecondFunctionFactoryTest extends AbstractCairoTest {
+public class NanosOfMicrosFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNull() throws Exception {
         assertQuery(
-                "micros\n" +
+                "nanos\n" +
                         "null\n",
-                "select micros(null)",
+                "select nanos(null)",
                 null,
                 null,
                 true,
@@ -44,9 +44,18 @@ public class MicrosOfSecondFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testPreEpoch() throws Exception {
         assertQuery(
-                "micros\n" +
-                        "998\n",
-                "select micros('1901-04-11T22:00:30.555998Z'::timestamp)",
+                "nanos\n" +
+                        "0\n",
+                "select nanos('1901-04-11T22:00:30.555998Z'::timestamp)",
+                null,
+                null,
+                true,
+                true
+        );
+        assertQuery(
+                "nanos\n" +
+                        "123\n",
+                "select nanos('1901-04-11T22:00:30.555998123Z'::timestamp_ns)",
                 null,
                 null,
                 true,
@@ -57,9 +66,18 @@ public class MicrosOfSecondFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVanilla() throws Exception {
         assertQuery(
-                "micros\n" +
-                        "555\n",
-                "select micros('1997-04-11T22:00:30.555555Z'::timestamp)",
+                "nanos\n" +
+                        "0\n",
+                "select nanos('1997-04-11T22:00:30.555555Z'::timestamp)",
+                null,
+                null,
+                true,
+                true
+        );
+        assertQuery(
+                "nanos\n" +
+                        "123\n",
+                "select nanos('1997-04-11T22:00:30.555555123Z'::timestamp_ns)",
                 null,
                 null,
                 true,

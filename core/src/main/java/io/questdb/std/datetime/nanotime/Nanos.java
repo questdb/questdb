@@ -40,8 +40,7 @@ import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_NANOS;
-import static io.questdb.std.datetime.microtime.Timestamps.SECOND_MILLIS;
-import static io.questdb.std.datetime.microtime.Timestamps.monthOfYearMicros;
+import static io.questdb.std.datetime.microtime.Timestamps.*;
 
 public final class Nanos {
 
@@ -635,9 +634,9 @@ public final class Nanos {
 
     public static int getMicrosOfMilli(long nanos) {
         if (nanos > -1) {
-            return (int) (nanos % MILLI_NANOS);
+            return (int) ((nanos / MICRO_NANOS) % MILLI_MICROS);
         } else {
-            return (int) (MILLI_NANOS - 1 + ((nanos + 1) % MILLI_NANOS));
+            return (int) (MILLI_MICROS - 1 + (int) (((nanos + 1) / MICRO_NANOS) % MILLI_MICROS));
         }
     }
 
@@ -729,11 +728,11 @@ public final class Nanos {
         return Math.abs(nanosA - nanosB);
     }
 
-    public static int getNanosOfMilli(long nanos) {
+    public static int getNanosOfMicros(long nanos) {
         if (nanos > -1) {
-            return (int) (nanos % MILLI_NANOS);
+            return (int) (nanos % MICRO_NANOS);
         } else {
-            return (int) (MILLI_NANOS - 1 + ((nanos + 1) % MILLI_NANOS));
+            return (int) (MICRO_NANOS - 1 + ((nanos + 1) % MICRO_NANOS));
         }
     }
 

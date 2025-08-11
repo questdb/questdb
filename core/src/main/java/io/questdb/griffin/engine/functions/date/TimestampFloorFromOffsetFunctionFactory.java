@@ -345,7 +345,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             sink.val(unit).val("',");
             sink.val(tsFunc).val(',');
             if (from != 0) {
-                sink.val('\'').val(timestampDriver.toString(from)).val("',");
+                sink.val('\'').val(timestampDriver.toMSecString(from)).val("',");
             } else {
                 sink.val("null,");
             }
@@ -415,7 +415,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             sink.val(unit).val("',");
             sink.val(tsFunc).val(',');
             if (from != 0) {
-                sink.val('\'').val(timestampDriver.toString(from)).val("',");
+                sink.val('\'').val(timestampDriver.toMSecString(from)).val("',");
             } else {
                 sink.val("null,");
             }
@@ -485,7 +485,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             sink.val(unit).val("',");
             sink.val(tsFunc).val(',');
             if (from != 0) {
-                sink.val('\'').val(timestampDriver.toString(from)).val("',");
+                sink.val('\'').val(timestampDriver.toMSecString(from)).val("',");
             } else {
                 sink.val("null,");
             }
@@ -613,7 +613,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             sink.val(unit).val("',");
             sink.val(tsFunc).val(',');
             if (from != 0) {
-                sink.val('\'').val(timestampDriver.toString(from)).val("',");
+                sink.val('\'').val(timestampDriver.toMSecString(from)).val("',");
             } else {
                 sink.val("null,");
             }
@@ -717,7 +717,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             sink.val(unit).val("',");
             sink.val(tsFunc).val(',');
             if (from != 0) {
-                sink.val('\'').val(timestampDriver.toString(from)).val("',");
+                sink.val('\'').val(timestampDriver.toMSecString(from)).val("',");
             } else {
                 sink.val("null,");
             }
@@ -812,7 +812,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             sink.val(unit).val("',");
             sink.val(tsFunc).val(',');
             if (from != 0) {
-                sink.val('\'').val(timestampDriver.toString(from)).val("',");
+                sink.val('\'').val(timestampDriver.toMSecString(from)).val("',");
             } else {
                 sink.val("null,");
             }
@@ -903,7 +903,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             sink.val(unit).val("',");
             sink.val(tsFunc).val(',');
             if (from != 0) {
-                sink.val('\'').val(timestampDriver.toString(from)).val("',");
+                sink.val('\'').val(timestampDriver.toMSecString(from)).val("',");
             } else {
                 sink.val("null,");
             }
@@ -1010,7 +1010,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             sink.val(unit).val("',");
             sink.val(tsFunc).val(',');
             if (from != 0) {
-                sink.val('\'').val(timestampDriver.toString(from)).val("',");
+                sink.val('\'').val(timestampDriver.toMSecString(from)).val("',");
             } else {
                 sink.val("null,");
             }

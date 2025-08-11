@@ -86,7 +86,7 @@ public class Interval implements Mutable {
             if (intervalType == ColumnType.INTERVAL_RAW) {
                 sink.put(lo);
             } else {
-                sink.put(IntervalUtils.getTimestampDriverByIntervalType(intervalType).toString(lo));
+                sink.put(IntervalUtils.getTimestampDriverByIntervalType(intervalType).toMSecString(lo));
             }
             sink.putAscii('\'');
         } else {
@@ -98,7 +98,7 @@ public class Interval implements Mutable {
             if (intervalType == ColumnType.INTERVAL_RAW) {
                 sink.put(hi);
             } else {
-                sink.put(IntervalUtils.getTimestampDriverByIntervalType(intervalType).toString(hi));
+                sink.put(IntervalUtils.getTimestampDriverByIntervalType(intervalType).toMSecString(hi));
             }
             sink.putAscii('\'');
         } else {

@@ -1148,7 +1148,7 @@ public class O3Test extends AbstractO3Test {
 
                     TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
                     long maxTimestamp = driver.parseFloorLiteral("2022-02-24") + driver.fromMicros(records * 1000L);
-                    CharSequence o3Ts = driver.toString(maxTimestamp - driver.fromMicros(2000));
+                    CharSequence o3Ts = driver.toMSecString(maxTimestamp - driver.fromMicros(2000));
                     engine.execute("insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')", sqlExecutionContext);
 
                     // Check that there was an attempt to write a file bigger than 2GB

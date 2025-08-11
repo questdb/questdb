@@ -76,6 +76,16 @@ import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix1;
 public class O3FailureTest extends AbstractO3Test {
 
     private final static AtomicInteger counter = new AtomicInteger(0);
+    private static final FilesFacade ffOpenIndexFailure = new TestFilesFacadeImpl() {
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "sym.v") && Utf8s.containsAscii(name, "1970-01-02") && counter.decrementAndGet() == 0) {
+                return -1;
+            }
+            return super.openRW(name, opts);
+        }
+    };
+    private final static AtomicBoolean fixFailure = new AtomicBoolean(true);
     private static final FilesFacade ffMapRW = new TestFilesFacadeImpl() {
         @Override
         public boolean close(long fd) {
@@ -102,16 +112,6 @@ public class O3FailureTest extends AbstractO3Test {
                 this.fd = fd;
             }
             return fd;
-        }
-    };
-    private final static AtomicBoolean fixFailure = new AtomicBoolean(true);
-    private static final FilesFacade ffOpenIndexFailure = new TestFilesFacadeImpl() {
-        @Override
-        public long openRW(LPSZ name, int opts) {
-            if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "sym.v") && Utf8s.containsAscii(name, "1970-01-02") && counter.decrementAndGet() == 0) {
-                return -1;
-            }
-            return super.openRW(name, opts);
         }
     };
     private static final FilesFacade ffMkDirFailure = new TestFilesFacadeImpl() {
@@ -664,7 +664,7 @@ public class O3FailureTest extends AbstractO3Test {
                     );
 
                     long maxTimestamp = MICRO_DRIVER.parseFloorLiteral("2022-02-24") + records * 1000L;
-                    CharSequence o3Ts = MICRO_DRIVER.toString(maxTimestamp - 2000);
+                    CharSequence o3Ts = MICRO_DRIVER.toMSecString(maxTimestamp - 2000);
 
                     try {
                         engine.execute("insert into " + tableName + " VALUES(-1, '" + o3Ts + "')", sqlExecutionContext);
@@ -686,7 +686,7 @@ public class O3FailureTest extends AbstractO3Test {
                     );
 
                     // Insert ok after failure
-                    o3Ts = MICRO_DRIVER.toString(maxTimestamp - 3000);
+                    o3Ts = MICRO_DRIVER.toMSecString(maxTimestamp - 3000);
                     engine.execute("insert into " + tableName + " VALUES(-1, '" + o3Ts + "')", sqlExecutionContext);
                     TestUtils.assertSql(
                             compiler,
@@ -1021,7 +1021,7 @@ public class O3FailureTest extends AbstractO3Test {
                     );
 
                     long maxTimestamp = MICRO_DRIVER.parseFloorLiteral("2022-02-24") + records * 1000L;
-                    CharSequence o3Ts = MICRO_DRIVER.toString(maxTimestamp - 2000);
+                    CharSequence o3Ts = MICRO_DRIVER.toMSecString(maxTimestamp - 2000);
 
                     try {
                         engine.execute("insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')", sqlExecutionContext);
@@ -1043,7 +1043,7 @@ public class O3FailureTest extends AbstractO3Test {
                     );
 
                     // Insert ok after failure
-                    o3Ts = MICRO_DRIVER.toString(maxTimestamp - 3000);
+                    o3Ts = MICRO_DRIVER.toMSecString(maxTimestamp - 3000);
                     engine.execute("insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')", sqlExecutionContext);
                     TestUtils.assertSql(
                             compiler,

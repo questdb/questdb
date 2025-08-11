@@ -65,20 +65,6 @@ import static io.questdb.std.datetime.microtime.TimestampFormatUtils.*;
 
 public class MicrosTimestampDriver implements TimestampDriver {
     public static final TimestampDriver INSTANCE = new MicrosTimestampDriver();
-    private static final PartitionAddMethod ADD_DD = Timestamps::addDays;
-    private static final PartitionAddMethod ADD_HH = Timestamps::addHours;
-    private static final PartitionAddMethod ADD_MM = Timestamps::addMonths;
-    private static final PartitionAddMethod ADD_WW = Timestamps::addWeeks;
-    private static final PartitionAddMethod ADD_YYYY = Timestamps::addYears;
-    private static final TimestampCeilMethod CEIL_DD = Timestamps::ceilDD;
-    private static final TimestampCeilMethod CEIL_HH = Timestamps::ceilHH;
-    private static final TimestampCeilMethod CEIL_MI = Timestamps::ceilMI;
-    private static final TimestampCeilMethod CEIL_MM = Timestamps::ceilMM;
-    private static final TimestampCeilMethod CEIL_MR = Timestamps::ceilMR;
-    private static final TimestampCeilMethod CEIL_MS = Timestamps::ceilMS;
-    private static final TimestampCeilMethod CEIL_SS = Timestamps::ceilSS;
-    private static final TimestampCeilMethod CEIL_WW = Timestamps::ceilWW;
-    private static final TimestampCeilMethod CEIL_YYYY = Timestamps::ceilYYYY;
     private static final DateFormat DEFAULT_FORMAT = new DateFormat() {
         @Override
         public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
@@ -101,46 +87,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
         }
     };
 
-    private static final TimestampFloorMethod FLOOR_CENTURY = Timestamps::floorCentury;
-    private static final TimestampFloorMethod FLOOR_DD = Timestamps::floorDD;
-    private static final TimestampFloorWithOffsetMethod FLOOR_DD_WITH_OFFSET = Timestamps::floorDD;
-    private static final TimestampFloorWithStrideMethod FLOOR_DD_WITH_STRIDE = Timestamps::floorDD;
-    private static final TimestampFloorMethod FLOOR_DECADE = Timestamps::floorDecade;
-    private static final TimestampFloorMethod FLOOR_DOW = Timestamps::floorDOW;
-    private static final TimestampFloorMethod FLOOR_HH = Timestamps::floorHH;
-    private static final TimestampFloorWithOffsetMethod FLOOR_HH_WITH_OFFSET = Timestamps::floorHH;
-    private static final TimestampFloorWithStrideMethod FLOOR_HH_WITH_STRIDE = Timestamps::floorHH;
-    private static final TimestampFloorMethod FLOOR_MC = Timestamps::floorMC;
-    private static final TimestampFloorWithOffsetMethod FLOOR_MC_WITH_OFFSET = Timestamps::floorMC;
-    private static final TimestampFloorWithStrideMethod FLOOR_MC_WITH_STRIDE = Timestamps::floorMC;
-    private static final TimestampFloorMethod FLOOR_MI = Timestamps::floorMI;
-    private static final TimestampFloorMethod FLOOR_MILLENNIUM = Timestamps::floorMillennium;
-    private static final TimestampFloorWithOffsetMethod FLOOR_MI_WITH_OFFSET = Timestamps::floorMI;
-    private static final TimestampFloorWithStrideMethod FLOOR_MI_WITH_STRIDE = Timestamps::floorMI;
-    private static final TimestampFloorMethod FLOOR_MM = Timestamps::floorMM;
-    private static final TimestampFloorWithOffsetMethod FLOOR_MM_WITH_OFFSET = Timestamps::floorMM;
-    private static final TimestampFloorWithStrideMethod FLOOR_MM_WITH_STRIDE = Timestamps::floorMM;
-    private static final TimestampFloorMethod FLOOR_MS = Timestamps::floorMS;
-    private static final TimestampFloorWithOffsetMethod FLOOR_MS_WITH_OFFSET = Timestamps::floorMS;
-    private static final TimestampFloorWithStrideMethod FLOOR_MS_WITH_STRIDE = Timestamps::floorMS;
-    private static final TimestampFloorMethod FLOOR_NS = Timestamps::floorNS;
-    private static final TimestampFloorWithOffsetMethod FLOOR_NS_WITH_OFFSET = Timestamps::floorNS;
-    private static final TimestampFloorWithStrideMethod FLOOR_NS_WITH_STRIDE = Timestamps::floorNS;
-    private static final TimestampFloorMethod FLOOR_QUARTER = Timestamps::floorQuarter;
-    private static final TimestampFloorMethod FLOOR_SS = Timestamps::floorSS;
-    private static final TimestampFloorWithOffsetMethod FLOOR_SS_WITH_OFFSET = Timestamps::floorSS;
-    private static final TimestampFloorWithStrideMethod FLOOR_SS_WITH_STRIDE = Timestamps::floorSS;
-    private static final TimestampFloorMethod FLOOR_WW = Timestamps::floorWW;
-    private static final TimestampFloorWithOffsetMethod FLOOR_WW_WITH_OFFSET = Timestamps::floorWW;
-    private static final TimestampFloorWithStrideMethod FLOOR_WW_WITH_STRIDE = Timestamps::floorWW;
-    private static final TimestampFloorMethod FLOOR_YYYY = Timestamps::floorYYYY;
-    private static final TimestampFloorWithOffsetMethod FLOOR_YYYY_WITH_OFFSET = Timestamps::floorYYYY;
-    private static final TimestampFloorWithStrideMethod FLOOR_YYYY_WITH_STRIDE = Timestamps::floorYYYY;
-    private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(FLOOR_DD, DAY_FORMAT);
-    private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(FLOOR_HH, HOUR_FORMAT);
-    private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(FLOOR_MM, MONTH_FORMAT);
+    private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(Timestamps::floorDD, DAY_FORMAT);
+    private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(Timestamps::floorHH, HOUR_FORMAT);
+    private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(Timestamps::floorMM, MONTH_FORMAT);
     private static final DateFormat PARTITION_WEEK_FORMAT = new IsoWeekPartitionFormat();
-    private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(FLOOR_YYYY, YEAR_FORMAT);
+    private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(Timestamps::floorYYYY, YEAR_FORMAT);
     private Clock clock = MicrosecondClockImpl.INSTANCE;
 
     private MicrosTimestampDriver() {
@@ -240,13 +191,53 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long addDays(long timestamp, int days) {
+        return Timestamps.addDays(timestamp, days);
+    }
+
+    @Override
+    public long addHours(long timestamp, int hours) {
+        return Timestamps.addHours(timestamp, hours);
+    }
+
+    @Override
+    public long addMicros(long timestamp, int micros) {
+        return Timestamps.addMicros(timestamp, micros);
+    }
+
+    @Override
+    public long addMillis(long timestamp, int millis) {
+        return Timestamps.addMillis(timestamp, millis);
+    }
+
+    @Override
+    public long addMinutes(long timestamp, int minutes) {
+        return Timestamps.addMinutes(timestamp, minutes);
+    }
+
+    @Override
     public long addMonths(long timestamp, int months) {
         return Timestamps.addMonths(timestamp, months);
     }
 
     @Override
+    public long addNanos(long timestamp, int nanos) {
+        return Timestamps.addNanos(timestamp, nanos);
+    }
+
+    @Override
     public long addPeriod(long lo, char type, int period) {
         return Timestamps.addPeriod(lo, type, period);
+    }
+
+    @Override
+    public long addSeconds(long timestamp, int seconds) {
+        return Timestamps.addSeconds(timestamp, seconds);
+    }
+
+    @Override
+    public long addWeeks(long timestamp, int weeks) {
+        return Timestamps.addWeeks(timestamp, weeks);
     }
 
     @Override
@@ -589,18 +580,26 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public int getNanosOfMicros(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return 0;
+    }
+
+    @Override
     public PartitionAddMethod getPartitionAddMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
-                return ADD_DD;
+                return Timestamps::addDays;
             case MONTH:
-                return ADD_MM;
+                return Timestamps::addMonths;
             case YEAR:
-                return ADD_YYYY;
+                return Timestamps::addYears;
             case HOUR:
-                return ADD_HH;
+                return Timestamps::addHours;
             case WEEK:
-                return ADD_WW;
+                return Timestamps::addWeeks;
             default:
                 return null;
         }
@@ -610,15 +609,15 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public TimestampCeilMethod getPartitionCeilMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
-                return CEIL_DD;
+                return Timestamps::ceilDD;
             case MONTH:
-                return CEIL_MM;
+                return Timestamps::ceilMM;
             case YEAR:
-                return CEIL_YYYY;
+                return Timestamps::ceilYYYY;
             case HOUR:
-                return CEIL_HH;
+                return Timestamps::ceilHH;
             case WEEK:
-                return CEIL_WW;
+                return Timestamps::ceilWW;
             default:
                 return null;
         }
@@ -648,15 +647,15 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public TimestampFloorMethod getPartitionFloorMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
-                return FLOOR_DD;
+                return Timestamps::floorDD;
             case WEEK:
-                return FLOOR_WW;
+                return Timestamps::floorWW;
             case MONTH:
-                return FLOOR_MM;
+                return Timestamps::floorMM;
             case YEAR:
-                return FLOOR_YYYY;
+                return Timestamps::floorYYYY;
             case HOUR:
-                return FLOOR_HH;
+                return Timestamps::floorHH;
             default:
                 return null;
         }
@@ -702,23 +701,23 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public TimestampCeilMethod getTimestampCeilMethod(char c) {
         switch (c) {
             case 'd':
-                return CEIL_DD;
+                return Timestamps::ceilDD;
             case 'M':
-                return CEIL_MM;
+                return Timestamps::ceilMM;
             case 'y':
-                return CEIL_YYYY;
+                return Timestamps::ceilYYYY;
             case 'w':
-                return CEIL_WW;
+                return Timestamps::ceilWW;
             case 'h':
-                return CEIL_HH;
+                return Timestamps::ceilHH;
             case 'm':
-                return CEIL_MI;
+                return Timestamps::ceilMI;
             case 's':
-                return CEIL_SS;
+                return Timestamps::ceilSS;
             case 'T':
-                return CEIL_MS;
+                return Timestamps::ceilMS;
             case 'U':
-                return CEIL_MR;
+                return Timestamps::ceilMR;
             default:
                 return null;
         }
@@ -766,33 +765,33 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public TimestampFloorMethod getTimestampFloorMethod(String c) {
         switch (c) {
             case "century":
-                return FLOOR_CENTURY;
+                return Timestamps::floorCentury;
             case "day":
-                return FLOOR_DD;
+                return Timestamps::floorDD;
             case "week":
-                return FLOOR_DOW;
+                return Timestamps::floorDOW;
             case "decade":
-                return FLOOR_DECADE;
+                return Timestamps::floorDecade;
             case "hour":
-                return FLOOR_HH;
+                return Timestamps::floorHH;
             case "microsecond":
-                return FLOOR_MC;
+                return Timestamps::floorMC;
             case "minute":
-                return FLOOR_MI;
+                return Timestamps::floorMI;
             case "month":
-                return FLOOR_MM;
+                return Timestamps::floorMM;
             case "millisecond":
-                return FLOOR_MS;
+                return Timestamps::floorMS;
             case "nanosecond":
-                return FLOOR_NS;
+                return Timestamps::floorNS;
             case "millennium":
-                return FLOOR_MILLENNIUM;
+                return Timestamps::floorMillennium;
             case "quarter":
-                return FLOOR_QUARTER;
+                return Timestamps::floorQuarter;
             case "second":
-                return FLOOR_SS;
+                return Timestamps::floorSS;
             case "year":
-                return FLOOR_YYYY;
+                return Timestamps::floorYYYY;
             default:
                 return null;
         }
@@ -802,25 +801,25 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public TimestampFloorWithOffsetMethod getTimestampFloorWithOffsetMethod(char c) {
         switch (c) {
             case 'M':
-                return FLOOR_MM_WITH_OFFSET;
+                return Timestamps::floorMM;
             case 'y':
-                return FLOOR_YYYY_WITH_OFFSET;
+                return Timestamps::floorYYYY;
             case 'w':
-                return FLOOR_WW_WITH_OFFSET;
+                return Timestamps::floorWW;
             case 'd':
-                return FLOOR_DD_WITH_OFFSET;
+                return Timestamps::floorDD;
             case 'h':
-                return FLOOR_HH_WITH_OFFSET;
+                return Timestamps::floorHH;
             case 'm':
-                return FLOOR_MI_WITH_OFFSET;
+                return Timestamps::floorMI;
             case 's':
-                return FLOOR_SS_WITH_OFFSET;
+                return Timestamps::floorSS;
             case 'T':
-                return FLOOR_MS_WITH_OFFSET;
+                return Timestamps::floorMS;
             case 'U':
-                return FLOOR_MC_WITH_OFFSET;
+                return Timestamps::floorMC;
             case 'n':
-                return FLOOR_NS_WITH_OFFSET;
+                return Timestamps::floorNS;
             default:
                 return null;
         }
@@ -830,25 +829,25 @@ public class MicrosTimestampDriver implements TimestampDriver {
     public TimestampFloorWithStrideMethod getTimestampFloorWithStrideMethod(String c) {
         switch (c) {
             case "day":
-                return FLOOR_DD_WITH_STRIDE;
+                return Timestamps::floorDD;
             case "hour":
-                return FLOOR_HH_WITH_STRIDE;
+                return Timestamps::floorHH;
             case "microsecond":
-                return FLOOR_MC_WITH_STRIDE;
+                return Timestamps::floorMC;
             case "minute":
-                return FLOOR_MI_WITH_STRIDE;
+                return Timestamps::floorMI;
             case "month":
-                return FLOOR_MM_WITH_STRIDE;
+                return Timestamps::floorMM;
             case "millisecond":
-                return FLOOR_MS_WITH_STRIDE;
+                return Timestamps::floorMS;
             case "nanosecond":
-                return FLOOR_NS_WITH_STRIDE;
+                return Timestamps::floorNS;
             case "second":
-                return FLOOR_SS_WITH_STRIDE;
+                return Timestamps::floorSS;
             case "week":
-                return FLOOR_WW_WITH_STRIDE;
+                return Timestamps::floorWW;
             case "year":
-                return FLOOR_YYYY_WITH_STRIDE;
+                return Timestamps::floorYYYY;
             default:
                 return null;
         }
@@ -1364,6 +1363,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public String toMSecString(long timestamp) {
+        return Timestamps.toString(timestamp);
+    }
+
+    @Override
     public long toMicros(long timestamp) {
         return timestamp;
     }
@@ -1381,11 +1385,6 @@ public class MicrosTimestampDriver implements TimestampDriver {
     @Override
     public long toSeconds(long timestamp) {
         return timestamp == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestamp / Timestamps.SECOND_MICROS;
-    }
-
-    @Override
-    public String toString(long timestamp) {
-        return Timestamps.toString(timestamp);
     }
 
     @Override

@@ -40,11 +40,9 @@ import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.Timestamps;
 
 public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory {
 
@@ -71,9 +69,9 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
             // validate timezone and parse timezone into rules, that provide the offset by timestamp
             final TimeZoneRules timeZoneRules;
             try {
-                timeZoneRules = Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tzFunc.getStrA(null));
-            } catch (NumericException e) {
-                throw SqlException.position(argPositions.getQuick(3)).put("invalid timezone [timezone=").put(tzFunc.getStrA(null)).put(']');
+                timeZoneRules = ColumnType.getTimestampDriver(timestampType).getTimezoneRules(DateLocaleFactory.EN_LOCALE, tzFunc.getStrA(null));
+            } catch (CairoException e) {
+                throw SqlException.position(argPositions.getQuick(3)).put(e.getFlyweightMessage());
             }
 
             final char period = periodFunc.getChar(null);
@@ -294,14 +292,12 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
             if (tz == null) {
                 throw CairoException.nonCritical().position(timezonePosition).put("NULL timezone");
             }
-
             final TimeZoneRules timeZoneRules;
             try {
-                timeZoneRules = Timestamps.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
-            } catch (NumericException e) {
-                throw CairoException.nonCritical().position(timezonePosition).put("invalid timezone [timezone=").put(tz).put(']');
+                timeZoneRules = timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
+            } catch (CairoException e) {
+                throw e.position(timezonePosition);
             }
-
             final TimestampDriver.TimestampAddMethod periodAddFunc = timestampDriver.getAddMethod(period);
             if (periodAddFunc == null) {
                 throw CairoException.nonCritical().position(periodPosition).put("invalid period [period=").put(period).put(']');

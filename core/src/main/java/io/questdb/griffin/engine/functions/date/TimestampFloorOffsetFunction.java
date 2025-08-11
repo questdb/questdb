@@ -68,7 +68,7 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
         sink.val(unit).val("',");
         sink.val(getArg());
         if (offset != 0) {
-            sink.val(",'").val(timestampDriver.toString(offset)).val('\'');
+            sink.val(",'").val(timestampDriver.toMSecString(offset)).val('\'');
         }
         sink.val(')');
     }
