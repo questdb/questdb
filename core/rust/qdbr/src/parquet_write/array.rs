@@ -44,7 +44,7 @@ use crate::allocator::AcVec;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, encode_group_levels, encode_primitive_def_levels, ExactSizedIter,
+    build_plain_page, encode_group_levels, encode_primitive_def_levels, ExactSizedIter, BinaryMaxMinStats,
 };
 
 const HEADER_SIZE_NULL: [u8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
@@ -457,12 +457,14 @@ pub fn array_to_raw_page(
 
     let definition_levels_byte_length = buffer.len();
 
+    let mut stats = BinaryMaxMinStats::new(&primitive_type);
+
     match encoding {
         Encoding::Plain => {
-            encode_raw_plain_streaming(aux, &raw_parser, &mut buffer);
+            encode_raw_plain_streaming(aux, &raw_parser, &mut buffer, &mut stats);
         }
         Encoding::DeltaLengthByteArray => {
-            encode_raw_delta_streaming(aux, &raw_parser, null_count, &mut buffer);
+            encode_raw_delta_streaming(aux, &raw_parser, null_count, &mut buffer, &mut stats);
         }
         _ => {
             return Err(fmt_err!(
