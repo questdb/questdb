@@ -38,7 +38,6 @@ import java.util.Arrays;
 class DecimalKnuthDivider {
     private static final ThreadLocal<DecimalKnuthDivider> tl = new ThreadLocal<>(DecimalKnuthDivider::new);
     private final int[] q = new int[8];
-    private final int[] r = new int[8];
     private final int[] u = new int[9];
     private final int[] v = new int[8];
     private int m = 0;
@@ -56,19 +55,21 @@ class DecimalKnuthDivider {
      */
     public void divide(boolean isNegative, RoundingMode roundingMode) {
         // If the dividend is smaller than the divisor, the result is zero.
-        if (n < m) {
-            System.arraycopy(u, 0, r, 0, n);
+        if (m < n) {
+            round(isNegative, roundingMode);
             return;
         }
 
         // If the divisor is a word, we can use the optimized algorithm.
-        if (m == 1) {
+        if (n == 1) {
             divideByWord();
+            round(isNegative, roundingMode);
+            return;
         }
 
         // Standard Knuth division algorithm, with inspiration from Devil's delight
         // implementation.
-        int s = normalize();
+        normalize();
 
         long divisor = v[n - 1] & 0xFFFFFFFFL;
 
@@ -136,7 +137,7 @@ class DecimalKnuthDivider {
                 //endregion Step D6
             }
         }
-        unnormalize(s);
+        round(isNegative, roundingMode);
     }
 
     /**
@@ -158,7 +159,7 @@ class DecimalKnuthDivider {
         u[2] = (int) lh;
         u[1] = (int) (ll >>> 32);
         u[0] = (int) ll;
-        n = countSignificantInts(u);
+        m = countSignificantInts(u);
     }
 
     /**
@@ -180,7 +181,7 @@ class DecimalKnuthDivider {
         v[2] = (int) lh;
         v[1] = (int) (ll >>> 32);
         v[0] = (int) ll;
-        m = countSignificantInts(v);
+        n = countSignificantInts(v);
     }
 
     /**
@@ -189,10 +190,10 @@ class DecimalKnuthDivider {
      * @param quotient the Decimal256 to store the result in
      */
     public void sink(Decimal256 quotient, int scale) {
-        long hh = (q[7] & 0xFFFFFFFFL) | ((long) q[6] << 32);
-        long hl = (q[5] & 0xFFFFFFFFL) | ((long) q[4] << 32);
-        long lh = (q[3] & 0xFFFFFFFFL) | ((long) q[2] << 32);
-        long ll = (q[1] & 0xFFFFFFFFL) | ((long) q[0] << 32);
+        long hh = (q[6] & 0xFFFFFFFFL) | ((long) q[7] << 32);
+        long hl = (q[4] & 0xFFFFFFFFL) | ((long) q[5] << 32);
+        long lh = (q[2] & 0xFFFFFFFFL) | ((long) q[3] << 32);
+        long ll = (q[0] & 0xFFFFFFFFL) | ((long) q[1] << 32);
         quotient.of(hh, hl, lh, ll, scale);
     }
 
@@ -234,58 +235,133 @@ class DecimalKnuthDivider {
         n = 0;
         // We don't need to clear u and v as they are bounded by m and n.
         Arrays.fill(q, 0);
-        Arrays.fill(r, 0);
+    }
+
+    /**
+     * Compare the remainder of the division with the half of the divisor.
+     *
+     * @return -1 if the remainder is less than the half of the divisor, 0 if they are equal, 1 otherwise.
+     */
+    private int compareDivisorHalfRemainder() {
+        int h = 0;
+        for (int i = n - 1; i >= 0; i--) {
+            int cmp = Integer.compareUnsigned(i >= m ? 0 : u[i], (h << 31) | (v[i] >>> 1));
+            if (cmp != 0) {
+                return cmp;
+            }
+            h = (v[i] & 0x1);
+        }
+        return h == 0 ? 0 : -1;
     }
 
     private void divideByWord() {
-        int divisor = v[0];
+        long divisor = (v[0] & 0xFFFFFFFFL);
         if (divisor == 0) {
             throw NumericException.instance().put("Division by zero");
+        }
+
+        int r;
+        long rLong = 0L;
+        for (int j = m - 1; j >= 0; j--) {
+            long qhat = rLong << 32 | (u[j] & 0xFFFFFFFFL);
+            int quo;
+            if (qhat >= 0L) {
+                quo = (int) (qhat / divisor);
+                r = (int) (qhat - (long) quo * divisor);
+            } else {
+                long tmp = divWord(qhat, divisor);
+                quo = (int) (tmp & 0xFFFFFFFFL);
+                r = (int) (tmp >>> 32);
+            }
+            rLong = (r & 0xFFFFFFFFL);
+            q[j] = quo;
+            u[j] -= (int) ((quo & 0xFFFFFFFFL) * (long) divisor);
         }
     }
 
     /**
      * Step D1: Normalize
      * Shift the dividend/divisor so that the most significant bit of the divisor is set to 1.
-     *
-     * @return the number of leading zeros in the divisor
      */
-    private int normalize() {
+    private void normalize() {
         int s = Integer.numberOfLeadingZeros(v[n - 1]);
         if (s == 0) {
-            return 0;
+            return;
         }
 
         // Shift the divisor
         for (int i = n - 1; i > 0; i--) {
-            v[i] = (v[i] << s) | (int) ((v[i - 1] & 0xFFFFFFFFL) >> (31 & -s));
+            v[i] = (v[i] << s) | (int) ((v[i - 1] & 0xFFFFFFFFL) >>> (31 & -s));
         }
         v[0] <<= s;
 
         // Shift the dividend
-        u[m] = (int) ((u[m - 1] & 0xFFFFFFFFL) >> (31 & -s));
+        u[m] = (int) ((u[m - 1] & 0xFFFFFFFFL) >>> (31 & -s));
         for (int i = m - 1; i > 0; i--) {
-            u[i] = (u[i] << s) | (int) ((u[i - 1] & 0xFFFFFFFFL) >> (31 & -s));
+            u[i] = (u[i] << s) | (int) ((u[i - 1] & 0xFFFFFFFFL) >>> (31 & -s));
         }
         u[0] <<= s;
-
-        return s;
     }
 
     /**
-     * Step D8: Unnormalize
-     * Build the reminder unnormalized.
+     * Round the quotient based on the unnormalized remainder/division.
      */
-    private void unnormalize(int s) {
-        if (s == 0) {
-            // No need to unnormalize, just copy the remainder.
-            System.arraycopy(u, 0, r, 0, n);
+    private void round(boolean isNegative, RoundingMode roundingMode) {
+        int mostSignificantDigit = -1;
+        for (int i = m - 1; i >= 0; i--) {
+            if (u[i] != 0) {
+                mostSignificantDigit = i;
+                break;
+            }
+        }
+        if (mostSignificantDigit == -1) {
             return;
         }
-        for (int i = 0; i < n - 1; i++) {
-            r[i] = (u[i] >>> s) | (u[i + 1] << (32 & -s));
+
+        boolean increment = false;
+
+        switch (roundingMode) {
+            case UNNECESSARY:
+                throw NumericException.instance().put("Rounding necessary");
+            case UP: // Away from zero
+                increment = true;
+                break;
+
+            case DOWN: // Towards zero
+                break;
+
+            case CEILING: // Towards +infinity
+                increment = !isNegative;
+                break;
+
+            case FLOOR: // Towards -infinity
+                increment = isNegative;
+                break;
+
+            default: // Some kind of half-way rounding
+                int cmp = compareDivisorHalfRemainder();
+                if (cmp > 0) {
+                    increment = true;
+                } else if (cmp == 0) {
+                    switch (roundingMode) {
+                        case HALF_UP:
+                            increment = true;
+                            break;
+                        case HALF_EVEN:
+                            increment = (q[0] & 0x1) == 1;
+                            break;
+                        default:
+                    }
+                }
         }
-        r[n - 1] = u[n - 1] >>> s;
+
+        if (increment) {
+            for (int i = 0; i < n; i++) {
+                if (++q[i] != 0) {
+                    break;
+                }
+            }
+        }
     }
 
     /**
@@ -294,5 +370,41 @@ class DecimalKnuthDivider {
      */
     private boolean unsignedLongCompare(long one, long two) {
         return (one + Long.MIN_VALUE) > (two + Long.MIN_VALUE);
+    }
+
+    /**
+     * Step D8: Unnormalize
+     * Build the reminder unnormalized.
+     */
+// Not needed yet, commenting it out to avoid having to allocate r
+//    private void unnormalize(int s) {
+//        if (s == 0) {
+//            // No need to unnormalize, just copy the remainder.
+//            System.arraycopy(u, 0, r, 0, n);
+//            return;
+//        }
+//        for (int i = 0; i < n - 1; i++) {
+//            r[i] = (u[i] >>> s) | (u[i + 1] << (32 & -s));
+//        }
+//        r[n - 1] = u[n - 1] >>> s;
+//    }
+    static long divWord(long n, long d) {
+        if (d == 1L) {
+            return n & 0xFFFFFFFFL;
+        } else {
+            long q = (n >>> 1) / (d >>> 1);
+
+            long r;
+            for (r = n - q * d; r < 0L; --q) {
+                r += d;
+            }
+
+            while (r >= d) {
+                r -= d;
+                ++q;
+            }
+
+            return r << 32 | q & 0xFFFFFFFFL;
+        }
     }
 }

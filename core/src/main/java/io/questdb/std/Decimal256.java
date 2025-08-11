@@ -29,6 +29,38 @@ public class Decimal256 implements Sinkable {
     public static final int MAX_SCALE = 77;
     public static final Decimal256 MAX_VALUE = new Decimal256(Long.MAX_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, 0);
     public static final Decimal256 MIN_VALUE = new Decimal256(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, 0);
+    private static final long[] POWERS_TEN_TABLE_HH = new long[]{ // from 10⁵⁸ to 10⁷⁶
+            1L, 15L,
+            159L, 1593L, 15930L, 159309L, 1593091L,
+            15930919L, 159309191L, 1593091911L, 15930919111L, 159309191113L,
+            1593091911132L, 15930919111324L, 159309191113245L, 1593091911132452L, 15930919111324522L,
+            159309191113245227L, 1593091911132452277L,
+    };
+    private static final long[] POWERS_TEN_TABLE_HL = new long[]{ // from 10³⁹ to 10⁷⁶
+            2L,
+            29L, 293L, 2938L, 29387L, 293873L,
+            2938735L, 29387358L, 293873587L, 2938735877L, 29387358770L,
+            293873587705L, 2938735877055L, 29387358770557L, 293873587705571L, 2938735877055718L,
+            29387358770557187L, 293873587705571876L, 2938735877055718769L, -7506129376861915533L, -1274317473780948864L,
+            5703569335900062977L, 1695461137871974930L, -1492132694989802312L, 3525417123811528497L, -1639316909303818259L,
+            2053574980671369030L, 2089005733004138687L, 2443313256331835254L, 5986388489608800929L, 4523652674959354447L,
+            8343038602174441244L, -8803334346803345639L, 4200376900514301694L, 5110280857723913709L, -4237423643889517749L,
+            -5480748291476074254L, 532749306367912313L,
+    };
+    private static final long[] POWERS_TEN_TABLE_LH = new long[]{ // from 10²⁰ to 10⁷⁶
+            5L, 54L, 542L, 5421L, 54210L,
+            542101L, 5421010L, 54210108L, 542101086L, 5421010862L,
+            54210108624L, 542101086242L, 5421010862427L, 54210108624275L, 542101086242752L,
+            5421010862427522L, 54210108624275221L, 542101086242752217L, 5421010862427522170L, -1130123596853433148L,
+            7145508105175220139L, -2331895243086005067L, -4872208357150499052L, 6618148649623664334L, -7605489798601563120L,
+            -2267921691177424736L, -4232472838064695744L, -5431240233227854204L, 1027829888850112811L, -8168445185208423502L,
+            -7897475557246028547L, -5187779277622078999L, 3462439444907864858L, -2269093698340454644L, -4244192909694994819L,
+            -5548440949530844953L, -144177274179794675L, -1441772741797946749L, 4029016655730084128L, 3396678409881738056L,
+            -2926704048601722663L, 7626447661401876602L, 2477500319180559562L, 6328259118096044006L, 7942358959831785217L,
+            5636613303479645706L, 1025900813667802212L, -8187735937031529496L, -8090383075477088496L, -7116854459932678496L,
+            2618431695511421504L, 7737572881404663424L, 3588752519208427776L, -1005962955334825472L, 8387114520361296896L,
+            -8362575164934789120L, 8607968719199866880L,
+    };
     private static final long[] POWERS_TEN_TABLE_LL = new long[]{ // from 10⁰ to 10⁷⁶
             1L, 10L, 100L, 1000L, 10000L,
             100000L, 1000000L, 10000000L, 100000000L, 1000000000L,
@@ -45,37 +77,35 @@ public class Decimal256 implements Sinkable {
             1152921504606846976L, -6917529027641081856L, 4611686018427387904L, -9223372036854775808L, 0L,
             0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L,
     };
-    private static final long[] POWERS_TEN_TABLE_LH = new long[]{ // from 10²⁰ to 10⁷⁶
-            5L, 54L, 542L, 5421L, 54210L,
-            542101L, 5421010L, 54210108L, 542101086L, 5421010862L,
-            54210108624L, 542101086242L, 5421010862427L, 54210108624275L, 542101086242752L,
-            5421010862427522L, 54210108624275221L, 542101086242752217L, 5421010862427522170L, -1130123596853433148L,
-            7145508105175220139L, -2331895243086005067L, -4872208357150499052L, 6618148649623664334L, -7605489798601563120L,
-            -2267921691177424736L, -4232472838064695744L, -5431240233227854204L, 1027829888850112811L, -8168445185208423502L,
-            -7897475557246028547L, -5187779277622078999L, 3462439444907864858L, -2269093698340454644L, -4244192909694994819L,
-            -5548440949530844953L, -144177274179794675L, -1441772741797946749L, 4029016655730084128L, 3396678409881738056L,
-            -2926704048601722663L, 7626447661401876602L, 2477500319180559562L, 6328259118096044006L, 7942358959831785217L,
-            5636613303479645706L, 1025900813667802212L, -8187735937031529496L, -8090383075477088496L, -7116854459932678496L,
-            2618431695511421504L, 7737572881404663424L, 3588752519208427776L, -1005962955334825472L, 8387114520361296896L,
-            -8362575164934789120L, 8607968719199866880L,
+    private static final long[] POWERS_TEN_TABLE_THRESHOLD_HH = new long[]{
+            9223372036854775807L, 922337203685477580L, 92233720368547758L, 9223372036854775L, 922337203685477L,
+            92233720368547L, 9223372036854L, 922337203685L, 92233720368L, 9223372036L,
+            922337203L, 92233720L, 9223372L, 922337L, 92233L,
+            9223L, 922L, 92L, 9L,
     };
-    private static final long[] POWERS_TEN_TABLE_HL = new long[]{ // from 10³⁸ to 10⁷⁶
-            2L,
-            29L, 293L, 2938L, 29387L, 293873L,
-            2938735L, 29387358L, 293873587L, 2938735877L, 29387358770L,
-            293873587705L, 2938735877055L, 29387358770557L, 293873587705571L, 2938735877055718L,
-            29387358770557187L, 293873587705571876L, 2938735877055718769L, -7506129376861915533L, -1274317473780948864L,
-            5703569335900062977L, 1695461137871974930L, -1492132694989802312L, 3525417123811528497L, -1639316909303818259L,
-            2053574980671369030L, 2089005733004138687L, 2443313256331835254L, 5986388489608800929L, 4523652674959354447L,
-            8343038602174441244L, -8803334346803345639L, 4200376900514301694L, 5110280857723913709L, -4237423643889517749L,
-            -5480748291476074254L, 532749306367912313L,
+    private static final long[] POWERS_TEN_TABLE_THRESHOLD_HL = new long[]{
+            -9223372036854775808L, -4611686018427387904L, 1383505805528216371L, -3550998234189088687L, -7733797452902729516L,
+            -4462728560032183275L, -4135621670745128651L, 8809809869780262942L, -8342391049876749514L, -2678913512358630113L,
+            -5801914573348728497L, 6798506172148947796L, 679850617214894779L, 3757333876463399801L, -5158289834466525505L,
+            6862868646037168095L, 6220310086716582294L, 4311379823413568552L, 4120486797083267178L, -1432625727662628444L,
+            1701411834604692317L, 170141183460469231L, 17014118346046923L, 1701411834604692L, 170141183460469L,
+            17014118346046L, 1701411834604L, 170141183460L, 17014118346L, 1701411834L,
+            170141183L, 17014118L, 1701411L, 170141L, 17014L,
+            1701L, 170L, 17L, 1L,
     };
-    private static final long[] POWERS_TEN_TABLE_HH = new long[]{ // from 10⁵⁷ to 10⁷⁶
-            1L, 15L,
-            159L, 1593L, 15930L, 159309L, 1593091L,
-            15930919L, 159309191L, 1593091911L, 15930919111L, 159309191113L,
-            1593091911132L, 15930919111324L, 159309191113245L, 1593091911132452L, 15930919111324522L,
-            159309191113245227L, 1593091911132452277L,
+    private static final long[] POWERS_TEN_TABLE_THRESHOLD_LH = new long[]{
+            -9223372036854775808L, 922337203685477580L, 3781582535110458081L, -1466516153859909354L, -146651615385990936L,
+            5519358060574266391L, 6085959028170292123L, -1236078504553925950L, 5410415371657472889L, 541041537165747288L,
+            -1790570253654380433L, -3868405840107348367L, -5920863806123600322L, 3097262434129550291L, 5843749465525820513L,
+            -1260299460818373111L, 7252667683401983335L, -6653430861143622313L, 8558028950740413576L, 4545151709815951680L,
+            4143863985723505491L, -5119636823540514936L, 3177385132387858829L, 5851761735351651367L, 4274524988277075459L,
+            -1417221908543247616L, -5675745412967190247L, 8655797495558056783L, 865579749555805678L, -7292139654528240079L,
+            8494158071401951800L, 6383439029253060664L, -3051004911816604257L, 3384248323560249897L, 2183099239726980151L,
+            7597007553456518661L, 2604375162716607027L, 260437516271660702L, -5507979470485699415L, 3138550867693340381L,
+            313855086769334038L, 31385508676933403L, 3138550867693340L, 313855086769334L, 31385508676933L,
+            3138550867693L, 313855086769L, 31385508676L, 3138550867L, 313855086L,
+            31385508L, 3138550L, 313855L, 31385L, 3138L,
+            313L, 31L, 3L,
     };
     private static final long[] POWERS_TEN_TABLE_THRESHOLD_LL = new long[]{
             -9223372036854775808L, -2767011611056432743L, 5257322061007222210L, -8697639830754053587L, -6403787205188270844L,
@@ -95,37 +125,6 @@ public class Decimal256 implements Sinkable {
             5789604L, 578960L, 57896L, 5789L, 578L,
             57L, 5L,
     };
-    private static final long[] POWERS_TEN_TABLE_THRESHOLD_LH = new long[]{
-            -9223372036854775808L, 922337203685477580L, 3781582535110458081L, -1466516153859909354L, -146651615385990936L,
-            5519358060574266391L, 6085959028170292123L, -1236078504553925950L, 5410415371657472889L, 541041537165747288L,
-            -1790570253654380433L, -3868405840107348367L, -5920863806123600322L, 3097262434129550291L, 5843749465525820513L,
-            -1260299460818373111L, 7252667683401983335L, -6653430861143622313L, 8558028950740413576L, 4545151709815951680L,
-            4143863985723505491L, -5119636823540514936L, 3177385132387858829L, 5851761735351651367L, 4274524988277075459L,
-            -1417221908543247616L, -5675745412967190247L, 8655797495558056783L, 865579749555805678L, -7292139654528240079L,
-            8494158071401951800L, 6383439029253060664L, -3051004911816604257L, 3384248323560249897L, 2183099239726980151L,
-            7597007553456518661L, 2604375162716607027L, 260437516271660702L, -5507979470485699415L, 3138550867693340381L,
-            313855086769334038L, 31385508676933403L, 3138550867693340L, 313855086769334L, 31385508676933L,
-            3138550867693L, 313855086769L, 31385508676L, 3138550867L, 313855086L,
-            31385508L, 3138550L, 313855L, 31385L, 3138L,
-            313L, 31L, 3L,
-    };
-    private static final long[] POWERS_TEN_TABLE_THRESHOLD_HL = new long[]{
-            -9223372036854775808L, -4611686018427387904L, 1383505805528216371L, -3550998234189088687L, -7733797452902729516L,
-            -4462728560032183275L, -4135621670745128651L, 8809809869780262942L, -8342391049876749514L, -2678913512358630113L,
-            -5801914573348728497L, 6798506172148947796L, 679850617214894779L, 3757333876463399801L, -5158289834466525505L,
-            6862868646037168095L, 6220310086716582294L, 4311379823413568552L, 4120486797083267178L, -1432625727662628444L,
-            1701411834604692317L, 170141183460469231L, 17014118346046923L, 1701411834604692L, 170141183460469L,
-            17014118346046L, 1701411834604L, 170141183460L, 17014118346L, 1701411834L,
-            170141183L, 17014118L, 1701411L, 170141L, 17014L,
-            1701L, 170L, 17L, 1L,
-    };
-    private static final long[] POWERS_TEN_TABLE_THRESHOLD_HH = new long[]{
-            9223372036854775807L, 922337203685477580L, 92233720368547758L, 9223372036854775L, 922337203685477L,
-            92233720368547L, 9223372036854L, 922337203685L, 92233720368L, 9223372036L,
-            922337203L, 92233720L, 9223372L, 922337L, 92233L,
-            9223L, 922L, 92L, 9L,
-    };
-
     private long hh; // Highest 64 bits (bits 192-255)
     private long hl;    // High 64 bits (bits 128-191)
     private long lh;     // Mid 64 bits (bits 64-127)
@@ -289,7 +288,12 @@ public class Decimal256 implements Sinkable {
         BigInteger unscaledValue = bd.unscaledValue();
         int scale = bd.scale();
 
-        validateScale(scale);
+        if (scale < 0) {
+            // We don't support negative scale, we must transform the value to match
+            // our format.
+            unscaledValue = unscaledValue.multiply(new BigInteger("10").pow(-scale));
+            scale = 0;
+        }
 
         // Check if the value fits in 256 bits
         if (unscaledValue.bitLength() > 255) {
@@ -303,6 +307,7 @@ public class Decimal256 implements Sinkable {
 
         // Fill the 256-bit value from the byte array
         result.setFromByteArray(bytes);
+        validateScale(scale);
 
         return result;
     }
@@ -355,365 +360,6 @@ public class Decimal256 implements Sinkable {
         }
 
         // TODO: Implement modulo
-    }
-
-    /**
-     * Multiply this (unsigned) by 10^n in place
-     */
-    private void multiplyByPowerOf10InPlace(int n) {
-        if (n <= 0 || isZero()) {
-            return;
-        }
-        if (n > 76) {
-            throw NumericException.instance().put("Overflow");
-        }
-
-        // For small powers, use lookup table
-        if (n < 18) {
-            long multiplier = POWERS_TEN_TABLE_LL[n];
-            // Special case: if high is 0, use simple 64-bit multiplication
-            if (hh == 0 && hl == 0 && lh == 0) {
-                // Check if result will overflow 64 bits
-                if (ll <= Long.MAX_VALUE / multiplier) {
-                    ll *= multiplier;
-                    return;
-                }
-            }
-        }
-
-        // For larger powers, break down into smaller chunks, first check the threshold to ensure that we won't overflow
-        // and then apply either a fast multiplyBy64 or multiplyBy128 depending on high/low.
-        // The bound checks for these tables already happens at the beginning of the method.
-        final long thresholdHH = n >= POWERS_TEN_TABLE_THRESHOLD_HH.length ? 0 : POWERS_TEN_TABLE_THRESHOLD_HH[n];
-        final long thresholdHL = n >= POWERS_TEN_TABLE_THRESHOLD_HL.length ? 0 : POWERS_TEN_TABLE_THRESHOLD_HL[n];
-        final long thresholdLH = n >= POWERS_TEN_TABLE_THRESHOLD_LH.length ? 0 : POWERS_TEN_TABLE_THRESHOLD_LH[n];
-        final long thresholdLL = POWERS_TEN_TABLE_THRESHOLD_LL[n];
-
-        if (compareTo(thresholdHH, thresholdHL, thresholdLH, thresholdLL) > 0) {
-            throw NumericException.instance().put("Overflow");
-        }
-
-        final long multiplierHH = n >= 57 ? POWERS_TEN_TABLE_HH[n - 57] : 0L;
-        final long multiplierHL = n >= 38 ? POWERS_TEN_TABLE_HL[n - 38] : 0L;
-        final long multiplierLH = n >= 20 ? POWERS_TEN_TABLE_LH[n - 20] : 0L;
-        final long multiplierLL = POWERS_TEN_TABLE_LL[n];
-
-        if (multiplierHH != 0L /* || multiplierHL < 0L */) { // multiplierHL always false, keep comment to ack
-            multiply256Unchecked(multiplierHH, multiplierHL, multiplierLH, multiplierLL);
-        } else if (multiplierHL != 0L /* || multiplierLH < 0L */) { // multiplierLH always false, keep comment to ack
-            multiply192Unchecked(multiplierHL, multiplierLH, multiplierLL);
-        } else if (multiplierLH != 0L || multiplierLL < 0L) {
-            multiply128Unchecked(multiplierLH, multiplierLL);
-        } else {
-            multiply64Unchecked(multiplierLL);
-        }
-    }
-
-    private void multiply256Unchecked(long hh, long hl, long lh, long ll) {
-        // Perform 256-bit × 256-bit multiplication
-        // Result is at most 512 bits, but we keep only the lower 256 bits
-
-        // Split this into eight 32-bit parts
-        long a7 = hh >>> 32;
-        long a6 = hh & 0xFFFFFFFFL;
-        long a5 = hl >>> 32;
-        long a4 = hl & 0xFFFFFFFFL;
-        long a3 = lh >>> 32;
-        long a2 = lh & 0xFFFFFFFFL;
-        long a1 = ll >>> 32;
-        long a0 = ll & 0xFFFFFFFFL;
-
-        long b7 = hh >> 32;
-        long b6 = hh & 0xFFFFFFFFL;
-        long b5 = hl >> 32;
-        long b4 = hl & 0xFFFFFFFFL;
-        long b3 = lh >> 32;
-        long b2 = lh & 0xFFFFFFFFL;
-        long b1 = ll >> 32;
-        long b0 = ll & 0xFFFFFFFFL;
-
-        // Compute all partial products
-        long p00 = a0 * b0;
-        long p01 = a0 * b1;
-        long p02 = a0 * b2;
-        long p03 = a0 * b3;
-        long p04 = a0 * b4;
-        long p05 = a0 * b5;
-        long p06 = a0 * b6;
-        long p07 = a0 * b7;
-        long p10 = a1 * b0;
-        long p11 = a1 * b1;
-        long p12 = a1 * b2;
-        long p13 = a1 * b3;
-        long p14 = a1 * b4;
-        long p15 = a1 * b5;
-        long p16 = a1 * b6;
-        long p20 = a2 * b0;
-        long p21 = a2 * b1;
-        long p22 = a2 * b2;
-        long p23 = a2 * b3;
-        long p24 = a2 * b4;
-        long p25 = a2 * b5;
-        long p30 = a3 * b0;
-        long p31 = a3 * b1;
-        long p32 = a3 * b2;
-        long p33 = a3 * b3;
-        long p34 = a3 * b4;
-        long p40 = a4 * b0;
-        long p41 = a4 * b1;
-        long p42 = a4 * b2;
-        long p43 = a4 * b3;
-        long p50 = a5 * b0;
-        long p51 = a5 * b1;
-        long p52 = a5 * b2;
-        long p60 = a6 * b0;
-        long p61 = a6 * b1;
-        long p70 = a7 * b0;
-
-        // Gather results into 256-bit result
-        long r0 = (p00 & 0xFFFFFFFFL);
-        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
-        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
-                (p02 & 0xFFFFFFFFL) + (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
-        long r3 = (r2 >>> 32) + (p02 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
-                (p03 & 0xFFFFFFFFL) + (p12 & 0xFFFFFFFFL) + (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
-        long r4 = (r3 >>> 32) + (p03 >>> 32) + (p12 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
-                (p04 & 0xFFFFFFFFL) + (p13 & 0xFFFFFFFFL) + (p22 & 0xFFFFFFFFL) + (p31 & 0xFFFFFFFFL) + (p40 & 0xFFFFFFFFL);
-        long r5 = (r4 >>> 32) + (p04 >>> 32) + (p13 >>> 32) + (p22 >>> 32) + (p31 >>> 32) + (p40 >>> 32) +
-                (p05 & 0xFFFFFFFFL) + (p14 & 0xFFFFFFFFL) + (p23 & 0xFFFFFFFFL) + (p32 & 0xFFFFFFFFL) + (p41 & 0xFFFFFFFFL) + (p50 & 0xFFFFFFFFL);
-        long r6 = (r5 >>> 32) + (p05 >>> 32) + (p14 >>> 32) + (p23 >>> 32) + (p32 >>> 32) + (p41 >>> 32) + (p50 >>> 32) +
-                (p06 & 0xFFFFFFFFL) + (p15 & 0xFFFFFFFFL) + (p24 & 0xFFFFFFFFL) + (p33 & 0xFFFFFFFFL) + (p42 & 0xFFFFFFFFL) + (p51 & 0xFFFFFFFFL) + (p60 & 0xFFFFFFFFL);
-        long r7 = (r6 >>> 32) + (p06 >>> 32) + (p15 >>> 32) + (p24 >>> 32) + (p33 >>> 32) + (p42 >>> 32) + (p51 >>> 32) + (p60 >>> 32) +
-                (p07 & 0xFFFFFFFFL) + (p16 & 0xFFFFFFFFL) + (p25 & 0xFFFFFFFFL) + (p34 & 0xFFFFFFFFL) + (p43 & 0xFFFFFFFFL) + (p52 & 0xFFFFFFFFL) + (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
-
-        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
-        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
-        this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
-        this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
-    }
-
-    private void multiply192Unchecked(long h, long m, long l) {
-        // Perform 256-bit × 192-bit multiplication
-        // Result is at most 448 bits, but we keep only the lower 256 bits
-
-        // Split this into eight 32-bit parts
-        long a7 = hh >>> 32;
-        long a6 = hh & 0xFFFFFFFFL;
-        long a5 = hl >>> 32;
-        long a4 = hl & 0xFFFFFFFFL;
-        long a3 = lh >>> 32;
-        long a2 = lh & 0xFFFFFFFFL;
-        long a1 = ll >>> 32;
-        long a0 = ll & 0xFFFFFFFFL;
-
-        long b5 = h >> 32;
-        long b4 = h & 0xFFFFFFFFL;
-        long b3 = m >> 32;
-        long b2 = m & 0xFFFFFFFFL;
-        long b1 = l >> 32;
-        long b0 = l & 0xFFFFFFFFL;
-
-        // Compute all partial products
-        long p00 = a0 * b0;
-        long p01 = a0 * b1;
-        long p02 = a0 * b2;
-        long p03 = a0 * b3;
-        long p04 = a0 * b4;
-        long p05 = a0 * b5;
-        long p10 = a1 * b0;
-        long p11 = a1 * b1;
-        long p12 = a1 * b2;
-        long p13 = a1 * b3;
-        long p14 = a1 * b4;
-        long p15 = a1 * b5;
-        long p20 = a2 * b0;
-        long p21 = a2 * b1;
-        long p22 = a2 * b2;
-        long p23 = a2 * b3;
-        long p24 = a2 * b4;
-        long p25 = a2 * b5;
-        long p30 = a3 * b0;
-        long p31 = a3 * b1;
-        long p32 = a3 * b2;
-        long p33 = a3 * b3;
-        long p34 = a3 * b4;
-        long p40 = a4 * b0;
-        long p41 = a4 * b1;
-        long p42 = a4 * b2;
-        long p43 = a4 * b3;
-        long p50 = a5 * b0;
-        long p51 = a5 * b1;
-        long p52 = a5 * b2;
-        long p60 = a6 * b0;
-        long p61 = a6 * b1;
-        long p70 = a7 * b0;
-
-        // Gather results into 256-bit result
-        long r0 = (p00 & 0xFFFFFFFFL);
-        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
-        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
-                (p02 & 0xFFFFFFFFL) + (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
-        long r3 = (r2 >>> 32) + (p02 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
-                (p03 & 0xFFFFFFFFL) + (p12 & 0xFFFFFFFFL) + (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
-        long r4 = (r3 >>> 32) + (p03 >>> 32) + (p12 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
-                (p04 & 0xFFFFFFFFL) + (p13 & 0xFFFFFFFFL) + (p22 & 0xFFFFFFFFL) + (p31 & 0xFFFFFFFFL) + (p40 & 0xFFFFFFFFL);
-        long r5 = (r4 >>> 32) + (p04 >>> 32) + (p13 >>> 32) + (p22 >>> 32) + (p31 >>> 32) + (p40 >>> 32) +
-                (p05 & 0xFFFFFFFFL) + (p14 & 0xFFFFFFFFL) + (p23 & 0xFFFFFFFFL) + (p32 & 0xFFFFFFFFL) + (p41 & 0xFFFFFFFFL) + (p50 & 0xFFFFFFFFL);
-        long r6 = (r5 >>> 32) + (p05 >>> 32) + (p14 >>> 32) + (p23 >>> 32) + (p32 >>> 32) + (p41 >>> 32) + (p50 >>> 32) +
-                (p15 & 0xFFFFFFFFL) + (p24 & 0xFFFFFFFFL) + (p33 & 0xFFFFFFFFL) + (p42 & 0xFFFFFFFFL) + (p51 & 0xFFFFFFFFL) + (p60 & 0xFFFFFFFFL);
-        long r7 = (r6 >>> 32) + (p15 >>> 32) + (p24 >>> 32) + (p33 >>> 32) + (p42 >>> 32) + (p51 >>> 32) + (p60 >>> 32) +
-                (p25 & 0xFFFFFFFFL) + (p34 & 0xFFFFFFFFL) + (p43 & 0xFFFFFFFFL) + (p52 & 0xFFFFFFFFL) + (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
-
-        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
-        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
-        this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
-        this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
-    }
-
-    private void multiply128Unchecked(long h, long l) {
-        // Perform 256-bit × 128-bit multiplication
-        // Result is at most 384 bits, but we keep only the lower 256 bits
-
-        // Split this into eight 32-bit parts
-        long a7 = hh >>> 32;
-        long a6 = hh & 0xFFFFFFFFL;
-        long a5 = hl >>> 32;
-        long a4 = hl & 0xFFFFFFFFL;
-        long a3 = lh >>> 32;
-        long a2 = lh & 0xFFFFFFFFL;
-        long a1 = ll >>> 32;
-        long a0 = ll & 0xFFFFFFFFL;
-
-        long b3 = h >> 32;
-        long b2 = h & 0xFFFFFFFFL;
-        long b1 = l >> 32;
-        long b0 = l & 0xFFFFFFFFL;
-
-        // Compute all partial products
-        long p00 = a0 * b0;
-        long p01 = a0 * b1;
-        long p02 = a0 * b2;
-        long p03 = a0 * b3;
-        long p10 = a1 * b0;
-        long p11 = a1 * b1;
-        long p12 = a1 * b2;
-        long p13 = a1 * b3;
-        long p20 = a2 * b0;
-        long p21 = a2 * b1;
-        long p22 = a2 * b2;
-        long p23 = a2 * b3;
-        long p30 = a3 * b0;
-        long p31 = a3 * b1;
-        long p32 = a3 * b2;
-        long p33 = a3 * b3;
-        long p40 = a4 * b0;
-        long p41 = a4 * b1;
-        long p42 = a4 * b2;
-        long p43 = a4 * b3;
-        long p50 = a5 * b0;
-        long p51 = a5 * b1;
-        long p52 = a5 * b2;
-        long p60 = a6 * b0;
-        long p61 = a6 * b1;
-        long p70 = a7 * b0;
-
-        // Gather results into 256-bit result
-        long r0 = (p00 & 0xFFFFFFFFL);
-        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
-        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
-                (p02 & 0xFFFFFFFFL) + (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
-        long r3 = (r2 >>> 32) + (p02 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
-                (p03 & 0xFFFFFFFFL) + (p12 & 0xFFFFFFFFL) + (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
-        long r4 = (r3 >>> 32) + (p03 >>> 32) + (p12 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
-                (p13 & 0xFFFFFFFFL) + (p22 & 0xFFFFFFFFL) + (p31 & 0xFFFFFFFFL) + (p40 & 0xFFFFFFFFL);
-        long r5 = (r4 >>> 32) + (p13 >>> 32) + (p22 >>> 32) + (p31 >>> 32) + (p40 >>> 32) +
-                (p23 & 0xFFFFFFFFL) + (p32 & 0xFFFFFFFFL) + (p41 & 0xFFFFFFFFL) + (p50 & 0xFFFFFFFFL);
-        long r6 = (r5 >>> 32) + (p23 >>> 32) + (p32 >>> 32) + (p41 >>> 32) + (p50 >>> 32) +
-                (p33 & 0xFFFFFFFFL) + (p42 & 0xFFFFFFFFL) + (p51 & 0xFFFFFFFFL) + (p60 & 0xFFFFFFFFL);
-        long r7 = (r6 >>> 32) + (p33 >>> 32) + (p42 >>> 32) + (p51 >>> 32) + (p60 >>> 32) +
-                (p43 & 0xFFFFFFFFL) + (p52 & 0xFFFFFFFFL) + (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
-
-        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
-        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
-        this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
-        this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
-    }
-
-    private void multiply64Unchecked(long multiplier) {
-        // Perform 256-bit × 64-bit multiplication
-        // Result is at most 320 bits, but we keep only the lower 256 bits
-
-        // Split this into eight 32-bit parts
-        long a7 = hh >>> 32;
-        long a6 = hh & 0xFFFFFFFFL;
-        long a5 = hl >>> 32;
-        long a4 = hl & 0xFFFFFFFFL;
-        long a3 = lh >>> 32;
-        long a2 = lh & 0xFFFFFFFFL;
-        long a1 = ll >>> 32;
-        long a0 = ll & 0xFFFFFFFFL;
-
-        long b1 = multiplier >> 32;
-        long b0 = multiplier & 0xFFFFFFFFL;
-
-        // Compute all partial products
-        long p00 = a0 * b0;
-        long p01 = a0 * b1;
-        long p10 = a1 * b0;
-        long p11 = a1 * b1;
-        long p20 = a2 * b0;
-        long p21 = a2 * b1;
-        long p30 = a3 * b0;
-        long p31 = a3 * b1;
-        long p40 = a4 * b0;
-        long p41 = a4 * b1;
-        long p50 = a5 * b0;
-        long p51 = a5 * b1;
-        long p60 = a6 * b0;
-        long p61 = a6 * b1;
-        long p70 = a7 * b0;
-
-        // Gather results into 256-bit result
-        long r0 = (p00 & 0xFFFFFFFFL);
-        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
-        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
-                (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
-        long r3 = (r2 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
-                (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
-        long r4 = (r3 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
-                (p31 & 0xFFFFFFFFL) + (p40 & 0xFFFFFFFFL);
-        long r5 = (r4 >>> 32) + (p31 >>> 32) + (p40 >>> 32) +
-                (p41 & 0xFFFFFFFFL) + (p50 & 0xFFFFFFFFL);
-        long r6 = (r5 >>> 32) + (p41 >>> 32) + (p50 >>> 32) +
-                (p51 & 0xFFFFFFFFL) + (p60 & 0xFFFFFFFFL);
-        long r7 = (r6 >>> 32) + (p51 >>> 32) + (p60 >>> 32) +
-                (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
-
-        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
-        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
-        this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
-        this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
-    }
-
-    private int compareTo(long bHH, long bHL, long bLH, long bLL) {
-        if (hh != bHH) {
-            return Long.compare(hh, bHH);
-        }
-        if (hl != bHL) {
-            return Long.compareUnsigned(hl, bHL);
-        }
-        if (lh != bLH) {
-            return Long.compareUnsigned(lh, bLH);
-        }
-        return Long.compareUnsigned(ll, bLL);
-    }
-
-    /**
-     * Compare two longs as if they were unsigned.
-     * Returns true iff one is bigger than two.
-     */
-    private static boolean unsignedLongCompare(long one, long two) {
-        return (one + Long.MIN_VALUE) > (two + Long.MIN_VALUE);
     }
 
     /**
@@ -980,6 +626,14 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
+     * Compare two longs as if they were unsigned.
+     * Returns true iff one is bigger than two.
+     */
+    private static boolean unsignedLongCompare(long one, long two) {
+        return (one + Long.MIN_VALUE) > (two + Long.MIN_VALUE);
+    }
+
+    /**
      * Validates that the scale is within the allowed range.
      *
      * @param scale the scale to validate
@@ -988,6 +642,357 @@ public class Decimal256 implements Sinkable {
     private static void validateScale(int scale) {
         if (scale < 0 || scale > MAX_SCALE) {
             throw new IllegalArgumentException("Scale must be between 0 and " + MAX_SCALE + ", got: " + scale);
+        }
+    }
+
+    private int compareTo(long bHH, long bHL, long bLH, long bLL) {
+        if (hh != bHH) {
+            return Long.compare(hh, bHH);
+        }
+        if (hl != bHL) {
+            return Long.compareUnsigned(hl, bHL);
+        }
+        if (lh != bLH) {
+            return Long.compareUnsigned(lh, bLH);
+        }
+        return Long.compareUnsigned(ll, bLL);
+    }
+
+    private void multiply128Unchecked(long h, long l) {
+        // Perform 256-bit × 128-bit multiplication
+        // Result is at most 384 bits, but we keep only the lower 256 bits
+
+        // Split this into eight 32-bit parts
+        long a7 = hh >>> 32;
+        long a6 = hh & 0xFFFFFFFFL;
+        long a5 = hl >>> 32;
+        long a4 = hl & 0xFFFFFFFFL;
+        long a3 = lh >>> 32;
+        long a2 = lh & 0xFFFFFFFFL;
+        long a1 = ll >>> 32;
+        long a0 = ll & 0xFFFFFFFFL;
+
+        long b3 = h >>> 32;
+        long b2 = h & 0xFFFFFFFFL;
+        long b1 = l >>> 32;
+        long b0 = l & 0xFFFFFFFFL;
+
+        // Compute all partial products
+        long p00 = a0 * b0;
+        long p01 = a0 * b1;
+        long p02 = a0 * b2;
+        long p03 = a0 * b3;
+        long p10 = a1 * b0;
+        long p11 = a1 * b1;
+        long p12 = a1 * b2;
+        long p13 = a1 * b3;
+        long p20 = a2 * b0;
+        long p21 = a2 * b1;
+        long p22 = a2 * b2;
+        long p23 = a2 * b3;
+        long p30 = a3 * b0;
+        long p31 = a3 * b1;
+        long p32 = a3 * b2;
+        long p33 = a3 * b3;
+        long p40 = a4 * b0;
+        long p41 = a4 * b1;
+        long p42 = a4 * b2;
+        long p43 = a4 * b3;
+        long p50 = a5 * b0;
+        long p51 = a5 * b1;
+        long p52 = a5 * b2;
+        long p60 = a6 * b0;
+        long p61 = a6 * b1;
+        long p70 = a7 * b0;
+
+        // Gather results into 256-bit result
+        long r0 = (p00 & 0xFFFFFFFFL);
+        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
+        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
+                (p02 & 0xFFFFFFFFL) + (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
+        long r3 = (r2 >>> 32) + (p02 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
+                (p03 & 0xFFFFFFFFL) + (p12 & 0xFFFFFFFFL) + (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
+        long r4 = (r3 >>> 32) + (p03 >>> 32) + (p12 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
+                (p13 & 0xFFFFFFFFL) + (p22 & 0xFFFFFFFFL) + (p31 & 0xFFFFFFFFL) + (p40 & 0xFFFFFFFFL);
+        long r5 = (r4 >>> 32) + (p13 >>> 32) + (p22 >>> 32) + (p31 >>> 32) + (p40 >>> 32) +
+                (p23 & 0xFFFFFFFFL) + (p32 & 0xFFFFFFFFL) + (p41 & 0xFFFFFFFFL) + (p50 & 0xFFFFFFFFL);
+        long r6 = (r5 >>> 32) + (p23 >>> 32) + (p32 >>> 32) + (p41 >>> 32) + (p50 >>> 32) +
+                (p33 & 0xFFFFFFFFL) + (p42 & 0xFFFFFFFFL) + (p51 & 0xFFFFFFFFL) + (p60 & 0xFFFFFFFFL);
+        long r7 = (r6 >>> 32) + (p33 >>> 32) + (p42 >>> 32) + (p51 >>> 32) + (p60 >>> 32) +
+                (p43 & 0xFFFFFFFFL) + (p52 & 0xFFFFFFFFL) + (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
+
+        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+        this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
+        this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
+    }
+
+    private void multiply192Unchecked(long h, long m, long l) {
+        // Perform 256-bit × 192-bit multiplication
+        // Result is at most 448 bits, but we keep only the lower 256 bits
+
+        // Split this into eight 32-bit parts
+        long a7 = hh >>> 32;
+        long a6 = hh & 0xFFFFFFFFL;
+        long a5 = hl >>> 32;
+        long a4 = hl & 0xFFFFFFFFL;
+        long a3 = lh >>> 32;
+        long a2 = lh & 0xFFFFFFFFL;
+        long a1 = ll >>> 32;
+        long a0 = ll & 0xFFFFFFFFL;
+
+        long b5 = h >>> 32;
+        long b4 = h & 0xFFFFFFFFL;
+        long b3 = m >>> 32;
+        long b2 = m & 0xFFFFFFFFL;
+        long b1 = l >>> 32;
+        long b0 = l & 0xFFFFFFFFL;
+
+        // Compute all partial products
+        long p00 = a0 * b0;
+        long p01 = a0 * b1;
+        long p02 = a0 * b2;
+        long p03 = a0 * b3;
+        long p04 = a0 * b4;
+        long p05 = a0 * b5;
+        long p10 = a1 * b0;
+        long p11 = a1 * b1;
+        long p12 = a1 * b2;
+        long p13 = a1 * b3;
+        long p14 = a1 * b4;
+        long p15 = a1 * b5;
+        long p20 = a2 * b0;
+        long p21 = a2 * b1;
+        long p22 = a2 * b2;
+        long p23 = a2 * b3;
+        long p24 = a2 * b4;
+        long p25 = a2 * b5;
+        long p30 = a3 * b0;
+        long p31 = a3 * b1;
+        long p32 = a3 * b2;
+        long p33 = a3 * b3;
+        long p34 = a3 * b4;
+        long p40 = a4 * b0;
+        long p41 = a4 * b1;
+        long p42 = a4 * b2;
+        long p43 = a4 * b3;
+        long p50 = a5 * b0;
+        long p51 = a5 * b1;
+        long p52 = a5 * b2;
+        long p60 = a6 * b0;
+        long p61 = a6 * b1;
+        long p70 = a7 * b0;
+
+        // Gather results into 256-bit result
+        long r0 = (p00 & 0xFFFFFFFFL);
+        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
+        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
+                (p02 & 0xFFFFFFFFL) + (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
+        long r3 = (r2 >>> 32) + (p02 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
+                (p03 & 0xFFFFFFFFL) + (p12 & 0xFFFFFFFFL) + (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
+        long r4 = (r3 >>> 32) + (p03 >>> 32) + (p12 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
+                (p04 & 0xFFFFFFFFL) + (p13 & 0xFFFFFFFFL) + (p22 & 0xFFFFFFFFL) + (p31 & 0xFFFFFFFFL) + (p40 & 0xFFFFFFFFL);
+        long r5 = (r4 >>> 32) + (p04 >>> 32) + (p13 >>> 32) + (p22 >>> 32) + (p31 >>> 32) + (p40 >>> 32) +
+                (p05 & 0xFFFFFFFFL) + (p14 & 0xFFFFFFFFL) + (p23 & 0xFFFFFFFFL) + (p32 & 0xFFFFFFFFL) + (p41 & 0xFFFFFFFFL) + (p50 & 0xFFFFFFFFL);
+        long r6 = (r5 >>> 32) + (p05 >>> 32) + (p14 >>> 32) + (p23 >>> 32) + (p32 >>> 32) + (p41 >>> 32) + (p50 >>> 32) +
+                (p15 & 0xFFFFFFFFL) + (p24 & 0xFFFFFFFFL) + (p33 & 0xFFFFFFFFL) + (p42 & 0xFFFFFFFFL) + (p51 & 0xFFFFFFFFL) + (p60 & 0xFFFFFFFFL);
+        long r7 = (r6 >>> 32) + (p15 >>> 32) + (p24 >>> 32) + (p33 >>> 32) + (p42 >>> 32) + (p51 >>> 32) + (p60 >>> 32) +
+                (p25 & 0xFFFFFFFFL) + (p34 & 0xFFFFFFFFL) + (p43 & 0xFFFFFFFFL) + (p52 & 0xFFFFFFFFL) + (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
+
+        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+        this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
+        this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
+    }
+
+    private void multiply256Unchecked(long hh, long hl, long lh, long ll) {
+        // Perform 256-bit × 256-bit multiplication
+        // Result is at most 512 bits, but we keep only the lower 256 bits
+
+        // Split this into eight 32-bit parts
+        long a7 = this.hh >>> 32;
+        long a6 = this.hh & 0xFFFFFFFFL;
+        long a5 = this.hl >>> 32;
+        long a4 = this.hl & 0xFFFFFFFFL;
+        long a3 = this.lh >>> 32;
+        long a2 = this.lh & 0xFFFFFFFFL;
+        long a1 = this.ll >>> 32;
+        long a0 = this.ll & 0xFFFFFFFFL;
+
+        long b7 = hh >>> 32;
+        long b6 = hh & 0xFFFFFFFFL;
+        long b5 = hl >>> 32;
+        long b4 = hl & 0xFFFFFFFFL;
+        long b3 = lh >>> 32;
+        long b2 = lh & 0xFFFFFFFFL;
+        long b1 = ll >>> 32;
+        long b0 = ll & 0xFFFFFFFFL;
+
+        // Compute all partial products
+        long p00 = a0 * b0;
+        long p01 = a0 * b1;
+        long p02 = a0 * b2;
+        long p03 = a0 * b3;
+        long p04 = a0 * b4;
+        long p05 = a0 * b5;
+        long p06 = a0 * b6;
+        long p07 = a0 * b7;
+        long p10 = a1 * b0;
+        long p11 = a1 * b1;
+        long p12 = a1 * b2;
+        long p13 = a1 * b3;
+        long p14 = a1 * b4;
+        long p15 = a1 * b5;
+        long p16 = a1 * b6;
+        long p20 = a2 * b0;
+        long p21 = a2 * b1;
+        long p22 = a2 * b2;
+        long p23 = a2 * b3;
+        long p24 = a2 * b4;
+        long p25 = a2 * b5;
+        long p30 = a3 * b0;
+        long p31 = a3 * b1;
+        long p32 = a3 * b2;
+        long p33 = a3 * b3;
+        long p34 = a3 * b4;
+        long p40 = a4 * b0;
+        long p41 = a4 * b1;
+        long p42 = a4 * b2;
+        long p43 = a4 * b3;
+        long p50 = a5 * b0;
+        long p51 = a5 * b1;
+        long p52 = a5 * b2;
+        long p60 = a6 * b0;
+        long p61 = a6 * b1;
+        long p70 = a7 * b0;
+
+        // Gather results into 256-bit result
+        long r0 = (p00 & 0xFFFFFFFFL);
+        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
+        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
+                (p02 & 0xFFFFFFFFL) + (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
+        long r3 = (r2 >>> 32) + (p02 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
+                (p03 & 0xFFFFFFFFL) + (p12 & 0xFFFFFFFFL) + (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
+        long r4 = (r3 >>> 32) + (p03 >>> 32) + (p12 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
+                (p04 & 0xFFFFFFFFL) + (p13 & 0xFFFFFFFFL) + (p22 & 0xFFFFFFFFL) + (p31 & 0xFFFFFFFFL) + (p40 & 0xFFFFFFFFL);
+        long r5 = (r4 >>> 32) + (p04 >>> 32) + (p13 >>> 32) + (p22 >>> 32) + (p31 >>> 32) + (p40 >>> 32) +
+                (p05 & 0xFFFFFFFFL) + (p14 & 0xFFFFFFFFL) + (p23 & 0xFFFFFFFFL) + (p32 & 0xFFFFFFFFL) + (p41 & 0xFFFFFFFFL) + (p50 & 0xFFFFFFFFL);
+        long r6 = (r5 >>> 32) + (p05 >>> 32) + (p14 >>> 32) + (p23 >>> 32) + (p32 >>> 32) + (p41 >>> 32) + (p50 >>> 32) +
+                (p06 & 0xFFFFFFFFL) + (p15 & 0xFFFFFFFFL) + (p24 & 0xFFFFFFFFL) + (p33 & 0xFFFFFFFFL) + (p42 & 0xFFFFFFFFL) + (p51 & 0xFFFFFFFFL) + (p60 & 0xFFFFFFFFL);
+        long r7 = (r6 >>> 32) + (p06 >>> 32) + (p15 >>> 32) + (p24 >>> 32) + (p33 >>> 32) + (p42 >>> 32) + (p51 >>> 32) + (p60 >>> 32) +
+                (p07 & 0xFFFFFFFFL) + (p16 & 0xFFFFFFFFL) + (p25 & 0xFFFFFFFFL) + (p34 & 0xFFFFFFFFL) + (p43 & 0xFFFFFFFFL) + (p52 & 0xFFFFFFFFL) + (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
+
+        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+        this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
+        this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
+    }
+
+    private void multiply64Unchecked(long multiplier) {
+        // Perform 256-bit × 64-bit multiplication
+        // Result is at most 320 bits, but we keep only the lower 256 bits
+
+        // Split this into eight 32-bit parts
+        long a7 = hh >>> 32;
+        long a6 = hh & 0xFFFFFFFFL;
+        long a5 = hl >>> 32;
+        long a4 = hl & 0xFFFFFFFFL;
+        long a3 = lh >>> 32;
+        long a2 = lh & 0xFFFFFFFFL;
+        long a1 = ll >>> 32;
+        long a0 = ll & 0xFFFFFFFFL;
+
+        long b1 = multiplier >>> 32;
+        long b0 = multiplier & 0xFFFFFFFFL;
+
+        // Compute all partial products
+        long p00 = a0 * b0;
+        long p01 = a0 * b1;
+        long p10 = a1 * b0;
+        long p11 = a1 * b1;
+        long p20 = a2 * b0;
+        long p21 = a2 * b1;
+        long p30 = a3 * b0;
+        long p31 = a3 * b1;
+        long p40 = a4 * b0;
+        long p41 = a4 * b1;
+        long p50 = a5 * b0;
+        long p51 = a5 * b1;
+        long p60 = a6 * b0;
+        long p61 = a6 * b1;
+        long p70 = a7 * b0;
+
+        // Gather results into 256-bit result
+        long r0 = (p00 & 0xFFFFFFFFL);
+        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
+        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
+                (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
+        long r3 = (r2 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
+                (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
+        long r4 = (r3 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
+                (p31 & 0xFFFFFFFFL) + (p40 & 0xFFFFFFFFL);
+        long r5 = (r4 >>> 32) + (p31 >>> 32) + (p40 >>> 32) +
+                (p41 & 0xFFFFFFFFL) + (p50 & 0xFFFFFFFFL);
+        long r6 = (r5 >>> 32) + (p41 >>> 32) + (p50 >>> 32) +
+                (p51 & 0xFFFFFFFFL) + (p60 & 0xFFFFFFFFL);
+        long r7 = (r6 >>> 32) + (p51 >>> 32) + (p60 >>> 32) +
+                (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
+
+        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+        this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
+        this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
+    }
+
+    /**
+     * Multiply this (unsigned) by 10^n in place
+     */
+    private void multiplyByPowerOf10InPlace(int n) {
+        if (n <= 0 || isZero()) {
+            return;
+        }
+        if (n > 76) {
+            throw NumericException.instance().put("Overflow");
+        }
+
+        // For small powers, use lookup table
+        if (n < 18) {
+            long multiplier = POWERS_TEN_TABLE_LL[n];
+            // Special case: if high is 0, use simple 64-bit multiplication
+            if (hh == 0 && hl == 0 && lh == 0 && ll > 0) {
+                // Check if result will overflow 64 bits
+                if (ll <= Long.MAX_VALUE / multiplier) {
+                    ll *= multiplier;
+                    return;
+                }
+            }
+        }
+
+        // For larger powers, break down into smaller chunks, first check the threshold to ensure that we won't overflow
+        // and then apply either a fast multiplyBy64 or multiplyBy128 depending on high/low.
+        // The bound checks for these tables already happens at the beginning of the method.
+        final long thresholdHH = n >= POWERS_TEN_TABLE_THRESHOLD_HH.length ? 0 : POWERS_TEN_TABLE_THRESHOLD_HH[n];
+        final long thresholdHL = n >= POWERS_TEN_TABLE_THRESHOLD_HL.length ? 0 : POWERS_TEN_TABLE_THRESHOLD_HL[n];
+        final long thresholdLH = n >= POWERS_TEN_TABLE_THRESHOLD_LH.length ? 0 : POWERS_TEN_TABLE_THRESHOLD_LH[n];
+        final long thresholdLL = POWERS_TEN_TABLE_THRESHOLD_LL[n];
+
+        if (compareTo(thresholdHH, thresholdHL, thresholdLH, thresholdLL) > 0) {
+            throw NumericException.instance().put("Overflow");
+        }
+
+        final long multiplierHH = n >= 58 ? POWERS_TEN_TABLE_HH[n - 58] : 0L;
+        final long multiplierHL = n >= 39 ? POWERS_TEN_TABLE_HL[n - 39] : 0L;
+        final long multiplierLH = n >= 20 ? POWERS_TEN_TABLE_LH[n - 20] : 0L;
+        final long multiplierLL = POWERS_TEN_TABLE_LL[n];
+
+        if (multiplierHH != 0L /* || multiplierHL < 0L */) { // multiplierHL always false, keep comment to ack
+            multiply256Unchecked(multiplierHH, multiplierHL, multiplierLH, multiplierLL);
+        } else if (multiplierHL != 0L /* || multiplierLH < 0L */) { // multiplierLH always false, keep comment to ack
+            multiply192Unchecked(multiplierHL, multiplierLH, multiplierLL);
+        } else if (multiplierLH != 0L || multiplierLL < 0L) {
+            multiply128Unchecked(multiplierLH, multiplierLL);
+        } else {
+            multiply64Unchecked(multiplierLL);
         }
     }
 
