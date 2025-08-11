@@ -39,7 +39,7 @@ use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 
-use super::util::{ArrayStats, BinaryMaxMinStats};
+use super::util::ArrayStats;
 use crate::allocator::AcVec;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
@@ -173,7 +173,11 @@ pub fn array_to_page(
     options: WriteOptions,
     encoding: Encoding,
 ) -> ParquetResult<Page> {
-    assert_eq!(size_of::<ArrayAuxEntry>(), 16, "size_of(ArrayAuxEntry) is not 16");
+    assert_eq!(
+        size_of::<ArrayAuxEntry>(),
+        16,
+        "size_of(ArrayAuxEntry) is not 16"
+    );
 
     if dim > ARRAY_NDIMS_LIMIT {
         return Err(fmt_err!(
@@ -379,7 +383,11 @@ pub fn array_to_raw_page(
     primitive_type: PrimitiveType,
     encoding: Encoding,
 ) -> ParquetResult<Page> {
-    assert_eq!(size_of::<ArrayAuxEntry>(), 16, "size_of(ArrayAuxEntry) is not 16");
+    assert_eq!(
+        size_of::<ArrayAuxEntry>(),
+        16,
+        "size_of(ArrayAuxEntry) is not 16"
+    );
 
     let num_rows = column_top + aux.len();
     let mut buffer = vec![];
@@ -411,14 +419,12 @@ pub fn array_to_raw_page(
 
     let definition_levels_byte_length = buffer.len();
 
-    let mut stats = BinaryMaxMinStats::new(&primitive_type);
-
     match encoding {
         Encoding::Plain => {
-            encode_raw_plain(&arr_slices, &mut buffer, &mut stats);
+            encode_raw_plain(&arr_slices, &mut buffer);
         }
         Encoding::DeltaLengthByteArray => {
-            encode_raw_delta(&arr_slices, null_count, &mut buffer, &mut stats);
+            encode_raw_delta(&arr_slices, null_count, &mut buffer);
         }
         _ => {
             return Err(fmt_err!(
@@ -429,13 +435,14 @@ pub fn array_to_raw_page(
     };
 
     let null_count = column_top + null_count;
+    let stats = ArrayStats::new(null_count);
     build_plain_page(
         buffer,
         num_rows,
         null_count,
         definition_levels_byte_length,
         if options.write_statistics {
-            Some(stats.into_parquet_stats(null_count))
+            Some(stats.into_parquet_stats())
         } else {
             None
         },
@@ -446,25 +453,15 @@ pub fn array_to_raw_page(
     .map(Page::Data)
 }
 
-fn encode_raw_plain(
-    arr_slices: &[Option<&[u8]>],
-    buffer: &mut Vec<u8>,
-    stats: &mut BinaryMaxMinStats,
-) {
+fn encode_raw_plain(arr_slices: &[Option<&[u8]>], buffer: &mut Vec<u8>) {
     for arr in arr_slices.iter().filter_map(|&option| option) {
         let len = (arr.len() as u32).to_le_bytes();
         buffer.extend_from_slice(&len);
         buffer.extend_from_slice(arr);
-        stats.update(arr);
     }
 }
 
-fn encode_raw_delta(
-    arr_slices: &[Option<&[u8]>],
-    null_count: usize,
-    buffer: &mut Vec<u8>,
-    stats: &mut BinaryMaxMinStats,
-) {
+fn encode_raw_delta(arr_slices: &[Option<&[u8]>], null_count: usize, buffer: &mut Vec<u8>) {
     let lengths = arr_slices
         .iter()
         .filter_map(|&option| option)
@@ -473,7 +470,6 @@ fn encode_raw_delta(
     delta_bitpacked::encode(lengths, buffer);
     for arr in arr_slices.iter().filter_map(|&option| option) {
         buffer.extend_from_slice(arr);
-        stats.update(arr);
     }
 }
 
@@ -593,43 +589,55 @@ pub fn calculate_array_shape(
 
     let max_rep_level = max_rep_level as usize;
     debug_assert!(max_rep_level <= ARRAY_NDIMS_LIMIT);
-    
+
     let mut counts = [0_u32; ARRAY_NDIMS_LIMIT];
-    
+
     // Common case optimization for small dimensions
     if max_rep_level <= 4 {
         // Unrolled version for common small dimensions
         for &rep_level in rep_levels {
             let rep_level = rep_level.max(1) as usize;
-            
+
             // Reset counts - unrolled for small dimensions
             match max_rep_level {
                 2 => {
-                    if rep_level < 2 { counts[1] = 0; }
+                    if rep_level < 2 {
+                        counts[1] = 0;
+                    }
                 }
                 3 => {
-                    if rep_level < 3 { counts[2] = 0; }
-                    if rep_level < 2 { counts[1] = 0; }
+                    if rep_level < 3 {
+                        counts[2] = 0;
+                    }
+                    if rep_level < 2 {
+                        counts[1] = 0;
+                    }
                 }
                 4 => {
-                    if rep_level < 4 { counts[3] = 0; }
-                    if rep_level < 3 { counts[2] = 0; }
-                    if rep_level < 2 { counts[1] = 0; }
+                    if rep_level < 4 {
+                        counts[3] = 0;
+                    }
+                    if rep_level < 3 {
+                        counts[2] = 0;
+                    }
+                    if rep_level < 2 {
+                        counts[1] = 0;
+                    }
                 }
                 _ => {
                     counts[rep_level] = 0;
                 }
             }
-            
+
             // Always increment the deepest level
             counts[max_rep_level - 1] += 1;
-            
+
             // Update shape - unrolled for better performance
             for i in 0..max_rep_level {
                 let count = counts[i];
                 shape[i] = shape[i].max(count);
             }
-            
+
             // Increment intermediate dimensions
             if rep_level > 0 {
                 for dim in (rep_level - 1)..(max_rep_level - 1) {
@@ -641,24 +649,24 @@ pub fn calculate_array_shape(
     } else {
         // General case for higher dimensions
         const CHUNK_SIZE: usize = 64;
-        
+
         for chunk in rep_levels.chunks(CHUNK_SIZE) {
             for &rep_level in chunk {
                 let rep_level = rep_level.max(1) as usize;
-                
+
                 // Reset counts for dimensions deeper than repetition level
                 for dim in rep_level..max_rep_level {
                     counts[dim] = 0;
                 }
-                
+
                 // Increment count at the deepest level
                 counts[max_rep_level - 1] += 1;
-                
+
                 // Update shape with branchless max
                 for dim in 0..max_rep_level {
                     shape[dim] = shape[dim].max(counts[dim]);
                 }
-                
+
                 // Increment deeper dimension counts
                 for dim in (rep_level - 1)..(max_rep_level - 1) {
                     counts[dim] += 1;
@@ -874,20 +882,20 @@ mod tests {
         let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
         calculate_array_shape(&mut shape, 1, &[0]);
         assert_eq!(shape[0], 1);
-        
+
         // Test jagged 2D array - [[1,2,3], [4,5]]
         let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
         let rep_levels = vec![0, 2, 2, 1, 2];
         calculate_array_shape(&mut shape, 2, &rep_levels);
         assert_eq!(shape[0], 2); // 2 sub-arrays
         assert_eq!(shape[1], 3); // max 3 elements in a sub-array
-        
+
         // Test with all zeros (multiple new records)
         let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
         let rep_levels = vec![0, 0, 0];
         calculate_array_shape(&mut shape, 1, &rep_levels);
         assert_eq!(shape[0], 3); // three separate single-element arrays, max size is 3
-        
+
         // Test large repetition levels
         let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
         let rep_levels = vec![0, 5, 5, 5, 5];
@@ -905,7 +913,7 @@ mod tests {
         }
         calculate_array_shape(&mut shape, 1, &rep_levels);
         assert_eq!(shape[0], 101);
-        
+
         // Test 2D array with multiple chunks
         let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
         let mut rep_levels = vec![];
@@ -930,14 +938,14 @@ mod tests {
         let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
         let max_dim = 10_u32; // use 10 dimensions for testing
         let mut rep_levels = vec![0]; // new record
-        
+
         // Add elements at deepest level
         for _ in 0..5 {
             rep_levels.push(max_dim);
         }
-        
+
         calculate_array_shape(&mut shape, max_dim, &rep_levels);
-        
+
         // Should have shape [1,1,1,...,1,6] with 6 at the deepest level
         for i in 0..(max_dim as usize - 1) {
             assert_eq!(shape[i], 1, "dimension {} should be 1", i);
