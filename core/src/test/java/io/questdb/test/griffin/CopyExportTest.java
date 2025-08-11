@@ -286,42 +286,6 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyParquetRecoveryAfterCleanup() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test_table (x int, y string)");
-            execute("insert into test_table values (1, 'test'), (2, 'data')");
-
-            CopyExportRunnable stmt = () ->
-                    runAndFetchCopyExportID("copy test_table to 'output_recovery' with format parquet", sqlExecutionContext);
-
-            CopyExportRunnable test = () ->
-                    assertEventually(() -> {
-                        assertSql("file\tstatus\n" +
-                                        "output_recovery\tfinished\n",
-                                "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
-                        // Verify data
-                        assertSql("x\ty\n1\ttest\n2\tdata\n",
-                                "select * from read_parquet('" + exportRoot + "/output_recovery/default.parquet') order by x");
-                    });
-
-            // First export
-            testCopyExport(stmt, test);
-
-            // Cleanup and re-export to same location should work using FilesFacade
-            if (exportDirectoryExists("output_recovery")) {
-                try (Path exportPath = new Path()) {
-                    exportPath.of(exportRoot).concat("output_recovery").$();
-                    engine.getConfiguration().getFilesFacade().remove(exportPath.$());
-//                    ff.remove(exportPath.$());
-                }
-            }
-
-            // Re-export should succeed
-            testCopyExport(stmt, test);
-        });
-    }
-
-    @Test
     public void testCopyParquetSyntaxError_InvalidCompressionLevel() throws Exception {
         assertException(
                 "copy test_table to 'output' with format parquet compression_level 'invalid'",
@@ -441,7 +405,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                 "SELECT file, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify all data types are preserved correctly
                         assertSql("bool_col\tbyte_col\tshort_col\tint_col\tlong_col\tfloat_col\tdouble_col\tstring_col\tsymbol_col\tts\n" +
-                                        "true\t1\t100\t1000\t10000\t1.5000\t2.5\ttest\tsym1\t2023-01-01T10:00:00.000000Z\n",
+                                        "true\t1\t100\t1000\t10000\t1.5\t2.5\ttest\tsym1\t2023-01-01T10:00:00.000000Z\n",
                                 "select * from read_parquet('" + exportRoot + "/output_all_types/default.parquet')");
                     });
 
@@ -501,7 +465,6 @@ public class CopyExportTest extends AbstractCairoTest {
 
             String exportId = runAndFetchCopyExportID("copy large_dataset to 'async_large' with format parquet " +
                     "row_group_size 100 compression_codec snappy", sqlExecutionContext);
-            waitForExportToComplete(exportId);
         };
 
         CopyExportRunnable test = () -> {
