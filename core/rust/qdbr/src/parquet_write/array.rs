@@ -44,10 +44,58 @@ use crate::allocator::AcVec;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, encode_group_levels, encode_primitive_def_levels, ExactSizedIter,
+    build_plain_page, encode_group_levels, encode_primitive_def_levels, BinaryMaxMinStats,
+    ExactSizedIter,
 };
 
 const HEADER_SIZE_NULL: [u8; 8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+
+// Helper struct for streaming array data parsing
+struct ArrayDataParser<'a> {
+    data: &'a [u8],
+    shape_size: usize,
+    data_offset: usize,
+}
+
+impl<'a> ArrayDataParser<'a> {
+    fn get_array_data(&self, entry: &ArrayAuxEntry) -> Option<(&'a [i32], &'a [f64])> {
+        let size = entry.size() as usize;
+        let offset = entry.offset() as usize;
+        if size > 0 {
+            assert!(
+                offset + size <= self.data.len(),
+                "Data corruption in ARRAY column"
+            );
+            let arr = &self.data[offset..][..size];
+            let shape: &[i32] = unsafe { util::transmute_slice(&arr[..self.shape_size]) };
+            let data: &[f64] = unsafe { util::transmute_slice(&arr[self.data_offset..]) };
+            Some((shape, data))
+        } else {
+            None
+        }
+    }
+}
+
+// Helper struct for streaming raw array data parsing
+struct RawArrayDataParser<'a> {
+    data: &'a [u8],
+}
+
+impl<'a> RawArrayDataParser<'a> {
+    fn get_raw_array_data(&self, entry: &ArrayAuxEntry) -> Option<&'a [u8]> {
+        let size = entry.size() as usize;
+        let offset = entry.offset() as usize;
+        if size > 0 {
+            assert!(
+                offset + size <= self.data.len(),
+                "Data corruption in ARRAY column"
+            );
+            Some(&self.data[offset..][..size])
+        } else {
+            None
+        }
+    }
+}
 
 // generates rep levels values for the given array shape and number of elements
 #[derive(Clone, Copy)]
@@ -195,48 +243,26 @@ pub fn array_to_page(
     let shape_size = 4 * dim;
     // data offset is aligned to 8 bytes
     let data_offset = align8b(shape_size);
-    let arr_slices: Vec<Option<(&[i32], &[f64])>> = aux
-        .iter()
-        .map(|entry| {
-            let size = entry.size() as usize;
-            let offset = entry.offset() as usize;
-            if size > 0 {
-                assert!(
-                    offset + size <= data.len(),
-                    "Data corruption in ARRAY column"
-                );
-                let arr = &data[offset..][..size];
-                let shape: &[i32] = unsafe { util::transmute_slice(&arr[..shape_size]) };
-                let data: &[f64] = unsafe { util::transmute_slice(&arr[data_offset..]) };
-                Some((shape, data))
-            } else {
-                null_count += 1;
-                None
-            }
-        })
-        .collect();
 
-    // calculate lengths of rep and def levels ahead of time
-    let num_values = arr_slices
-        .iter()
-        .map(|arr| match arr {
-            Some(arr) => {
-                let data = arr.1;
-                std::cmp::max(data.len(), 1)
-            }
-            None => 1,
-        })
-        .sum::<usize>()
-        + column_top;
+    let parser = ArrayDataParser { data, shape_size, data_offset };
+
+    // calculate lengths of rep and def levels ahead of time (streaming approach)
+    let mut num_values = column_top;
+    for entry in aux.iter() {
+        if let Some((_shape, arr_data)) = parser.get_array_data(entry) {
+            num_values += std::cmp::max(arr_data.len(), 1);
+        } else {
+            null_count += 1;
+            num_values += 1;
+        }
+    }
 
     let rep_levels_iter = (0..num_rows).flat_map(|i| {
         if i < column_top {
             RepLevelsIterator::new_single()
         } else {
-            match arr_slices[i - column_top] {
-                Some(arr) => {
-                    let shape = arr.0;
-                    let data = arr.1;
+            match parser.get_array_data(&aux[i - column_top]) {
+                Some((shape, data)) => {
                     if data.is_empty() {
                         RepLevelsIterator::new_single()
                     } else {
@@ -261,9 +287,8 @@ pub fn array_to_page(
         if i < column_top {
             DefLevelsIterator::new_single(0)
         } else {
-            match arr_slices[i - column_top] {
-                Some(arr) => {
-                    let data = arr.1;
+            match parser.get_array_data(&aux[i - column_top]) {
+                Some((_shape, data)) => {
                     if data.is_empty() {
                         DefLevelsIterator::new_single(1)
                     } else {
@@ -287,7 +312,7 @@ pub fn array_to_page(
 
     match encoding {
         Encoding::Plain => {
-            encode_data_plain(&arr_slices, &mut buffer);
+            encode_data_plain_streaming(aux, &parser, &mut buffer);
         }
         _ => {
             return Err(fmt_err!(
@@ -318,6 +343,25 @@ pub fn array_to_page(
     .map(Page::Data)
 }
 
+// Streaming version that processes arrays on-demand without intermediate allocation
+fn encode_data_plain_streaming(
+    aux: &[ArrayAuxEntry],
+    parser: &ArrayDataParser,
+    buffer: &mut Vec<u8>,
+) {
+    for entry in aux.iter() {
+        if let Some((_shape, data)) = parser.get_array_data(entry) {
+            data.iter().for_each(|v| {
+                if !v.is_nan() {
+                    buffer.extend_from_slice(&v.to_le_bytes());
+                }
+            });
+        }
+    }
+}
+
+// Legacy function kept for compatibility (now unused)
+#[allow(dead_code)]
 fn encode_data_plain(arr_slices: &[Option<(&[i32], &[f64])>], buffer: &mut Vec<u8>) {
     for (_shape, data) in arr_slices.iter().filter_map(|&option| option) {
         data.iter().for_each(|v| {
@@ -395,36 +439,33 @@ pub fn array_to_raw_page(
 
     let aux: &[ArrayAuxEntry] = unsafe { mem::transmute(aux) };
 
-    let arr_slices: Vec<Option<&[u8]>> = aux
-        .iter()
-        .map(|entry| {
-            let size = entry.size() as usize;
-            let offset = entry.offset() as usize;
-            if size > 0 {
-                assert!(
-                    offset + size <= data.len(),
-                    "Data corruption in ARRAY column"
-                );
-                Some(&data[offset..][..size])
-            } else {
-                null_count += 1;
-                None
-            }
-        })
-        .collect();
+    let raw_parser = RawArrayDataParser { data };
 
-    let def_levels_iter =
-        (0..num_rows).map(|i| i >= column_top && arr_slices[i - column_top].is_some());
+    // Count nulls during streaming
+    for entry in aux.iter() {
+        if raw_parser.get_raw_array_data(entry).is_none() {
+            null_count += 1;
+        }
+    }
+
+    let def_levels_iter = (0..num_rows).map(|i| {
+        i >= column_top
+            && raw_parser
+                .get_raw_array_data(&aux[i - column_top])
+                .is_some()
+    });
     encode_primitive_def_levels(&mut buffer, def_levels_iter, num_rows, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
 
+    let mut stats = BinaryMaxMinStats::new(&primitive_type);
+
     match encoding {
         Encoding::Plain => {
-            encode_raw_plain(&arr_slices, &mut buffer);
+            encode_raw_plain_streaming(aux, &raw_parser, &mut buffer, &mut stats);
         }
         Encoding::DeltaLengthByteArray => {
-            encode_raw_delta(&arr_slices, null_count, &mut buffer);
+            encode_raw_delta_streaming(aux, &raw_parser, null_count, &mut buffer, &mut stats);
         }
         _ => {
             return Err(fmt_err!(
@@ -453,6 +494,49 @@ pub fn array_to_raw_page(
     .map(Page::Data)
 }
 
+// Streaming versions that process arrays on-demand
+fn encode_raw_plain_streaming(
+    aux: &[ArrayAuxEntry],
+    raw_parser: &RawArrayDataParser,
+    buffer: &mut Vec<u8>,
+    stats: &mut BinaryMaxMinStats,
+) {
+    for entry in aux.iter() {
+        if let Some(arr) = raw_parser.get_raw_array_data(entry) {
+            let len = (arr.len() as u32).to_le_bytes();
+            buffer.extend_from_slice(&len);
+            buffer.extend_from_slice(arr);
+            stats.update(arr);
+        }
+    }
+}
+
+fn encode_raw_delta_streaming(
+    aux: &[ArrayAuxEntry],
+    raw_parser: &RawArrayDataParser,
+    null_count: usize,
+    buffer: &mut Vec<u8>,
+    stats: &mut BinaryMaxMinStats,
+) {
+    // First pass: collect lengths
+    let lengths = aux
+        .iter()
+        .filter_map(|entry| raw_parser.get_raw_array_data(entry))
+        .map(|arr| arr.len() as i64);
+    let lengths = ExactSizedIter::new(lengths, aux.len() - null_count);
+    delta_bitpacked::encode(lengths, buffer);
+
+    // Second pass: write data
+    for entry in aux.iter() {
+        if let Some(arr) = raw_parser.get_raw_array_data(entry) {
+            buffer.extend_from_slice(arr);
+            stats.update(arr);
+        }
+    }
+}
+
+// Legacy functions kept for compatibility (now unused)
+#[allow(dead_code)]
 fn encode_raw_plain(arr_slices: &[Option<&[u8]>], buffer: &mut Vec<u8>) {
     for arr in arr_slices.iter().filter_map(|&option| option) {
         let len = (arr.len() as u32).to_le_bytes();
@@ -461,6 +545,7 @@ fn encode_raw_plain(arr_slices: &[Option<&[u8]>], buffer: &mut Vec<u8>) {
     }
 }
 
+#[allow(dead_code)]
 fn encode_raw_delta(arr_slices: &[Option<&[u8]>], null_count: usize, buffer: &mut Vec<u8>) {
     let lengths = arr_slices
         .iter()
@@ -927,9 +1012,7 @@ mod tests {
         // Test performance with larger array (over CHUNK_SIZE)
         let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
         let mut rep_levels = vec![0]; // start with new record
-        for _ in 0..100 {
-            rep_levels.push(1); // continue in same array
-        }
+        rep_levels.extend(std::iter::repeat_n(1, 100)); // continue in same array
         calculate_array_shape(&mut shape, 1, &rep_levels);
         assert_eq!(shape[0], 101);
 
@@ -942,9 +1025,7 @@ mod tests {
             } else {
                 rep_levels.push(0); // new record
             }
-            for _ in 0..15 {
-                rep_levels.push(2); // elements in sub-array
-            }
+            rep_levels.extend(std::iter::repeat_n(2, 15)); // elements in sub-array
         }
         calculate_array_shape(&mut shape, 2, &rep_levels);
         assert_eq!(shape[0], 10); // 10 sub-arrays
@@ -959,15 +1040,12 @@ mod tests {
         let mut rep_levels = vec![0]; // new record
 
         // Add elements at deepest level
-        for _ in 0..5 {
-            rep_levels.push(max_dim);
-        }
-
+        rep_levels.extend(std::iter::repeat_n(max_dim, 5));
         calculate_array_shape(&mut shape, max_dim, &rep_levels);
 
         // Should have shape [1,1,1,...,1,6] with 6 at the deepest level
-        for i in 0..(max_dim as usize - 1) {
-            assert_eq!(shape[i], 1, "dimension {} should be 1", i);
+        for (i, &value) in shape[0..(max_dim as usize - 1)].iter().enumerate() {
+            assert_eq!(value, 1, "dimension {} should be 1", i);
         }
         assert_eq!(shape[max_dim as usize - 1], 6);
     }
