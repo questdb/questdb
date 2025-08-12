@@ -640,72 +640,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return false;
     }
 
-    private void checkBitmapIndexReadersConsistency(int maxPartitionIndex) {
-        System.out.println("Checking bitmap index readers consistency [maxPartitionIndex=" + maxPartitionIndex + ']');
-        // check all bitmap index readers for consistency - getPartitionNameTxn() must match loaded txn of a given partition
-        for (int partitionIndex = 0; partitionIndex < maxPartitionIndex; partitionIndex++) {
-//            System.out.println("Checking bitmap index readers consistency for partitionIndex=" + partitionIndex);
-            final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
-            final long openPartitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-
-//            if (openPartitionSize <= -1) {
-//                continue;
-//            }
-
-            final long expectedPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
-            final int columnBase = getColumnBase(partitionIndex);
-
-            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-//                if (!metadata.isColumnIndexed(columnIndex)) {
-//                    continue;
-//                }
-
-                final int primaryIndex = getPrimaryColumnIndex(columnBase, columnIndex);
-                for (int direction = 0; direction < 2; direction++) {
-                    final int readerIndex = primaryIndex + direction;
-                    BitmapIndexReader reader = bitmapIndexes.getQuick(readerIndex);
-
-                    if (reader != null && reader.isOpen() && !(reader instanceof BitmapIndexBwdNullReader) && !(reader instanceof BitmapIndexFwdNullReader)) {
-                        AbstractIndexReader abstractReader = (AbstractIndexReader) reader;
-                        long actualPartitionNameTxn = abstractReader.getPartitionNameTxn();
-
-                        if (actualPartitionNameTxn != expectedPartitionNameTxn) {
-                            throw new AssertionError("inconsistent bitmap index reader [partitionIndex="
-                                    + partitionIndex
-                                    + ", columnIndex="
-                                    + columnIndex
-                                    + ", direction="
-                                    + direction
-                                    + ", expectedPartitionNameTxn="
-                                    + expectedPartitionNameTxn
-                                    + ", actualPartitionNameTxn="
-                                    + actualPartitionNameTxn
-                                    + ']');
-                        } else {
-                            System.out.println("Bitmap index reader is consistent [partitionIndex="
-                                    + partitionIndex
-                                    + ", columnIndex="
-                                    + columnIndex
-                                    + ", direction="
-                                    + direction
-                                    + ", partitionNameTxn="
-                                    + expectedPartitionNameTxn
-                                    + ']');
-                        }
-                    } else {
-//                        System.out.println("Bitmap index reader is null or closed [partitionIndex="
-//                                + partitionIndex
-//                                + ", columnIndex="
-//                                + columnIndex
-//                                + ", direction="
-//                                + direction
-//                                + ']');
-                    }
-                }
-            }
-        }
-    }
-
     private void checkSchedulePurgeO3Partitions() {
         // In scoreboard V2, it is cheap to check that the txn released is not the max txn,
         // do it as a first step before more expensive checks.
@@ -1366,8 +1300,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         boolean changed = false;
         System.out.println("reconcile slow: txPartitionCount: " + txPartitionCount);
         while (partitionIndex < partitionCount && txPartitionIndex < txPartitionCount) {
-            checkBitmapIndexReadersConsistency(partitionIndex);
-
             final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
             final long txPartTs = txFile.getPartitionTimestampByIndex(txPartitionIndex);
             final long openPartitionTimestamp = openPartitionInfo.getQuick(offset);
@@ -1375,17 +1307,13 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (openPartitionTimestamp < txPartTs) {
                 // Deleted partitions
                 // This will decrement partitionCount
-                System.out.println("close deleted: " + partitionIndex);
                 closeDeletedPartition(partitionIndex);
-                checkBitmapIndexReadersConsistency(partitionIndex + 1);
             } else if (openPartitionTimestamp > txPartTs) {
                 // Insert partition
                 insertPartition(partitionIndex, txPartTs);
                 changed = true;
                 txPartitionIndex++;
                 partitionIndex++;
-                checkBitmapIndexReadersConsistency(partitionIndex + 1);
-                System.out.println("inserting a partition: " + partitionIndex);
             } else {
                 // Refresh partition
                 final long txPartitionSize = txFile.getPartitionSize(txPartitionIndex);
@@ -1406,11 +1334,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 if (reloadColumnFiles(partitionIndex, txPartitionSize)) {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                     LOG.debug().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
-                                    checkBitmapIndexReadersConsistency(partitionIndex + 1);
                                 } else {
-                                    System.out.println("Reload column files failed: " + partitionIndex + ", txPartitionNameTxn: " + txPartitionNameTxn);
                                     prepareForLazyOpen(partitionIndex);
-                                    checkBitmapIndexReadersConsistency(partitionIndex + 1);
                                 }
                             } else {
                                 // reload Parquet file
@@ -1425,12 +1350,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                         }
                     } else {
                         prepareForLazyOpen(partitionIndex);
-                        checkBitmapIndexReadersConsistency(partitionIndex + 1);
                     }
                     changed = true;
                 } else if (openPartitionSize > -1 && txPartitionSize > -1) { // Don't force re-open if not yet opened
                     prepareForLazyOpen(partitionIndex);
-                    checkBitmapIndexReadersConsistency(partitionIndex);
                 }
                 txPartitionIndex++;
                 partitionIndex++;

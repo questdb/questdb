@@ -27,16 +27,13 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
