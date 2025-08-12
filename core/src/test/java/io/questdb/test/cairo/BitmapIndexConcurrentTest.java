@@ -83,6 +83,7 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
         final AtomicInteger queryErrorCount = new AtomicInteger(0);
         final AtomicInteger insertErrorCount = new AtomicInteger(0);
         final AtomicReference<String> lastError = new AtomicReference<>();
+        final AtomicReference<Boolean> shouldStop = new AtomicReference<>(false);
         final SOCountDownLatch queryLatch = new SOCountDownLatch(1);
         final SOCountDownLatch insertLatch = new SOCountDownLatch(1);
         final CyclicBarrier startBarrier = new CyclicBarrier(2); // 2 background threads only
@@ -97,7 +98,7 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
                 int insertCount = 0;
 
                 try (TableWriter w = TestUtils.getWriter(engine, "trades")) {
-                    while (System.currentTimeMillis() - startTime < testDurationMs) {
+                    while (System.currentTimeMillis() - startTime < testDurationMs && !shouldStop.get()) {
                         try {
                             // Insert multiple rows in batch before committing
                             for (int batch = 0; batch < 10; batch++) {
@@ -144,7 +145,7 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
                 long startTime = System.currentTimeMillis();
                 int queryCount = 0;
 
-                while (System.currentTimeMillis() - startTime < testDurationMs) {
+                while (System.currentTimeMillis() - startTime < testDurationMs && !shouldStop.get()) {
                     try {
                         // Use random symbol from existing ones (SYM1 to SYM100)
                         String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
@@ -163,6 +164,7 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
                                     if (rowCount > 1) {
                                         queryErrorCount.incrementAndGet();
                                         lastError.set("Query returned more than one row for symbol: " + randomSymbol);
+                                        shouldStop.set(true);
                                         return;
                                     }
 
@@ -170,6 +172,7 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
                                     if (!Chars.equals(resultSymbol, randomSymbol)) {
                                         queryErrorCount.incrementAndGet();
                                         lastError.set("Expected symbol '" + randomSymbol + "' but got '" + resultSymbol + "'");
+                                        shouldStop.set(true);
                                         return;
                                     }
                                 }
@@ -177,6 +180,7 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
                                 if (rowCount != 1) {
                                     queryErrorCount.incrementAndGet();
                                     lastError.set("Expected exactly 1 row for symbol '" + randomSymbol + "' but got " + rowCount);
+                                    shouldStop.set(true);
                                     return;
                                 }
                             }
@@ -189,6 +193,7 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
                     } catch (Exception e) {
                         queryErrorCount.incrementAndGet();
                         lastError.set("Query error: " + e.getMessage());
+                        shouldStop.set(true);
                         break;
                     }
                 }
