@@ -234,16 +234,22 @@ public class Decimal256 implements Sinkable {
         // We need to have both dividend and divisor positive for scaling and division.
         if (dividendHH < 0) {
             dividendLL = ~dividendLL + 1;
-            dividendLH = ~dividendLH + (dividendLL == 0 ? 1 : 0);
-            dividendHL = ~dividendHL + (dividendLH == 0 ? 1 : 0);
-            dividendHH = ~dividendHH + (dividendHL == 0 ? 1 : 0);
+            long c = dividendLL == 0L ? 1L : 0L;
+            dividendLH = ~dividendLH + c;
+            c = (c == 1L && dividendLH == 0L) ? 1L : 0L;
+            dividendHL = ~dividendHL + c;
+            c = (c == 1L && dividendHL == 0L) ? 1L : 0L;
+            dividendHH = ~dividendHH + c;
         }
 
         if (divisorHH < 0) {
             divisorLL = ~divisorLL + 1;
-            divisorLH = ~divisorLH + (divisorLL == 0 ? 1 : 0);
-            divisorHL = ~divisorHL + (divisorLH == 0 ? 1 : 0);
-            divisorHH = ~divisorHH + (divisorHL == 0 ? 1 : 0);
+            long c = divisorLL == 0L ? 1L : 0L;
+            divisorLH = ~divisorLH + c;
+            c = (c == 1L && divisorLH == 0L) ? 1L : 0L;
+            divisorHL = ~divisorHL + c;
+            c = (c == 1L && divisorHL == 0L) ? 1L : 0L;
+            divisorHH = ~divisorHH + c;
         }
 
         if (delta > 0) {
@@ -356,11 +362,8 @@ public class Decimal256 implements Sinkable {
      * @throws NumericException if division by zero occurs
      */
     public static void modulo(Decimal256 dividend, Decimal256 divisor, Decimal256 result) {
-        if (divisor.isZero()) {
-            throw NumericException.instance().put("Modulo by zero");
-        }
-
-        // TODO: Implement modulo
+        result.copyFrom(dividend);
+        result.modulo(divisor);
     }
 
     /**
@@ -504,7 +507,55 @@ public class Decimal256 implements Sinkable {
      * @throws NumericException if division by zero occurs
      */
     public void modulo(Decimal256 divisor) {
-        modulo(this, divisor, this);
+        if (divisor.isZero()) {
+            throw NumericException.instance().put("Division by zero");
+        }
+
+        // Result scale should be the larger of the two scales
+        int resultScale = Math.max(this.scale, divisor.scale);
+
+        // Use simple repeated subtraction for modulo: a % b = a - (a / b) * b
+        // First compute integer division (a / b)
+        // We store this for later usage
+        long thisHH = this.hh;
+        long thisHL = this.hl;
+        long thisLH = this.lh;
+        long thisLL = this.ll;
+        int thisScale = this.scale;
+
+        this.divide(divisor, 0, RoundingMode.DOWN);
+
+        // Now compute this * divisor
+        this.multiply(divisor);
+
+        long qHH = this.hh;
+        long qHL = this.hl;
+        long qLH = this.lh;
+        long qLL = this.ll;
+        int qScale = this.scale;
+        // restore this as a
+        this.of(thisHH, thisHL, thisLH, thisLL, thisScale);
+        // Finally compute remainder: a - (a / b) * b
+        this.subtract(qHH, qHL, qLH, qLL, qScale);
+
+        // Handle scale adjustment
+        if (this.scale != resultScale) {
+            if (this.scale < resultScale) {
+                int scaleUp = resultScale - this.scale;
+                boolean isNegative = isNegative();
+                if (isNegative) {
+                    negate();
+                }
+                multiplyByPowerOf10InPlace(scaleUp);
+                if (isNegative) {
+                    negate();
+                }
+            } else {
+                int scaleDown = this.scale - resultScale;
+                divideByPowerOf10InPlace(scaleDown);
+            }
+            this.scale = resultScale;
+        }
     }
 
     /**
@@ -525,9 +576,12 @@ public class Decimal256 implements Sinkable {
         long otherLL = other.ll;
         if (other.isNegative()) {
             otherLL = ~otherLL + 1;
-            otherLH = ~otherLH + (otherLL == 0 ? 1 : 0);
-            otherHL = ~otherHL + (otherLH == 0 ? 1 : 0);
-            otherHH = ~otherHH + (otherHL == 0 ? 1 : 0);
+            long c = otherLL == 0L ? 1L : 0L;
+            otherLH = ~otherLH + c;
+            c = (c == 1L && otherLH == 0L) ? 1L : 0L;
+            otherHL = ~otherHL + c;
+            c = (c == 1L && otherHL == 0L) ? 1L : 0L;
+            otherHH = ~otherHH + c;
         }
 
         if (isNegative()) {
@@ -617,14 +671,26 @@ public class Decimal256 implements Sinkable {
      * @throws NumericException if overflow occurs
      */
     public void subtract(Decimal256 other) {
-        // Negate other and perform addition
-        if (!other.isZero()) {
-            long bLL = ~other.ll + 1;
-            long bLH = ~other.lh + (bLL == 0 ? 1 : 0);
-            long bHL = ~other.hl + (bLH == 0 ? 1 : 0);
-            long bHH = ~other.hh + (bHL == 0 ? 1 : 0);
+        subtract(other.hh, other.hl, other.lh, other.ll, other.scale);
+    }
 
-            add(this, hh, hl, lh, ll, scale, bHH, bHL, bLH, bLL, other.scale);
+    /**
+     * In-place subtraction.
+     *
+     * @throws NumericException if overflow occurs
+     */
+    public void subtract(long bHH, long bHL, long bLH, long bLL, int bScale) {
+        // Negate other and perform addition
+        if (bHH != 0 || hl != 0 || lh != 0 || ll != 0) {
+            bLL = ~bLL + 1;
+            long c = bLL == 0L ? 1L : 0L;
+            bLH = ~bLH + c;
+            c = (c == 1L && bLH == 0L) ? 1L : 0L;
+            bHL = ~bHL + c;
+            c = (c == 1L && bHL == 0L) ? 1L : 0L;
+            bHH = ~bHH + c;
+
+            add(this, hh, hl, lh, ll, scale, bHH, bHL, bLH, bLL, bScale);
         }
     }
 
@@ -754,6 +820,39 @@ public class Decimal256 implements Sinkable {
             return Long.compareUnsigned(lh, bLH);
         }
         return Long.compareUnsigned(ll, bLL);
+    }
+
+    /**
+     * Multiply this (unsigned) by 10^n in place
+     */
+    private void divideByPowerOf10InPlace(int n) {
+        if (n <= 0 || isZero()) {
+            return;
+        }
+        if (n > 76) {
+            throw NumericException.instance().put("Overflow");
+        }
+
+        final boolean isNegative = isNegative();
+        if (isNegative) {
+            negate();
+        }
+
+        DecimalKnuthDivider divider = DecimalKnuthDivider.instance();
+        divider.ofDividend(hh, hl, lh, ll);
+
+        final long multiplierHH = n >= 58 ? POWERS_TEN_TABLE_HH[n - 58] : 0L;
+        final long multiplierHL = n >= 39 ? POWERS_TEN_TABLE_HL[n - 39] : 0L;
+        final long multiplierLH = n >= 20 ? POWERS_TEN_TABLE_LH[n - 20] : 0L;
+        final long multiplierLL = POWERS_TEN_TABLE_LL[n];
+
+        divider.ofDivisor(multiplierHH, multiplierHL, multiplierLH, multiplierLL);
+        divider.divide(isNegative, RoundingMode.FLOOR);
+        divider.sink(this, scale);
+
+        if (isNegative) {
+            negate();
+        }
     }
 
     private void multiply128(long h, long l) {
