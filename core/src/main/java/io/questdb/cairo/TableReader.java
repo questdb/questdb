@@ -770,6 +770,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void closeIndexReader(int base, int columnIndex) {
         int index = getPrimaryColumnIndex(base, columnIndex);
+        System.out.println("Closing index reader [base=" + base + ", columnIndex=" + columnIndex + ", index=" + index + ']');
         Misc.free(bitmapIndexes.getAndSetQuick(index, null));
         Misc.free(bitmapIndexes.getAndSetQuick(index + 1, null));
     }
@@ -1386,10 +1387,10 @@ public class TableReader implements Closeable, SymbolTableSource {
             } else if (openPartitionTimestamp > txPartTs) {
                 // Insert partition
                 insertPartition(partitionIndex, txPartTs);
-                checkBitmapIndexReadersConsistency(partitionIndex + 1);
                 changed = true;
                 txPartitionIndex++;
                 partitionIndex++;
+                checkBitmapIndexReadersConsistency(partitionIndex + 1);
                 System.out.println("inserting a partition: " + partitionIndex);
             } else {
                 // Refresh partition
