@@ -110,7 +110,7 @@ public class GeoHashesAppendCharBenchmark {
                 return (geohash << 5) | idx;
             }
         }
-        throw NumericException.INSTANCE;
+        throw new NumericException();
     }
 
     private static long appendChar1(long geohash, char c) throws NumericException {
@@ -121,7 +121,7 @@ public class GeoHashesAppendCharBenchmark {
                 return (geohash << 5) | idx;
             }
         }
-        throw NumericException.INSTANCE;
+        throw new NumericException();
     }
 
     private static long appendChar2(long geohash, char c) throws NumericException { // faster execution
@@ -130,7 +130,7 @@ public class GeoHashesAppendCharBenchmark {
         if (idx > -1) {
             return (geohash << 5) | idx;
         }
-        throw NumericException.INSTANCE;
+        throw new NumericException();
     }
 
     private static char rnd_geochar(Rnd rnd) {

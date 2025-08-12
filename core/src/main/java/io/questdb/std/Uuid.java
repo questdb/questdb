@@ -60,28 +60,28 @@ public final class Uuid implements Sinkable {
 
     public static void checkDashesAndLength(CharSequence uuid, int lo, int hi) throws NumericException {
         if (lo < 0 || hi < lo || hi > uuid.length()) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
         if (hi - lo != UUID_LENGTH) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
         if (uuid.charAt(lo + FIRST_DASH_POS) != '-'
                 || uuid.charAt(lo + SECOND_DASH_POS) != '-'
                 || uuid.charAt(lo + THIRD_DASH_POS) != '-'
                 || uuid.charAt(lo + FOURTH_DASH_POS) != '-') {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
     }
 
     public static void checkDashesAndLength(Utf8Sequence uuid) throws NumericException {
         if (uuid.size() != UUID_LENGTH) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
         if (uuid.byteAt(FIRST_DASH_POS) != '-'
                 || uuid.byteAt(SECOND_DASH_POS) != '-'
                 || uuid.byteAt(THIRD_DASH_POS) != '-'
                 || uuid.byteAt(FOURTH_DASH_POS) != '-') {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
     }
 

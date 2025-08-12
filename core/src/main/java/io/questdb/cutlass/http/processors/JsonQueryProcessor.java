@@ -240,6 +240,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             // re-throw the exception
             throw e;
         } catch (Throwable e) {
+            LOG.error().$(e).$();
             internalError(
                     context.getChunkedResponse(),
                     context.getLastRequestBytesSent(),

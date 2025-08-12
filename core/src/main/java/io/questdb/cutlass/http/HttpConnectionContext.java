@@ -225,7 +225,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.receivedBytes = 0;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.authenticator.close();
-        this.resume(0, null, null);
+        if (fd != -1) {
+            LOG.info().$("====== resuming connection virtual thread on close [fd=").$(fd).I$();
+            this.resume(0, null, null);
+        }
         LOG.debug().$("closed [fd=").$(fd).I$();
     }
 

@@ -53,7 +53,7 @@ public class PartitionDateParseUtil {
                         for (; pos < mlim; pos++) {
                             char c = seq.charAt(pos);
                             if (c < '0' || c > '9') {
-                                throw NumericException.INSTANCE;
+                                throw new NumericException();
                             }
                             micr *= 10;
                             micr += c - '0';
@@ -74,7 +74,7 @@ public class PartitionDateParseUtil {
                                     + min * Timestamps.MINUTE_MICROS
                                     + sec * Timestamps.SECOND_MICROS;
                         } else {
-                            throw NumericException.INSTANCE;
+                            throw new NumericException();
                         }
                     }
                 } else {
@@ -99,7 +99,7 @@ public class PartitionDateParseUtil {
     public static long parseFloorPartialTimestamp(CharSequence seq, final int pos, int lim) throws NumericException {
         long ts;
         if (lim - pos < 4 || lim - pos > 25) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
         int p = pos;
         int year = Numbers.parseInt(seq, p, p += 4);
@@ -125,7 +125,7 @@ public class PartitionDateParseUtil {
 
     private static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {
         if (p >= lim || s.charAt(p) != c) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
     }
 
@@ -137,12 +137,12 @@ public class PartitionDateParseUtil {
             return false;
         }
 
-        throw NumericException.INSTANCE;
+        throw new NumericException();
     }
 
     private static void checkRange(int x, int min, int max) throws NumericException {
         if (x < min || x > max) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
     }
 
@@ -161,7 +161,7 @@ public class PartitionDateParseUtil {
             case 5:
                 return 100000;
             default:
-                throw NumericException.INSTANCE;
+                throw new NumericException();
         }
     }
 }

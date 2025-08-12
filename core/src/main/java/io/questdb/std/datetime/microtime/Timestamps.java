@@ -940,7 +940,7 @@ public final class Timestamps {
 
     public static long parseNanosAsMicrosGreedy(CharSequence sequence, final int p, int lim) throws NumericException {
         if (lim == p) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
 
         boolean negative = sequence.charAt(p) == '-';
@@ -950,7 +950,7 @@ public final class Timestamps {
         }
 
         if (i >= lim || Numbers.notDigit(sequence.charAt(i))) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
 
         int val = 0;
@@ -964,7 +964,7 @@ public final class Timestamps {
             // val * 10 + (c - '0')
             int r = (val << 3) + (val << 1) - (c - '0');
             if (r > val) {
-                throw NumericException.INSTANCE;
+                throw new NumericException();
             }
             val = r;
         }
@@ -972,7 +972,7 @@ public final class Timestamps {
         final int len = i - p;
 
         if (len > 9 || val == Integer.MIN_VALUE && !negative) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
 
         while (i - p < 9) {

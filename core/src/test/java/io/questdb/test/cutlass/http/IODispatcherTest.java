@@ -9322,7 +9322,11 @@ public class IODispatcherTest extends AbstractTest {
                                         if (startIdx > -1) {
                                             startIdx += "\"dataset\":[[".length();
                                             int endIdx = response.indexOf("]]", startIdx);
-                                            queryId = Numbers.parseLong(response, startIdx, endIdx);
+                                            try {
+                                                queryId = Numbers.parseLong(response, startIdx, endIdx);
+                                            } catch (Throwable th) {
+                                                throw th;
+                                            }
                                             break;
                                         }
                                         if (System.currentTimeMillis() - start > TIMEOUT) {

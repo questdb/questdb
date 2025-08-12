@@ -43,7 +43,7 @@ final class FastDoubleCharArray {
                         || d == 0.0
         )
         ) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
         return d;
     }
@@ -159,7 +159,7 @@ final class FastDoubleCharArray {
         index = skipWhitespace(str, index, endIndex);
         if (illegal || index < endIndex
                 || !hasLeadingZero && digitCount == 0) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
 
         // Re-parse significand in case of a potential overflow
@@ -308,7 +308,7 @@ final class FastDoubleCharArray {
         if (illegal || index < endIndex
                 || digitCount == 0
                 || !hasExponent) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
 
         // Re-parse significand in case of a potential overflow
@@ -381,7 +381,7 @@ final class FastDoubleCharArray {
                 return negative ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY;
             }
         }
-        throw NumericException.INSTANCE;
+        throw new NumericException();
     }
 
     /**
@@ -413,7 +413,7 @@ final class FastDoubleCharArray {
                 return Double.NaN;
             }
         }
-        throw NumericException.INSTANCE;
+        throw new NumericException();
     }
 
     /**
@@ -507,14 +507,14 @@ final class FastDoubleCharArray {
     static double parseFloatingPointLiteral(char[] str, int offset, int length, boolean rejectOverflow) throws NumericException {
         final int endIndex = offset + length;
         if (offset < 0 || endIndex > str.length) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
 
         // Skip leading whitespace
         // -------------------
         int index = skipWhitespace(str, offset, endIndex);
         if (index == endIndex) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
         char ch = str[index];
 
@@ -524,7 +524,7 @@ final class FastDoubleCharArray {
         if (isNegative || ch == '+') {
             ch = ++index < endIndex ? str[index] : 0;
             if (ch == 0) {
-                throw NumericException.INSTANCE;
+                throw new NumericException();
             }
         }
 

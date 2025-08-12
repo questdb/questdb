@@ -299,7 +299,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                                             try {
                                                 final int segmentId = Numbers.parseInt(walName);
                                                 if ((segmentId < WalUtils.SEG_MIN_ID) || (segmentId > WalUtils.SEG_MAX_ID)) {
-                                                    throw NumericException.INSTANCE;
+                                                    throw new NumericException();
                                                 }
                                                 path.trimTo(walPathLen);
                                                 final Path segmentPath = setSegmentLockPath(tableToken, walId, segmentId);

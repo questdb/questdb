@@ -135,13 +135,13 @@ public class DateFormatUtils {
     public static void assertChar(char c, @NotNull CharSequence in, int pos, int hi) throws NumericException {
         assertRemaining(pos, hi);
         if (in.charAt(pos) != c) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
     }
 
     public static void assertNoTail(int pos, int hi) throws NumericException {
         if (pos < hi) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
     }
 
@@ -149,20 +149,20 @@ public class DateFormatUtils {
         if (pos < hi) {
             return;
         }
-        throw NumericException.INSTANCE;
+        throw new NumericException();
     }
 
     public static int assertString(@NotNull CharSequence delimiter, int len, @NotNull CharSequence in, int pos, int hi) throws NumericException {
         if (delimiter.charAt(0) == '\'' && delimiter.charAt(len - 1) == '\'') {
             assertRemaining(pos + len - 3, hi);
             if (!Chars.equals(delimiter, 1, len - 1, in, pos, pos + len - 2)) {
-                throw NumericException.INSTANCE;
+                throw new NumericException();
             }
             return pos + len - 2;
         } else {
             assertRemaining(pos + len - 1, hi);
             if (!Chars.equals(delimiter, in, pos, pos + len)) {
-                throw NumericException.INSTANCE;
+                throw new NumericException();
             }
             return pos + len;
         }
@@ -190,19 +190,19 @@ public class DateFormatUtils {
 
         // wrong month
         if (month < 1 || month > 12) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
 
         if (hourType == HOUR_24) {
             // wrong 24-hour clock hour
             if (hour < 0 || hour > 24) {
-                throw NumericException.INSTANCE;
+                throw new NumericException();
             }
             hour %= 24;
         } else {
             // wrong 12-hour clock hour
             if (hour < 0 || hour > 12) {
-                throw NumericException.INSTANCE;
+                throw new NumericException();
             }
             hour %= 12;
             if (hourType == HOUR_PM) {
@@ -212,15 +212,15 @@ public class DateFormatUtils {
 
         // wrong day of month
         if (day < 1 || day > Dates.getDaysPerMonth(month, leap)) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
 
         if (minute < 0 || minute > 59) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
 
         if (second < 0 || second > 59) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
 
         long datetime = Dates.yearMillis(year, leap)

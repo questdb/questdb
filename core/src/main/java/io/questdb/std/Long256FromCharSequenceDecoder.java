@@ -50,7 +50,7 @@ public abstract class Long256FromCharSequenceDecoder implements Long256Acceptor 
             p -= 16;
             if (p > startPos) {
                 // hex string too long
-                throw NumericException.INSTANCE;
+                throw new NumericException();
             }
             long l3 = parse64BitGroup(startPos, minPos, hexString, p, lim);
             acceptor.setAll(l0, l1, l2, l3);

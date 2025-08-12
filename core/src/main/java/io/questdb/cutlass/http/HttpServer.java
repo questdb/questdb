@@ -389,7 +389,7 @@ public class HttpServer implements Closeable {
                     }
                 });
             } else {
-                System.out.println("========= resuming virtual thread, operation: " + operation);
+                LOG.info().$("========= resuming virtual thread, operation: " + operation).$();
                 context.resume(operation, selector, rescheduleContext);
             }
         } else {

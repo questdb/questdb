@@ -148,14 +148,14 @@ public class DateLocale {
 
     private static long findToken(CharSequence content, int lo, int hi, IntObjHashMap<ObjList<CharSequence>> map) throws NumericException {
         if (lo >= hi) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
 
         char c = Character.toUpperCase(content.charAt(lo));
 
         ObjList<CharSequence> l = map.get(c);
         if (l == null) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
 
         for (int i = 0, sz = l.size(); i < sz; i++) {
@@ -176,7 +176,7 @@ public class DateLocale {
             }
         }
 
-        throw NumericException.INSTANCE;
+        throw new NumericException();
     }
 
     private static void index(String[] tokens, IntObjHashMap<ObjList<CharSequence>> map) {

@@ -51,7 +51,7 @@ public class FastDoubleParserTest extends AbstractFastXParserTest {
                                         // the function under the test cannot validate length of
                                         // the memory pointer. This validation has to be done externally.
                                         if (s.length() < u.charOffset() + u.charLength()) {
-                                            throw NumericException.INSTANCE;
+                                            throw new NumericException();
                                         }
                                         Utf8s.strCpyAscii(s, len, mem);
                                         return FastDoubleParser.parseDouble(mem, u.charOffset(), u.charLength(), false);

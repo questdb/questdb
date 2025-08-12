@@ -49,7 +49,7 @@ final class FastFloatMem {
                     (v == Float.POSITIVE_INFINITY
                             || v == Float.NEGATIVE_INFINITY
                             || v == 0.0)) {
-                throw NumericException.INSTANCE;
+                throw new NumericException();
             }
             return v;
         }
@@ -167,7 +167,7 @@ final class FastFloatMem {
         index = skipWhitespace(str, index, endIndex);
         if (illegal || index < endIndex
                 || !hasLeadingZero && digitCount == 0) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
 
         // Re-parse significand in case of a potential overflow
@@ -305,7 +305,7 @@ final class FastFloatMem {
         if (illegal || index < endIndex
                 || digitCount == 0
                 || !hasExponent) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
 
         // Re-parse significand in case of a potential overflow
@@ -378,7 +378,7 @@ final class FastFloatMem {
                 return negative ? negativeInfinity() : positiveInfinity();
             }
         }
-        throw NumericException.INSTANCE;
+        throw new NumericException();
     }
 
     /**
@@ -410,7 +410,7 @@ final class FastFloatMem {
                 return nan();
             }
         }
-        throw NumericException.INSTANCE;
+        throw new NumericException();
     }
 
     /**
@@ -464,14 +464,14 @@ final class FastFloatMem {
     static float parseFloatingPointLiteral(long str, int offset, int length, boolean rejectOverflow) throws NumericException {
         final int endIndex = offset + length;
         if (offset < 0) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
 
         // Skip leading whitespace
         // -------------------
         int index = skipWhitespace(str, offset, endIndex);
         if (index == endIndex) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
         byte ch = Unsafe.getUnsafe().getByte(str + index);
 
@@ -481,7 +481,7 @@ final class FastFloatMem {
         if (isNegative || ch == '+') {
             ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
             if (ch == 0) {
-                throw NumericException.INSTANCE;
+                throw new NumericException();
             }
         }
 

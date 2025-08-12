@@ -48,7 +48,7 @@ final class FastFloatCharArray {
                         || f == 0.0f
         )
         ) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
         return f;
     }
@@ -164,7 +164,7 @@ final class FastFloatCharArray {
         index = skipWhitespace(str, index, endIndex);
         if (illegal || index < endIndex
                 || !hasLeadingZero && digitCount == 0) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
 
         // Re-parse significand in case of a potential overflow
@@ -302,7 +302,7 @@ final class FastFloatCharArray {
         if (illegal || index < endIndex
                 || digitCount == 0
                 || !hasExponent) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
 
         // Re-parse significand in case of a potential overflow
@@ -375,7 +375,7 @@ final class FastFloatCharArray {
                 return negative ? negativeInfinity() : positiveInfinity();
             }
         }
-        throw NumericException.INSTANCE;
+        throw new NumericException();
     }
 
     /**
@@ -407,7 +407,7 @@ final class FastFloatCharArray {
                 return nan();
             }
         }
-        throw NumericException.INSTANCE;
+        throw new NumericException();
     }
 
     /**
@@ -461,14 +461,14 @@ final class FastFloatCharArray {
     static float parseFloatingPointLiteral(char[] str, int offset, int length, boolean rejectOverflow) throws NumericException {
         final int endIndex = offset + length;
         if (offset < 0 || endIndex > str.length) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
 
         // Skip leading whitespace
         // -------------------
         int index = skipWhitespace(str, offset, endIndex);
         if (index == endIndex) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
         char ch = str[index];
 
@@ -478,7 +478,7 @@ final class FastFloatCharArray {
         if (isNegative || ch == '+') {
             ch = ++index < endIndex ? str[index] : 0;
             if (ch == 0) {
-                throw NumericException.INSTANCE;
+                throw new NumericException();
             }
         }
 

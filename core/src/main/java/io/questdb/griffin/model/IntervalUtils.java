@@ -331,7 +331,7 @@ public final class IntervalUtils {
     public static long parseCCPartialDate(CharSequence seq, final int pos, int lim) throws NumericException {
         long ts;
         if (lim - pos < 4) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
         int p = pos;
         int year = Numbers.parseInt(seq, p, p += 4);
@@ -434,7 +434,7 @@ public final class IntervalUtils {
     public static long parseFloorPartialTimestamp(CharSequence seq, final int pos, int lim) throws NumericException {
         long ts;
         if (lim - pos < 4) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
         int p = pos;
         int year = Numbers.parseInt(seq, p, p += 4);
@@ -541,7 +541,7 @@ public final class IntervalUtils {
     public static long parseFloorPartialTimestamp(Utf8Sequence seq, final int pos, int lim) throws NumericException {
         long ts;
         if (lim - pos < 4) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
         int p = pos;
         int year = Numbers.parseInt(seq, p, p += 4);
@@ -656,7 +656,7 @@ public final class IntervalUtils {
 
     public static void parseInterval(CharSequence seq, int pos, int lim, short operation, LongList out) throws NumericException {
         if (lim - pos < 4) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
         int p = pos;
         int year = Numbers.parseInt(seq, p, p += 4);
@@ -682,7 +682,7 @@ public final class IntervalUtils {
                             int sec = Numbers.parseInt(seq, p, p += 2);
                             checkRange(sec, 0, 59);
                             if (p < lim) {
-                                throw NumericException.INSTANCE;
+                                throw new NumericException();
                             } else {
                                 // seconds
                                 addHiLoInterval(Timestamps.yearMicros(year, l)
@@ -1041,25 +1041,25 @@ public final class IntervalUtils {
 
     private static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {
         if (p >= lim || s.charAt(p) != c) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
     }
 
     private static void checkChar(Utf8Sequence s, int p, int lim, char c) throws NumericException {
         if (p >= lim || s.byteAt(p) != c) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
     }
 
     private static void checkChar(CharSequence s, int p, int lim, char c1, char c2) throws NumericException {
         if (p >= lim || (s.charAt(p) != c1 && s.charAt(p) != c2)) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
     }
 
     private static void checkChar(Utf8Sequence s, int p, int lim, char c1, char c2) throws NumericException {
         if (p >= lim || (s.byteAt(p) != c1 && s.byteAt(p) != c2)) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
     }
 
@@ -1071,7 +1071,7 @@ public final class IntervalUtils {
             return false;
         }
 
-        throw NumericException.INSTANCE;
+        throw new NumericException();
     }
 
     private static boolean checkLenStrict(int p, int lim) throws NumericException {
@@ -1082,12 +1082,12 @@ public final class IntervalUtils {
             return false;
         }
 
-        throw NumericException.INSTANCE;
+        throw new NumericException();
     }
 
     private static void checkRange(int x, int min, int max) throws NumericException {
         if (x < min || x > max) {
-            throw NumericException.INSTANCE;
+            throw new NumericException();
         }
     }
 
@@ -1119,7 +1119,7 @@ public final class IntervalUtils {
                 return tzSign * (hour * Timestamps.HOUR_MICROS);
             }
         }
-        throw NumericException.INSTANCE;
+        throw new NumericException();
     }
 
     private static long checkTimezoneTail(Utf8Sequence seq, int p, int lim) throws NumericException {
@@ -1150,7 +1150,7 @@ public final class IntervalUtils {
                 return tzSign * (hour * Timestamps.HOUR_MICROS);
             }
         }
-        throw NumericException.INSTANCE;
+        throw new NumericException();
     }
 
     private static void parseRange(CharSequence seq, int lo, int p, int lim, int position, short operation, LongList out) throws SqlException {
@@ -1197,7 +1197,7 @@ public final class IntervalUtils {
                 tzSign = 1;
                 break;
             default:
-                throw NumericException.INSTANCE;
+                throw new NumericException();
         }
         return tzSign;
     }
@@ -1231,7 +1231,7 @@ public final class IntervalUtils {
             case 5:
                 return 100000;
             default:
-                throw NumericException.INSTANCE;
+                throw new NumericException();
         }
     }
 
