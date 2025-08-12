@@ -1936,7 +1936,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 final WalEventCursor.MatViewDataInfo mvDataInfo = eventCursor.getMatViewDataInfo();
                 assertEquals(1, mvDataInfo.getLastRefreshBaseTableTxn());
-                assertEquals(2, mvDataInfo.getLastRefreshTimestamp());
+                assertEquals(2, mvDataInfo.getLastRefreshTimestampUs());
                 // last period value should be written along with replace range lo/hi timestamps
                 assertEquals(3, mvDataInfo.getLastPeriodHi());
                 assertEquals(4, mvDataInfo.getReplaceRangeTsLow());
@@ -1947,7 +1947,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 final WalEventCursor.MatViewInvalidationInfo mvInfo = eventCursor.getMatViewInvalidationInfo();
                 assertEquals(6, mvInfo.getLastRefreshBaseTableTxn());
-                assertEquals(7, mvInfo.getLastRefreshTimestamp());
+                assertEquals(7, mvInfo.getLastRefreshTimestampMicros());
                 assertTrue(mvInfo.isInvalid());
                 TestUtils.assertEquals("test", mvInfo.getInvalidationReason());
                 // last period and cached txn intervals values should be ignored
@@ -4139,7 +4139,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         assertEquals(segmentTxn, info.getStartRowID());
                         assertEquals(segmentTxn + 1, info.getEndRowID());
                         assertEquals(refreshTxn + segmentTxn, info.getLastRefreshBaseTableTxn());
-                        assertEquals(segmentTxn, info.getLastRefreshTimestamp());
+                        assertEquals(segmentTxn, info.getLastRefreshTimestampUs());
                     } else {
                         Assert.fail("MVData event should not be present in old format");
                     }

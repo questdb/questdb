@@ -104,7 +104,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private CreateTableOperationImpl createTableOperation;
     private long samplingInterval;
     private char samplingIntervalUnit;
-    private long timerStart;
+    private long timerStartUs;
 
     public CreateMatViewOperationImpl(
             @NotNull String sqlText,
@@ -117,7 +117,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             @Nullable String timeZoneOffset,
             int timerInterval,
             char timerUnit,
-            long timerStart,
+            long timerStartUs,
             @Nullable String timerTimeZone,
             int periodLength,
             char periodLengthUnit,
@@ -134,7 +134,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         this.timeZoneOffset = timeZoneOffset;
         this.timerInterval = timerInterval;
         this.timerUnit = timerUnit;
-        this.timerStart = timerStart;
+        this.timerStartUs = timerStartUs;
         this.timerTimeZone = timerTimeZone;
         this.periodLength = periodLength;
         this.periodLengthUnit = periodLengthUnit;
@@ -274,8 +274,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     public void init(TableToken matViewToken) {
         viewDefinition.init(
                 refreshType,
-                baseTableTimestampType,
                 deferred,
+                baseTableTimestampType,
                 matViewToken,
                 Chars.toString(createTableOperation.getSelectText()),
                 baseTableName,
@@ -286,7 +286,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 0, // refreshLimitHoursOrMonths can only be set via ALTER
                 timerInterval,
                 timerUnit,
-                timerStart,
+                timerStartUs,
                 timerTimeZone,
                 periodLength,
                 periodLengthUnit,
@@ -472,7 +472,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata);
         updateMatViewTablePartitionBy(createTableOperation.getTimestampType());
         this.baseTableTimestampType = baseTableMetadata.getTimestampType();
-        this.timerStart = ColumnType.getTimestampDriver(this.baseTableTimestampType).fromMicros(timerStart);
     }
 
     private static void copyBaseTableSymbolColumnCapacity(

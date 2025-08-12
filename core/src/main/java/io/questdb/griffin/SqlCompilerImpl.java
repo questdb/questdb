@@ -43,6 +43,7 @@ import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.MapWriter;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
@@ -1821,9 +1822,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         int refreshType = MatViewDefinition.REFRESH_TYPE_IMMEDIATE;
                         int every = 0;
                         char everyUnit = 0;
-                        long start = Numbers.LONG_NULL;
+                        long startUs = Numbers.LONG_NULL;
                         String tz = null;
-                        TimeZoneRules tzRules = null;
+                        TimeZoneRules tzRulesMicros = null;
                         int length = 0;
                         char lengthUnit = 0;
                         int delay = 0;
@@ -1843,7 +1844,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             tok = SqlUtil.fetchNext(lexer);
                         }
 
-                        TimestampDriver driver = viewDefinition.getBaseTableTimestampDriver();
                         if (tok != null && isPeriodKeyword(tok)) {
                             // REFRESH ... PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
                             expectKeyword(lexer, "(");
@@ -1852,7 +1852,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             length = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
                             lengthUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                             SqlParser.validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
-                            final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(driver, length, lengthUnit, lexer.lastTokenPosition());
+                            final TimestampSampler periodSamplerMicros = TimestampSamplerFactory.getInstance(
+                                    MicrosTimestampDriver.INSTANCE,
+                                    length,
+                                    lengthUnit,
+                                    lexer.lastTokenPosition()
+                            );
                             tok = expectToken(lexer, "'time zone' or 'delay' or ')'");
 
                             if (isTimeKeyword(tok)) {
@@ -1863,7 +1868,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 }
                                 tz = unquote(tok).toString();
                                 try {
-                                    tzRules = driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
+                                    tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
                                 } catch (CairoException e) {
                                     throw SqlException.position(lexer.lastTokenPosition()).put(e.getFlyweightMessage());
                                 }
@@ -1883,16 +1888,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             }
 
                             // Period timer start is at the boundary of the current period.
-                            final long now = driver.getTicks();
-                            final long nowLocal = tzRules != null ? now + tzRules.getOffset(now) : now;
-                            start = periodSampler.round(nowLocal);
+                            final long nowMicros = configuration.getMicrosecondClock().getTicks();
+                            final long nowLocalMicros = tzRulesMicros != null ? nowMicros + tzRulesMicros.getOffset(nowMicros) : nowMicros;
+                            startUs = periodSamplerMicros.round(nowLocalMicros);
                             tok = SqlUtil.fetchNext(lexer);
                         } else if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
                             if (tok != null && isStartKeyword(tok)) {
                                 // REFRESH EVERY <interval> [START '<datetime>' [TIME ZONE '<timezone>']]
                                 tok = expectToken(lexer, "START timestamp");
                                 try {
-                                    start = driver.parseFloorLiteral(unquote(tok));
+                                    startUs = MicrosTimestampDriver.INSTANCE.parseFloorLiteral(unquote(tok));
                                 } catch (NumericException e) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                                 }
@@ -1904,7 +1909,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     tz = unquote(tok).toString();
                                     // validate time zone
                                     try {
-                                        driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
+                                        MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
                                     } catch (CairoException e) {
                                         throw SqlException.position(lexer.lastTokenPosition()).put(e.getFlyweightMessage());
                                     }
@@ -1913,7 +1918,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             } else {
                                 // REFRESH EVERY <interval> AS
                                 // Don't forget to set timer params.
-                                start = configuration.getMicrosecondClock().getTicks();
+                                startUs = configuration.getMicrosecondClock().getTicks();
                             }
                         }
 
@@ -1928,7 +1933,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 refreshType,
                                 every,
                                 everyUnit,
-                                start,
+                                startUs,
                                 tz,
                                 length,
                                 lengthUnit,
@@ -4580,7 +4585,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         private void mkBackupDstRoot() {
             DateFormat format = configuration.getBackupDirTimestampFormat();
-            long epochMicros = configuration.getMicrosecondClock().getTicks();
+            long epochUs = configuration.getMicrosecondClock().getTicks();
             dstPath.of(configuration.getBackupRoot()).slash();
             int plen = dstPath.size();
             int n = 0;
@@ -4588,7 +4593,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // only one will succeed the other will throw a CairoException. It could be serialised
             do {
                 dstPath.trimTo(plen);
-                format.format(epochMicros, configuration.getDefaultDateLocale(), null, dstPath);
+                format.format(epochUs, configuration.getDefaultDateLocale(), null, dstPath);
                 if (n > 0) {
                     dstPath.put('.').put(n);
                 }

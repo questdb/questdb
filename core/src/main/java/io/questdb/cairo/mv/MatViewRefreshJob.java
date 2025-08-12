@@ -168,12 +168,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @NotNull RefreshContext refreshContext,
             @NotNull RecordCursorFactory factory,
             @NotNull RecordToRowCopier copier,
-            long refreshTriggerTimestamp,
+            long refreshTriggerTimestampUs,
             long replacementTimestampLo,
             long replacementTimestampHi
     ) {
         final long recordRowCopierMetadataVersion = walWriter.getMetadata().getMetadataVersion();
-        final long refreshFinishTimestamp = microsecondClock.getTicks();
+        final long refreshFinishTimestampUs = microsecondClock.getTicks();
         final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
         if (refreshContext.toBaseTxn == -1) {
             // It's a range refresh.
@@ -193,7 +193,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             if (refreshContext.periodHi != Numbers.LONG_NULL) {
                 walWriter.resetMatViewState(
                         viewState.getLastRefreshBaseTxn(),
-                        refreshFinishTimestamp,
+                        refreshFinishTimestampUs,
                         false,
                         null,
                         commitPeriodHi,
@@ -205,8 +205,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     factory,
                     copier,
                     recordRowCopierMetadataVersion,
-                    refreshFinishTimestamp,
-                    refreshTriggerTimestamp,
+                    refreshFinishTimestampUs,
+                    refreshTriggerTimestampUs,
                     commitPeriodHi
             );
         } else {
@@ -215,7 +215,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // The mat view data commit will reset cached txn intervals since we want to evict them.
             walWriter.commitMatView(
                     refreshContext.toBaseTxn,
-                    refreshFinishTimestamp,
+                    refreshFinishTimestampUs,
                     commitPeriodHi,
                     replacementTimestampLo,
                     replacementTimestampHi
@@ -224,8 +224,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     factory,
                     copier,
                     recordRowCopierMetadataVersion,
-                    refreshFinishTimestamp,
-                    refreshTriggerTimestamp,
+                    refreshFinishTimestampUs,
+                    refreshTriggerTimestampUs,
                     refreshContext.toBaseTxn,
                     commitPeriodHi
             );
@@ -272,7 +272,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long lastTxn = baseTableReader.getSeqTxn();
         final TableToken baseTableToken = baseTableReader.getTableToken();
         final TableToken viewToken = viewDefinition.getMatViewToken();
-        TimestampDriver driver = viewDefinition.getBaseTableTimestampDriver();
+        final TimestampDriver driver = viewDefinition.getBaseTableTimestampDriver();
 
         final long now = driver.getTicks();
         final boolean rangeRefresh = rangeTo != Numbers.LONG_NULL;
@@ -349,19 +349,24 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             if (viewDefinition.getPeriodLength() > 0) {
                 TimestampSampler periodSampler = viewDefinition.getPeriodSampler();
                 if (periodSampler == null) {
-                    periodSampler = TimestampSamplerFactory.getInstance(driver, viewDefinition.getPeriodLength(), viewDefinition.getPeriodLengthUnit(), -1);
+                    periodSampler = TimestampSamplerFactory.getInstance(
+                            driver,
+                            viewDefinition.getPeriodLength(),
+                            viewDefinition.getPeriodLengthUnit(),
+                            -1
+                    );
                     viewDefinition.setPeriodSampler(periodSampler);
                 }
-                periodSampler.setStart(viewDefinition.getTimerStart());
+                periodSampler.setStart(driver.fromMicros(viewDefinition.getTimerStartUs()));
 
-                final long delay = MatViewTimerJob.periodDelay(driver, viewDefinition.getPeriodDelay(), viewDefinition.getPeriodDelayUnit());
-                long nowLocal = viewDefinition.getTimerTzRules() != null
-                        ? now + viewDefinition.getTimerTzRules().getOffset(now)
+                final long delay = driver.from(viewDefinition.getPeriodDelay(), viewDefinition.getPeriodDelayUnit());
+                long nowLocal = viewDefinition.getTimerTzRulesUs() != null
+                        ? now + driver.fromMicros(viewDefinition.getTimerTzRulesUs().getOffset(driver.toMicros(now)))
                         : now;
                 // Period hi is exclusive, but maxTs is inclusive, so we align them.
                 final long periodHiLocal = periodSampler.round(nowLocal - delay) - 1;
-                final long periodHi = viewDefinition.getTimerTzRules() != null
-                        ? periodHiLocal - viewDefinition.getTimerTzRules().getOffset(periodHiLocal)
+                final long periodHi = viewDefinition.getTimerTzRulesUs() != null
+                        ? periodHiLocal - driver.fromMicros(viewDefinition.getTimerTzRulesUs().getOffset(driver.toMicros(periodHiLocal)))
                         : periodHiLocal;
 
                 // Remove incomplete periods from both txn intervals and refresh interval.
@@ -610,7 +615,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         RecordCursorFactory factory = null;
         RecordToRowCopier copier;
         final long refreshStartTimestamp = microsecondClock.getTicks();
-        viewState.setLastRefreshStartTimestamp(refreshStartTimestamp);
+        viewState.setLastRefreshStartTimestampUs(refreshStartTimestamp);
         final TableToken viewTableToken = viewDefinition.getMatViewToken();
         final SampleByIntervalIterator intervalIterator = refreshContext.intervalIterator;
         int intervalStep = 0;
@@ -724,7 +729,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                     throw CairoException.nonCritical()
                                             .put("timestamp out of replace range [expected=").ts(driver.getColumnType(), replacementTimestampLo)
                                             .put(", ").ts(driver.getColumnType(), replacementTimestampHi)
-                                            .put(", actual=").ts(driver.getColumnType(), timestamp);
+                                            .put(", actual=").ts(driver.getColumnType(), timestamp)
+                                            .put(']');
                                 }
                                 TableWriter.Row row = walWriter.newRow(timestamp);
                                 copier.copy(record, row);
@@ -1109,7 +1115,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         if (walWriter != null) {
             walWriter.resetMatViewState(
                     viewState.getLastRefreshBaseTxn(),
-                    viewState.getLastRefreshFinishTimestamp(),
+                    viewState.getLastRefreshFinishTimestampUs(),
                     true,
                     errorMessage,
                     viewState.getLastPeriodHi(),
@@ -1269,11 +1275,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         viewState.setLastRefreshBaseTableTxn(-1);
         viewState.setRefreshIntervalsBaseTxn(-1);
         viewState.getRefreshIntervals().clear();
-        viewState.setLastRefreshTimestamp(Numbers.LONG_NULL);
+        viewState.setLastRefreshTimestampMicros(Numbers.LONG_NULL);
         viewState.setLastPeriodHi(Numbers.LONG_NULL);
         walWriter.resetMatViewState(
                 viewState.getLastRefreshBaseTxn(),
-                viewState.getLastRefreshFinishTimestamp(),
+                viewState.getLastRefreshFinishTimestampUs(),
                 false,
                 null,
                 viewState.getLastPeriodHi(),
@@ -1284,11 +1290,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private void setInvalidState(MatViewState viewState, WalWriter walWriter, CharSequence invalidationReason, long invalidationTimestamp) {
         viewState.markAsInvalid(invalidationReason);
-        viewState.setLastRefreshTimestamp(invalidationTimestamp);
-        viewState.setLastRefreshStartTimestamp(invalidationTimestamp);
+        viewState.setLastRefreshTimestampMicros(invalidationTimestamp);
+        viewState.setLastRefreshStartTimestampUs(invalidationTimestamp);
         walWriter.resetMatViewState(
                 viewState.getLastRefreshBaseTxn(),
-                viewState.getLastRefreshFinishTimestamp(),
+                viewState.getLastRefreshFinishTimestampUs(),
                 true,
                 invalidationReason,
                 viewState.getLastPeriodHi(),
@@ -1374,7 +1380,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                 walWriter.resetMatViewState(
                         viewState.getLastRefreshBaseTxn(),
-                        viewState.getLastRefreshFinishTimestamp(),
+                        viewState.getLastRefreshFinishTimestampUs(),
                         false,
                         null,
                         viewState.getLastPeriodHi(),

@@ -178,7 +178,7 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
                             " rnd_varchar(2,3,0)," +
                             " timestamp_sequence(0L, 10L) ts from long_sequence(10)) timestamp(ts)"
             );
-            if (timestampType == ColumnType.TIMESTAMP_MICRO) {
+            if (ColumnType.isTimestampMicro(timestampType)) {
                 assertSql(
                         "concat\n" +
                                 "-1148479920/24814/27/0.12966659791573354/0.28455776/-7611843578141082998/YR/A/false/[]/2827518/0x63eb3740c80f661e9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b/D/cec82869-edec-421b-8259-3f82b430328d/235.156.195.158/jF/1970-01-01T00:00:00.000000Z\n" +

@@ -220,7 +220,7 @@ public class MatViewStateTest extends AbstractCairoTest {
             final MatViewStateReader viewState = new MatViewStateReader().of(reader, viewToken);
             assertEquals(invalid, viewState.isInvalid());
             assertEquals(lastRefreshBaseTxn, viewState.getLastRefreshBaseTxn());
-            assertEquals(lastRefreshTimestamp, viewState.getLastRefreshTimestamp());
+            assertEquals(lastRefreshTimestamp, viewState.getLastRefreshTimestampUs());
             TestUtils.assertEquals(invalidationReason, viewState.getInvalidationReason());
             assertEquals(lastPeriodHi, viewState.getLastPeriodHi());
             if (refreshIntervals != null) {

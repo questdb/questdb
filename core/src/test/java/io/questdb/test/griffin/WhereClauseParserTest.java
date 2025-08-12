@@ -3715,7 +3715,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private IntrinsicModel modelOf(CharSequence seq, String preferredColumn) throws SqlException {
         queryModel.clear();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            RecordMetadata m = timestampType == ColumnType.TIMESTAMP_MICRO ? metadata : metadataNanos;
+            RecordMetadata m = ColumnType.isTimestampMicro(timestampType) ? metadata : metadataNanos;
             return e.extract(
                     column -> column,
                     compiler.testParseExpression(seq, queryModel),
@@ -3726,7 +3726,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     m,
                     sqlExecutionContext,
                     false,
-                    timestampType == ColumnType.TIMESTAMP_MICRO ? reader : readerNanos
+                    ColumnType.isTimestampMicro(timestampType) ? reader : readerNanos
             );
         }
     }
@@ -3734,7 +3734,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private IntrinsicModel noDesignatedTimestampNotIdxModelOf(CharSequence seq) throws SqlException {
         queryModel.clear();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            RecordMetadata m = timestampType == ColumnType.TIMESTAMP_MICRO ? noDesignatedTimestampNorIdxMetadata : noDesignatedTimestampNorIdxMetadataNanos;
+            RecordMetadata m = ColumnType.isTimestampMicro(timestampType) ? noDesignatedTimestampNorIdxMetadata : noDesignatedTimestampNorIdxMetadataNanos;
             return e.extract(
                     column -> column,
                     compiler.testParseExpression(seq, queryModel),
@@ -3742,10 +3742,10 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     null,
                     m.getTimestampIndex(),
                     functionParser,
-                    timestampType == ColumnType.TIMESTAMP_MICRO ? metadata : metadataNanos,
+                    ColumnType.isTimestampMicro(timestampType) ? metadata : metadataNanos,
                     sqlExecutionContext,
                     false,
-                    timestampType == ColumnType.TIMESTAMP_MICRO ? noDesignatedTimestampNorIdxReader : noDesignatedTimestampNorIdxReaderNanos
+                    ColumnType.isTimestampMicro(timestampType) ? noDesignatedTimestampNorIdxReader : noDesignatedTimestampNorIdxReaderNanos
             );
         }
     }
@@ -3760,7 +3760,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     null,
                     noTimestampMetadata.getTimestampIndex(),
                     functionParser,
-                    timestampType == ColumnType.TIMESTAMP_MICRO ? metadata : metadataNanos,
+                    ColumnType.isTimestampMicro(timestampType) ? metadata : metadataNanos,
                     sqlExecutionContext,
                     false,
                     noTimestampReader
@@ -3771,7 +3771,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private IntrinsicModel nonEmptyModelOf() throws SqlException {
         queryModel.clear();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            RecordMetadata m = timestampType == ColumnType.TIMESTAMP_MICRO ? nonEmptyMetadata : nonEmptyMetadataNanos;
+            RecordMetadata m = ColumnType.isTimestampMicro(timestampType) ? nonEmptyMetadata : nonEmptyMetadataNanos;
             return e.extract(
                     column -> column,
                     compiler.testParseExpression("sym = 'X' and ex = 'Y' and mode = 'Z'", queryModel),
@@ -3782,17 +3782,18 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     metadata,
                     sqlExecutionContext,
                     false,
-                    timestampType == ColumnType.TIMESTAMP_MICRO ? nonEmptyReader : nonEmptyReaderNanos
+                    ColumnType.isTimestampMicro(timestampType) ? nonEmptyReader : nonEmptyReaderNanos
             );
         }
     }
 
     private String replaceTimestampSuffix(String expected) {
-        return timestampType == ColumnType.TIMESTAMP_MICRO ? expected :
-                expected.replaceAll("00000", "00000000").
-                        replaceAll("99999", "99999999").
-                        replaceAll("294247-01-10T04:00:54.775807Z", "2262-04-11T23:47:16.854775807Z")
-                        .replaceAll("-290308-01-01T19:59:05.224193Z", "1677-01-01T00:12:43.145224193Z");
+        return ColumnType.isTimestampMicro(timestampType)
+                ? expected
+                : expected.replaceAll("00000", "00000000").
+                replaceAll("99999", "99999999").
+                replaceAll("294247-01-10T04:00:54.775807Z", "2262-04-11T23:47:16.854775807Z")
+                .replaceAll("-290308-01-01T19:59:05.224193Z", "1677-01-01T00:12:43.145224193Z");
     }
 
     private IntrinsicModel runWhereCompareToModelTest(String where, String expected) throws SqlException {

@@ -144,14 +144,16 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         super.toSink(sink);
-        TimestampDriver driver = ColumnType.getTimestampDriver(baseTableReader.getMetadata().getTimestampType());
-        sink.putAscii(", refreshMinTs=").putISODate(driver, getTimestamp(1));
-        sink.putAscii(", refreshMaxTs=").putISODate(driver, getTimestamp(2));
+        if (baseTableReader != null) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(baseTableReader.getMetadata().getTimestampType());
+            sink.putAscii(", refreshMinTs=").putISODate(driver, getTimestamp(1));
+            sink.putAscii(", refreshMaxTs=").putISODate(driver, getTimestamp(2));
+        }
     }
 
     private long getTimestamp(int index) {
         final Function func = getBindVariableService().getFunction(index);
-        if (func == null || ColumnType.isTimestamp(func.getType())) {
+        if (func == null || !ColumnType.isTimestamp(func.getType())) {
             return Numbers.LONG_NULL;
         }
         return func.getTimestamp(null);

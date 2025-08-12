@@ -75,7 +75,6 @@ import static io.questdb.test.tools.TestUtils.assertContains;
 
 @RunWith(Parameterized.class)
 public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
-
     private final TimestampDriver timestampDriver;
     private final String timestampType;
 
@@ -1096,7 +1095,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     }
 
     private String replaceExpectedTimestamp(String expected) {
-        return timestampDriver.getColumnType() == ColumnType.TIMESTAMP_MICRO ? expected : expected.replaceAll(".000000Z", ".000000000Z");
+        return ColumnType.isTimestampMicro(timestampDriver.getColumnType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
     }
 
     enum Transport {

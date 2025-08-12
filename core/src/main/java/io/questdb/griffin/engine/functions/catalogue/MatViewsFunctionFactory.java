@@ -215,7 +215,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
                         final long lastPeriodHi = MicrosTimestampDriver.INSTANCE.from(viewStateReader.getLastPeriodHi(), viewDefinition.getBaseTableTimestampType());
                         final long lastRefreshedBaseTxn = viewStateReader.getLastRefreshBaseTxn();
-                        final long lastRefreshTimestamp = viewStateReader.getLastRefreshTimestamp();
+                        final long lastRefreshTimestampUs = viewStateReader.getLastRefreshTimestampUs();
 
                         final TableToken baseTableToken = engine.getTableTokenIfExists(viewDefinition.getBaseTableName());
                         // Read base table txn after mat view's last refreshed txn to avoid
@@ -228,31 +228,30 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         final char periodLengthUnit = viewDefinition.getPeriodLengthUnit();
                         final int periodDelay = viewDefinition.getPeriodDelay();
                         final char periodDelayUnit = viewDefinition.getPeriodDelayUnit();
-                        long timerStart = Numbers.LONG_NULL;
+                        long timerStartUs = Numbers.LONG_NULL;
                         int timerInterval = 0;
                         char timerIntervalUnit = 0;
                         if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_TIMER || periodLength > 0) {
-                            // record use timestamp_micro for timer start
-                            timerStart = MicrosTimestampDriver.INSTANCE.from(viewDefinition.getTimerStart(), viewDefinition.getBaseTableTimestampType());
+                            timerStartUs = viewDefinition.getTimerStartUs();
                             timerInterval = viewDefinition.getTimerInterval();
                             timerIntervalUnit = viewDefinition.getTimerUnit();
                         }
 
                         final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
                         // start timestamp is not persisted
-                        final long lastRefreshStartTimestamp = state != null ? state.getLastRefreshStartTimestamp() : Numbers.LONG_NULL;
+                        final long lastRefreshStartTimestamp = state != null ? state.getLastRefreshStartTimestampUs() : Numbers.LONG_NULL;
 
                         record.of(
                                 viewDefinition,
                                 lastRefreshStartTimestamp,
-                                lastRefreshTimestamp,
+                                lastRefreshTimestampUs,
                                 lastPeriodHi,
                                 lastRefreshedBaseTxn,
                                 lastAppliedBaseTxn,
                                 viewStateReader.getInvalidationReason(),
                                 viewStateReader.isInvalid(),
                                 refreshLimitHoursOrMonths,
-                                timerStart,
+                                timerStartUs,
                                 timerInterval,
                                 timerIntervalUnit,
                                 periodLength,

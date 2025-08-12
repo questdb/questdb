@@ -1715,7 +1715,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableTimestampTypeChangeThrowError() throws Exception {
-        Assume.assumeTrue(timestampDriver.getColumnType() == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampDriver.getColumnType()));
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -6112,7 +6112,7 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     private String replaceExpectedTimestamp(String expected) {
-        return timestampDriver.getColumnType() == ColumnType.TIMESTAMP_MICRO ? expected : expected.replaceAll(".000000Z", ".000000000Z");
+        return ColumnType.isTimestampMicro(timestampDriver.getColumnType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
     }
 
     private void testAlignToCalendarTimezoneOffset(final String timezone) throws Exception {
@@ -6266,7 +6266,7 @@ public class MatViewTest extends AbstractCairoTest {
             Assert.assertEquals(targetRefreshParams.periodLengthUnit, viewDefinition.getPeriodLengthUnit());
             Assert.assertEquals(targetRefreshParams.timerInterval, viewDefinition.getTimerInterval());
             Assert.assertEquals(targetRefreshParams.timerUnit, viewDefinition.getTimerUnit());
-            Assert.assertEquals(targetRefreshParams.timerStart, viewDefinition.getTimerStart());
+            Assert.assertEquals(targetRefreshParams.timerStartUs, viewDefinition.getTimerStartUs());
             Assert.assertEquals(targetRefreshParams.timerTimeZone, viewDefinition.getTimerTimeZone());
         });
     }
@@ -6840,7 +6840,7 @@ public class MatViewTest extends AbstractCairoTest {
         }
     }
 
-    private class TestRefreshParams {
+    private static class TestRefreshParams {
         boolean deferred;
         int periodDelay;
         char periodDelayUnit;
@@ -6848,7 +6848,7 @@ public class MatViewTest extends AbstractCairoTest {
         char periodLengthUnit;
         int refreshType;
         int timerInterval;
-        long timerStart = Numbers.LONG_NULL;
+        long timerStartUs = Numbers.LONG_NULL;
         String timerTimeZone;
         char timerUnit;
 
@@ -6873,7 +6873,7 @@ public class MatViewTest extends AbstractCairoTest {
             this.periodLengthUnit = 'h';
             this.periodDelay = 1;
             this.periodDelayUnit = 'h';
-            this.timerStart = timestampDriver.parseFloorLiteral("2020-12-12T00:00:00.000000Z");
+            this.timerStartUs = MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2020-12-12T00:00:00.000000Z");
             this.timerTimeZone = "Europe/London";
             return this;
         }
@@ -6882,7 +6882,7 @@ public class MatViewTest extends AbstractCairoTest {
             refreshType = MatViewDefinition.REFRESH_TYPE_TIMER;
             this.timerInterval = 42;
             this.timerUnit = 'm';
-            this.timerStart = 0;
+            this.timerStartUs = 0;
             this.timerTimeZone = "Europe/Sofia";
             return this;
         }

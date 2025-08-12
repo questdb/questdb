@@ -1685,7 +1685,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     );
                     block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_MSG_TYPE);
                     block = writer.append();
-                    MatViewState.appendTs(matViewState.getLastRefreshFinishTimestamp(), block);
+                    MatViewState.appendTs(matViewState.getLastRefreshFinishTimestampUs(), block);
                     block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE);
                     writer.commit();
                 }
@@ -1697,7 +1697,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
                     assertEquals(matViewState.isInvalid(), actualState.isInvalid());
                     assertEquals(matViewState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
-                    assertEquals(matViewState.getLastRefreshFinishTimestamp(), actualState.getLastRefreshTimestamp());
+                    assertEquals(matViewState.getLastRefreshFinishTimestampUs(), actualState.getLastRefreshTimestampUs());
                     TestUtils.assertEquals(invalidationReason, actualState.getInvalidationReason());
                 }
             }
@@ -1715,8 +1715,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             try {
                 def.init(
                         MatViewDefinition.REFRESH_TYPE_IMMEDIATE,
-                        ColumnType.TIMESTAMP_MICRO,
                         false,
+                        ColumnType.TIMESTAMP_MICRO,
                         matViewToken,
                         query,
                         TABLE1,
@@ -1742,8 +1742,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             try {
                 def.init(
                         MatViewDefinition.REFRESH_TYPE_IMMEDIATE,
-                        ColumnType.TIMESTAMP_MICRO,
                         false,
+                        ColumnType.TIMESTAMP_MICRO,
                         matViewToken,
                         query,
                         TABLE1,
@@ -1765,11 +1765,12 @@ public class CreateMatViewTest extends AbstractCairoTest {
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Oceania");
             }
+
             try {
                 def.init(
                         MatViewDefinition.REFRESH_TYPE_IMMEDIATE,
-                        ColumnType.TIMESTAMP_MICRO,
                         false,
+                        ColumnType.TIMESTAMP_MICRO,
                         matViewToken,
                         query,
                         TABLE1,
@@ -1830,7 +1831,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
                     assertEquals(matViewState.isInvalid(), actualState.isInvalid());
                     assertEquals(matViewState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
-                    assertEquals(Numbers.LONG_NULL, actualState.getLastRefreshTimestamp());
+                    assertEquals(Numbers.LONG_NULL, actualState.getLastRefreshTimestampUs());
                     TestUtils.assertEquals(invalidationReason, actualState.getInvalidationReason());
                     assertEquals(Numbers.LONG_NULL, actualState.getLastPeriodHi());
 
@@ -1848,7 +1849,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
                     assertEquals(matViewState.isInvalid(), actualState.isInvalid());
                     assertEquals(matViewState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
-                    assertEquals(Numbers.LONG_NULL, actualState.getLastRefreshTimestamp());
+                    assertEquals(Numbers.LONG_NULL, actualState.getLastRefreshTimestampUs());
                     TestUtils.assertEquals(invalidationReason, actualState.getInvalidationReason());
                     assertEquals(Numbers.LONG_NULL, actualState.getLastPeriodHi());
                 }
@@ -1863,7 +1864,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_MSG_TYPE);
 
                     block = writer.append();
-                    MatViewState.appendTs(matViewState.getLastRefreshFinishTimestamp(), block);
+                    MatViewState.appendTs(matViewState.getLastRefreshFinishTimestampUs(), block);
                     block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE);
 
                     block = writer.append();
@@ -1879,7 +1880,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
                     assertEquals(matViewState.isInvalid(), actualState.isInvalid());
                     assertEquals(matViewState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
-                    assertEquals(matViewState.getLastRefreshFinishTimestamp(), actualState.getLastRefreshTimestamp());
+                    assertEquals(matViewState.getLastRefreshFinishTimestampUs(), actualState.getLastRefreshTimestampUs());
                     TestUtils.assertEquals(invalidationReason, actualState.getInvalidationReason());
                     assertEquals(matViewState.getLastPeriodHi(), actualState.getLastPeriodHi());
                 }
@@ -1905,8 +1906,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     MatViewDefinition unknownDefinition = new MatViewDefinition();
                     unknownDefinition.init(
                             MatViewDefinition.REFRESH_TYPE_IMMEDIATE + 42,
-                            ColumnType.TIMESTAMP_MICRO,
                             false,
+                            ColumnType.TIMESTAMP_MICRO,
                             matViewToken,
                             matViewDefinition.getMatViewSql(),
                             TABLE1,
@@ -1917,7 +1918,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             matViewDefinition.getRefreshLimitHoursOrMonths(),
                             matViewDefinition.getTimerInterval(),
                             matViewDefinition.getTimerUnit(),
-                            matViewDefinition.getTimerStart(),
+                            matViewDefinition.getTimerStartUs(),
                             matViewDefinition.getTimerTimeZone(),
                             matViewDefinition.getPeriodDelay(),
                             matViewDefinition.getPeriodDelayUnit(),
@@ -2165,7 +2166,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         "test1",
                         "create materialized view test1 refresh every 7d start '2020-01-01T02:23:59.900000Z' time zone 'Europe/Paris' as " + query,
                         "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test1' WITH BASE 'table1' REFRESH EVERY 7d START '2020-01-01T02:23:59.900000000Z' TIME ZONE 'Europe/Paris' AS (\n" +
+                                "CREATE MATERIALIZED VIEW 'test1' WITH BASE 'table1' REFRESH EVERY 7d START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' AS (\n" +
                                 "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
                                 ") PARTITION BY DAY;\n"
                 ),
@@ -2173,7 +2174,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         "test2",
                         "create materialized view 'test2' refresh every 7d deferred start '2020-01-01T02:23:59.900000000Z' time zone 'Europe/Paris' as " + query,
                         "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test2' WITH BASE 'table1' REFRESH EVERY 7d DEFERRED START '2020-01-01T02:23:59.900000000Z' TIME ZONE 'Europe/Paris' AS (\n" +
+                                "CREATE MATERIALIZED VIEW 'test2' WITH BASE 'table1' REFRESH EVERY 7d DEFERRED START '2020-01-01T02:23:59.900000Z' TIME ZONE 'Europe/Paris' AS (\n" +
                                 "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
                                 ") PARTITION BY DAY;\n"
                 ),
@@ -2293,7 +2294,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertEquals(refreshLimitHoursOrMonths, matViewDefinition.getRefreshLimitHoursOrMonths());
         assertEquals(timerInterval, matViewDefinition.getTimerInterval());
         assertEquals(timerUnit, matViewDefinition.getTimerUnit());
-        assertEquals(timerStart, matViewDefinition.getTimerStart());
+        assertEquals(timerStart, matViewDefinition.getTimerStartUs());
         assertEquals(timerTimeZone, timerTimeZone != null ? matViewDefinition.getTimerTimeZone() : null);
         assertEquals(periodLength, matViewDefinition.getPeriodLength());
         assertEquals(periodLengthUnit, matViewDefinition.getPeriodLengthUnit());
@@ -2355,7 +2356,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertEquals(refreshLimitHoursOrMonths, matViewDefinition.getRefreshLimitHoursOrMonths());
             assertEquals(timerInterval, matViewDefinition.getTimerInterval());
             assertEquals(timerUnit, matViewDefinition.getTimerUnit());
-            assertEquals(timerStart, matViewDefinition.getTimerStart());
+            assertEquals(timerStart, matViewDefinition.getTimerStartUs());
             assertEquals(timerTimeZone, Chars.toString(matViewDefinition.getTimerTimeZone()));
             assertEquals(periodLength, matViewDefinition.getPeriodLength());
             assertEquals(periodLengthUnit, matViewDefinition.getPeriodLengthUnit());

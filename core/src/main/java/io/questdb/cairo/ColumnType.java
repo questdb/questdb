@@ -143,7 +143,6 @@ public final class ColumnType {
     private static final IntHashSet nonPersistedTypes = new IntHashSet();
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
 
-
     private ColumnType() {
     }
 
@@ -261,7 +260,7 @@ public final class ColumnType {
     public static TimestampDriver getTimestampDriver(int timestampType) {
         final short type = tagOf(timestampType);
         // todo null and UNDEFINED use MicrosTimestamp
-        if (type == ColumnType.NULL || type == UNDEFINED) {
+        if (type == NULL || type == UNDEFINED) {
             return MicrosTimestampDriver.INSTANCE;
         }
 
@@ -462,6 +461,14 @@ public final class ColumnType {
         return ColumnType.tagOf(columnType) == TIMESTAMP;
     }
 
+    public static boolean isTimestampMicro(int timestampType) {
+        return (timestampType & TIMESTAMP_TYPE_MASK) == TIMESTAMP_MICRO;
+    }
+
+    public static boolean isTimestampNano(int timestampType) {
+        return (timestampType & TIMESTAMP_TYPE_MASK) == TIMESTAMP_NANO;
+    }
+
     public static boolean isToSameOrWider(int fromType, int toType) {
         return (tagOf(fromType) == tagOf(toType) && !isArray(fromType) && (getGeoHashBits(fromType) == 0 || getGeoHashBits(fromType) >= getGeoHashBits(toType)))
                 || isBuiltInWideningCast(fromType, toType)
@@ -576,8 +583,8 @@ public final class ColumnType {
     }
 
     private static int getTimestampTypePriority(int timestampType) {
-        assert isTimestamp(timestampType);
-        switch (timestampType) {
+        assert tagOf(timestampType) == TIMESTAMP;
+        switch (timestampType & TIMESTAMP_TYPE_MASK) {
             case TIMESTAMP_MICRO:
                 return 1;
             case TIMESTAMP_NANO:

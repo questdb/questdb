@@ -398,7 +398,7 @@ public class IntrinsicModelTest {
         sink.clear();
         long t = timestampDriver.parseFloorLiteral(value);
         timestampDriver.append(sink, t);
-        TestUtils.assertEquals(timestampType == ColumnType.TIMESTAMP_NANO ?
+        TestUtils.assertEquals(ColumnType.isTimestampNano(timestampType) ?
                 expected.replaceAll("Z", "000Z").replaceAll("999999Z", "999999999Z")
                 : expected, sink);
     }
@@ -407,7 +407,7 @@ public class IntrinsicModelTest {
         out.add(a);
         out.add(b);
         IntervalUtils.intersectInPlace(out, a.size());
-        TestUtils.assertEquals(timestampType == ColumnType.TIMESTAMP_NANO ?
+        TestUtils.assertEquals(ColumnType.isTimestampNano(timestampType) ?
                 expected.replaceAll("000000Z", "000000000Z").replaceAll("999999Z", "999999999Z")
                 : expected, intervalToString(timestampDriver, out));
     }
@@ -425,7 +425,7 @@ public class IntrinsicModelTest {
         LongList out = new LongList();
         IntervalUtils.parseInterval(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         IntervalUtils.applyLastEncodedInterval(timestampDriver, out);
-        TestUtils.assertEquals(timestampType == ColumnType.TIMESTAMP_NANO ?
+        TestUtils.assertEquals(ColumnType.isTimestampNano(timestampType) ?
                         expected.replaceAll("00000Z", "00000000Z").replaceAll("999999Z", "999999999Z")
                         : expected,
                 intervalToString(timestampDriver, out));

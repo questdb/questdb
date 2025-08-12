@@ -90,7 +90,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleIO();
             closeContext();
             drainWalQueue();
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "location\tcast\ttemperature\ttimestamp\thumidity\n" +
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "location\tcast\ttemperature\ttimestamp\thumidity\n" +
                     "us-midwest\t\t82.0\t2016-06-13T17:43:50.100400Z\tnull\n" +
                     "us-eastcoast\tcast\t81.0\t2016-06-13T17:43:50.101400Z\t23.0\n"
                     : "location\tcast\ttemperature\ttimestamp\thumidity\n" +
@@ -114,7 +115,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testAddFieldColumn() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "addField";
         runInContext(() -> {
             recvBuffer =
@@ -177,7 +178,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testAddTagColumn() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "addTag";
         runInContext(() -> {
             recvBuffer =
@@ -210,7 +211,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             recvBuffer = makeMessages(table);
             handleIO();
             closeContext();
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "location\ttemperature\ttimestamp\n" +
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
@@ -245,7 +247,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
             handleIO();
             closeContext();
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "location\ttemperature\ttimestamp\n" +
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
@@ -265,7 +268,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testBadLineSyntax1() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "badLineSyntax1";
         runInContext(() -> {
             recvBuffer =
@@ -292,7 +295,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testBadLineSyntax2() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "badLineSyntax2";
         runInContext(() -> {
             recvBuffer =
@@ -319,7 +322,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testBadLineSyntax3() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "badLineSyntax3";
         runInContext(() -> {
             recvBuffer =
@@ -346,7 +349,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testBadLineSyntax4() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "badLineSyntax4";
         runInContext(() -> {
             recvBuffer =
@@ -373,7 +376,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testBadLineSyntax5() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "badLineSyntax5";
         runInContext(() -> {
             recvBuffer =
@@ -399,7 +402,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testBadLineSyntax6() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "badLineSyntax6";
         runInContext(() -> {
             recvBuffer =
@@ -439,14 +442,14 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleContextIO0();
             Assert.assertFalse(disconnected);
             closeContext();
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
-                    "location\ttemperature\ttimestamp\n" +
-                            "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                            "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
-                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                            "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
                     : "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400200Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
@@ -460,7 +463,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testBooleans() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "badBooleans";
         runInContext(() -> {
             recvBuffer =
@@ -487,7 +490,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testCairoExceptionOnAddColumn() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         assumeFalse(walEnabled);
 
         String table = "columnEx";
@@ -554,7 +557,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     Assert.assertFalse(recvBuffer.isEmpty());
                     closeContext();
 
-                    String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "location\ttemperature\ttimestamp\n" +
+                    String expected = ColumnType.isTimestampMicro(timestampType)
+                            ? "location\ttemperature\ttimestamp\n" +
                             "us-midwest\t82.0\t1970-01-01T00:00:00.000099Z\n"
                             : "location\ttemperature\ttimestamp\n" +
                             "us-midwest\t82.0\t1970-01-01T00:00:00.000099000Z\n";
@@ -597,7 +601,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testColumnConversion1() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         runInContext(() -> {
             TableModel model = new TableModel(configuration, "t_ilp21", PartitionBy.DAY)
                     .col("event", ColumnType.SHORT)
@@ -627,7 +631,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testColumnConversion2() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         assumeFalse(walEnabled); // Wal needs partitioning
         runInContext(() -> {
             TableModel model = new TableModel(configuration, "t_ilp21", PartitionBy.NONE).col("l", ColumnType.LONG);
@@ -648,7 +652,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testColumnNameWithSlash1() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "columnSlash";
         runInContext(() -> {
             recvBuffer =
@@ -674,7 +678,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testColumnNameWithSlash2() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "colSlash2";
         runInContext(() -> {
             recvBuffer =
@@ -700,7 +704,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testColumnTypeChange() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "typeChange";
         addTable(table);
         runInContext(() -> {
@@ -741,15 +745,15 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
             handleIO();
             closeContext();
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
-                    "location\ttemperature\ttimestamp\n" +
-                            "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                            "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
-                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                            "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                            "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
                     : "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400200Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
@@ -776,15 +780,15 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-westcost timestamp=1465839830102500t,temperature=82\n";
             handleIO();
             closeContext();
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
-                    "location\ttimestamp\ttemperature\n" +
-                            "us-midwest\t2016-06-13T17:43:50.100400Z\t82.0\n" +
-                            "us-midwest\t2016-06-13T17:43:50.100500Z\t83.0\n" +
-                            "us-eastcoast\t2016-06-13T17:43:50.101600Z\t81.0\n" +
-                            "us-midwest\t2016-06-13T17:43:50.102300Z\t85.0\n" +
-                            "us-eastcoast\t2016-06-13T17:43:50.102400Z\t89.0\n" +
-                            "us-eastcoast\t2016-06-13T17:43:50.102400Z\t80.0\n" +
-                            "us-westcost\t2016-06-13T17:43:50.102500Z\t82.0\n"
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "location\ttimestamp\ttemperature\n" +
+                    "us-midwest\t2016-06-13T17:43:50.100400Z\t82.0\n" +
+                    "us-midwest\t2016-06-13T17:43:50.100500Z\t83.0\n" +
+                    "us-eastcoast\t2016-06-13T17:43:50.101600Z\t81.0\n" +
+                    "us-midwest\t2016-06-13T17:43:50.102300Z\t85.0\n" +
+                    "us-eastcoast\t2016-06-13T17:43:50.102400Z\t89.0\n" +
+                    "us-eastcoast\t2016-06-13T17:43:50.102400Z\t80.0\n" +
+                    "us-westcost\t2016-06-13T17:43:50.102500Z\t82.0\n"
                     : "location\ttimestamp\ttemperature\n" +
                     "us-midwest\t2016-06-13T17:43:50.100400000Z\t82.0\n" +
                     "us-midwest\t2016-06-13T17:43:50.100500000Z\t83.0\n" +
@@ -812,15 +816,15 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleIO();
             closeContext();
 
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
-                    "location\ttemperature\ttimestamp\n" +
-                            "us-midwest\t82.0\t2016-06-13T17:43:50.100200Z\n" +
-                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                            "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
-                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                            "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                            "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100200Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
                     : "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100200000Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
@@ -848,15 +852,15 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-westcost temperature=82,time=1465839830102600t 1465839830102700200\n";
             handleIO();
             closeContext();
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
-                    "location\ttemperature\ttime\tcity\n" +
-                            "us-midwest\t82.0\t2016-06-13T17:43:50.100300Z\t\n" +
-                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\t\n" +
-                            "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\tyork\n" +
-                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\tlondon\n" +
-                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\t\n" +
-                            "us-eastcoast\t80.0\t2016-06-13T17:43:50.102500Z\t\n" +
-                            "us-westcost\t82.0\t2016-06-13T17:43:50.102600Z\t\n"
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "location\ttemperature\ttime\tcity\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100300Z\t\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\t\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\tyork\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\tlondon\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\t\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102500Z\t\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102600Z\t\n"
                     : "location\ttemperature\ttime\tcity\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100300000Z\t\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\t\n" +
@@ -871,7 +875,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testDifferentCaseForExistingColumnWhenTableExistsAlready() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "tableExistAlready";
         runInContext(() -> {
             execute("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
@@ -899,7 +903,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testDuplicateField() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "dupField";
         runInContext(() -> {
             recvBuffer =
@@ -926,7 +930,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testDuplicateFieldIPv4() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "dupField";
         runInContext(() -> {
             recvBuffer =
@@ -953,7 +957,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testDuplicateFieldInFirstRow() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "dupField";
         runInContext(() -> {
             recvBuffer =
@@ -980,7 +984,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testDuplicateFieldInFirstRowCaseInsensitivity() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "dupField";
         runInContext(() -> {
             recvBuffer =
@@ -1007,7 +1011,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testDuplicateFieldNonASCII() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "dupField";
         runInContext(() -> {
             recvBuffer =
@@ -1034,7 +1038,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testDuplicateFieldNonASCIIDifferentCaseFirstRow() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "dupField";
         runInContext(() -> {
             recvBuffer =
@@ -1061,7 +1065,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testDuplicateFieldNonASCIIFirstRow() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "dupField";
         runInContext(() -> {
             recvBuffer =
@@ -1088,7 +1092,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testDuplicateFieldWhenTableExistsAlready() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "tableExistAlready";
         runInContext(() -> {
             execute("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
@@ -1116,7 +1120,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testDuplicateFieldWhenTableExistsAlreadyNonASCIIFirstRow() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "dupField";
         runInContext(() -> {
             execute("create table " + table + " (terület SYMBOL, hőmérséklet DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
@@ -1144,7 +1148,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testDuplicateNewField() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "dupField";
         runInContext(() -> {
             recvBuffer =
@@ -1171,7 +1175,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testDuplicateNewFieldAlternating() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "dupField";
         runInContext(() -> {
             recvBuffer =
@@ -1198,7 +1202,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testDuplicateNewFieldCaseInsensitivity() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "dupField";
         runInContext(() -> {
             recvBuffer =
@@ -1237,15 +1241,15 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
             handleIO();
             closeContext();
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
-                    "location\ttemperature\ttimestamp\n" +
-                            "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                            "us-eastcoast\t81.0\t2016-06-13T17:43:50.101500Z\n" +
-                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                            "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                            "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101500Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
                     : "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400200Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
@@ -1272,15 +1276,15 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
             handleIO();
             closeContext();
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
-                    "location\ttemperature\ttimestamp\n" +
-                            "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                            "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
-                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                            "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                            "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
                     : "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400000Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
@@ -1295,7 +1299,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testEmptyLine() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         runInContext(() -> {
             recvBuffer = "\n";
             handleContextIO0();
@@ -1305,7 +1309,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testExtremeFragmentation() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "extremeFrag";
         runInContext(() -> {
             String allMsgs = makeMessages(table);
@@ -1331,7 +1335,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testFailure() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         final AtomicInteger nCommittedLines = new AtomicInteger(4);
         String table = "failure1";
         UnstableRunnable onCommitNewEvent = () -> {
@@ -1449,7 +1453,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testInsertIntoExistingVarcharColumn() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "tableExistAlready";
         runInContext(() -> {
             execute("create table " + table + " (location SYMBOL, slog VARCHAR, timestamp TIMESTAMP) timestamp(timestamp);");
@@ -1477,7 +1481,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testInvalidTableName() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "testInvalidEmptyTableName";
         Files.touch(Path.getThreadLocal(configuration.getDbRoot()).concat(TableUtils.TXN_FILE_NAME).$());
         Files.touch(Path.getThreadLocal(configuration.getDbRoot()).concat(TableUtils.META_FILE_NAME).$());
@@ -1528,7 +1532,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testMaxMeasurementSize() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         Assume.assumeFalse(walEnabled);
         String table = "maxSize";
         runInContext(() -> {
@@ -1559,7 +1563,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testMoreDuplicateNewFields() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "dupField";
         runInContext(() -> {
             recvBuffer =
@@ -1598,15 +1602,15 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
             handleIO();
             closeContext();
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
-                    "location\ttemperature\ttimestamp\n" +
-                            "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                            "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
-                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                            "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                            "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
                     : "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400200Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
@@ -1621,7 +1625,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testMultipleMeasurements2() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "multipleMeasurements1";
         runInContext(() -> {
             recvBuffer =
@@ -1652,7 +1656,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testMultipleMeasurements3() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "multipleMeasurements3";
         runInContext(() -> {
             recvBuffer =
@@ -1680,7 +1684,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testMultipleMeasurements4() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "multipleMeasurements4";
         runInContext(() -> {
             recvBuffer =
@@ -1708,7 +1712,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testMultipleTablesWithMultipleWriterThreads() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         maxRecvBufferSize.set(4096);
         nWriterThreads = 3;
         int nTables = 5;
@@ -1718,7 +1722,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testMultipleTablesWithSingleWriterThread() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         maxRecvBufferSize.set(4096);
         nWriterThreads = 1;
         int nTables = 3;
@@ -1809,7 +1813,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testNoTimestamp() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "notimestamp";
         timestampTicks = Micros.DAY_MICROS;
         runInContext(() -> {
@@ -1835,7 +1839,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testNonAsciiTableNameWithUtf16SurrogateChar() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "\uD834\uDD1E g-clef";
         runInContext(() -> {
             recvBuffer =
@@ -1856,7 +1860,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testNonPrintableChars() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         char nonPrintable = 0x3000;
         char nonPrintable1 = 0x3080;
         char nonPrintable2 = 0x3a55;
@@ -1903,7 +1907,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testQuotes() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         runInContext(() -> {
             recvBuffer = "tbl,t1=tv1,t2=tv2 f1=\"fv1\",f2=\"Zen Internet Ltd\" 1465839830100400200\n" +
                     "tbl,t1=tv1,t2=tv2 f1=\"Zen Internet Ltd\" 1465839830100400200\n" +
@@ -1930,7 +1934,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testSingleMeasurement() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "singleMeasurement";
         runInContext(() -> {
             recvBuffer = table + ",location=us-midwest temperature=82 1465839830100400200\n";
@@ -1945,7 +1949,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testStrings() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "strings";
         runInContext(() -> {
             recvBuffer =
@@ -1991,7 +1995,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testSymbolOrder1() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "symbolOrder";
         addTable(table);
         runInContext(() -> {
@@ -2025,7 +2029,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testTableParameterRetentionOnAddColumn() throws Exception {
-        Assume.assumeTrue(timestampType == ColumnType.TIMESTAMP_MICRO);
+        Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType));
         String table = "retention";
         runInContext(() -> {
             execute("create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp) partition by DAY WITH maxUncommittedRows=3, o3MaxLag=250ms;");
@@ -2076,15 +2080,15 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleContextIO0();
             Assert.assertFalse(disconnected);
             closeContext();
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ?
-                    "location\ttemperature\ttimestamp\n" +
-                            "us-midwest\t82.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "us-midwest\t83.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "us-eastcoast\t81.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "us-midwest\t85.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "us-eastcoast\t89.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "us-eastcoast\t80.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "us-westcost\t82.0\t1970-01-01T00:00:00.000000Z\n"
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "us-midwest\t83.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "us-eastcoast\t81.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "us-midwest\t85.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "us-eastcoast\t89.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "us-eastcoast\t80.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "us-westcost\t82.0\t1970-01-01T00:00:00.000000Z\n"
                     : "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t1970-01-01T00:00:00.000000000Z\n" +
                     "us-midwest\t83.0\t1970-01-01T00:00:00.000000000Z\n" +
@@ -2102,7 +2106,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 .col("location", ColumnType.SYMBOL)
                 .col("temperature", ColumnType.DOUBLE);
 
-        if (timestampType == ColumnType.TIMESTAMP_MICRO) {
+        if (ColumnType.isTimestampMicro(timestampType)) {
             model = model.timestamp();
         } else {
             model = model.timestampNs();
@@ -2163,7 +2167,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             if (walEnabled) {
                 drainWalQueue();
             }
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "location\ttemperature\ttimestamp\tnewcol\n" +
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "location\ttemperature\ttimestamp\tnewcol\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t" + emptyValue + "\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t" + tableValue + "\n"
                     : "location\ttemperature\ttimestamp\tnewcol\n" +
@@ -2189,22 +2194,23 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleContextIO0();
             Assert.assertFalse(disconnected);
             closeContext();
-            String expected = timestampType == ColumnType.TIMESTAMP_MICRO ? "location\ttemperature\ttimestamp\n" +
+            String expected = ColumnType.isTimestampMicro(timestampType)
+                    ? "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
                     "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
                     "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n" :
-                    "location\ttemperature\ttimestamp\n" +
-                            "us-midwest\t82.0\t2016-06-13T17:43:50.100400200Z\n" +
-                            "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
-                            "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400200Z\n" +
-                            "us-midwest\t85.0\t2016-06-13T17:43:50.102300200Z\n" +
-                            "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400200Z\n" +
-                            "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400200Z\n" +
-                            "us-westcost\t82.0\t2016-06-13T17:43:50.102500200Z\n";
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
+                    : "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400200Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400200Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300200Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400200Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400200Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500200Z\n";
             assertTable(expected, table);
         });
     }

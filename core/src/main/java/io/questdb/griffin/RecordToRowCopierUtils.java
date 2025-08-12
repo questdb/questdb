@@ -795,9 +795,9 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.TIMESTAMP:
                             asm.invokeInterface(rGetVarchar);
-                            if (toColumnType == ColumnType.TIMESTAMP_MICRO) {
+                            if (ColumnType.isTimestampMicro(toColumnType)) {
                                 asm.invokeStatic(transferVarcharToMicroTimestampCol);
-                            } else if (toColumnType == ColumnType.TIMESTAMP_NANO) {
+                            } else if (ColumnType.isTimestampNano(toColumnType)) {
                                 asm.invokeStatic(transferVarcharToNanoTimestampCol);
                             } else {
                                 throw new UnsupportedOperationException("Unsupported timestamp type: " + toColumnType);
@@ -893,9 +893,9 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.TIMESTAMP:
                             asm.invokeInterface(rGetStrA);
-                            if (toColumnType == ColumnType.TIMESTAMP_MICRO) {
+                            if (ColumnType.isTimestampMicro(toColumnType)) {
                                 asm.invokeStatic(transferStrToMicroTimestampCol);
-                            } else if (toColumnType == ColumnType.TIMESTAMP_NANO) {
+                            } else if (ColumnType.isTimestampNano(toColumnType)) {
                                 asm.invokeStatic(transferStrToNanoTimestampCol);
                             } else {
                                 throw new UnsupportedOperationException("Unsupported timestamp type: " + toColumnType);

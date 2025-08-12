@@ -30,7 +30,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
@@ -941,7 +940,6 @@ public class SqlParser {
             }
 
             // Timer uses microsecond precision for start time calculation
-            TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
             if (isPeriodKeyword(tok)) {
                 // REFRESH ... PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
                 expectTok(lexer, "(");
@@ -950,10 +948,15 @@ public class SqlParser {
                 final int length = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
                 final char lengthUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
-                final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(driver, length, lengthUnit, lexer.lastTokenPosition());
+                final TimestampSampler periodSamplerMicros = TimestampSamplerFactory.getInstance(
+                        MicrosTimestampDriver.INSTANCE,
+                        length,
+                        lengthUnit,
+                        lexer.lastTokenPosition()
+                );
                 tok = tok(lexer, "'time zone' or 'delay' or ')'");
 
-                TimeZoneRules tzRules = null;
+                TimeZoneRules tzRulesMicros = null;
                 String tz = null;
                 if (isTimeKeyword(tok)) {
                     expectTok(lexer, "zone");
@@ -963,7 +966,7 @@ public class SqlParser {
                     }
                     tz = unquote(tok).toString();
                     try {
-                        tzRules = driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
+                        tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
                     } catch (CairoException e) {
                         throw SqlException.position(lexer.lastTokenPosition()).put(e.getFlyweightMessage());
                     }
@@ -985,11 +988,11 @@ public class SqlParser {
                 }
 
                 // Period timer start is at the boundary of the current period.
-                final long now = configuration.getMicrosecondClock().getTicks();
-                final long nowLocal = tzRules != null ? now + tzRules.getOffset(now) : now;
-                final long start = periodSampler.round(nowLocal);
+                final long nowMicros = configuration.getMicrosecondClock().getTicks();
+                final long nowLocalMicros = tzRulesMicros != null ? nowMicros + tzRulesMicros.getOffset(nowMicros) : nowMicros;
+                final long startUs = periodSamplerMicros.round(nowLocalMicros);
 
-                mvOpBuilder.setTimer(tz, start, every, everyUnit);
+                mvOpBuilder.setTimer(tz, startUs, every, everyUnit);
                 mvOpBuilder.setPeriodLength(length, lengthUnit, delay, delayUnit);
                 tok = tok(lexer, "'as'");
             } else if (!isAsKeyword(tok)) {
@@ -998,12 +1001,12 @@ public class SqlParser {
                     throw SqlException.$(lexer.lastTokenPosition(), "'as' expected");
                 }
                 // Use the current time as the start timestamp if it wasn't specified.
-                long start = configuration.getMicrosecondClock().getTicks();
+                long startUs = configuration.getMicrosecondClock().getTicks();
                 String tz = null;
                 if (isStartKeyword(tok)) {
                     tok = tok(lexer, "START timestamp");
                     try {
-                        start = driver.parseFloorLiteral(GenericLexer.unquote(tok));
+                        startUs = MicrosTimestampDriver.INSTANCE.parseFloorLiteral(GenericLexer.unquote(tok));
                     } catch (NumericException e) {
                         throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                     }
@@ -1016,12 +1019,12 @@ public class SqlParser {
                         tok = tok(lexer, "'as'");
                     }
                 }
-                mvOpBuilder.setTimer(tz, start, every, everyUnit);
+                mvOpBuilder.setTimer(tz, startUs, every, everyUnit);
             } else if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
                 // REFRESH EVERY <interval> AS
                 // Don't forget to set timer params.
-                final long start = configuration.getMicrosecondClock().getTicks();
-                mvOpBuilder.setTimer(null, start, every, everyUnit);
+                final long startUs = configuration.getMicrosecondClock().getTicks();
+                mvOpBuilder.setTimer(null, startUs, every, everyUnit);
             }
         }
         mvOpBuilder.setRefreshType(refreshType);

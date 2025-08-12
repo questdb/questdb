@@ -301,7 +301,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testIntervalCursorNoTimestamp() throws Exception {
-        Assume.assumeFalse(convertToParquet && timestampType == ColumnType.TIMESTAMP_NANO);
+        Assume.assumeFalse(convertToParquet && ColumnType.isTimestampNano(timestampType));
         TestUtils.assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
                     col("a", ColumnType.SYMBOL).indexed(true, 4).

@@ -124,7 +124,7 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testMixedMicrosAndNanos() throws Exception {
-        Assume.assumeTrue(driver.getColumnType() == ColumnType.TIMESTAMP_NANO);
+        Assume.assumeTrue(ColumnType.isTimestampNano(driver.getColumnType()));
         assertMemoryLeak(() -> {
             execute("create table x as (" +
                     "select " +

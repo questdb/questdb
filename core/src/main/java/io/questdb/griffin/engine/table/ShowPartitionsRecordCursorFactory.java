@@ -74,7 +74,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
     private FilesFacade ff;
 
     public ShowPartitionsRecordCursorFactory(TableToken tableToken, int timestampType) {
-        super(timestampType == ColumnType.TIMESTAMP_MICRO ? METADATA_TIMESTAMP : METADATA_TIMESTAMP_NS);
+        super(ColumnType.isTimestampMicro(timestampType) ? METADATA_TIMESTAMP : METADATA_TIMESTAMP_NS);
         this.tableToken = tableToken;
     }
 

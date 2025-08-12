@@ -344,7 +344,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long from(long timestamp, int timestampType) {
-        if (timestampType == ColumnType.TIMESTAMP_NANO) {
+        if (ColumnType.isTimestampNano(timestampType)) {
             return CommonUtils.nanosToMicros(timestamp);
         }
         return timestamp;
@@ -897,7 +897,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public CommonUtils.TimestampUnitConverter getTimestampUnitConverter(int srcTimestampType) {
-        if (srcTimestampType == ColumnType.TIMESTAMP_NANO) {
+        if (ColumnType.isTimestampNano(srcTimestampType)) {
             return CommonUtils::nanosToMicros;
         }
         return null;
