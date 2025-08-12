@@ -80,7 +80,6 @@ class DecimalKnuthDivider {
             long qhat;
             long rhat;
             {
-                // TODO: improve
                 long q = (dividend >>> 1) / divisor << 1;
                 long r = dividend - q * divisor;
                 long i = ~(r - divisor);
