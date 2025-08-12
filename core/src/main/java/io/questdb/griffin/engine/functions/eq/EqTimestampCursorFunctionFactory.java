@@ -79,6 +79,13 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "select must provide exactly one column");
         }
 
+        if (args.getQuick(0).getType() != ColumnType.TIMESTAMP &&
+                args.getQuick(0).getType() != ColumnType.STRING &&
+                args.getQuick(0).getType() != ColumnType.VARCHAR) {
+            throw SqlException.$(argPositions.getQuick(0), "left operand must be a TIMESTAMP, STRING, or VARCHAR, found: ")
+                    .put(ColumnType.nameOf(metadata.getColumnType(0)));
+        }
+
         switch (metadata.getColumnType(0)) {
             case ColumnType.TIMESTAMP:
             case ColumnType.NULL:
