@@ -309,6 +309,11 @@ public class Decimal256 implements Sinkable {
             throw NumericException.instance().put("BigDecimal value too large for Decimal256");
         }
 
+        boolean negative = unscaledValue.signum() == -1;
+        if (negative) {
+            unscaledValue = unscaledValue.negate();
+        }
+
         // Convert to 256-bit representation
         byte[] bytes = unscaledValue.toByteArray();
         Decimal256 result = new Decimal256();
@@ -317,6 +322,10 @@ public class Decimal256 implements Sinkable {
         // Fill the 256-bit value from the byte array
         result.setFromByteArray(bytes);
         validateScale(scale);
+
+        if (negative) {
+            result.negate();
+        }
 
         return result;
     }
@@ -331,11 +340,7 @@ public class Decimal256 implements Sinkable {
      */
     public static Decimal256 fromDouble(double value, int scale) {
         validateScale(scale);
-        if (Double.isInfinite(value) || Double.isNaN(value)) {
-            throw NumericException.instance().put("Cannot create Decimal256 from " + value);
-        }
-
-        BigDecimal bd = BigDecimal.valueOf(value).setScale(scale, RoundingMode.HALF_UP);
+        BigDecimal bd = new BigDecimal(value).setScale(scale, RoundingMode.HALF_UP);
         return fromBigDecimal(bd);
     }
 
