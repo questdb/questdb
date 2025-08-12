@@ -40,11 +40,11 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicReference;
 
-public class PGWireConfigurationWrapper implements PGWireConfiguration {
-    private final AtomicReference<PGWireConfiguration> delegate = new AtomicReference<>();
+public class PGConfigurationWrapper implements PGConfiguration {
+    private final AtomicReference<PGConfiguration> delegate = new AtomicReference<>();
     private final Metrics metrics;
 
-    public PGWireConfigurationWrapper(Metrics metrics) {
+    public PGConfigurationWrapper(Metrics metrics) {
         this.metrics = metrics;
         delegate.set(null);
     }
@@ -375,11 +375,6 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     }
 
     @Override
-    public boolean isLegacyModeEnabled() {
-        return getDelegate().isLegacyModeEnabled();
-    }
-
-    @Override
     public boolean isReadOnlyUserEnabled() {
         return getDelegate().isReadOnlyUserEnabled();
     }
@@ -404,7 +399,7 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
         return getDelegate().readOnlySecurityContext();
     }
 
-    public void setDelegate(PGWireConfiguration delegate) {
+    public void setDelegate(PGConfiguration delegate) {
         this.delegate.set(delegate);
     }
 
@@ -413,7 +408,7 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
         return getDelegate().workerPoolPriority();
     }
 
-    protected PGWireConfiguration getDelegate() {
+    protected PGConfiguration getDelegate() {
         return delegate.get();
     }
 }
