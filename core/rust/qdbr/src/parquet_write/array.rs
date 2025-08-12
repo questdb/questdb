@@ -588,88 +588,91 @@ pub fn calculate_array_shape(
     }
 
     let max_rep_level = max_rep_level as usize;
-    debug_assert!(max_rep_level <= ARRAY_NDIMS_LIMIT);
 
     let mut counts = [0_u32; ARRAY_NDIMS_LIMIT];
 
-    // Common case optimization for small dimensions
-    if max_rep_level <= 4 {
-        // Unrolled version for common small dimensions
-        for &rep_level in rep_levels {
-            let rep_level = rep_level.max(1) as usize;
+    match max_rep_level {
+        // Common case optimization for small dimensions - unrolled loops
+        1 => {
+            shape[0] = rep_levels.len() as u32;
+        }
+        2 => {
+            for &rep_level in rep_levels {
+                let rep_level = rep_level.max(1) as usize;
 
-            // Reset counts - unrolled for small dimensions
-            match max_rep_level {
-                2 => {
-                    if rep_level < 2 {
-                        counts[1] = 0;
-                    }
+                if rep_level < 2 {
+                    counts[0] += 1;
+                    counts[1] = 1;
+                } else {
+                    counts[1] += 1;
                 }
-                3 => {
-                    if rep_level < 3 {
-                        counts[2] = 0;
-                    }
-                    if rep_level < 2 {
-                        counts[1] = 0;
-                    }
-                }
-                4 => {
-                    if rep_level < 4 {
-                        counts[3] = 0;
-                    }
-                    if rep_level < 3 {
-                        counts[2] = 0;
-                    }
-                    if rep_level < 2 {
-                        counts[1] = 0;
-                    }
-                }
-                _ => {
-                    counts[rep_level] = 0;
-                }
-            }
 
-            // Always increment the deepest level
-            counts[max_rep_level - 1] += 1;
-
-            // Update shape - unrolled for better performance
-            for i in 0..max_rep_level {
-                let count = counts[i];
-                shape[i] = shape[i].max(count);
-            }
-
-            // Increment intermediate dimensions
-            if rep_level > 0 {
-                for dim in (rep_level - 1)..(max_rep_level - 1) {
-                    counts[dim] += 1;
-                    shape[dim] = shape[dim].max(counts[dim]);
-                }
+                shape[0] = shape[0].max(counts[0]);
+                shape[1] = shape[1].max(counts[1]);
             }
         }
-    } else {
-        // General case for higher dimensions
-        const CHUNK_SIZE: usize = 64;
+        3 => {
+            for &rep_level in rep_levels {
+                let rep_level = rep_level.max(1) as usize;
 
-        for chunk in rep_levels.chunks(CHUNK_SIZE) {
-            for &rep_level in chunk {
+                if rep_level < 2 {
+                    counts[0] += 1;
+                    counts[1] = 0;
+                }
+                if rep_level < 3 {
+                    counts[1] += 1;
+                    counts[2] = 1;
+                } else {
+                    counts[2] += 1;
+                }
+
+                shape[0] = shape[0].max(counts[0]);
+                shape[1] = shape[1].max(counts[1]);
+                shape[2] = shape[2].max(counts[2]);
+            }
+        }
+        4 => {
+            for &rep_level in rep_levels {
+                let rep_level = rep_level.max(1) as usize;
+
+                if rep_level < 2 {
+                    counts[0] += 1;
+                    counts[1] = 0;
+                }
+                if rep_level < 3 {
+                    counts[1] += 1;
+                    counts[2] = 0;
+                }
+                if rep_level < 4 {
+                    counts[2] += 1;
+                    counts[3] = 1;
+                } else {
+                    counts[3] += 1;
+                }
+
+                shape[0] = shape[0].max(counts[0]);
+                shape[1] = shape[1].max(counts[1]);
+                shape[2] = shape[2].max(counts[2]);
+                shape[3] = shape[3].max(counts[3]);
+            }
+        }
+        _ => {
+            // General case for higher dimensions
+            for &rep_level in rep_levels {
                 let rep_level = rep_level.max(1) as usize;
 
                 // Reset counts for dimensions deeper than repetition level
-                for dim in rep_level..max_rep_level {
-                    counts[dim] = 0;
-                }
+                counts[rep_level..max_rep_level].fill(0);
 
-                // Increment count at the deepest level
+                // Increment count at the deepest level (where actual values are)
                 counts[max_rep_level - 1] += 1;
 
-                // Update shape with branchless max
+                // Update shape with maximum counts seen so far
                 for dim in 0..max_rep_level {
-                    shape[dim] = shape[dim].max(counts[dim]);
-                }
-
-                // Increment deeper dimension counts
-                for dim in (rep_level - 1)..(max_rep_level - 1) {
-                    counts[dim] += 1;
+                    // If this is not the first element, increment deeper dimension counts
+                    if dim >= rep_level - 1 && dim <= max_rep_level - 2 {
+                        counts[dim] += 1;
+                    }
                     shape[dim] = shape[dim].max(counts[dim]);
                 }
             }
@@ -877,13 +880,29 @@ mod tests {
     }
 
     #[test]
+    fn test_calculate_array_shape_4d() {
+        let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
+        let rep_levels = vec![0, 4, 4, 3, 4, 4, 1, 4, 4, 3, 4, 4];
+        calculate_array_shape(&mut shape, 4, &rep_levels);
+        assert_eq!(shape[0..4], [2_u32, 1, 2, 3]);
+    }
+
+    #[test]
+    fn test_calculate_array_shape_5d() {
+        let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
+        let rep_levels = vec![0, 4, 4, 3, 4, 4, 1, 4, 4, 3, 4, 4];
+        calculate_array_shape(&mut shape, 5, &rep_levels);
+        assert_eq!(shape[0..5], [2_u32, 1, 2, 3, 1]);
+    }
+
+    #[test]
     fn test_calculate_array_shape_edge_cases() {
         // Test single element array
         let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
         calculate_array_shape(&mut shape, 1, &[0]);
         assert_eq!(shape[0], 1);
 
-        // Test jagged 2D array - [[1,2,3], [4,5]]
+        // Test jagged 2D array - [[1,2,3], [4,5]] - this is not used ATM
         let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
         let rep_levels = vec![0, 2, 2, 1, 2];
         calculate_array_shape(&mut shape, 2, &rep_levels);
