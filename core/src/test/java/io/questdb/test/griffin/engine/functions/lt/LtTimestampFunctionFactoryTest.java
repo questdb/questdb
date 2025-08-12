@@ -24,21 +24,41 @@
 
 package io.questdb.test.griffin.engine.functions.lt;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Assume;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
-import static io.questdb.std.datetime.microtime.MicrosFormatUtils.parseUTCTimestamp;
+import java.util.Arrays;
+import java.util.Collection;
 
+@RunWith(Parameterized.class)
 public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
+    private final TimestampDriver driver;
+
+    public LtTimestampFunctionFactoryTest(int timestampType) {
+        this.driver = ColumnType.getTimestampDriver(timestampType);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {ColumnType.TIMESTAMP_MICRO}, {ColumnType.TIMESTAMP_NANO}
+        });
+    }
 
     @Test
     public void testGreaterOrEqThanNull() throws SqlException, NumericException {
-        long t1 = parseUTCTimestamp("2020-12-31T23:59:59.000000Z");
+        long t1 = driver.parseFloorLiteral("2020-12-31T23:59:59.000000Z");
         long t2 = Numbers.LONG_NULL;
         callBySignature(">=(NN)", t1, t1).andAssert(true);
         callBySignature(">=(NN)", t1, t2).andAssert(false);
@@ -48,8 +68,8 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testGreaterThan() throws SqlException, NumericException {
-        long t1 = parseUTCTimestamp("2020-12-31T23:59:59.000000Z");
-        long t2 = parseUTCTimestamp("2020-12-31T23:59:59.000001Z");
+        long t1 = driver.parseFloorLiteral("2020-12-31T23:59:59.000000Z");
+        long t2 = driver.parseFloorLiteral("2020-12-31T23:59:59.000001Z");
         callBySignature(">(NN)", t1, t1).andAssert(false);
         callBySignature(">(NN)", t1, t2).andAssert(false);
         callBySignature(">(NN)", t2, t1).andAssert(true);
@@ -57,7 +77,7 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testGreaterThanNull() throws SqlException, NumericException {
-        long t1 = parseUTCTimestamp("2020-12-31T23:59:59.000000Z");
+        long t1 = driver.parseFloorLiteral("2020-12-31T23:59:59.000000Z");
         long t2 = Numbers.LONG_NULL;
         callBySignature(">(NN)", t1, t1).andAssert(false);
         callBySignature(">(NN)", t1, t2).andAssert(false);
@@ -67,8 +87,8 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testGreaterThanOrEqualTo() throws SqlException, NumericException {
-        long t1 = parseUTCTimestamp("2020-12-31T23:59:59.000000Z");
-        long t2 = parseUTCTimestamp("2020-12-31T23:59:59.000001Z");
+        long t1 = driver.parseFloorLiteral("2020-12-31T23:59:59.000000Z");
+        long t2 = driver.parseFloorLiteral("2020-12-31T23:59:59.000001Z");
         callBySignature(">=(NN)", t1, t1).andAssert(true);
         callBySignature(">=(NN)", t1, t2).andAssert(false);
         callBySignature(">=(NN)", t2, t1).andAssert(true);
@@ -76,7 +96,7 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testLessOrEqThanNull() throws SqlException, NumericException {
-        long t1 = parseUTCTimestamp("2020-12-31T23:59:59.000000Z");
+        long t1 = driver.parseFloorLiteral("2020-12-31T23:59:59.000000Z");
         long t2 = Numbers.LONG_NULL;
         callBySignature("<=(NN)", t1, t1).andAssert(true);
         callBySignature("<=(NN)", t1, t2).andAssert(false);
@@ -86,8 +106,8 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testLessThan() throws SqlException, NumericException {
-        long t1 = parseUTCTimestamp("2020-12-31T23:59:59.000000Z");
-        long t2 = parseUTCTimestamp("2020-12-31T23:59:59.000001Z");
+        long t1 = driver.parseFloorLiteral("2020-12-31T23:59:59.000000Z");
+        long t2 = driver.parseFloorLiteral("2020-12-31T23:59:59.000001Z");
         callBySignature("<(NN)", t1, t1).andAssert(false);
         callBySignature("<(NN)", t1, t2).andAssert(true);
         callBySignature("<(NN)", t2, t1).andAssert(false);
@@ -95,11 +115,75 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testLessThanOrEqualTo() throws SqlException, NumericException {
-        long t1 = parseUTCTimestamp("2020-12-31T23:59:59.000000Z");
-        long t2 = parseUTCTimestamp("2020-12-31T23:59:59.000001Z");
+        long t1 = driver.parseFloorLiteral("2020-12-31T23:59:59.000000Z");
+        long t2 = driver.parseFloorLiteral("2020-12-31T23:59:59.000001Z");
         callBySignature("<=(NN)", t1, t1).andAssert(true);
         callBySignature("<=(NN)", t1, t2).andAssert(true);
         callBySignature("<=(NN)", t2, t1).andAssert(false);
+    }
+
+    @Test
+    public void testMixedMicrosAndNanos() throws Exception {
+        Assume.assumeTrue(driver.getColumnType() == ColumnType.TIMESTAMP_NANO);
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select " +
+                    "timestamp_sequence(1000000, 1000000) as ts, " +
+                    "timestamp_sequence(0::timestamp_ns, 2000000000) as ts_ns " +
+                    "from long_sequence(4)" +
+                    ") timestamp(ts)");
+            assertQuery("ts\tts_ns\tcolumn\n" +
+                            "1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000000Z\ttrue\n" +
+                            "1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:02.000000000Z\tfalse\n" +
+                            "1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:04.000000000Z\tfalse\n" +
+                            "1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:06.000000000Z\tfalse\n",
+                    "select ts, ts_ns, ts > ts_ns from x");
+            assertQuery("ts\tts_ns\tcolumn\n" +
+                            "1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000000Z\ttrue\n" +
+                            "1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:02.000000000Z\ttrue\n" +
+                            "1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:04.000000000Z\tfalse\n" +
+                            "1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:06.000000000Z\tfalse\n",
+                    "select ts, ts_ns, ts >= ts_ns from x");
+
+            assertQuery("ts\tts_ns\tcolumn\n" +
+                            "1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000000Z\tfalse\n" +
+                            "1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:02.000000000Z\tfalse\n" +
+                            "1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:04.000000000Z\ttrue\n" +
+                            "1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:06.000000000Z\ttrue\n",
+                    "select ts, ts_ns, ts < ts_ns from x");
+            assertQuery("ts\tts_ns\tcolumn\n" +
+                            "1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000000Z\tfalse\n" +
+                            "1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:02.000000000Z\ttrue\n" +
+                            "1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:04.000000000Z\ttrue\n" +
+                            "1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:06.000000000Z\ttrue\n",
+                    "select ts, ts_ns, ts <= ts_ns from x");
+
+            assertQuery("ts\tts_ns\tcolumn\n" +
+                            "1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000000Z\tfalse\n" +
+                            "1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:02.000000000Z\tfalse\n" +
+                            "1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:04.000000000Z\ttrue\n" +
+                            "1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:06.000000000Z\ttrue\n",
+                    "select ts, ts_ns, ts_ns > ts from x");
+            assertQuery("ts\tts_ns\tcolumn\n" +
+                            "1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000000Z\tfalse\n" +
+                            "1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:02.000000000Z\ttrue\n" +
+                            "1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:04.000000000Z\ttrue\n" +
+                            "1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:06.000000000Z\ttrue\n",
+                    "select ts, ts_ns, ts_ns >= ts from x");
+
+            assertQuery("ts\tts_ns\tcolumn\n" +
+                            "1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000000Z\ttrue\n" +
+                            "1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:02.000000000Z\tfalse\n" +
+                            "1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:04.000000000Z\tfalse\n" +
+                            "1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:06.000000000Z\tfalse\n",
+                    "select ts, ts_ns, ts_ns < ts from x");
+            assertQuery("ts\tts_ns\tcolumn\n" +
+                            "1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:00.000000000Z\ttrue\n" +
+                            "1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:02.000000000Z\ttrue\n" +
+                            "1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:04.000000000Z\tfalse\n" +
+                            "1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:06.000000000Z\tfalse\n",
+                    "select ts, ts_ns, ts_ns <= ts from x");
+        });
     }
 
     @Override

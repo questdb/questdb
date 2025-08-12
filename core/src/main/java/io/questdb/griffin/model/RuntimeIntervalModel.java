@@ -304,7 +304,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             assert factory != null;
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 if (cursor.hasNext()) {
-                    return cursor.getRecord().getTimestamp(0);
+                    return timestampDriver.from(cursor.getRecord().getTimestamp(0), ColumnType.getTimestampType(factory.getMetadata().getColumnType(0)));
                 } else {
                     return Numbers.LONG_NULL;
                 }
