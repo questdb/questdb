@@ -84,6 +84,8 @@ public interface BitmapIndexReader extends Closeable {
             @Transient Path path,
             CharSequence columnName,
             long columnNameTxn,
+                               long partitionNameTxn,
+
             long columnTop
     );
 
