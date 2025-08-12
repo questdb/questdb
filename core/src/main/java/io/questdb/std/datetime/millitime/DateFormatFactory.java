@@ -26,6 +26,7 @@ package io.questdb.std.datetime.millitime;
 
 
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.DateFormat;
 
 import java.util.function.Function;
@@ -33,7 +34,7 @@ import java.util.function.Function;
 
 public class DateFormatFactory {
     public static final DateFormatFactory INSTANCE = new DateFormatFactory();
-    private final static ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
+    private final static ThreadLocal<DateFormatCompiler> tlCompiler = new ThreadLocal<>(DateFormatCompiler::new);
     private static final Function<CharSequence, DateFormat> mapper = DateFormatFactory::map;
     private final ConcurrentHashMap<DateFormat> cache = new ConcurrentHashMap<>();
 

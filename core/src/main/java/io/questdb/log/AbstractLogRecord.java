@@ -30,6 +30,7 @@ import io.questdb.network.Net;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -46,7 +47,7 @@ import java.util.Set;
 import static io.questdb.ParanoiaState.*;
 
 abstract class AbstractLogRecord implements LogRecord, Log {
-    private static final ThreadLocal<ObjHashSet<Throwable>> tlSet = ThreadLocal.withInitial(ObjHashSet::new);
+    private static final ThreadLocal<ObjHashSet<Throwable>> tlSet = new ThreadLocal<>(ObjHashSet::new);
     protected final RingQueue<LogRecordUtf8Sink> advisoryRing;
     protected final Sequence advisorySeq;
     protected final RingQueue<LogRecordUtf8Sink> criticalRing;
@@ -57,7 +58,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     protected final Sequence errorSeq;
     protected final RingQueue<LogRecordUtf8Sink> infoRing;
     protected final Sequence infoSeq;
-    protected final ThreadLocal<CursorHolder> tl = ThreadLocal.withInitial(CursorHolder::new);
+    protected final ThreadLocal<CursorHolder> tl = new ThreadLocal<>(CursorHolder::new);
     private final MicrosecondClock clock;
     private final CharSequence name;
 

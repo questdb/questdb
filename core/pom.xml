@@ -33,7 +33,7 @@
         <maven.javadoc.skip>false</maven.javadoc.skip>
         <outputPath>target</outputPath>
         <runtime.assembly>none</runtime.assembly>
-        <javac.target>11</javac.target>
+        <javac.target>21</javac.target>
         <argLine>-ea -Dfile.encoding=UTF-8</argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
@@ -617,10 +617,10 @@
             </build>
         </profile>
         <profile>
-            <id>java11+</id>
+            <id>java21+</id>
             <properties>
-                <jdk.version>11</jdk.version>
-                <java.enforce.version>11</java.enforce.version>
+                <jdk.version>21</jdk.version>
+                <java.enforce.version>21</java.enforce.version>
                 <questdb.artifactid>questdb</questdb.artifactid>
                 <compilerArg1>--add-exports</compilerArg1>
                 <compilerArg2>java.base/jdk.internal.math=io.questdb</compilerArg2>

@@ -41,6 +41,8 @@ public final class Misc {
     private Misc() {
     }
 
+
+
     public static <T extends Mutable> T clear(T object) {
         if (object != null) {
             object.clear();
@@ -128,6 +130,14 @@ public final class Misc {
         Utf8StringSink b = tlUtf8Sink.get();
         b.clear();
         return b;
+    }
+
+    public static ThreadLocal<StringSink> getTlSink() {
+        return tlSink;
+    }
+
+    public static ThreadLocal<Utf8StringSink> getTlUtf8Sink() {
+        return tlUtf8Sink;
     }
 
     public static int[] getWorkerAffinity(int workerCount) {

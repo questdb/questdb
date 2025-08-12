@@ -46,11 +46,12 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
+import io.questdb.std.ThreadLocal;
 
 import java.util.Arrays;
 
 public class GreatestNumericFunctionFactory implements FunctionFactory {
-    private static final ThreadLocal<int[]> tlCounters = ThreadLocal.withInitial(() -> new int[ColumnType.NULL + 1]);
+    private static final ThreadLocal<int[]> tlCounters = new ThreadLocal<>(() -> new int[ColumnType.NULL + 1]);
 
     @Override
     public String getSignature() {

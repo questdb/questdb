@@ -46,7 +46,7 @@ import java.util.function.Function;
  * This object is always in-use, even when mat views are disabled or the node is a read-only replica.
  */
 public class MatViewGraph implements Mutable {
-    private static final java.lang.ThreadLocal<MatViewDefinition> tlDefinitionTask = new java.lang.ThreadLocal<>();
+    private static final ThreadLocal<MatViewDefinition> tlDefinitionTask = new ThreadLocal<>(MatViewDefinition::new);
     private static final ThreadLocal<LowerCaseCharSequenceHashSet> tlSeen = new ThreadLocal<>(LowerCaseCharSequenceHashSet::new);
     private static final ThreadLocal<ArrayDeque<CharSequence>> tlStack = new ThreadLocal<>(ArrayDeque::new);
     private final Function<CharSequence, MatViewDependencyList> createDependencyList;
@@ -274,7 +274,7 @@ public class MatViewGraph implements Mutable {
         if (existingDefinition == null) {
             return null;
         }
-        MatViewDefinition newDefinition = tlDefinitionTask.get();
+        MatViewDefinition newDefinition = tlDefinitionTask.getOrDefault();
         assert newDefinition != null;
         // no, this won't produce a mem leak since we don't spawn short-lived threads in runtime
         tlDefinitionTask.set(null);

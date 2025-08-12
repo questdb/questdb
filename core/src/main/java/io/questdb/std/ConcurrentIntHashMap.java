@@ -63,7 +63,6 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.ObjectStreamField;
 import java.io.Serializable;
-import java.lang.ThreadLocal;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.Arrays;
@@ -454,7 +453,7 @@ public class ConcurrentIntHashMap<V> implements Serializable {
             new ObjectStreamField("segmentShift", Integer.TYPE)
     };
     private static final long serialVersionUID = 7249069246763182397L;
-    private final ThreadLocal<Traverser<V>> tlTraverser = ThreadLocal.withInitial(Traverser::new);
+    private final ThreadLocal<Traverser<V>> tlTraverser = new ThreadLocal<>(Traverser::new);
     /**
      * The array of bins. Lazily initialized upon first insertion.
      * Size is always a power of two. Accessed directly by iterators.
@@ -2364,7 +2363,7 @@ public class ConcurrentIntHashMap<V> implements Serializable {
             implements Set<IntEntry<V>>, Serializable {
         private static final long serialVersionUID = 2249069246763182397L;
 
-        private final ThreadLocal<EntryIterator<V>> tlEntryIterator = ThreadLocal.withInitial(EntryIterator::new);
+        private final ThreadLocal<EntryIterator<V>> tlEntryIterator = new ThreadLocal<>(EntryIterator::new);
 
         EntrySetView(ConcurrentIntHashMap<V> map) {
             super(map);
@@ -2506,7 +2505,7 @@ public class ConcurrentIntHashMap<V> implements Serializable {
     public static class KeySetView<V> implements Serializable {
         private static final long serialVersionUID = 7249069246763182397L;
         private final ConcurrentIntHashMap<V> map;
-        private final ThreadLocal<KeyIterator<V>> tlKeyIterator = ThreadLocal.withInitial(KeyIterator::new);
+        private final ThreadLocal<KeyIterator<V>> tlKeyIterator = new ThreadLocal<>(KeyIterator::new);
         private final V value;
 
         KeySetView(ConcurrentIntHashMap<V> map, V value) {  // non-public
@@ -3532,7 +3531,7 @@ public class ConcurrentIntHashMap<V> implements Serializable {
     static final class ValuesView<V> extends CollectionView<V, V>
             implements Collection<V>, Serializable {
         private static final long serialVersionUID = 2249069246763182397L;
-        private final ThreadLocal<ValueIterator<V>> tlValueIterator = ThreadLocal.withInitial(ValueIterator::new);
+        private final ThreadLocal<ValueIterator<V>> tlValueIterator = new ThreadLocal<>(ValueIterator::new);
 
         ValuesView(ConcurrentIntHashMap<V> map) {
             super(map);

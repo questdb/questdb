@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
@@ -46,7 +47,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class ToStrDateFunctionFactory implements FunctionFactory {
 
-    private static final ThreadLocal<StringSink> tlSink = ThreadLocal.withInitial(StringSink::new);
+    private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
 
     @Override
     public String getSignature() {

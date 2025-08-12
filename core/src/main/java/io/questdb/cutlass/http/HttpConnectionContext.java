@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
+import io.questdb.ThreadingSupport;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
@@ -81,6 +82,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final boolean dumpNetworkTraffic;
     private final int forceFragmentationReceiveChunkSize;
     private final HttpHeaderParser headerParser;
+    private final Object ioMonitor = new Object();
     private final LocalValueMap localValueMap = new LocalValueMap();
     private final Metrics metrics;
     private final HttpHeaderParser multipartContentHeaderParser;
@@ -101,8 +103,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private long authenticationNanos = 0L;
     private AtomicLongGauge connectionCountGauge;
     private boolean connectionCounted;
+    private boolean ioReady = false;
+    private boolean isClean = true;
     private int nCompletedRequests;
+    private int pendingOperation;
+    private RescheduleContext pendingRescheduleContext;
     private boolean pendingRetry = false;
+    private HttpRequestProcessorSelector pendingSelector;
     private int receivedBytes;
     private long recvBuffer;
     private int recvBufferReadSize;
@@ -111,6 +118,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private HttpRequestProcessor resumeProcessor = null;
     private SecurityContext securityContext;
     private SuspendEvent suspendEvent;
+    private final ThreadingSupport.ThreadState threadLocalContainer = new ThreadingSupport.ThreadState();
     private long totalBytesSent;
     private long totalReceived;
 
@@ -217,6 +225,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.receivedBytes = 0;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.authenticator.close();
+        this.resume(0, null, null);
         LOG.debug().$("closed [fd=").$(fd).I$();
     }
 
@@ -302,6 +311,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
             throws HeartBeatException, PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
         boolean keepGoing;
+
         switch (operation) {
             case IOOperation.READ:
                 keepGoing = handleClientRecv(selector, rescheduleContext);
@@ -328,9 +338,23 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return useful;
     }
 
+    public void handleClientOperation() throws PeerIsSlowToReadException, HeartBeatException, ServerDisconnectException, PeerIsSlowToWriteException {
+        ioReady = false;
+        ThreadingSupport.useThreadLocalState(threadLocalContainer);
+        handleClientOperation(pendingOperation, pendingSelector, pendingRescheduleContext);
+    }
+
     @Override
     public boolean invalid() {
         return pendingRetry || receivedBytes > 0 || this.socket == null;
+    }
+
+    public boolean isClosed() {
+        return this.recvBuffer == 0;
+    }
+
+    public boolean isNewRequest() {
+        return isClean;
     }
 
     public void reset() {
@@ -357,6 +381,17 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.recvPos = recvBuffer;
         this.rejectProcessor.clear();
         clearSuspendEvent();
+        this.isClean = true;
+    }
+
+    public void resume(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+        synchronized (ioMonitor) {
+            this.pendingOperation = operation;
+            this.pendingSelector = selector;
+            this.pendingRescheduleContext = rescheduleContext;
+            ioReady = true;
+            ioMonitor.notify();
+        }
     }
 
     public void resumeResponseSend() throws PeerIsSlowToReadException, PeerDisconnectedException {
@@ -374,6 +409,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     public HttpResponseSink.SimpleResponseImpl simpleResponse() {
         return responseSink.simpleResponse();
+    }
+
+    public void startNewRequest() {
+        isClean = false;
     }
 
     @Override
@@ -425,6 +464,23 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
         }
         return true;
+    }
+
+    public void waitForIO() {
+        synchronized (ioMonitor) {
+            ThreadingSupport.detachThreadLocals();
+
+            while (!ioReady) {
+                try {
+                    ioMonitor.wait();
+                } catch (InterruptedException e) {
+                    // continue waiting if interrupted
+                }
+            }
+            // Reset the flag for next wait
+            ioReady = false;
+            ThreadingSupport.useThreadLocalState(threadLocalContainer);
+        }
     }
 
     @SuppressWarnings("StatementWithEmptyBody")

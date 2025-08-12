@@ -24,28 +24,54 @@
 
 package io.questdb.std;
 
+import io.questdb.ThreadingSupport;
+
 import java.io.Closeable;
 
 public class ThreadLocal<T> extends java.lang.ThreadLocal<T> implements Closeable {
     private final ObjectFactory<T> factory;
+    private final int key;
 
     public ThreadLocal(ObjectFactory<T> factory) {
+        this.key = ThreadingSupport.getNextThreadLocalKey();
         this.factory = factory;
+    }
+
+    public static <TT> ThreadLocal<TT> withInitial(ObjectFactory<TT> factory) {
+        return new ThreadLocal<>(factory);
     }
 
     @Override
     public void close() {
-        Misc.freeIfCloseable(super.get());
+        Misc.freeIfCloseable(get());
         remove();
     }
 
     @Override
     public T get() {
-        T val = super.get();
+        T val = (T) ThreadingSupport.getVirtualThreadLocal(key);
+
         if (val == null) {
             val = factory.newInstance();
-            set(val);
+            ThreadingSupport.putVirtualThreadLocal(key, val);
         }
         return val;
+    }
+
+    public T getOrDefault() {
+        return (T) ThreadingSupport.getVirtualThreadLocal(key);
+    }
+
+    @Override
+    public void remove() {
+        ThreadingSupport.putVirtualThreadLocal(key, null);
+    }
+
+    public void set(T value) {
+        if (Thread.currentThread().isVirtual()) {
+            ThreadingSupport.putVirtualThreadLocal(key, value);
+        } else {
+            super.set(value);
+        }
     }
 }

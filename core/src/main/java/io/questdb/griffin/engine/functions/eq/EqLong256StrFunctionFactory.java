@@ -35,12 +35,16 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.*;
-
-import java.lang.ThreadLocal;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Long256FromCharSequenceDecoder;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.ObjList;
+import io.questdb.std.ThreadLocal;
 
 public class EqLong256StrFunctionFactory implements FunctionFactory {
-    private static final ThreadLocal<Long256ConstDecoder> DECODER = ThreadLocal.withInitial(Long256ConstDecoder::new);
+    private static final ThreadLocal<Long256ConstDecoder> DECODER = new ThreadLocal<>(Long256ConstDecoder::new);
 
     @Override
     public String getSignature() {

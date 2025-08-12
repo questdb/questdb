@@ -44,13 +44,14 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
 
 public class LeastNumericFunctionFactory implements FunctionFactory {
-    private static final ThreadLocal<int[]> tlCounters = ThreadLocal.withInitial(() -> new int[ColumnType.NULL + 1]);
+    private static final ThreadLocal<int[]> tlCounters = new ThreadLocal<>(() -> new int[ColumnType.NULL + 1]);
 
     @Override
     public String getSignature() {

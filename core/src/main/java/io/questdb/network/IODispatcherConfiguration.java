@@ -115,4 +115,8 @@ public interface IODispatcherConfiguration {
     long getTimeout();
 
     Counter listenerStateChangeCounter();
+
+    default boolean getVirtualThreadsEnabled() {
+        return true;
+    }
 }
