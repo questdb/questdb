@@ -71,7 +71,7 @@ public class Decimal256Test {
         Rnd rnd = TestUtils.generateRandom(null);
 
         // Number of test iterations
-        final int ITERATIONS = 10_000;
+        final int ITERATIONS = 1000_000;
 
         for (int i = 0; i < ITERATIONS; i++) {
             // Generate random operands with various scales and values

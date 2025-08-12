@@ -125,6 +125,8 @@ public class Decimal256 implements Sinkable {
             5789604L, 578960L, 57896L, 5789L, 578L,
             57L, 5L,
     };
+    // holders for in-place mutations that doesn't have a mutable structure available
+    private static final ThreadLocal<Decimal256> tl = new ThreadLocal<>(Decimal256::new);
     private long hh; // Highest 64 bits (bits 192-255)
     private long hl;    // High 64 bits (bits 128-191)
     private long lh;     // Mid 64 bits (bits 64-127)
@@ -409,8 +411,87 @@ public class Decimal256 implements Sinkable {
      * @return -1, 0, or 1 as this is less than, equal to, or greater than other
      */
     public int compareTo(Decimal256 other) {
-        // TODO: Implement compareTo
-        return 0;
+        boolean aNeg = isNegative();
+        boolean bNeg = other.isNegative();
+        if (aNeg != bNeg) {
+            return aNeg ? -1 : 1;
+        }
+
+        int diffQ = aNeg ? -1 : 1;
+
+        if (this.scale == other.scale) {
+            // Same scale - direct comparison
+            if (this.hh != other.hh) {
+                return Long.compare(this.hh, other.hh);
+            }
+            if (this.hl != other.hl) {
+                return Long.compareUnsigned(this.hl, other.hl) * diffQ;
+            }
+            if (this.lh != other.lh) {
+                return Long.compareUnsigned(this.lh, other.lh) * diffQ;
+            }
+            return Long.compareUnsigned(this.ll, other.ll) * diffQ;
+        }
+
+        // Stores the coefficient to apply to the response, if both numbers are negative, then
+        // we have to reverse the result
+        long aHH = this.hh;
+        long aHL = this.hl;
+        long aLH = this.lh;
+        long aLL = this.ll;
+        int aScale = this.scale;
+        long bHH = other.hh;
+        long bHL = other.hl;
+        long bLH = other.lh;
+        long bLL = other.ll;
+        int bScale = other.scale;
+
+        if (aNeg) {
+            aLL = ~aLL + 1;
+            long c = aLL == 0L ? 1L : 0L;
+            aLH = ~aLH + c;
+            c = (c == 1L && aLH == 0L) ? 1L : 0L;
+            aHL = ~aHL + c;
+            c = (c == 1L && aHL == 0L) ? 1L : 0L;
+            aHH = ~aHH + c;
+
+            // Negate b
+            bLL = ~bLL + 1;
+            c = bLL == 0L ? 1L : 0L;
+            bLH = ~bLH + c;
+            c = (c == 1L && bLH == 0L) ? 1L : 0L;
+            bHL = ~bHL + c;
+            c = (c == 1L && bHL == 0L) ? 1L : 0L;
+            bHH = ~bHH + c;
+        }
+
+        Decimal256 holder = tl.get();
+        if (aScale < bScale) {
+            holder.of(aHH, aHL, aLH, aLL, aScale);
+            holder.multiplyByPowerOf10InPlace(bScale - aScale);
+            aHH = holder.hh;
+            aHL = holder.hl;
+            aLH = holder.lh;
+            aLL = holder.ll;
+        } else {
+            holder.of(bHH, bHL, bLH, bLL, bScale);
+            holder.multiplyByPowerOf10InPlace(aScale - bScale);
+            bHH = holder.hh;
+            bHL = holder.hl;
+            bLH = holder.lh;
+            bLL = holder.ll;
+        }
+
+        if (aHH != bHH) {
+            return Long.compare(aHH, bHH) * diffQ;
+        }
+        if (aHL != bHL) {
+            return Long.compareUnsigned(aHL, bHL) * diffQ;
+        }
+        if (aLH != bLH) {
+            return Long.compareUnsigned(aLH, bLH) * diffQ;
+        }
+        return Long.compareUnsigned(aLL, bLL) * diffQ;
     }
 
     /**

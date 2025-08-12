@@ -374,14 +374,6 @@ public class Decimal128 implements Sinkable {
      * @return -1 if this decimal is less than other, 0 if equal, 1 if greater than other
      */
     public int compareTo(Decimal128 other) {
-        if (this.scale == other.scale) {
-            // Same scale - direct comparison
-            if (this.high != other.high) {
-                return Long.compare(this.high, other.high);
-            }
-            return Long.compareUnsigned(this.low, other.low);
-        }
-
         boolean aNeg = isNegative();
         boolean bNeg = other.isNegative();
         if (aNeg != bNeg) {
@@ -390,7 +382,15 @@ public class Decimal128 implements Sinkable {
 
         // Stores the coefficient to apply to the response, if both numbers are negative, then
         // we have to reverse the result
-        int diffQ = 1;
+        int diffQ = aNeg ? -1 : 1;
+
+        if (this.scale == other.scale) {
+            // Same scale - direct comparison
+            if (this.high != other.high) {
+                return Long.compare(this.high, other.high);
+            }
+            return Long.compareUnsigned(this.low, other.low) * diffQ;
+        }
 
         // We need to make both operands positive to detect overflows when scaling them
         long aH = this.high;
@@ -399,28 +399,13 @@ public class Decimal128 implements Sinkable {
         long bL = other.low;
         if (aNeg) {
             diffQ = -1;
-            long oldLow = aL;
 
-            // Two's complement: invert all bits and add 1
             aL = ~aL + 1;
-            aH = ~aH;
-
-            // Check for carry from low
-            if (aL == 0 && oldLow != 0) {
-                aH += 1;
-            }
+            aH = ~aH + (aL == 0 ? 1L : 0L);
 
             // Negate b
-            oldLow = bL;
-
-            // Two's complement: invert all bits and add 1
             bL = ~bL + 1;
-            bH = ~bH;
-
-            // Check for carry from low
-            if (bL == 0 && oldLow != 0) {
-                bH += 1;
-            }
+            bH = ~bH + (bL == 0 ? 1L : 0L);
         }
 
         // Different scales - need to align for comparison
@@ -489,7 +474,8 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Copy values from another Decimal128
+     * Copy values from another Decimal128low
+low
      */
     public void copyFrom(Decimal128 source) {
         this.high = source.high;
