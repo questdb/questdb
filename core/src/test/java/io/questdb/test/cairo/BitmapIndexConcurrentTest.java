@@ -80,73 +80,37 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
     }
 
     private void testConcurrentOperations() throws Exception {
-        final AtomicInteger queryErrorCount = new AtomicInteger(0);
-        final AtomicInteger insertErrorCount = new AtomicInteger(0);
+        final AtomicInteger errorCount = new AtomicInteger(0);
         final AtomicReference<String> lastError = new AtomicReference<>();
-        final AtomicReference<Boolean> shouldStop = new AtomicReference<>(false);
-        final SOCountDownLatch queryLatch = new SOCountDownLatch(1);
-        final SOCountDownLatch insertLatch = new SOCountDownLatch(1);
-        final CyclicBarrier startBarrier = new CyclicBarrier(2); // 2 background threads only
         final long testDurationMs = 20_000; // Run for 20 seconds
 
-        // Background thread 1: Out-of-order inserts
-        Thread inserterThread = new Thread(() -> {
-            try {
-                startBarrier.await();
-                Rnd rnd = new Rnd();
-                long startTime = System.currentTimeMillis();
-                int insertCount = 0;
+        Rnd rnd = new Rnd();
+        long startTime = System.currentTimeMillis();
+        int insertCount = 0;
+        int queryCount = 0;
 
-                try (TableWriter w = TestUtils.getWriter(engine, "trades")) {
-                    while (System.currentTimeMillis() - startTime < testDurationMs && !shouldStop.get()) {
-                        try {
-                            // Insert multiple rows in batch before committing
-                            for (int batch = 0; batch < 10; batch++) {
-                                // Use random symbol from existing ones (SYM1 to SYM100)
-                                String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
-                                
-                                // Create out-of-order timestamp (random minutes in the past)
-                                long oooTimestamp = System.currentTimeMillis() * 1000L - (rnd.nextInt(600) * 60000000L); // micros
+        try (TableWriter w = TestUtils.getWriter(engine, "trades")) {
+            while (System.currentTimeMillis() - startTime < testDurationMs) {
+                try {
+                    // Insert a batch of rows
+                    for (int batch = 0; batch < 10; batch++) {
+                        // Use random symbol from existing ones (SYM1 to SYM100)
+                        String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
+                        
+                        // Create out-of-order timestamp (random minutes in the past)
+                        long oooTimestamp = System.currentTimeMillis() * 1000L - (rnd.nextInt(600) * 60000000L); // micros
 
-                                TableWriter.Row r = w.newRow(oooTimestamp);
-                                r.putSym(0, randomSymbol); // Use pre-existing symbol
-                                r.append();
-                                insertCount++;
-                            }
-                            
-                            // Commit batch
-                            w.commit();
-
-                            if (insertCount % 100 == 0) {
-                                Thread.sleep(5); // Small pause after each batch
-                            }
-                        } catch (Exception e) {
-                            insertErrorCount.incrementAndGet();
-                            lastError.set("Insert error: " + e.getMessage());
-                            break;
-                        }
+                        TableWriter.Row r = w.newRow(oooTimestamp);
+                        r.putSym(0, randomSymbol);
+                        r.append();
+                        insertCount++;
                     }
-                }
-                System.out.println("Inserter thread completed " + insertCount + " inserts");
-            } catch (Exception e) {
-                insertErrorCount.incrementAndGet();
-                lastError.set("Insert thread error: " + e.getMessage());
-            } finally {
-                Path.clearThreadLocals();
-                insertLatch.countDown();
-            }
-        });
+                    
+                    // Commit batch
+                    w.commit();
 
-        // Background thread 2: Concurrent queries
-        Thread queryThread = new Thread(() -> {
-            try {
-                startBarrier.await();
-                Rnd rnd = new Rnd();
-                long startTime = System.currentTimeMillis();
-                int queryCount = 0;
-
-                while (System.currentTimeMillis() - startTime < testDurationMs && !shouldStop.get()) {
-                    try {
+                    // Immediately validate with queries after each commit
+                    for (int q = 0; q < 5; q++) {
                         // Use random symbol from existing ones (SYM1 to SYM100)
                         String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
 
@@ -162,67 +126,52 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
                                 while (cursor.hasNext()) {
                                     rowCount++;
                                     if (rowCount > 1) {
-                                        queryErrorCount.incrementAndGet();
+                                        errorCount.incrementAndGet();
                                         lastError.set("Query returned more than one row for symbol: " + randomSymbol);
-                                        shouldStop.set(true);
+                                        System.err.println("Error at insert count " + insertCount + ", query count " + queryCount + ": " + lastError.get());
+                                        Assert.fail(lastError.get());
                                         return;
                                     }
 
                                     CharSequence resultSymbol = cursor.getRecord().getSymA(0);
                                     if (!Chars.equals(resultSymbol, randomSymbol)) {
-                                        queryErrorCount.incrementAndGet();
+                                        errorCount.incrementAndGet();
                                         lastError.set("Expected symbol '" + randomSymbol + "' but got '" + resultSymbol + "'");
-                                        shouldStop.set(true);
+                                        System.err.println("Error at insert count " + insertCount + ", query count " + queryCount + ": " + lastError.get());
+                                        Assert.fail(lastError.get());
                                         return;
                                     }
                                 }
 
                                 if (rowCount != 1) {
-                                    queryErrorCount.incrementAndGet();
+                                    errorCount.incrementAndGet();
                                     lastError.set("Expected exactly 1 row for symbol '" + randomSymbol + "' but got " + rowCount);
-                                    shouldStop.set(true);
+                                    System.err.println("Error at insert count " + insertCount + ", query count " + queryCount + ": " + lastError.get());
+                                    Assert.fail(lastError.get());
                                     return;
                                 }
                             }
                         }
                         queryCount++;
-
-                        if (queryCount % 10 == 0) {
-                            Thread.sleep(10); // Small pause
-                        }
-                    } catch (Exception e) {
-                        queryErrorCount.incrementAndGet();
-                        lastError.set("Query error: " + e.getMessage());
-                        shouldStop.set(true);
-                        break;
                     }
+
+                    if (insertCount % 100 == 0) {
+                        Thread.sleep(5); // Small pause after every 100 inserts
+                    }
+                } catch (Exception e) {
+                    errorCount.incrementAndGet();
+                    lastError.set("Operation error: " + e.getMessage());
+                    System.err.println("Error at insert count " + insertCount + ", query count " + queryCount + ": " + lastError.get());
+                    Assert.fail(lastError.get());
+                    return;
                 }
-                System.out.println("Query thread completed " + queryCount + " queries");
-            } catch (Exception e) {
-                queryErrorCount.incrementAndGet();
-                lastError.set("Query thread error: " + e.getMessage());
-            } finally {
-                Path.clearThreadLocals();
-                queryLatch.countDown();
             }
-        });
-
-        // Start both threads
-        inserterThread.start();
-        queryThread.start();
-
-        // Wait for completion
-        insertLatch.await();
-        queryLatch.await();
-
-        // Validate results
-        String errorMessage = lastError.get();
-        if (errorMessage != null) {
-            System.err.println("Test error: " + errorMessage);
         }
 
-        Assert.assertEquals("Query errors detected", 0, queryErrorCount.get());
-        Assert.assertEquals("Insert errors detected", 0, insertErrorCount.get());
+        System.out.println("Test completed: " + insertCount + " inserts, " + queryCount + " queries");
+
+        // Validate results
+        Assert.assertEquals("Errors detected", 0, errorCount.get());
 
         // Final validation query
         try (RecordCursorFactory factory = select("SELECT count(*) FROM trades")) {
