@@ -46,6 +46,8 @@ public interface BitmapIndexReader extends Closeable {
     default void close() {
     }
 
+    long getColumnNameTxn();
+
     long getColumnTop();
 
     /**
@@ -87,5 +89,5 @@ public interface BitmapIndexReader extends Closeable {
             long columnTop
     );
 
-    void reloadConditionally();
+    boolean reloadConditionally(long partitionTxn);
 }

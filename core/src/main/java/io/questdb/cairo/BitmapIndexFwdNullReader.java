@@ -33,6 +33,11 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     private final NullCursor cursor = new NullCursor();
 
     @Override
+    public long getColumnNameTxn() {
+        return -1;
+    }
+
+    @Override
     public long getColumnTop() {
         return 0;
     }
@@ -91,8 +96,9 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     }
 
     @Override
-    public void reloadConditionally() {
+    public boolean reloadConditionally(long partitionTxn) {
         // no-op
+        return false;
     }
 
     private NullCursor getCursor(boolean cachedInstance) {
