@@ -208,11 +208,21 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
-     * Static division method.
+     * Static division method using raw 256-bit values.
      *
-     * @param result       the result
-     * @param scale        the desired scale of the result
-     * @param roundingMode the rounding mode
+     * @param dividendHH    the dividend's highest 64 bits
+     * @param dividendHL    the dividend's high 64 bits
+     * @param dividendLH    the dividend's mid 64 bits
+     * @param dividendLL    the dividend's low 64 bits
+     * @param dividendScale the dividend's scale
+     * @param divisorHH     the divisor's highest 64 bits
+     * @param divisorHL     the divisor's high 64 bits
+     * @param divisorLH     the divisor's mid 64 bits
+     * @param divisorLL     the divisor's low 64 bits
+     * @param divisorScale  the divisor's scale
+     * @param result        the result Decimal256 to store the quotient
+     * @param scale         the desired scale of the result
+     * @param roundingMode  the rounding mode
      * @throws NumericException if division by zero or overflow occurs
      */
     public static void divide(
@@ -500,9 +510,9 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
-     * Copy the value from another Decimal256.
+     * Copy values from another Decimal256 instance.
      *
-     * @param other the Decimal256 to copy from
+     * @param other the Decimal256 instance to copy from
      */
     public void copyFrom(Decimal256 other) {
         this.hh = other.hh;
@@ -524,6 +534,13 @@ public class Decimal256 implements Sinkable {
         divide(this, divisor, this, targetScale, roundingMode);
     }
 
+    /**
+     * Checks if this Decimal256 is equal to another object.
+     * Two Decimal256 instances are equal if they have the same 256-bit value and scale.
+     *
+     * @param obj the object to compare with
+     * @return true if equal, false otherwise
+     */
     @Override
     public boolean equals(Object obj) {
         if (this == obj) return true;
@@ -537,27 +554,57 @@ public class Decimal256 implements Sinkable {
                 scale == other.scale;
     }
 
-    // Getter methods
+    /**
+     * Gets the highest 64 bits of the 256-bit decimal value (bits 192-255).
+     *
+     * @return the highest 64 bits
+     */
     public long getHh() {
         return hh;
     }
 
+    /**
+     * Gets the high 64 bits of the 256-bit decimal value (bits 128-191).
+     *
+     * @return the high 64 bits
+     */
     public long getHl() {
         return hl;
     }
 
+    /**
+     * Gets the mid 64 bits of the 256-bit decimal value (bits 64-127).
+     *
+     * @return the mid 64 bits
+     */
     public long getLh() {
         return lh;
     }
 
+    /**
+     * Gets the low 64 bits of the 256-bit decimal value (bits 0-63).
+     *
+     * @return the low 64 bits
+     */
     public long getLl() {
         return ll;
     }
 
+    /**
+     * Gets the scale (number of decimal places) of this decimal number.
+     *
+     * @return the scale
+     */
     public int getScale() {
         return scale;
     }
 
+    /**
+     * Returns the hash code for this Decimal256.
+     * The hash code is computed based on all 256 bits of the value and the scale.
+     *
+     * @return the hash code
+     */
     @Override
     public int hashCode() {
         int result = (int) (hh ^ (hh >>> 32));
@@ -645,10 +692,11 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
-     * In-place multiplication.
+     * Multiplies this Decimal256 by another Decimal256 in-place.
+     * The result scale is the sum of both operands' scales.
      *
      * @param other the Decimal256 to multiply by
-     * @throws NumericException if overflow occurs
+     * @throws NumericException if overflow occurs or resulting scale exceeds MAX_SCALE
      */
     public void multiply(Decimal256 other) {
         int finalScale = scale + other.scale;
@@ -692,7 +740,8 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
-     * In-place negation.
+     * Negates this Decimal256 in-place using two's complement arithmetic.
+     * Changes the sign of the decimal number (positive becomes negative and vice versa).
      */
     public void negate() {
         ll = ~ll + 1;
@@ -704,6 +753,15 @@ public class Decimal256 implements Sinkable {
         hh = ~hh + c;
     }
 
+    /**
+     * Sets this Decimal256 to the specified 256-bit value and scale.
+     *
+     * @param hh    the highest 64 bits (bits 192-255)
+     * @param hl    the high 64 bits (bits 128-191)
+     * @param lh    the mid 64 bits (bits 64-127)
+     * @param ll    the low 64 bits (bits 0-63)
+     * @param scale the number of decimal places
+     */
     public void of(long hh, long hl, long lh, long ll, int scale) {
         this.hh = hh;
         this.hl = hl;
@@ -783,8 +841,13 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
-     * In-place subtraction.
+     * In-place subtraction using raw 256-bit values.
      *
+     * @param bHH    the subtrahend's highest 64 bits
+     * @param bHL    the subtrahend's high 64 bits
+     * @param bLH    the subtrahend's mid 64 bits
+     * @param bLL    the subtrahend's low 64 bits
+     * @param bScale the subtrahend's scale
      * @throws NumericException if overflow occurs
      */
     public void subtract(long bHH, long bHL, long bLH, long bLL, int bScale) {
@@ -834,12 +897,24 @@ public class Decimal256 implements Sinkable {
         return toBigDecimal().doubleValue();
     }
 
+    /**
+     * Writes the string representation of this Decimal256 to the specified CharSink.
+     * The output format is a plain decimal string without scientific notation.
+     *
+     * @param sink the CharSink to write to
+     */
     @Override
     public void toSink(@NotNull CharSink sink) {
         BigDecimal bd = toBigDecimal();
         sink.put(bd.toPlainString());
     }
 
+    /**
+     * Returns the string representation of this Decimal256.
+     * The output format is a plain decimal string without scientific notation.
+     *
+     * @return string representation of this decimal number
+     */
     @Override
     public String toString() {
         StringSink sink = new StringSink();
