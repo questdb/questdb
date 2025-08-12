@@ -1170,6 +1170,37 @@ public class Decimal128Test {
     }
 
     @Test
+    public void testToSinkLargeLong() {
+        Decimal128 decimal = new Decimal128(0, -1, 0);
+        StringSink sink = new StringSink();
+
+        decimal.toSink(sink);
+
+        Assert.assertEquals("18446744073709551615", sink.toString());
+    }
+
+    @Test
+    public void testToSinkLargeLongScale() {
+        Decimal128 decimal = new Decimal128(0, -1, 5);
+        StringSink sink = new StringSink();
+
+        decimal.toSink(sink);
+
+        Assert.assertEquals("184467440737095.51615", sink.toString());
+    }
+
+
+    @Test
+    public void testToSinkLargeLongLargeScale() {
+        Decimal128 decimal = new Decimal128(0, -1, 25);
+        StringSink sink = new StringSink();
+
+        decimal.toSink(sink);
+
+        Assert.assertEquals("0.0000018446744073709551615", sink.toString());
+    }
+
+    @Test
     public void testToSinkMultipleDecimals() {
         // Test multiple decimals being written to the same sink
         StringSink sink = new StringSink();

@@ -164,19 +164,6 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
-     * Copy constructor.
-     *
-     * @param other the Decimal256 to copy from
-     */
-    public Decimal256(Decimal256 other) {
-        this.hh = other.hh;
-        this.hl = other.hl;
-        this.lh = other.lh;
-        this.ll = other.ll;
-        this.scale = other.scale;
-    }
-
-    /**
      * Static addition method.
      *
      * @param a      the first operand
@@ -673,19 +660,14 @@ public class Decimal256 implements Sinkable {
 
         // Handle scale adjustment
         if (this.scale != resultScale) {
-            if (this.scale < resultScale) {
-                int scaleUp = resultScale - this.scale;
-                boolean isNegative = isNegative();
-                if (isNegative) {
-                    negate();
-                }
-                multiplyByPowerOf10InPlace(scaleUp);
-                if (isNegative) {
-                    negate();
-                }
-            } else {
-                int scaleDown = this.scale - resultScale;
-                divideByPowerOf10InPlace(scaleDown);
+            int scaleUp = resultScale - this.scale;
+            boolean isNegative = isNegative();
+            if (isNegative) {
+                negate();
+            }
+            multiplyByPowerOf10InPlace(scaleUp);
+            if (isNegative) {
+                negate();
             }
             this.scale = resultScale;
         }
@@ -973,14 +955,6 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
-     * Compare two longs as if they were unsigned.
-     * Returns true iff one is bigger than two.
-     */
-    private static boolean unsignedLongCompare(long one, long two) {
-        return (one + Long.MIN_VALUE) > (two + Long.MIN_VALUE);
-    }
-
-    /**
      * Validates that the scale is within the allowed range.
      *
      * @param scale the scale to validate
@@ -1003,39 +977,6 @@ public class Decimal256 implements Sinkable {
             return Long.compareUnsigned(lh, bLH);
         }
         return Long.compareUnsigned(ll, bLL);
-    }
-
-    /**
-     * Multiply this (unsigned) by 10^n in place
-     */
-    private void divideByPowerOf10InPlace(int n) {
-        if (n <= 0 || isZero()) {
-            return;
-        }
-        if (n > 76) {
-            throw NumericException.instance().put("Overflow");
-        }
-
-        final boolean isNegative = isNegative();
-        if (isNegative) {
-            negate();
-        }
-
-        DecimalKnuthDivider divider = DecimalKnuthDivider.instance();
-        divider.ofDividend(hh, hl, lh, ll);
-
-        final long multiplierHH = n >= 58 ? POWERS_TEN_TABLE_HH[n - 58] : 0L;
-        final long multiplierHL = n >= 39 ? POWERS_TEN_TABLE_HL[n - 39] : 0L;
-        final long multiplierLH = n >= 20 ? POWERS_TEN_TABLE_LH[n - 20] : 0L;
-        final long multiplierLL = POWERS_TEN_TABLE_LL[n];
-
-        divider.ofDivisor(multiplierHH, multiplierHL, multiplierLH, multiplierLL);
-        divider.divide(isNegative, RoundingMode.FLOOR);
-        divider.sink(this, scale);
-
-        if (isNegative) {
-            negate();
-        }
     }
 
     private void multiply128(long h, long l) {
@@ -1759,10 +1700,6 @@ public class Decimal256 implements Sinkable {
      * @param newScale The new scale (must be >= current scale)
      */
     private void rescale(int newScale) {
-        if (newScale < this.scale) {
-            throw new IllegalArgumentException("Cannot reduce scale");
-        }
-
         int scaleDiff = newScale - this.scale;
 
         boolean isNegative = isNegative();
@@ -1816,16 +1753,6 @@ public class Decimal256 implements Sinkable {
         // Fill highest 64 bits
         for (int i = 0; i < 8 && byteIndex >= 0; i++, byteIndex--) {
             this.hh |= ((long) (bytes[byteIndex] & 0xFF)) << (i * 8);
-        }
-
-        // Sign extend if necessary
-        if (negative) {
-            if (byteIndex >= 0) {
-                // We still have bytes, so sign extend the remaining parts
-                if (this.hh == 0) this.hh = -1L;
-                if (this.hl == 0) this.hl = -1L;
-                if (this.lh == 0) this.lh = -1L;
-            }
         }
     }
 

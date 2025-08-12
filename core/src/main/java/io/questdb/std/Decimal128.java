@@ -190,18 +190,6 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Copy constructor for cached values.
-     *
-     * @param other the Decimal128 to copy from
-     */
-    private Decimal128(Decimal128 other) {
-        this.high = other.high;
-        this.low = other.low;
-        this.scale = other.scale;
-        this.compact = other.compact;
-    }
-
-    /**
      * Add two Decimal128 numbers and store the result in sink
      *
      * @param a    First operand
@@ -649,21 +637,14 @@ public class Decimal128 implements Sinkable {
 
         // Handle scale adjustment
         if (this.scale != resultScale) {
-            if (this.scale < resultScale) {
-                int scaleUp = resultScale - this.scale;
-                boolean isNegative = isNegative();
-                if (isNegative) {
-                    negate();
-                }
-                multiplyByPowerOf10InPlace(scaleUp);
-                if (isNegative) {
-                    negate();
-                }
-            } else {
-                int scaleDown = this.scale - resultScale;
-                for (int i = 0; i < scaleDown; i++) {
-                    divideBy10InPlace();
-                }
+            int scaleUp = resultScale - this.scale;
+            boolean isNegative = isNegative();
+            if (isNegative) {
+                negate();
+            }
+            multiplyByPowerOf10InPlace(scaleUp);
+            if (isNegative) {
+                negate();
             }
             this.scale = resultScale;
         }
@@ -765,37 +746,6 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
-     * Sets the high 64 bits of the decimal value.
-     *
-     * @param high the high 64 bits to set
-     */
-    public void setHigh(long high) {
-        this.high = high;
-        updateCompact();
-    }
-
-    /**
-     * Sets the low 64 bits of the decimal value.
-     *
-     * @param low the low 64 bits to set
-     */
-    public void setLow(long low) {
-        this.low = low;
-        updateCompact();
-    }
-
-    /**
-     * Sets the scale (number of decimal places).
-     *
-     * @param scale the number of decimal places
-     * @throws IllegalArgumentException if scale is invalid
-     */
-    public void setScale(int scale) {
-        validateScale(scale);
-        this.scale = scale;
-    }
-
-    /**
      * Subtract another Decimal128 from this one (in-place)
      *
      * @param other The Decimal128 to subtract
@@ -868,13 +818,8 @@ public class Decimal128 implements Sinkable {
             } else {
                 // Two's complement: ~high * 2^64 + ~low + 1
                 // But we need to be careful with the arithmetic
-                long negHigh = ~high;
                 long negLow = ~low + 1;
-
-                // Check for carry from low negation
-                if (negLow == 0) {
-                    negHigh += 1;
-                }
+                long negHigh = ~high + (negLow == 0 ? 1L : 0L);
 
                 // Now we have the absolute value in negHigh:negLow
                 result = -((double) negHigh * 18446744073709551616.0 + unsignedToDouble(negLow));
@@ -1833,42 +1778,6 @@ public class Decimal128 implements Sinkable {
         if (Integer.compareUnsigned(scale, MAX_SCALE) > 0) {
             throw new IllegalArgumentException("Scale must be between 0 and " + MAX_SCALE + ", got: " + scale);
         }
-    }
-
-    /**
-     * Divide this by 10 in place
-     */
-    private void divideBy10InPlace() {
-        // Simple case
-        if (this.high == 0 && this.low < 10) {
-            this.low = 0;
-            return;
-        }
-
-        // Use our division algorithm for dividing by 10
-        long quotientHigh = 0;
-        long quotientLow = 0;
-        long remainder = 0;
-
-        // Divide high part
-        if (this.high != 0) {
-            quotientHigh = Long.divideUnsigned(this.high, 10);
-            remainder = Long.remainderUnsigned(this.high, 10);
-        }
-
-        // Combine remainder with low part for division
-        // We need to compute (remainder * 2^64 + low) / 10
-        // Do this bit by bit to avoid overflow
-        for (int i = 63; i >= 0; i--) {
-            remainder = remainder * 2 + ((this.low >>> i) & 1);
-            if (remainder >= 10) {
-                quotientLow |= (1L << i);
-                remainder -= 10;
-            }
-        }
-
-        this.high = quotientHigh;
-        this.low = quotientLow;
     }
 
     /**

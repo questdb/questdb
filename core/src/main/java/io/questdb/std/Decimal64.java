@@ -99,16 +99,6 @@ public class Decimal64 implements Sinkable {
     }
 
     /**
-     * Copy constructor for cached values.
-     *
-     * @param other the Decimal64 to copy from
-     */
-    private Decimal64(Decimal64 other) {
-        this.value = other.value;
-        this.scale = other.scale;
-    }
-
-    /**
      * Add two Decimal64 numbers and store the result in sink
      */
     public static void add(Decimal64 a, Decimal64 b, Decimal64 sink) {
