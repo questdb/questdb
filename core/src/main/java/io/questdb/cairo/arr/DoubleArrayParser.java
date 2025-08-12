@@ -22,13 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.modern;
-// todo: move to another package, it's not PGWire-specific
-
+package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.FlatArrayView;
-import io.questdb.cairo.arr.MutableArray;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.DoubleList;
 import io.questdb.std.Numbers;

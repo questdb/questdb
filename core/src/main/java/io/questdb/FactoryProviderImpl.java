@@ -32,8 +32,8 @@ import io.questdb.cutlass.http.DefaultHttpCookieHandler;
 import io.questdb.cutlass.http.DefaultHttpHeaderParserFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpCookieHandler;
-import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
-import io.questdb.cutlass.pgwire.modern.DefaultPgWireAuthenticatorFactoryModern;
+import io.questdb.cutlass.pgwire.DefaultPGAuthenticatorFactory;
+import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.network.SocketFactory;
 import org.jetbrains.annotations.NotNull;
@@ -42,13 +42,13 @@ public class FactoryProviderImpl implements FactoryProvider {
     private final DefaultWalJobFactory defaultWalJobFactory = new DefaultWalJobFactory();
     private final HttpAuthenticatorFactory httpAuthenticatorFactory;
     private final LineAuthenticatorFactory lineAuthenticatorFactory;
-    private final PgWireAuthenticatorFactory pgWireAuthenticatorFactory;
+    private final PGAuthenticatorFactory pgAuthenticatorFactory;
     private final SecurityContextFactory securityContextFactory;
 
     public FactoryProviderImpl(ServerConfiguration configuration) {
         this.lineAuthenticatorFactory = ServerMain.getLineAuthenticatorFactory(configuration);
         this.securityContextFactory = ServerMain.getSecurityContextFactory(configuration);
-        this.pgWireAuthenticatorFactory = new DefaultPgWireAuthenticatorFactoryModern(configuration);
+        this.pgAuthenticatorFactory = new DefaultPGAuthenticatorFactory(configuration);
         this.httpAuthenticatorFactory = ServerMain.getHttpAuthenticatorFactory(configuration);
     }
 
@@ -93,8 +93,8 @@ public class FactoryProviderImpl implements FactoryProvider {
     }
 
     @Override
-    public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
-        return pgWireAuthenticatorFactory;
+    public @NotNull PGAuthenticatorFactory getPgWireAuthenticatorFactory() {
+        return pgAuthenticatorFactory;
     }
 
     @Override
