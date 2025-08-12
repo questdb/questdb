@@ -852,7 +852,7 @@ public class Decimal256 implements Sinkable {
      */
     public void subtract(long bHH, long bHL, long bLH, long bLL, int bScale) {
         // Negate other and perform addition
-        if (bHH != 0 || hl != 0 || lh != 0 || ll != 0) {
+        if (bHH != 0 || bHL != 0 || bLH != 0 || bLL != 0) {
             bLL = ~bLL + 1;
             long c = bLL == 0L ? 1L : 0L;
             bLH = ~bLH + c;
