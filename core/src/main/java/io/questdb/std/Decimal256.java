@@ -183,7 +183,8 @@ public class Decimal256 implements Sinkable {
      * @throws NumericException if overflow occurs
      */
     public static void add(Decimal256 a, Decimal256 b, Decimal256 result) {
-        // TODO: Implement addition
+        result.copyFrom(a);
+        result.add(b);
     }
 
     /**
@@ -384,7 +385,8 @@ public class Decimal256 implements Sinkable {
      * @throws NumericException if overflow occurs
      */
     public static void subtract(Decimal256 a, Decimal256 b, Decimal256 result) {
-        // TODO: Implement subtraction
+        result.copyFrom(a);
+        result.subtract(b);
     }
 
     /**
@@ -394,7 +396,7 @@ public class Decimal256 implements Sinkable {
      * @throws NumericException if overflow occurs
      */
     public void add(Decimal256 other) {
-        add(this, other, this);
+        add(this, hh, hl, lh, ll, scale, other.hh, other.hl, other.lh, other.ll, other.scale);
     }
 
     /**
@@ -554,9 +556,12 @@ public class Decimal256 implements Sinkable {
      */
     public void negate() {
         ll = ~ll + 1;
-        lh = ~lh + (ll == 0 ? 1 : 0);
-        hl = ~hl + (lh == 0 ? 1 : 0);
-        hh = ~hh + (hl == 0 ? 1 : 0);
+        long c = ll == 0L ? 1L : 0L;
+        lh = ~lh + c;
+        c = (c == 1L && lh == 0L) ? 1L : 0L;
+        hl = ~hl + c;
+        c = (c == 1L && hl == 0L) ? 1L : 0L;
+        hh = ~hh + c;
     }
 
     public void of(long hh, long hl, long lh, long ll, int scale) {
@@ -583,7 +588,7 @@ public class Decimal256 implements Sinkable {
         }
 
         if (targetScale == this.scale) {
-            return; // No rounding needed
+            // No rounding needed
         }
 
         // TODO: Implement rounding
@@ -612,7 +617,15 @@ public class Decimal256 implements Sinkable {
      * @throws NumericException if overflow occurs
      */
     public void subtract(Decimal256 other) {
-        subtract(this, other, this);
+        // Negate other and perform addition
+        if (!other.isZero()) {
+            long bLL = ~other.ll + 1;
+            long bLH = ~other.lh + (bLL == 0 ? 1 : 0);
+            long bHL = ~other.hl + (bLH == 0 ? 1 : 0);
+            long bHH = ~other.hh + (bHL == 0 ? 1 : 0);
+
+            add(this, hh, hl, lh, ll, scale, bHH, bHL, bLH, bLL, other.scale);
+        }
     }
 
     /**
@@ -658,6 +671,56 @@ public class Decimal256 implements Sinkable {
         StringSink sink = new StringSink();
         toSink(sink);
         return sink.toString();
+    }
+
+    private static void add(Decimal256 result,
+                            long aHH, long aHL, long aLH, long aLL, int aScale,
+                            long bHH, long bHL, long bLH, long bLL, int bScale) {
+        result.scale = aScale;
+        if (aScale < bScale) {
+            // We need to rescale a to the same scale as b
+            result.of(aHH, aHL, aLH, aLL, aScale);
+            result.rescale(bScale);
+            aHH = result.hh;
+            aHL = result.hl;
+            aLH = result.lh;
+            aLL = result.ll;
+        } else if (aScale > bScale) {
+            // We need to rescale b to the same scale as a
+            result.of(bHH, bHL, bLH, bLL, bScale);
+            result.rescale(aScale);
+            bHH = result.hh;
+            bHL = result.hl;
+            bLH = result.lh;
+            bLL = result.ll;
+        }
+
+        // Perform 256-bit addition
+        long r = aLL + bLL;
+        long carry = hasCarry(aLL, r) ? 1L : 0L;
+        result.ll = r;
+
+        long t = aLH + carry;
+        carry = hasCarry(aLH, t) ? 1L : 0L;
+        r = t + bLH;
+        carry |= hasCarry(t, r) ? 1L : 0L;
+        result.lh = r;
+
+        t = aHL + carry;
+        carry = hasCarry(aHL, t) ? 1L : 0L;
+        r = t + bHL;
+        carry |= hasCarry(t, r) ? 1L : 0L;
+        result.hl = r;
+
+        t = aHH + carry;
+        if (((aHH ^ t) & (carry ^ t)) < 0L) {
+            throw NumericException.instance().put("Overflow");
+        }
+        r = t + bHH;
+        if (((bHH ^ r) & (t ^ r)) < 0L) {
+            throw NumericException.instance().put("Overflow");
+        }
+        result.hh = r;
     }
 
     /**
@@ -1409,6 +1472,33 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
+     * Rescale this Decimal256 in place
+     *
+     * @param newScale The new scale (must be >= current scale)
+     */
+    private void rescale(int newScale) {
+        if (newScale < this.scale) {
+            throw new IllegalArgumentException("Cannot reduce scale");
+        }
+
+        int scaleDiff = newScale - this.scale;
+
+        boolean isNegative = isNegative();
+        if (isNegative) {
+            negate();
+        }
+
+        // Multiply by 10^scaleDiff
+        multiplyByPowerOf10InPlace(scaleDiff);
+
+        if (isNegative) {
+            negate();
+        }
+
+        this.scale = newScale;
+    }
+
+    /**
      * Set this Decimal256 from a byte array representation.
      *
      * @param bytes the byte array
@@ -1455,5 +1545,18 @@ public class Decimal256 implements Sinkable {
                 if (this.lh == 0) this.lh = -1L;
             }
         }
+    }
+
+    /**
+     * Check if addition resulted in a carry
+     * When adding two unsigned numbers a + b = sum, carry occurs iff sum < a (or sum < b)
+     * This works because:
+     * - No carry: sum = a + b, so sum >= a and sum >= b
+     * - Carry: sum = a + b - 2^64, so sum < a and sum < b
+     */
+    static boolean hasCarry(long a, long sum) {
+        // We can check against either a or b - both work
+        // Using a for consistency, b parameter kept for clarity
+        return Long.compareUnsigned(sum, a) < 0;
     }
 }

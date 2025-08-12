@@ -713,7 +713,7 @@ public class Decimal128 implements Sinkable {
      * @param targetScale  the desired scale (number of decimal places)
      * @param roundingMode the rounding mode to use
      * @throws IllegalArgumentException if targetScale is invalid
-     * @throws NumericException      if roundingMode is UNNECESSARY and rounding is required
+     * @throws NumericException         if roundingMode is UNNECESSARY and rounding is required
      */
     public void round(int targetScale, RoundingMode roundingMode) {
         validateScale(targetScale);
@@ -828,16 +828,9 @@ public class Decimal128 implements Sinkable {
     public void subtract(long bH, long bL, int bScale) {
         // Negate other and perform addition
         if (bH != 0 || bL != 0) {
-            long oldLow = bL;
-
             // Two's complement: invert all bits and add 1
             bL = ~bL + 1;
-            bH = ~bH;
-
-            // Check for carry from low
-            if (bL == 0 && oldLow != 0) {
-                bH += 1;
-            }
+            bH = ~bH + (bL == 0 ? 1 : 0);
 
             add(this, this.high, this.low, this.scale, bH, bL, bScale);
         }
