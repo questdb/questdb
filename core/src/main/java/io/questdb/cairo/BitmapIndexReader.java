@@ -48,6 +48,8 @@ public interface BitmapIndexReader extends Closeable {
 
     long getColumnTop();
 
+    long getColumnTxn();
+
     /**
      * Setup value cursor. Values in this cursor will be bounded by provided
      * minimum and maximum, both of which are inclusive. Order of values is
@@ -71,6 +73,8 @@ public interface BitmapIndexReader extends Closeable {
 
     long getKeyMemorySize();
 
+    long getPartitionTxn();
+
     long getValueBaseAddress();
 
     int getValueBlockCapacity();
@@ -84,8 +88,20 @@ public interface BitmapIndexReader extends Closeable {
             @Transient Path path,
             CharSequence columnName,
             long columnNameTxn,
+            long partitionTxn,
             long columnTop
     );
+
+    default void of(
+            CairoConfiguration configuration,
+            @Transient Path path,
+            CharSequence columnName,
+            long columnNameTxn,
+            long columnTop
+    ) {
+        of(configuration, path, columnName, columnNameTxn, -1, columnTop);
+    }
+
 
     void reloadConditionally();
 }
