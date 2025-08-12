@@ -44,10 +44,9 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
             Path path,
             CharSequence name,
             long columnNameTxn,
-            long partitionNameTxn,
             long columnTop
     ) {
-        of(configuration, path, name, columnNameTxn, partitionNameTxn, columnTop);
+        of(configuration, path, name, columnNameTxn, columnTop);
     }
 
     @Override

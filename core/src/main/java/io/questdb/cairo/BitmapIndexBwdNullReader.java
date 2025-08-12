@@ -79,7 +79,7 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
     }
 
     @Override
-    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, long partitionTxn, long unIndexedNullCount) {
+    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, long columnTop) {
         // no-op
     }
 

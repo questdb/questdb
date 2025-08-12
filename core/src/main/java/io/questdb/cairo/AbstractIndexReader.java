@@ -49,8 +49,6 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     private int keyCountIncludingNulls;
     private long keyFileSequence = -1;
     private long valueMemSize = -1;
-    private long columnNameTxn;
-    private long partitionNameTxn;
 
     @Override
     public void close() {
@@ -94,24 +92,17 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         return keyMem.getFd() != -1;
     }
 
-    public long getColumnNameTxn() {
-        return columnNameTxn;
-    }
-
-    public long getPartitionNameTxn() {
-        return partitionNameTxn;
-    }
-
     @Override
-    public void of(CairoConfiguration configuration, Path path, CharSequence columnName,
-                   long columnNameTxn,
-                   long partitionNameTxn,
-                   long columnTop) {
+    public void of(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence columnName,
+            long columnNameTxn,
+            long columnTop
+    ) {
         this.columnTop = columnTop;
         final int plen = path.size();
         this.spinLockTimeoutMs = configuration.getSpinLockTimeout();
-        this.columnNameTxn = columnNameTxn;
-        this.partitionNameTxn = partitionNameTxn;
 
         try {
             keyMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, columnName, columnNameTxn), MemoryTag.MMAP_INDEX_READER);

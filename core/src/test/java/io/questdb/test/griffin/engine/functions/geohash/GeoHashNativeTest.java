@@ -87,7 +87,7 @@ public class GeoHashNativeTest extends AbstractCairoTest {
                 }
             }
 
-            try (BitmapIndexFwdReader indexReader = new BitmapIndexFwdReader(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0,0)) {
+            try (BitmapIndexFwdReader indexReader = new BitmapIndexFwdReader(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0)) {
                 GeoHashNative.latestByAndFilterPrefix(
                         frameMemoryPool, // won't be used
                         indexReader.getKeyBaseAddress(),
