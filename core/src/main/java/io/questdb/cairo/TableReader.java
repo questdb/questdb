@@ -261,10 +261,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int indexIndex = direction == BitmapIndexReader.DIR_BACKWARD ? index : index + 1;
         BitmapIndexReader reader = bitmapIndexes.getQuick(indexIndex);
         if (reader != null) {
-            if (reader.reloadConditionally(partitionTxn)) {
-                return reader;
-            }
-            Misc.free(reader);
+            reader.reloadConditionally();
+            return reader;
         }
         return createBitmapIndexReaderAt(index, columnBase, columnIndex, columnNameTxn, direction, partitionTxn);
     }

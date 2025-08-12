@@ -46,7 +46,6 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     protected long columnTop;
     protected int keyCount;
     protected long spinLockTimeoutMs;
-    private long columnNameTxn;
     private int keyCountIncludingNulls;
     private long keyFileSequence = -1;
     private long valueMemSize = -1;
@@ -57,11 +56,6 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         // Failures in opening should have memories closed as well.
         Misc.free(keyMem);
         Misc.free(valueMem);
-    }
-
-    @Override
-    public long getColumnNameTxn() {
-        return columnNameTxn;
     }
 
     public long getColumnTop() {
@@ -103,7 +97,6 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         this.columnTop = columnTop;
         final int plen = path.size();
         this.spinLockTimeoutMs = configuration.getSpinLockTimeout();
-        this.columnNameTxn = columnNameTxn;
 
         try {
             keyMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, columnName, columnNameTxn), MemoryTag.MMAP_INDEX_READER);
@@ -148,21 +141,15 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
      * - key file sequence value and "value memory size" are both updated
      * - we can resize key memory using only keyCount
      * - we can resize value memory using the "value memory size" we read from the key header
-     *
-     * @return
      */
-    public boolean reloadConditionally(long partitionTxn) {
-        if (partitionTxn == columnNameTxn) {
-            long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK);
-            if (seq != keyFileSequence) {
-                readIndexMetadataAtomically();
-                // extend memory objects
-                this.keyMem.extend(BitmapIndexUtils.getKeyEntryOffset(keyCount));
-                this.valueMem.extend(valueMemSize);
-            }
-            return true;
+    public void reloadConditionally() {
+        long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK);
+        if (seq != keyFileSequence) {
+            readIndexMetadataAtomically();
+            // extend memory objects
+            this.keyMem.extend(BitmapIndexUtils.getKeyEntryOffset(keyCount));
+            this.valueMem.extend(valueMemSize);
         }
-        return false;
     }
 
     public void updateKeyCount() {
