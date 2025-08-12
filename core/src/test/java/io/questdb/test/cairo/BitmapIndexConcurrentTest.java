@@ -96,7 +96,7 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
                     for (int batch = 0; batch < 10; batch++) {
                         // Use random symbol from existing ones (SYM1 to SYM100)
                         String randomSymbol = "SYM" + (rnd.nextInt(100) + 1);
-                        
+
                         // Create out-of-order timestamp (random minutes in the past)
                         long oooTimestamp = System.currentTimeMillis() * 1000L - (rnd.nextInt(600) * 60000000L); // micros
 
@@ -105,7 +105,7 @@ public class BitmapIndexConcurrentTest extends AbstractCairoTest {
                         r.append();
                         insertCount++;
                     }
-                    
+
                     // Commit batch
                     w.commit();
 
