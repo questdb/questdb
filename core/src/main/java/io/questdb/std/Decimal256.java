@@ -371,7 +371,8 @@ public class Decimal256 implements Sinkable {
      * @throws NumericException if overflow occurs
      */
     public static void multiply(Decimal256 a, Decimal256 b, Decimal256 result) {
-        // TODO: Implement multiplication
+        result.copyFrom(a);
+        result.multiply(b);
     }
 
     /**
@@ -511,7 +512,41 @@ public class Decimal256 implements Sinkable {
      * @throws NumericException if overflow occurs
      */
     public void multiply(Decimal256 other) {
-        multiply(this, other, this);
+        int finalScale = scale + other.scale;
+        validateScale(finalScale);
+
+        boolean isNegative = isNegative() ^ other.isNegative();
+
+        long otherHH = other.hh;
+        long otherHL = other.hl;
+        long otherLH = other.lh;
+        long otherLL = other.ll;
+        if (other.isNegative()) {
+            otherLL = ~otherLL + 1;
+            otherLH = ~otherLH + (otherLL == 0 ? 1 : 0);
+            otherHL = ~otherHL + (otherLH == 0 ? 1 : 0);
+            otherHH = ~otherHH + (otherHL == 0 ? 1 : 0);
+        }
+
+        if (isNegative()) {
+            negate();
+        }
+
+        if (otherHH != 0 || otherHL < 0) {
+            multiply256(otherHH, otherHL, otherLH, otherLL);
+        } else if (otherHL != 0 || otherLH < 0) {
+            multiply192(otherHL, otherLH, otherLL);
+        } else if (otherLH != 0 || otherLL < 0) {
+            multiply128(otherLH, otherLL);
+        } else {
+            multiply64(otherLL);
+        }
+
+        if (isNegative) {
+            negate();
+        }
+
+        scale = finalScale;
     }
 
     /**
@@ -641,7 +676,7 @@ public class Decimal256 implements Sinkable {
      */
     private static void validateScale(int scale) {
         if (scale < 0 || scale > MAX_SCALE) {
-            throw new IllegalArgumentException("Scale must be between 0 and " + MAX_SCALE + ", got: " + scale);
+            throw NumericException.instance().put("Invalid scale: " + scale);
         }
     }
 
@@ -656,6 +691,90 @@ public class Decimal256 implements Sinkable {
             return Long.compareUnsigned(lh, bLH);
         }
         return Long.compareUnsigned(ll, bLL);
+    }
+
+    private void multiply128(long h, long l) {
+        // Perform 256-bit × 128-bit multiplication
+        // Result is at most 384 bits, but we keep only the lower 256 bits
+
+        // Split this into eight 32-bit parts
+        long a7 = hh >>> 32;
+        long a6 = hh & 0xFFFFFFFFL;
+        long a5 = hl >>> 32;
+        long a4 = hl & 0xFFFFFFFFL;
+        long a3 = lh >>> 32;
+        long a2 = lh & 0xFFFFFFFFL;
+        long a1 = ll >>> 32;
+        long a0 = ll & 0xFFFFFFFFL;
+
+        long b3 = h >>> 32;
+        long b2 = h & 0xFFFFFFFFL;
+        long b1 = l >>> 32;
+        long b0 = l & 0xFFFFFFFFL;
+
+        // Compute all partial products
+        long p00 = a0 * b0;
+        long p01 = a0 * b1;
+        long p02 = a0 * b2;
+        long p03 = a0 * b3;
+        long p10 = a1 * b0;
+        long p11 = a1 * b1;
+        long p12 = a1 * b2;
+        long p13 = a1 * b3;
+        long p20 = a2 * b0;
+        long p21 = a2 * b1;
+        long p22 = a2 * b2;
+        long p23 = a2 * b3;
+        long p30 = a3 * b0;
+        long p31 = a3 * b1;
+        long p32 = a3 * b2;
+        long p33 = a3 * b3;
+        long p40 = a4 * b0;
+        long p41 = a4 * b1;
+        long p42 = a4 * b2;
+        long p43 = a4 * b3;
+        long p50 = a5 * b0;
+        long p51 = a5 * b1;
+        long p52 = a5 * b2;
+        long p53 = a5 * b3;
+        long p60 = a6 * b0;
+        long p61 = a6 * b1;
+        long p62 = a6 * b2;
+        long p63 = a6 * b3;
+        long p70 = a7 * b0;
+        long p71 = a7 * b1;
+        long p72 = a7 * b2;
+        long p73 = a7 * b3;
+
+        long overflow = p53 | p62 | p63 | p71 | p72 | p73;
+        if (overflow != 0) {
+            throw NumericException.instance().put("Overflow");
+        }
+
+        // Gather results into 256-bit result
+        long r0 = (p00 & 0xFFFFFFFFL);
+        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
+        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
+                (p02 & 0xFFFFFFFFL) + (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
+        long r3 = (r2 >>> 32) + (p02 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
+                (p03 & 0xFFFFFFFFL) + (p12 & 0xFFFFFFFFL) + (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
+        long r4 = (r3 >>> 32) + (p03 >>> 32) + (p12 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
+                (p13 & 0xFFFFFFFFL) + (p22 & 0xFFFFFFFFL) + (p31 & 0xFFFFFFFFL) + (p40 & 0xFFFFFFFFL);
+        long r5 = (r4 >>> 32) + (p13 >>> 32) + (p22 >>> 32) + (p31 >>> 32) + (p40 >>> 32) +
+                (p23 & 0xFFFFFFFFL) + (p32 & 0xFFFFFFFFL) + (p41 & 0xFFFFFFFFL) + (p50 & 0xFFFFFFFFL);
+        long r6 = (r5 >>> 32) + (p23 >>> 32) + (p32 >>> 32) + (p41 >>> 32) + (p50 >>> 32) +
+                (p33 & 0xFFFFFFFFL) + (p42 & 0xFFFFFFFFL) + (p51 & 0xFFFFFFFFL) + (p60 & 0xFFFFFFFFL);
+        long r7 = (r6 >>> 32) + (p33 >>> 32) + (p42 >>> 32) + (p51 >>> 32) + (p60 >>> 32) +
+                (p43 & 0xFFFFFFFFL) + (p52 & 0xFFFFFFFFL) + (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
+        overflow = (r7 >>> 31) | (p43 >>> 32) | (p52 >>> 32) | (p61 >>> 32) | (p70 >>> 32);
+        if (overflow != 0) {
+            throw NumericException.instance().put("Overflow");
+        }
+
+        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+        this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
+        this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
     }
 
     private void multiply128Unchecked(long h, long l) {
@@ -720,6 +839,108 @@ public class Decimal256 implements Sinkable {
                 (p33 & 0xFFFFFFFFL) + (p42 & 0xFFFFFFFFL) + (p51 & 0xFFFFFFFFL) + (p60 & 0xFFFFFFFFL);
         long r7 = (r6 >>> 32) + (p33 >>> 32) + (p42 >>> 32) + (p51 >>> 32) + (p60 >>> 32) +
                 (p43 & 0xFFFFFFFFL) + (p52 & 0xFFFFFFFFL) + (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
+
+        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+        this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
+        this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
+    }
+
+    private void multiply192(long h, long m, long l) {
+        // Perform 256-bit × 192-bit multiplication
+        // Result is at most 448 bits, but we keep only the lower 256 bits
+
+        // Split this into eight 32-bit parts
+        long a7 = hh >>> 32;
+        long a6 = hh & 0xFFFFFFFFL;
+        long a5 = hl >>> 32;
+        long a4 = hl & 0xFFFFFFFFL;
+        long a3 = lh >>> 32;
+        long a2 = lh & 0xFFFFFFFFL;
+        long a1 = ll >>> 32;
+        long a0 = ll & 0xFFFFFFFFL;
+
+        long b5 = h >>> 32;
+        long b4 = h & 0xFFFFFFFFL;
+        long b3 = m >>> 32;
+        long b2 = m & 0xFFFFFFFFL;
+        long b1 = l >>> 32;
+        long b0 = l & 0xFFFFFFFFL;
+
+        // Compute all partial products
+        long p00 = a0 * b0;
+        long p01 = a0 * b1;
+        long p02 = a0 * b2;
+        long p03 = a0 * b3;
+        long p04 = a0 * b4;
+        long p05 = a0 * b5;
+        long p10 = a1 * b0;
+        long p11 = a1 * b1;
+        long p12 = a1 * b2;
+        long p13 = a1 * b3;
+        long p14 = a1 * b4;
+        long p15 = a1 * b5;
+        long p20 = a2 * b0;
+        long p21 = a2 * b1;
+        long p22 = a2 * b2;
+        long p23 = a2 * b3;
+        long p24 = a2 * b4;
+        long p25 = a2 * b5;
+        long p30 = a3 * b0;
+        long p31 = a3 * b1;
+        long p32 = a3 * b2;
+        long p33 = a3 * b3;
+        long p34 = a3 * b4;
+        long p35 = a3 * b5;
+        long p40 = a4 * b0;
+        long p41 = a4 * b1;
+        long p42 = a4 * b2;
+        long p43 = a4 * b3;
+        long p44 = a4 * b4;
+        long p45 = a4 * b5;
+        long p50 = a5 * b0;
+        long p51 = a5 * b1;
+        long p52 = a5 * b2;
+        long p53 = a5 * b3;
+        long p54 = a5 * b4;
+        long p55 = a5 * b5;
+        long p60 = a6 * b0;
+        long p61 = a6 * b1;
+        long p62 = a6 * b2;
+        long p63 = a6 * b3;
+        long p64 = a6 * b4;
+        long p65 = a6 * b5;
+        long p70 = a7 * b0;
+        long p71 = a7 * b1;
+        long p72 = a7 * b2;
+        long p73 = a7 * b3;
+        long p74 = a7 * b4;
+        long p75 = a7 * b5;
+
+        long overflow = p35 | p44 | p45 | p53 | p54 | p55 | p62 | p63 | p64 | p65 | p71 | p72 | p73 | p74 | p75;
+        if (overflow != 0) {
+            throw NumericException.instance().put("Overflow");
+        }
+
+        // Gather results into 256-bit result
+        long r0 = (p00 & 0xFFFFFFFFL);
+        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
+        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
+                (p02 & 0xFFFFFFFFL) + (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
+        long r3 = (r2 >>> 32) + (p02 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
+                (p03 & 0xFFFFFFFFL) + (p12 & 0xFFFFFFFFL) + (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
+        long r4 = (r3 >>> 32) + (p03 >>> 32) + (p12 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
+                (p04 & 0xFFFFFFFFL) + (p13 & 0xFFFFFFFFL) + (p22 & 0xFFFFFFFFL) + (p31 & 0xFFFFFFFFL) + (p40 & 0xFFFFFFFFL);
+        long r5 = (r4 >>> 32) + (p04 >>> 32) + (p13 >>> 32) + (p22 >>> 32) + (p31 >>> 32) + (p40 >>> 32) +
+                (p05 & 0xFFFFFFFFL) + (p14 & 0xFFFFFFFFL) + (p23 & 0xFFFFFFFFL) + (p32 & 0xFFFFFFFFL) + (p41 & 0xFFFFFFFFL) + (p50 & 0xFFFFFFFFL);
+        long r6 = (r5 >>> 32) + (p05 >>> 32) + (p14 >>> 32) + (p23 >>> 32) + (p32 >>> 32) + (p41 >>> 32) + (p50 >>> 32) +
+                (p15 & 0xFFFFFFFFL) + (p24 & 0xFFFFFFFFL) + (p33 & 0xFFFFFFFFL) + (p42 & 0xFFFFFFFFL) + (p51 & 0xFFFFFFFFL) + (p60 & 0xFFFFFFFFL);
+        long r7 = (r6 >>> 32) + (p15 >>> 32) + (p24 >>> 32) + (p33 >>> 32) + (p42 >>> 32) + (p51 >>> 32) + (p60 >>> 32) +
+                (p25 & 0xFFFFFFFFL) + (p34 & 0xFFFFFFFFL) + (p43 & 0xFFFFFFFFL) + (p52 & 0xFFFFFFFFL) + (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
+        overflow = (r7 >>> 31) | (p25 >>> 32) | (p34 >>> 32) | (p43 >>> 32) | (p52 >>> 32) | (p61 >>> 32) | (p70 >>> 32);
+        if (overflow != 0) {
+            throw NumericException.instance().put("Overflow");
+        }
 
         this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
         this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
@@ -805,6 +1026,127 @@ public class Decimal256 implements Sinkable {
         this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
     }
 
+    private void multiply256(long hh, long hl, long lh, long ll) {
+        // Perform 256-bit × 256-bit multiplication
+        // Result is at most 512 bits, but we keep only the lower 256 bits
+
+        // Split this into eight 32-bit parts
+        long a7 = this.hh >>> 32;
+        long a6 = this.hh & 0xFFFFFFFFL;
+        long a5 = this.hl >>> 32;
+        long a4 = this.hl & 0xFFFFFFFFL;
+        long a3 = this.lh >>> 32;
+        long a2 = this.lh & 0xFFFFFFFFL;
+        long a1 = this.ll >>> 32;
+        long a0 = this.ll & 0xFFFFFFFFL;
+
+        long b7 = hh >>> 32;
+        long b6 = hh & 0xFFFFFFFFL;
+        long b5 = hl >>> 32;
+        long b4 = hl & 0xFFFFFFFFL;
+        long b3 = lh >>> 32;
+        long b2 = lh & 0xFFFFFFFFL;
+        long b1 = ll >>> 32;
+        long b0 = ll & 0xFFFFFFFFL;
+
+        // Compute all partial products
+        long p00 = a0 * b0;
+        long p01 = a0 * b1;
+        long p02 = a0 * b2;
+        long p03 = a0 * b3;
+        long p04 = a0 * b4;
+        long p05 = a0 * b5;
+        long p06 = a0 * b6;
+        long p07 = a0 * b7;
+        long p10 = a1 * b0;
+        long p11 = a1 * b1;
+        long p12 = a1 * b2;
+        long p13 = a1 * b3;
+        long p14 = a1 * b4;
+        long p15 = a1 * b5;
+        long p16 = a1 * b6;
+        long p17 = a1 * b7;
+        long p20 = a2 * b0;
+        long p21 = a2 * b1;
+        long p22 = a2 * b2;
+        long p23 = a2 * b3;
+        long p24 = a2 * b4;
+        long p25 = a2 * b5;
+        long p26 = a2 * b6;
+        long p27 = a2 * b7;
+        long p30 = a3 * b0;
+        long p31 = a3 * b1;
+        long p32 = a3 * b2;
+        long p33 = a3 * b3;
+        long p34 = a3 * b4;
+        long p35 = a3 * b5;
+        long p36 = a3 * b6;
+        long p37 = a3 * b7;
+        long p40 = a4 * b0;
+        long p41 = a4 * b1;
+        long p42 = a4 * b2;
+        long p43 = a4 * b3;
+        long p44 = a4 * b4;
+        long p45 = a4 * b5;
+        long p46 = a4 * b6;
+        long p47 = a4 * b7;
+        long p50 = a5 * b0;
+        long p51 = a5 * b1;
+        long p52 = a5 * b2;
+        long p53 = a5 * b3;
+        long p54 = a5 * b4;
+        long p55 = a5 * b5;
+        long p56 = a5 * b6;
+        long p57 = a5 * b7;
+        long p60 = a6 * b0;
+        long p61 = a6 * b1;
+        long p62 = a6 * b2;
+        long p63 = a6 * b3;
+        long p64 = a6 * b4;
+        long p65 = a6 * b5;
+        long p66 = a6 * b6;
+        long p67 = a6 * b7;
+        long p70 = a7 * b0;
+        long p71 = a7 * b1;
+        long p72 = a7 * b2;
+        long p73 = a7 * b3;
+        long p74 = a7 * b4;
+        long p75 = a7 * b5;
+        long p76 = a7 * b6;
+        long p77 = a7 * b7;
+
+        long overflow = p17 | p26 | p27 | p35 | p36 | p37 | p44 | p45 | p46 | p47 | p53 | p54 | p55 | p56 | p57 |
+                p62 | p63 | p64 | p65 | p66 | p67 | p71 | p72 | p73 | p74 | p75 | p76 | p77;
+        if (overflow != 0) {
+            throw NumericException.instance().put("Overflow");
+        }
+
+        // Gather results into 256-bit result
+        long r0 = (p00 & 0xFFFFFFFFL);
+        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
+        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
+                (p02 & 0xFFFFFFFFL) + (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
+        long r3 = (r2 >>> 32) + (p02 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
+                (p03 & 0xFFFFFFFFL) + (p12 & 0xFFFFFFFFL) + (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
+        long r4 = (r3 >>> 32) + (p03 >>> 32) + (p12 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
+                (p04 & 0xFFFFFFFFL) + (p13 & 0xFFFFFFFFL) + (p22 & 0xFFFFFFFFL) + (p31 & 0xFFFFFFFFL) + (p40 & 0xFFFFFFFFL);
+        long r5 = (r4 >>> 32) + (p04 >>> 32) + (p13 >>> 32) + (p22 >>> 32) + (p31 >>> 32) + (p40 >>> 32) +
+                (p05 & 0xFFFFFFFFL) + (p14 & 0xFFFFFFFFL) + (p23 & 0xFFFFFFFFL) + (p32 & 0xFFFFFFFFL) + (p41 & 0xFFFFFFFFL) + (p50 & 0xFFFFFFFFL);
+        long r6 = (r5 >>> 32) + (p05 >>> 32) + (p14 >>> 32) + (p23 >>> 32) + (p32 >>> 32) + (p41 >>> 32) + (p50 >>> 32) +
+                (p06 & 0xFFFFFFFFL) + (p15 & 0xFFFFFFFFL) + (p24 & 0xFFFFFFFFL) + (p33 & 0xFFFFFFFFL) + (p42 & 0xFFFFFFFFL) + (p51 & 0xFFFFFFFFL) + (p60 & 0xFFFFFFFFL);
+        long r7 = (r6 >>> 32) + (p06 >>> 32) + (p15 >>> 32) + (p24 >>> 32) + (p33 >>> 32) + (p42 >>> 32) + (p51 >>> 32) + (p60 >>> 32) +
+                (p07 & 0xFFFFFFFFL) + (p16 & 0xFFFFFFFFL) + (p25 & 0xFFFFFFFFL) + (p34 & 0xFFFFFFFFL) + (p43 & 0xFFFFFFFFL) + (p52 & 0xFFFFFFFFL) + (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
+        overflow = (r7 >>> 31) | (p07 >>> 32) | (p16 >>> 32) | (p25 >>> 32) | (p34 >>> 32) | (p43 >>> 32) | (p52 >>> 32) | (p61 >>> 32) | (p70 >>> 32);
+        if (overflow != 0) {
+            throw NumericException.instance().put("Overflow");
+        }
+
+        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+        this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
+        this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
+    }
+
     private void multiply256Unchecked(long hh, long hl, long lh, long ll) {
         // Perform 256-bit × 256-bit multiplication
         // Result is at most 512 bits, but we keep only the lower 256 bits
@@ -881,6 +1223,70 @@ public class Decimal256 implements Sinkable {
                 (p06 & 0xFFFFFFFFL) + (p15 & 0xFFFFFFFFL) + (p24 & 0xFFFFFFFFL) + (p33 & 0xFFFFFFFFL) + (p42 & 0xFFFFFFFFL) + (p51 & 0xFFFFFFFFL) + (p60 & 0xFFFFFFFFL);
         long r7 = (r6 >>> 32) + (p06 >>> 32) + (p15 >>> 32) + (p24 >>> 32) + (p33 >>> 32) + (p42 >>> 32) + (p51 >>> 32) + (p60 >>> 32) +
                 (p07 & 0xFFFFFFFFL) + (p16 & 0xFFFFFFFFL) + (p25 & 0xFFFFFFFFL) + (p34 & 0xFFFFFFFFL) + (p43 & 0xFFFFFFFFL) + (p52 & 0xFFFFFFFFL) + (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
+
+        this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
+        this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
+        this.hl = (r4 & 0xFFFFFFFFL) | ((r5 & 0xFFFFFFFFL) << 32);
+        this.hh = (r6 & 0xFFFFFFFFL) | ((r7 & 0xFFFFFFFFL) << 32);
+    }
+
+    private void multiply64(long multiplier) {
+        // Perform 256-bit × 64-bit multiplication
+        // Result is at most 320 bits, but we keep only the lower 256 bits
+
+        // Split this into eight 32-bit parts
+        long a7 = hh >>> 32;
+        long a6 = hh & 0xFFFFFFFFL;
+        long a5 = hl >>> 32;
+        long a4 = hl & 0xFFFFFFFFL;
+        long a3 = lh >>> 32;
+        long a2 = lh & 0xFFFFFFFFL;
+        long a1 = ll >>> 32;
+        long a0 = ll & 0xFFFFFFFFL;
+
+        long b1 = multiplier >>> 32;
+        long b0 = multiplier & 0xFFFFFFFFL;
+
+        // Compute all partial products
+        long p00 = a0 * b0;
+        long p01 = a0 * b1;
+        long p10 = a1 * b0;
+        long p11 = a1 * b1;
+        long p20 = a2 * b0;
+        long p21 = a2 * b1;
+        long p30 = a3 * b0;
+        long p31 = a3 * b1;
+        long p40 = a4 * b0;
+        long p41 = a4 * b1;
+        long p50 = a5 * b0;
+        long p51 = a5 * b1;
+        long p60 = a6 * b0;
+        long p61 = a6 * b1;
+        long p70 = a7 * b0;
+        long p71 = a7 * b1;
+        if (p71 != 0) {
+            throw NumericException.instance().put("Overflow");
+        }
+
+        // Gather results into 256-bit result
+        long r0 = (p00 & 0xFFFFFFFFL);
+        long r1 = (p00 >>> 32) + (p01 & 0xFFFFFFFFL) + (p10 & 0xFFFFFFFFL);
+        long r2 = (r1 >>> 32) + (p01 >>> 32) + (p10 >>> 32) +
+                (p11 & 0xFFFFFFFFL) + (p20 & 0xFFFFFFFFL);
+        long r3 = (r2 >>> 32) + (p11 >>> 32) + (p20 >>> 32) +
+                (p21 & 0xFFFFFFFFL) + (p30 & 0xFFFFFFFFL);
+        long r4 = (r3 >>> 32) + (p21 >>> 32) + (p30 >>> 32) +
+                (p31 & 0xFFFFFFFFL) + (p40 & 0xFFFFFFFFL);
+        long r5 = (r4 >>> 32) + (p31 >>> 32) + (p40 >>> 32) +
+                (p41 & 0xFFFFFFFFL) + (p50 & 0xFFFFFFFFL);
+        long r6 = (r5 >>> 32) + (p41 >>> 32) + (p50 >>> 32) +
+                (p51 & 0xFFFFFFFFL) + (p60 & 0xFFFFFFFFL);
+        long r7 = (r6 >>> 32) + (p51 >>> 32) + (p60 >>> 32) +
+                (p61 & 0xFFFFFFFFL) + (p70 & 0xFFFFFFFFL);
+        long overflow = (r7 >>> 31) | (p61 >>> 32) | (p70 >>> 32);
+        if (overflow != 0) {
+            throw NumericException.instance().put("Overflow");
+        }
 
         this.ll = (r0 & 0xFFFFFFFFL) | ((r1 & 0xFFFFFFFFL) << 32);
         this.lh = (r2 & 0xFFFFFFFFL) | ((r3 & 0xFFFFFFFFL) << 32);
