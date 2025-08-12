@@ -726,7 +726,29 @@ public class Decimal256 implements Sinkable {
             // No rounding needed
         }
 
-        // TODO: Implement rounding
+        if (isZero()) {
+            this.scale = targetScale;
+            return;
+        }
+
+        if (this.scale < targetScale) {
+            boolean isNegative = isNegative();
+            if (isNegative) {
+                negate();
+            }
+
+            // Need to increase scale (add trailing zeros)
+            int scaleIncrease = targetScale - this.scale;
+            multiplyByPowerOf10InPlace(scaleIncrease);
+            this.scale = targetScale;
+
+            if (isNegative) {
+                negate();
+            }
+            return;
+        }
+
+        divide(hh, hl, lh, ll, scale, 0L, 0L, 0L, 1L, 0, this, targetScale, roundingMode);
     }
 
     /**

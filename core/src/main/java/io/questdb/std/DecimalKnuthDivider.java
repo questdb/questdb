@@ -260,7 +260,7 @@ class DecimalKnuthDivider {
             throw NumericException.instance().put("Division by zero");
         }
 
-        int r;
+        int r = 0;
         long rLong = 0L;
         for (int j = m - 1; j >= 0; j--) {
             long qhat = rLong << 32 | (u[j] & 0xFFFFFFFFL);
@@ -275,8 +275,9 @@ class DecimalKnuthDivider {
             }
             rLong = (r & 0xFFFFFFFFL);
             q[j] = quo;
-            u[j] -= (int) ((quo & 0xFFFFFFFFL) * (long) divisor);
+            u[j] = 0;
         }
+        u[0] = r;
     }
 
     /**

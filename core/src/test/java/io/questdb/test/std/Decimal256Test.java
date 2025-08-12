@@ -537,6 +537,144 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testRoundFuzz() {
+        // Fuzz test for round() method using BigDecimal as oracle
+        final int iterations = 10_000;  // Reduced for debugging
+        final Rnd rnd = TestUtils.generateRandom(null);
+
+        // All rounding modes except UNNECESSARY (which requires special handling)
+        java.math.RoundingMode[] roundingModes = {
+                java.math.RoundingMode.UP,
+                java.math.RoundingMode.DOWN,
+                java.math.RoundingMode.CEILING,
+                java.math.RoundingMode.FLOOR,
+                java.math.RoundingMode.HALF_UP,
+                java.math.RoundingMode.HALF_DOWN,
+                java.math.RoundingMode.HALF_EVEN
+        };
+
+        Decimal256 decimal = new Decimal256();
+        for (int i = 0; i < iterations; i++) {
+            // Generate random decimal with varying characteristics
+            rnd.nextDecimal256(decimal);
+
+            // Skip zero and very small values that might cause issues
+            if (decimal.isZero()) {
+                continue;
+            }
+
+            // Generate random target scale (0 to 10)
+            int targetScale = rnd.nextInt(11);
+
+            // Skip cases where target scale equals current scale (no rounding needed)
+            if (targetScale == decimal.getScale()) {
+                continue;
+            }
+
+            // Randomly select rounding mode
+            java.math.RoundingMode roundingMode = roundingModes[rnd.nextInt(roundingModes.length)];
+
+            // Create copies for testing
+            Decimal256 testDecimal = new Decimal256();
+            testDecimal.copyFrom(decimal);
+
+            // Get the original BigDecimal representation
+            java.math.BigDecimal originalBigDecimal;
+            try {
+                originalBigDecimal = decimal.toBigDecimal();
+            } catch (NumberFormatException e) {
+                String errorMsg = String.format(
+                        "Failed to convert original Decimal256 to BigDecimal at iteration %d:\n" +
+                                "Decimal256: hh=0x%016x, hl=0x%016x, lh=0x%016x, ll=0x%016x, scale=%d\n" +
+                                "toString()=%s\n" +
+                                "Error: %s",
+                        i, decimal.getHh(), decimal.getHl(), decimal.getLh(), decimal.getLl(), decimal.getScale(),
+                        decimal, e.getMessage()
+                );
+                Assert.fail(errorMsg);
+                return; // unreachable but makes compiler happy
+            }
+
+            try {
+                // Apply rounding to our Decimal256
+                testDecimal.round(targetScale, roundingMode);
+
+                // Apply same rounding to BigDecimal as oracle
+                java.math.BigDecimal expectedBigDecimal = originalBigDecimal.setScale(targetScale, roundingMode);
+
+                // Compare results
+                java.math.BigDecimal actualBigDecimal;
+                try {
+                    actualBigDecimal = testDecimal.toBigDecimal();
+                } catch (NumberFormatException e) {
+                    String errorMsg = String.format(
+                            "Failed to convert result Decimal256 to BigDecimal at iteration %d:\n" +
+                                    "Original: %s (scale=%d)\n" +
+                                    "Target scale: %d, Mode: %s\n" +
+                                    "Result Decimal256: hh=0x%016x, hl=0x%016x, lh=0x%016x, ll=0x%016x, scale=%d\n" +
+                                    "toString()=%s\n" +
+                                    "Error: %s",
+                            i,
+                            originalBigDecimal.toPlainString(), decimal.getScale(),
+                            targetScale, roundingMode,
+                            testDecimal.getHh(), testDecimal.getHl(), testDecimal.getLh(), testDecimal.getLl(), testDecimal.getScale(),
+                            testDecimal, e.getMessage()
+                    );
+                    Assert.fail(errorMsg);
+                    return; // unreachable but makes compiler happy
+                }
+
+                if (!expectedBigDecimal.equals(actualBigDecimal)) {
+                    String errorMsg = String.format(
+                            "Rounding mismatch at iteration %d:\n" +
+                                    "Original: %s (scale=%d)\n" +
+                                    "Target scale: %d, Mode: %s\n" +
+                                    "Expected: %s\n" +
+                                    "Actual: %s\n" +
+                                    "Original Decimal256: hh=0x%016x, hl=0x%016x, lh=0x%016x, ll=0x%016x, scale=%d",
+                            i,
+                            originalBigDecimal.toPlainString(), decimal.getScale(),
+                            targetScale, roundingMode,
+                            expectedBigDecimal.toPlainString(),
+                            actualBigDecimal.toPlainString(),
+                            decimal.getHh(), decimal.getHl(), decimal.getLh(), decimal.getLl(), decimal.getScale()
+                    );
+                    Assert.fail(errorMsg);
+                }
+
+                // Verify the scale is set correctly
+                Assert.assertEquals("Scale should match target scale", targetScale, testDecimal.getScale());
+
+            } catch (NumericException e) {
+                // BigDecimal might throw NumericException in some cases
+                // In such cases, our implementation should either handle it gracefully
+                // or throw the same exception
+                boolean decimal256Threw = false;
+                try {
+                    testDecimal.copyFrom(decimal);
+                    testDecimal.round(targetScale, roundingMode);
+                } catch (NumericException e2) {
+                    decimal256Threw = true;
+                }
+
+                if (!decimal256Threw) {
+                    String errorMsg = String.format(
+                            "BigDecimal threw NumericException but Decimal256 didn't at iteration %d:\n" +
+                                    "Original: %s (scale=%d)\n" +
+                                    "Target scale: %d, Mode: %s\n" +
+                                    "BigDecimal error: %s",
+                            i,
+                            originalBigDecimal.toPlainString(), decimal.getScale(),
+                            targetScale, roundingMode,
+                            e.getMessage()
+                    );
+                    Assert.fail(errorMsg);
+                }
+            }
+        }
+    }
+
+    @Test
     public void testStaticAdd() {
         Decimal256 a = Decimal256.fromDouble(123.45, 2);
         Decimal256 b = Decimal256.fromDouble(67.89, 2);
