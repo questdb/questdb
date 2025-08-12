@@ -3023,8 +3023,8 @@ public class SqlParser {
                                     lexer.unparseLast();
                                     winCol.setRowsLoExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                     if (framingMode == WindowColumn.FRAMING_RANGE) {
-                                        long timeUnit = parseTimeUnit(lexer);
-                                        if (timeUnit != -1) {
+                                        char timeUnit = parseTimeUnit(lexer);
+                                        if (timeUnit != 0) {
                                             winCol.setRowsLoExprTimeUnit(timeUnit);
                                         }
                                     }
@@ -3067,8 +3067,8 @@ public class SqlParser {
                                         lexer.unparseLast();
                                         winCol.setRowsHiExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                         if (framingMode == WindowColumn.FRAMING_RANGE) {
-                                            long timeUnit = parseTimeUnit(lexer);
-                                            if (timeUnit != -1) {
+                                            char timeUnit = parseTimeUnit(lexer);
+                                            if (timeUnit != 0) {
                                                 winCol.setRowsHiExprTimeUnit(timeUnit);
                                             }
                                         }
@@ -3107,8 +3107,8 @@ public class SqlParser {
                                     lexer.unparseLast();
                                     winCol.setRowsLoExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                     if (framingMode == WindowColumn.FRAMING_RANGE) {
-                                        long timeUnit = parseTimeUnit(lexer);
-                                        if (timeUnit != -1) {
+                                        char timeUnit = parseTimeUnit(lexer);
+                                        if (timeUnit != 0) {
                                             winCol.setRowsLoExprTimeUnit(timeUnit);
                                         }
                                     }
@@ -3335,11 +3335,13 @@ public class SqlParser {
         model.setTableNameExpr(tableNameExpr);
     }
 
-    private long parseTimeUnit(GenericLexer lexer) throws SqlException {
+    private char parseTimeUnit(GenericLexer lexer) throws SqlException {
         CharSequence tok = tok(lexer, "'preceding' or time unit");
-        long unit = -1;
-        if (isMicrosecondKeyword(tok) || isMicrosecondsKeyword(tok)) {
-            unit = WindowColumn.ITME_UNIT_MICROSECOND;
+        char unit = 0;
+        if (isNanosecondsKeyword(tok) || isNanosecondKeyword(tok)) {
+            unit = WindowColumn.TIME_UNIT_NANOSECOND;
+        } else if (isMicrosecondKeyword(tok) || isMicrosecondsKeyword(tok)) {
+            unit = WindowColumn.TIME_UNIT_MICROSECOND;
         } else if (isMillisecondKeyword(tok) || isMillisecondsKeyword(tok)) {
             unit = WindowColumn.TIME_UNIT_MILLISECOND;
         } else if (isSecondKeyword(tok) || isSecondsKeyword(tok)) {
@@ -3351,7 +3353,7 @@ public class SqlParser {
         } else if (isDayKeyword(tok) || isDaysKeyword(tok)) {
             unit = WindowColumn.TIME_UNIT_DAY;
         }
-        if (unit == -1) {
+        if (unit == 0) {
             lexer.unparseLast();
         }
         return unit;

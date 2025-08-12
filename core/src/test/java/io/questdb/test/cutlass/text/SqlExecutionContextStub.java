@@ -68,12 +68,15 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
             boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
+            char rowsLoUnit,
             int rowsLoExprPos,
             long rowsHi,
+            char rowsHiUnit,
             int rowsHiExprPos,
             int exclusionKind,
             int exclusionKindPos,
             int timestampIndex,
+            int timestampType,
             boolean ignoreNulls,
             int nullsDescPos
     ) {

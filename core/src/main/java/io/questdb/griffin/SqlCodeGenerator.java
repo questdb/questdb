@@ -5157,12 +5157,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             base.recordCursorSupportsRandomAccess(),
                             ac.getFramingMode(),
                             ac.getRowsLo(),
+                            ac.getRowsLoExprTimeUnit(),
                             ac.getRowsLoKindPos(),
                             ac.getRowsHi(),
+                            ac.getRowsHiExprTimeUnit(),
                             ac.getRowsHiKindPos(),
                             ac.getExclusionKind(),
                             ac.getExclusionKindPos(),
                             baseMetadata.getTimestampIndex(),
+                            baseMetadata.getTimestampType(),
                             ac.isIgnoreNulls(),
                             ac.getNullsDescPos()
                     );
@@ -5394,12 +5397,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             base.recordCursorSupportsRandomAccess(),
                             ac.getFramingMode(),
                             ac.getRowsLo(),
+                            ac.getRowsLoExprTimeUnit(),
                             ac.getRowsLoKindPos(),
                             ac.getRowsHi(),
+                            ac.getRowsHiExprTimeUnit(),
                             ac.getRowsHiKindPos(),
                             ac.getExclusionKind(),
                             ac.getExclusionKindPos(),
                             chainMetadata.getTimestampIndex(),
+                            chainMetadata.getTimestampType(),
                             ac.isIgnoreNulls(),
                             ac.getNullsDescPos()
                     );

@@ -6905,8 +6905,8 @@ public class SqlOptimiser implements Mutable {
                             break;
                     }
 
-                    ac.setRowsLo(rowsLo * ac.getRowsLoExprTimeUnit());
-                    ac.setRowsHi(rowsHi * ac.getRowsHiExprTimeUnit());
+                    ac.setRowsLo(rowsLo);
+                    ac.setRowsHi(rowsHi);
                 }
             }
         }
