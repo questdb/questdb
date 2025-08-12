@@ -3356,6 +3356,45 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLargeSampleByInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE Samples (" +
+                            "  Time TIMESTAMP," +
+                            "  DeviceId INT," +
+                            "  Register SYMBOL INDEX," +
+                            "  Value DOUBLE" +
+                            ") timestamp(Time) PARTITION BY MONTH WAL " +
+                            "DEDUP UPSERT KEYS(Time, DeviceId, Register);"
+            );
+            execute(
+                    "CREATE MATERIALIZED VIEW Samples_latest AS" +
+                            "  SELECT" +
+                            "    Time as UnixEpoch," +
+                            "    last(Time) AS Time," +
+                            "    DeviceId," +
+                            "    Register," +
+                            "    last(Value) AS Value" +
+                            "  FROM" +
+                            "    Samples" +
+                            "  SAMPLE BY 2y;"
+            );
+            execute("INSERT INTO Samples (Time, DeviceId, Register, Value) VALUES ('2025-08-08T12:57:07.388314Z', 1, 'hello', 123);");
+
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "UnixEpoch\tTime\tDeviceId\tRegister\tValue\n" +
+                            "2024-01-01T00:00:00.000000Z\t2025-08-08T12:57:07.388314Z\t1\thello\t123.0\n",
+                    "Samples_latest",
+                    "UnixEpoch",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testManualDeferredMatView() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -4481,7 +4520,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
 
-            final MatViewRefreshSqlExecutionContext refreshExecutionContext = new MatViewRefreshSqlExecutionContext(engine, 1, 1);
+            final MatViewRefreshSqlExecutionContext refreshExecutionContext = new MatViewRefreshSqlExecutionContext(engine, 0);
 
             try (TableReader baseReader = engine.getReader("x")) {
                 refreshExecutionContext.of(baseReader);
@@ -5221,7 +5260,7 @@ public class MatViewTest extends AbstractCairoTest {
                     () -> {
                         started.countDown();
                         try {
-                            try (MatViewRefreshJob job = new MatViewRefreshJob(0, engine)) {
+                            try (MatViewRefreshJob job = new MatViewRefreshJob(0, engine, 0)) {
                                 refreshed.set(job.run(0));
                             }
                         } finally {

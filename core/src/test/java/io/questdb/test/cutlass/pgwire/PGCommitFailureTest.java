@@ -88,7 +88,7 @@ public class PGCommitFailureTest extends BasePGTest {
                     }
 
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         long fd = super.openRW(name, opts);
                         if (Utf8s.endsWithAscii(name, Files.SEPARATOR + EVENT_INDEX_FILE_NAME)
                                 && Utf8s.containsAscii(name, Files.SEPARATOR + "x~")) {
@@ -147,7 +147,7 @@ public class PGCommitFailureTest extends BasePGTest {
                     }
 
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         long fd = super.openRW(name, opts);
                         if (Utf8s.endsWithAscii(name, Files.SEPARATOR + EVENT_INDEX_FILE_NAME)
                                 && Utf8s.containsAscii(name, Files.SEPARATOR + "x~")) {
@@ -204,7 +204,7 @@ public class PGCommitFailureTest extends BasePGTest {
                     }
 
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         long fd = super.openRW(name, opts);
                         if (Utf8s.endsWithAscii(name, Files.SEPARATOR + EVENT_INDEX_FILE_NAME)
                                 && Utf8s.containsAscii(name, Files.SEPARATOR + "x~")) {

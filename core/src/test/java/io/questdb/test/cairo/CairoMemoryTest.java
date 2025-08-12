@@ -142,7 +142,7 @@ public class CairoMemoryTest extends AbstractTest {
 
         class X extends FilesFacadeImpl {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 int n = name.size();
                 if (n > 5 && Utf8s.equalsAscii(".fail", name, n - 5, n)) {
                     return -1;
@@ -271,7 +271,7 @@ public class CairoMemoryTest extends AbstractTest {
 
         class X extends FilesFacadeImpl {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 int n = name.size();
                 if (n > 5 && Utf8s.equalsAscii(".fail", name, n - 5, n)) {
                     return -1;

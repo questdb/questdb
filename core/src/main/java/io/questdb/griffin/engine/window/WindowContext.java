@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.window;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.griffin.SqlException;
 
 public interface WindowContext {
     boolean baseSupportsRandomAccess();
@@ -36,6 +37,8 @@ public interface WindowContext {
     int getExclusionKindPos();
 
     int getFramingMode();
+
+    int getNullsDescPos();
 
     int getOrderByPos();
 
@@ -59,11 +62,11 @@ public interface WindowContext {
 
     boolean isEmpty();
 
+    boolean isIgnoreNulls();
+
     boolean isOrdered();
 
     boolean isOrderedByDesignatedTimestamp();
 
-    boolean isIgnoreNulls();
-
-    int getNullsDescPos();
+    void validate(int position, boolean supportTNullsDesc) throws SqlException;
 }

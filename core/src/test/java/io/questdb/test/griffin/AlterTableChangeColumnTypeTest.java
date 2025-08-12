@@ -647,7 +647,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (!failRead.get() && fail.get() != null && Misc.getThreadLocalUtf8Sink().put(name).toString().endsWith(fail.get())) {
                     fail.set(null);
                     return -1;

@@ -307,6 +307,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getFileDescriptorCacheEnabled() {
+        return getDelegate().getFileDescriptorCacheEnabled();
+    }
+
+    @Override
     public @NotNull FilesFacade getFilesFacade() {
         return getDelegate().getFilesFacade();
     }
@@ -1207,7 +1212,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getWriterFileOpenOpts() {
+    public int getWriterFileOpenOpts() {
         return getDelegate().getWriterFileOpenOpts();
     }
 
@@ -1314,6 +1319,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelReadParquetEnabled() {
         return getDelegate().isSqlParallelReadParquetEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelTopKEnabled() {
+        return getDelegate().isSqlParallelTopKEnabled();
     }
 
     @Override

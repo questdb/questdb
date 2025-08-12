@@ -22,7 +22,8 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <name>QuestDB</name>
     <description>QuestDB is high performance SQL time series database</description>
@@ -190,7 +191,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.3</version>
                 <configuration>
-                    <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory" />
+                    <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory"/>
                     <useModulePath>true</useModulePath>
                     <includes>
                         <include>${test.include}</include>
@@ -521,7 +522,8 @@
                 <archive.name>${project.version}-rt-linux-x86-64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-linux-x86-64</runtime.name>
                 <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
-                <jemalloc.so>linux-x86-64/libjemalloc.so</jemalloc.so>
+                <platform.dir.name>linux-x86-64</platform.dir.name>
+                <jemalloc.so>libjemalloc.so</jemalloc.so>
             </properties>
         </profile>
         <profile>
@@ -550,7 +552,8 @@
                 <archive.name>${project.version}-rt-linux-aarch64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-linux-aarch64</runtime.name>
                 <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
-                <jemalloc.so>linux-aarch64/libjemalloc.so</jemalloc.so>
+                <platform.dir.name>linux-aarch64</platform.dir.name>
+                <jemalloc.so>libjemalloc.so</jemalloc.so>
             </properties>
         </profile>
         <profile>
@@ -565,7 +568,8 @@
                 <archive.name>${project.version}-rt-osx-x86-64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-osx-x86-64</runtime.name>
                 <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
-                <jemalloc.so>darwin-x86-64/libjemalloc.dylib</jemalloc.so>
+                <platform.dir.name>darwin-x86-64</platform.dir.name>
+                <jemalloc.so>libjemalloc.dylib</jemalloc.so>
             </properties>
         </profile>
         <profile>
@@ -580,7 +584,8 @@
                 <archive.name>${project.version}-rt-osx-aarch64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-osx-aarch64</runtime.name>
                 <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
-                <jemalloc.so>darwin-aarch64/libjemalloc.dylib</jemalloc.so>
+                <platform.dir.name>darwin-aarch64</platform.dir.name>
+                <jemalloc.so>libjemalloc.dylib</jemalloc.so>
             </properties>
         </profile>
         <profile>
