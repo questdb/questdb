@@ -987,7 +987,9 @@ mod tests {
         calculate_array_shape(&mut shape, 1, &[0]);
         assert_eq!(shape[0], 1);
 
-        // Test jagged 2D array - [[1,2,3], [4,5]] - this is not used ATM
+        // Test jagged 2D array - [[1,2,3], [4,5]]
+        // Jagged arrays are not yet supported by QDB query engine,
+        // but calculate_array_shape() understands them
         let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
         let rep_levels = vec![0, 2, 2, 1, 2];
         calculate_array_shape(&mut shape, 2, &rep_levels);
