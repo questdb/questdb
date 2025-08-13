@@ -1179,6 +1179,23 @@ pub fn decode_page(
                     decode_array_page(page, row_lo, row_hi, &mut slicer, bufs)?;
                     Ok(())
                 }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
+                    PhysicalType::Double,
+                    ColumnTypeTag::Array,
+                ) => {
+                    let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
+                    let mut slicer = RleDictionarySlicer::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        row_hi,
+                        row_count,
+                        &DOUBLE_NULL,
+                    )?;
+                    decode_array_page(page, row_lo, row_hi, &mut slicer, bufs)?;
+                    Ok(())
+                }
                 _ => Err(encoding_error),
             }
         }
