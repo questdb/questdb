@@ -225,8 +225,8 @@ public class MicrosFormatUtils {
 
         boolean leap = CommonUtils.isLeapYear(year);
 
-        // wrong month
-        if (month < 1 || month > 12) {
+        // wrong month (month = -1 is special case for day-of-year)
+        if (month != -1 && (month < 1 || month > 12)) {
             throw NumericException.INSTANCE;
         }
 
@@ -247,9 +247,20 @@ public class MicrosFormatUtils {
             }
         }
 
-        // wrong day of month
-        if (day < 1 || day > CommonUtils.getDaysPerMonth(month, leap)) {
+        if (day < 1) {
             throw NumericException.INSTANCE;
+        }
+        if (month != -1) {
+            // normal month/day validation
+            if (day > CommonUtils.getDaysPerMonth(month, leap)) {
+                throw NumericException.INSTANCE;
+            }
+        } else {
+            // day-of-year validation (month = -1 signals day-of-year usage)
+            int maxDayOfYear = leap ? 366 : 365;
+            if (day > maxDayOfYear) {
+                throw NumericException.INSTANCE;
+            }
         }
 
         if (minute < 0 || minute > 59) {
@@ -274,10 +285,18 @@ public class MicrosFormatUtils {
             day = Micros.getDayOfMonth(firstDayOfIsoWeekMicros, year, month, CommonUtils.isLeapYear(year));
         }
 
-        long outMicros = Micros.yearMicros(year, leap)
-                + Micros.monthOfYearMicros(month, leap)
-                + (long) (day - 1) * Micros.DAY_MICROS
-                + (long) hour * Micros.HOUR_MICROS
+        long outMicros = Micros.yearMicros(year, leap);
+
+        if (month != -1) {
+            // standard month/day computation
+            outMicros += Micros.monthOfYearMicros(month, leap) + (long) (day - 1) * Micros.DAY_MICROS;
+        } else {
+            // day-of-year computation (month = -1 signals day-of-year usage)
+            outMicros += (long) (day - 1) * Micros.DAY_MICROS;
+        }
+
+        // add time components
+        outMicros += (long) hour * Micros.HOUR_MICROS
                 + (long) minute * Micros.MINUTE_MICROS
                 + (long) second * Micros.SECOND_MICROS
                 + (long) millis * Micros.MILLI_MICROS
