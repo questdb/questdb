@@ -425,7 +425,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             if (tableMetadata == null) {
                 tableMetadata = new TableReaderMetadata(configuration);
             }
-            tableMetadata.load(tablePath.concat(TableUtils.META_FILE_NAME).$());
+            tableMetadata.loadMetadata(tablePath.concat(TableUtils.META_FILE_NAME).$());
 
             if (txWriter == null) {
                 txWriter = new TxWriter(configuration.getFilesFacade(), configuration);

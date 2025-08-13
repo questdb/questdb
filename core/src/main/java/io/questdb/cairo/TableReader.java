@@ -1083,7 +1083,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private TableReaderMetadata openMetaFile() {
         TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableToken);
         try {
-            metadata.load();
+            metadata.loadMetadata();
             return metadata;
         } catch (Throwable th) {
             metadata.close();

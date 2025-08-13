@@ -155,7 +155,7 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
     private void initialize(CairoConfiguration configuration, TableToken tableToken) {
         try (Path path = new Path()) {
             path.of(configuration.getDbRoot()).concat(tableToken);
-            load();
+            loadMetadata();
             this.txFile = new TxReader(
                     configuration.getFilesFacade()).ofRO(path.concat(TXN_FILE_NAME).$(),
                     this.getTimestampType(),
