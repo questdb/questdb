@@ -72,8 +72,8 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "varchar:" + ColumnType.nameOf(ColumnType.VARCHAR) + "\n" +
-                ColumnType.nameOf(timestampType) +
-                "\nstr:" + ColumnType.nameOf(ColumnType.STRING) + "\n";
+                "timestamp:" + ColumnType.nameOf(timestampType) + "\n" +
+                "str:" + ColumnType.nameOf(ColumnType.STRING) + "\n";
 
         assertThatTimestampRemains((w) -> {
             w.removeColumn("str");
@@ -105,8 +105,8 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 "byte:BYTE\n" +
                 "double:DOUBLE\n" +
                 "float:FLOAT\n" +
-                ColumnType.nameOf(timestampType) +
-                "\nlong:LONG\n" +
+                "timestamp:" + ColumnType.nameOf(timestampType) + "\n" +
+                "long:LONG\n" +
                 "str:" + ColumnType.nameOf(ColumnType.STRING) + "\n" +
                 "sym:SYMBOL\n" +
                 "bool:BOOLEAN\n" +
@@ -131,7 +131,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "varchar:" + ColumnType.nameOf(ColumnType.VARCHAR) + "\n" +
-                ColumnType.nameOf(timestampType) + "\n";
+                "timestamp:" + ColumnType.nameOf(timestampType) + "\n";
         assertThatTimestampRemains((w) -> w.removeColumn("str"), expected, 12, 11, 12);
     }
 
