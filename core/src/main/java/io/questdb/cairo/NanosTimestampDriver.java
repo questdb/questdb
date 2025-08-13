@@ -261,7 +261,7 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public long approxPartitionTimestamps(int partitionBy) {
+    public long approxPartitionDuration(int partitionBy) {
         switch (partitionBy) {
             case PartitionBy.HOUR:
                 return Nanos.HOUR_NANOS;

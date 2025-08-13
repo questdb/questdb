@@ -261,7 +261,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public long approxPartitionTimestamps(int partitionBy) {
+    public long approxPartitionDuration(int partitionBy) {
         switch (partitionBy) {
             case PartitionBy.HOUR:
                 return Micros.HOUR_MICROS;

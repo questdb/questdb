@@ -106,7 +106,7 @@ public class MatViewStateReader implements Mutable {
         invalidationReason.clear();
         invalidationReason.put(info.getInvalidationReason());
         lastRefreshBaseTxn = info.getLastRefreshBaseTableTxn();
-        lastRefreshTimestampUs = info.getLastRefreshTimestampMicros();
+        lastRefreshTimestampUs = info.getLastRefreshTimestampUs();
         lastPeriodHi = info.getLastPeriodHi();
         refreshIntervalsBaseTxn = info.getRefreshIntervalsBaseTxn();
         refreshIntervals.clear();

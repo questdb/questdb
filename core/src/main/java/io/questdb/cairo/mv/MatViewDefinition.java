@@ -356,6 +356,7 @@ public class MatViewDefinition implements Mutable {
     }
 
     public void updateBaseTableTimestampType(int baseTableTimestampType) throws SqlException {
+        // TODO(puzpuzpuz): this code is racy
         if (this.baseTableTimestampType == baseTableTimestampType) {
             return; // no change
         }

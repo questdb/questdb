@@ -123,12 +123,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * it doesn't use exact min/max timestamps for each partition, but it should do the job
      * of splitting large refresh table scans into multiple smaller scans.
      */
-    private static long estimateRowsPerBucket(TimestampDriver driver, @NotNull TableReader baseTableReader, long bucket) {
+    private static long estimateRowsPerBucket(@NotNull TimestampDriver driver, @NotNull TableReader baseTableReader, long bucket) {
         final long rows = baseTableReader.size();
-        final long partitionTimestamps = driver.approxPartitionTimestamps(baseTableReader.getPartitionedBy());
+        final long partitionDuration = driver.approxPartitionDuration(baseTableReader.getPartitionedBy());
         final int partitionCount = baseTableReader.getPartitionCount();
         if (partitionCount > 0) {
-            return Math.max(1, (rows * bucket) / (partitionTimestamps * partitionCount));
+            return Math.max(1, (rows * bucket) / (partitionDuration * partitionCount));
         }
         return 1;
     }
@@ -359,10 +359,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
                 periodSampler.setStart(driver.fromMicros(viewDefinition.getTimerStartUs()));
 
-                final long delay = driver.from(viewDefinition.getPeriodDelay(), viewDefinition.getPeriodDelayUnit());
-                long nowLocal = viewDefinition.getTimerTzRulesUs() != null
+                final long nowLocal = viewDefinition.getTimerTzRulesUs() != null
                         ? now + driver.fromMicros(viewDefinition.getTimerTzRulesUs().getOffset(driver.toMicros(now)))
                         : now;
+                final long delay = driver.from(viewDefinition.getPeriodDelay(), viewDefinition.getPeriodDelayUnit());
                 // Period hi is exclusive, but maxTs is inclusive, so we align them.
                 final long periodHiLocal = periodSampler.round(nowLocal - delay) - 1;
                 final long periodHi = viewDefinition.getTimerTzRulesUs() != null
@@ -414,7 +414,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         if (minTs <= maxTs) {
             final TimestampSampler timestampSampler = viewDefinition.getTimestampSampler();
-            final long rowsPerBucket = estimateRowsPerBucket(viewDefinition.getBaseTableTimestampDriver(), baseTableReader, timestampSampler.getApproxBucketSize());
+            final long rowsPerBucket = estimateRowsPerBucket(driver, baseTableReader, timestampSampler.getApproxBucketSize());
             final int rowsPerQuery = configuration.getMatViewRowsPerQueryEstimate();
             final int step = Math.max(1, (int) (rowsPerQuery / rowsPerBucket));
 
@@ -619,20 +619,33 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         viewState.setLastRefreshStartTimestampUs(refreshStartTimestamp);
         final TableToken viewTableToken = viewDefinition.getMatViewToken();
         final SampleByIntervalIterator intervalIterator = refreshContext.intervalIterator;
-        int intervalStep = 0;
-        if (intervalIterator != null) {
-            intervalStep = intervalIterator.getStep();
+
+        // If we don't have intervals to query, we may still need to bump base table txn or last period hi.
+        if (intervalIterator == null) {
+            if (refreshContext.toBaseTxn != -1 || refreshContext.periodHi != Numbers.LONG_NULL) {
+                final long commitBaseTxn = refreshContext.toBaseTxn != -1 ? refreshContext.toBaseTxn : viewState.getLastRefreshBaseTxn();
+                final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
+                refreshSuccessNoRows(
+                        viewState,
+                        walWriter,
+                        microsecondClock.getTicks(),
+                        refreshTriggerTimestamp,
+                        commitBaseTxn,
+                        commitPeriodHi
+                );
+                return true;
+            }
+            return false;
         }
 
+        int intervalStep = intervalIterator.getStep();
         try {
             factory = viewState.acquireRecordFactory();
             copier = viewState.getRecordToRowCopier();
 
             for (int i = 0; i <= maxRetries; i++) {
                 try {
-                    boolean cacheFactoryForEmptyTable = true;
                     if (factory == null) {
-                        cacheFactoryForEmptyTable = false;
                         final String viewSql = viewDefinition.getMatViewSql();
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
                             LOG.info().$("compiling materialized view [view=").$(viewTableToken).$(", attempt=").$(i).I$();
@@ -663,32 +676,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 .put(", query=")
                                 .put(ColumnType.nameOf(factory.getMetadata().getTimestampType()))
                                 .put(']');
-                    }
-
-                    if (intervalIterator == null) {
-                        boolean result;
-                        // We don't have intervals to query, but we may need to bump base table txn or last period hi.
-                        if (refreshContext.toBaseTxn != -1 || refreshContext.periodHi != Numbers.LONG_NULL) {
-                            final long commitBaseTxn = refreshContext.toBaseTxn != -1 ? refreshContext.toBaseTxn : viewState.getLastRefreshBaseTxn();
-                            final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
-                            refreshSuccessNoRows(
-                                    viewState,
-                                    walWriter,
-                                    microsecondClock.getTicks(),
-                                    refreshTriggerTimestamp,
-                                    commitBaseTxn,
-                                    commitPeriodHi
-                            );
-                            result = true;
-                        } else {
-                            result = false;
-                        }
-                        if (cacheFactoryForEmptyTable) {
-                            viewState.assignRecordCursorFactory(factory);
-                        } else {
-                            factory = Misc.free(factory);
-                        }
-                        return result;
                     }
 
                     final CharSequence timestampName = walWriter.getMetadata().getColumnName(walWriter.getMetadata().getTimestampIndex());
@@ -816,7 +803,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private SampleByIntervalIterator intervalIterator(
-            TimestampDriver driver,
+            @NotNull TimestampDriver driver,
             @NotNull TimestampSampler sampler,
             @Nullable TimeZoneRules tzRules,
             long fixedOffset,
@@ -951,18 +938,19 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         if (viewState == null || viewState.isPendingInvalidation() || viewState.isInvalid() || viewState.isDropped()) {
             return false;
         }
+
         final MatViewDefinition viewDefinition = viewState.getViewDefinition();
+        final TimestampDriver driver = viewDefinition.getBaseTableTimestampDriver();
 
         if (!viewState.tryLock()) {
             // Someone is refreshing the view, so we're going for another attempt.
             LOG.debug().$("could not lock materialized view for range refresh, will retry [view=").$(viewToken)
-                    .$(", from=").$ts(viewDefinition.getBaseTableTimestampDriver(), rangeFrom)
-                    .$(", to=").$ts(viewDefinition.getBaseTableTimestampDriver(), rangeTo)
+                    .$(", from=").$ts(driver, rangeFrom)
+                    .$(", to=").$ts(driver, rangeTo)
                     .I$();
             stateStore.enqueueRangeRefresh(viewToken, rangeFrom, rangeTo);
             return false;
         }
-
 
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
             final TableToken baseTableToken;
@@ -971,8 +959,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 baseTableToken = engine.verifyTableName(viewDefinition.getBaseTableName());
             } catch (CairoException e) {
                 LOG.error().$("could not perform range refresh, could not verify base table [view=").$(viewToken)
-                        .$(", from=").$ts(viewDefinition.getBaseTableTimestampDriver(), rangeFrom)
-                        .$(", to=").$ts(viewDefinition.getBaseTableTimestampDriver(), rangeTo)
+                        .$(", from=").$ts(driver, rangeFrom)
+                        .$(", to=").$ts(driver, rangeTo)
                         .$(", baseTableName=").$(baseTableName)
                         .$(", errno=").$(e.getErrno())
                         .$(", errorMsg=").$safe(e.getFlyweightMessage())
@@ -1276,7 +1264,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         viewState.setLastRefreshBaseTableTxn(-1);
         viewState.setRefreshIntervalsBaseTxn(-1);
         viewState.getRefreshIntervals().clear();
-        viewState.setLastRefreshTimestampMicros(Numbers.LONG_NULL);
+        viewState.setLastRefreshTimestampUs(Numbers.LONG_NULL);
         viewState.setLastPeriodHi(Numbers.LONG_NULL);
         walWriter.resetMatViewState(
                 viewState.getLastRefreshBaseTxn(),
@@ -1291,7 +1279,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private void setInvalidState(MatViewState viewState, WalWriter walWriter, CharSequence invalidationReason, long invalidationTimestamp) {
         viewState.markAsInvalid(invalidationReason);
-        viewState.setLastRefreshTimestampMicros(invalidationTimestamp);
+        viewState.setLastRefreshTimestampUs(invalidationTimestamp);
         viewState.setLastRefreshStartTimestampUs(invalidationTimestamp);
         walWriter.resetMatViewState(
                 viewState.getLastRefreshBaseTxn(),

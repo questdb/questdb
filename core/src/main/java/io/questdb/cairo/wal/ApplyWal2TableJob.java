@@ -622,7 +622,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     updateMatViewRefreshState(
                             path.trimTo(tablePathLen),
                             info.getLastRefreshBaseTableTxn(),
-                            info.getLastRefreshTimestampMicros(),
+                            info.getLastRefreshTimestampUs(),
                             info.isInvalid(),
                             info.getInvalidationReason(),
                             info.getLastPeriodHi(),

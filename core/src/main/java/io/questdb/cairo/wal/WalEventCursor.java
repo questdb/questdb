@@ -418,7 +418,7 @@ public class WalEventCursor {
 
     public class MatViewDataInfo extends DataInfo {
         private long lastRefreshBaseTableTxn;
-        private long lastRefreshTimestampMicros;
+        private long lastRefreshTimestampUs;
 
         public long getLastPeriodHi() {
             return replaceRangeExtra;
@@ -429,7 +429,7 @@ public class WalEventCursor {
         }
 
         public long getLastRefreshTimestampUs() {
-            return lastRefreshTimestampMicros;
+            return lastRefreshTimestampUs;
         }
 
         @Override
@@ -438,7 +438,7 @@ public class WalEventCursor {
             // read the extra fields in the fixed part
             // symbol map will start after this
             lastRefreshBaseTableTxn = readLong();
-            lastRefreshTimestampMicros = readLong();
+            lastRefreshTimestampUs = readLong();
         }
     }
 
@@ -448,7 +448,7 @@ public class WalEventCursor {
         private boolean invalid;
         private long lastPeriodHi;
         private long lastRefreshBaseTableTxn;
-        private long lastRefreshTimestampMicros;
+        private long lastRefreshTimestampUs;
         private long refreshIntervalsBaseTxn;
 
         public CharSequence getInvalidationReason() {
@@ -463,8 +463,8 @@ public class WalEventCursor {
             return lastRefreshBaseTableTxn;
         }
 
-        public long getLastRefreshTimestampMicros() {
-            return lastRefreshTimestampMicros;
+        public long getLastRefreshTimestampUs() {
+            return lastRefreshTimestampUs;
         }
 
         public LongList getRefreshIntervals() {
@@ -481,7 +481,7 @@ public class WalEventCursor {
 
         private void read() {
             lastRefreshBaseTableTxn = readLong();
-            lastRefreshTimestampMicros = readLong();
+            lastRefreshTimestampUs = readLong();
             invalid = readBool();
             error.clear();
             error.put(readStr());

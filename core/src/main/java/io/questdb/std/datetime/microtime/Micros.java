@@ -56,7 +56,7 @@ public final class Micros {
     public static final long SECOND_NANOS = 1000000000;
     public static final long STARTUP_TIMESTAMP;
     public static final int WEEK_DAYS = 7;
-    public static final long WEEK_MICROS = 604800000000L; // DAY_MICROS * 7
+    public static final long WEEK_MICROS = 7 * DAY_MICROS;
     public static final long YEAR_10000 = 253_402_300_800_000_000L;
     public static final long YEAR_MICROS_NONLEAP = 365 * DAY_MICROS;
     private static final int DAYS_0000_TO_1970 = 719527;

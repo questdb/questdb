@@ -195,11 +195,6 @@ public class MatViewState implements QuietCloseable {
         return factory;
     }
 
-    public void assignRecordCursorFactory(@NotNull RecordCursorFactory factory) {
-        assert latch.get();
-        this.cursorFactory = factory;
-    }
-
     @Override
     public void close() {
         cursorFactory = Misc.free(cursorFactory);
@@ -418,7 +413,7 @@ public class MatViewState implements QuietCloseable {
         lastRefreshStartTimestampUs = timestampUs;
     }
 
-    public void setLastRefreshTimestampMicros(long timestampUs) {
+    public void setLastRefreshTimestampUs(long timestampUs) {
         this.lastRefreshFinishTimestampUs = timestampUs;
     }
 

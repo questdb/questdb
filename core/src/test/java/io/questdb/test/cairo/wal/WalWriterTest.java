@@ -1947,7 +1947,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 final WalEventCursor.MatViewInvalidationInfo mvInfo = eventCursor.getMatViewInvalidationInfo();
                 assertEquals(6, mvInfo.getLastRefreshBaseTableTxn());
-                assertEquals(7, mvInfo.getLastRefreshTimestampMicros());
+                assertEquals(7, mvInfo.getLastRefreshTimestampUs());
                 assertTrue(mvInfo.isInvalid());
                 TestUtils.assertEquals("test", mvInfo.getInvalidationReason());
                 // last period and cached txn intervals values should be ignored
