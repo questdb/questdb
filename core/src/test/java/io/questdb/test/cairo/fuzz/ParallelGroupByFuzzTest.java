@@ -3173,24 +3173,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesAndExpectedResults) throws SqlException {
-        assertQueries(engine, sqlExecutionContext, sink, queriesAndExpectedResults);
-    }
-
-    private static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, StringSink sink, String... queriesAndExpectedResults) throws SqlException {
-        for (int i = 0, n = queriesAndExpectedResults.length; i < n; i += 2) {
-            final String query = queriesAndExpectedResults[i];
-            final String expected = queriesAndExpectedResults[i + 1];
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    query,
-                    sink,
-                    expected
-            );
-        }
-    }
-
     private void testFirstLastFunctionFuzz(String query) throws Exception {
         // With this test, we aim to verify correctness of merge() method
         // implementation in first/last functions.
@@ -3735,6 +3717,24 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     LOG
             );
         });
+    }
+
+    static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesAndExpectedResults) throws SqlException {
+        assertQueries(engine, sqlExecutionContext, sink, queriesAndExpectedResults);
+    }
+
+    static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, StringSink sink, String... queriesAndExpectedResults) throws SqlException {
+        for (int i = 0, n = queriesAndExpectedResults.length; i < n; i += 2) {
+            final String query = queriesAndExpectedResults[i];
+            final String expected = queriesAndExpectedResults[i + 1];
+            TestUtils.assertSql(
+                    engine,
+                    sqlExecutionContext,
+                    query,
+                    sink,
+                    expected
+            );
+        }
     }
 
     private interface BindVariablesInitializer {

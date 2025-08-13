@@ -933,7 +933,7 @@ public class FuzzRunner {
     }
 
     private void drainWalQueue(Rnd applyRnd, String tableName) {
-        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1);
+        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0);
              O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
              TableReader rdr1 = getReaderHandleTableDropped(tableName);
              TableReader rdr2 = getReaderHandleTableDropped(tableName)
@@ -980,7 +980,7 @@ public class FuzzRunner {
             ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
             int i = 0;
             CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
-            try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 1, 1)) {
+            try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 0)) {
                 while (done.get() == 0 && errors.isEmpty()) {
                     Unsafe.getUnsafe().loadFence();
                     while (job.run(0) || checkJob.run(0)) {

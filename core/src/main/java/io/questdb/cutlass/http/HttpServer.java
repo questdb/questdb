@@ -88,12 +88,12 @@ public class HttpServer implements Closeable {
 
     public HttpServer(
             HttpServerConfiguration configuration,
-            WorkerPool pool,
+            WorkerPool networkSharedPool,
             SocketFactory socketFactory,
             HttpCookieHandler cookieHandler,
             HttpHeaderParserFactory headerParserFactory
     ) {
-        this.workerCount = pool.getWorkerCount();
+        this.workerCount = networkSharedPool.getWorkerCount();
         this.selectors = new ObjList<>(workerCount);
 
         for (int i = 0; i < workerCount; i++) {
@@ -114,14 +114,14 @@ public class HttpServer implements Closeable {
 
         this.httpContextFactory = new HttpContextFactory(configuration, socketFactory, cookieHandler, headerParserFactory, selectCache);
         this.dispatcher = IODispatchers.create(configuration, httpContextFactory);
-        pool.assign(dispatcher);
+        networkSharedPool.assign(dispatcher);
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatcher);
-        pool.assign(rescheduleContext);
+        networkSharedPool.assign(rescheduleContext);
 
         for (int i = 0; i < workerCount; i++) {
             final int index = i;
 
-            pool.assign(i, new Job() {
+            networkSharedPool.assign(i, new Job() {
 
                 private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
                 private final IORequestProcessor<HttpConnectionContext> processor =
@@ -138,7 +138,7 @@ public class HttpServer implements Closeable {
 
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
-            pool.assignThreadLocalCleaner(i, httpContextFactory::freeThreadLocal);
+            networkSharedPool.assignThreadLocalCleaner(i, httpContextFactory::freeThreadLocal);
         }
     }
 
@@ -146,8 +146,7 @@ public class HttpServer implements Closeable {
             HttpServer server,
             ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            int sharedWorkerCount,
+            int sharedQueryWorkerCount,
             HttpRequestHandlerBuilder jsonQueryProcessorBuilder,
             HttpRequestHandlerBuilder ilpWriteProcessorBuilderV2
     ) {
@@ -245,8 +244,7 @@ public class HttpServer implements Closeable {
                 return new TextQueryProcessor(
                         httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                         cairoEngine,
-                        workerPool.getWorkerCount(),
-                        sharedWorkerCount
+                        sharedQueryWorkerCount
                 );
             }
         });

@@ -239,7 +239,11 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getNextLogicalPartitionTimestamp(long timestamp) {
-        return partitionCeilMethod.ceil(timestamp);
+        if (partitionCeilMethod != null) {
+            return partitionCeilMethod.ceil(timestamp);
+        }
+        assert partitionBy == PartitionBy.NONE;
+        return Long.MAX_VALUE;
     }
 
     public long getNextPartitionTimestamp(long timestamp) {
@@ -476,6 +480,7 @@ public class TxReader implements Closeable, Mutable {
         try {
             openTxnFile(ff, path);
             this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
+            this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
             this.partitionBy = partitionBy;
         } catch (Throwable e) {
             close();

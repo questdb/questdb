@@ -888,7 +888,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final Thread th = new Thread(
                 () -> {
                     try {
-                        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine)) {
+                        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine, 0)) {
                             while (!stop.get()) {
                                 refreshJob.run(workerId);
                                 Os.sleep(rnd.nextInt(50));
@@ -925,7 +925,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final Thread th = new Thread(
                 () -> {
                     try {
-                        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine)) {
+                        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine, 0)) {
                             while (!stop.get()) {
                                 drainMatViewTimerQueue(timerJob);
                                 refreshJob.run(workerId);

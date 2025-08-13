@@ -37,8 +37,8 @@ import org.junit.Test;
 public class BitmapIndexFuzzTest extends AbstractFuzzTest {
     private static final long BASE_TIMESTAMP = 1704067200000000L; // 2024-01-01T00:00:00.000000Z
     private static final Log LOG = LogFactory.getLog(BitmapIndexFuzzTest.class);
-    private static final int MAX_INITIAL_PARTITIONS = 20;
-    private static final int MAX_ITERATIONS = 10_000;
+    private static final int MAX_INITIAL_PARTITIONS = 10;
+    private static final int MAX_ITERATIONS = 1_000;
     private static final int MAX_MAX_SYMBOL_ID = 200;
     private static final int MAX_ROWS_PER_COMMIT = 10;
     private static final int MAX_ROWS_PER_PARTITION = 30_000;

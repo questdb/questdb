@@ -36,7 +36,7 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.metrics.WorkerMetrics;
 import io.questdb.mp.Job;
@@ -69,8 +69,8 @@ public class WorkerPoolManagerTest {
         final AtomicInteger counter = new AtomicInteger(0);
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount, sharedPool -> counter.incrementAndGet());
         Assert.assertEquals(1, counter.get());
-        Assert.assertNotNull(workerPoolManager.getSharedPool());
-        Assert.assertEquals(workerCount, workerPoolManager.getSharedWorkerCount());
+        Assert.assertNotNull(workerPoolManager.getSharedPoolNetwork());
+        Assert.assertEquals(workerCount, workerPoolManager.getSharedQueryWorkerCount());
     }
 
     @Test
@@ -78,7 +78,7 @@ public class WorkerPoolManagerTest {
         final int workerCount = 2;
         final String poolName = "pool";
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
-        WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+        WorkerPool networkSharedPool = workerPoolManager.getSharedNetworkPool(new WorkerPoolConfiguration() {
             @Override
             public String getPoolName() {
                 return poolName;
@@ -89,9 +89,9 @@ public class WorkerPoolManagerTest {
                 return workerCount;
             }
         }, WorkerPoolManager.Requester.OTHER);
-        Assert.assertNotSame(workerPoolManager.getSharedPool(), workerPool);
-        Assert.assertEquals(workerCount, workerPool.getWorkerCount());
-        Assert.assertEquals(poolName, workerPool.getPoolName());
+        Assert.assertNotSame(workerPoolManager.getSharedPoolNetwork(), networkSharedPool);
+        Assert.assertEquals(workerCount, networkSharedPool.getWorkerCount());
+        Assert.assertEquals(poolName, networkSharedPool.getPoolName());
     }
 
     @Test
@@ -110,21 +110,21 @@ public class WorkerPoolManagerTest {
                 return workerCount;
             }
         };
-        WorkerPool workerPool0 = workerPoolManager.getInstance(workerPoolConfiguration, WorkerPoolManager.Requester.OTHER);
-        Assert.assertNotSame(workerPoolManager.getSharedPool(), workerPool0);
-        WorkerPool workerPool1 = workerPoolManager.getInstance(workerPoolConfiguration, WorkerPoolManager.Requester.OTHER);
-        Assert.assertSame(workerPool0, workerPool1);
-        Assert.assertEquals(workerCount, workerPool0.getWorkerCount());
-        Assert.assertEquals(poolName, workerPool0.getPoolName());
-        Assert.assertEquals(workerCount, workerPool1.getWorkerCount());
-        Assert.assertEquals(poolName, workerPool1.getPoolName());
+        WorkerPool networkSharedPool0 = workerPoolManager.getSharedNetworkPool(workerPoolConfiguration, WorkerPoolManager.Requester.OTHER);
+        Assert.assertNotSame(workerPoolManager.getSharedPoolNetwork(), networkSharedPool0);
+        WorkerPool networkSharedPool1 = workerPoolManager.getSharedNetworkPool(workerPoolConfiguration, WorkerPoolManager.Requester.OTHER);
+        Assert.assertSame(networkSharedPool0, networkSharedPool1);
+        Assert.assertEquals(workerCount, networkSharedPool0.getWorkerCount());
+        Assert.assertEquals(poolName, networkSharedPool0.getPoolName());
+        Assert.assertEquals(workerCount, networkSharedPool1.getWorkerCount());
+        Assert.assertEquals(poolName, networkSharedPool1.getPoolName());
     }
 
     @Test
     public void testGetInstanceDefaultPool() {
         final int workerCount = 2;
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
-        WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+        WorkerPool networkSharedPool = workerPoolManager.getSharedNetworkPool(new WorkerPoolConfiguration() {
             @Override
             public String getPoolName() {
                 return "pool";
@@ -135,9 +135,9 @@ public class WorkerPoolManagerTest {
                 return 0; // No workers, will result in returning the shared pool
             }
         }, WorkerPoolManager.Requester.OTHER);
-        Assert.assertSame(workerPoolManager.getSharedPool(), workerPool);
-        Assert.assertEquals(workerCount, workerPool.getWorkerCount());
-        Assert.assertEquals("worker", workerPool.getPoolName());
+        Assert.assertSame(workerPoolManager.getSharedPoolNetwork(), networkSharedPool);
+        Assert.assertEquals(workerCount, networkSharedPool.getWorkerCount());
+        Assert.assertEquals("worker", networkSharedPool.getPoolName());
     }
 
     @Test
@@ -145,7 +145,7 @@ public class WorkerPoolManagerTest {
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(1);
         workerPoolManager.start(null);
         try {
-            workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+            workerPoolManager.getSharedNetworkPool(new WorkerPoolConfiguration() {
                 @Override
                 public String getPoolName() {
                     return null;
@@ -174,15 +174,15 @@ public class WorkerPoolManagerTest {
         final ServerConfiguration config = createServerConfig(1); // shared pool
         final WorkerPoolManager workerPoolManager = new WorkerPoolManager(config) {
             @Override
-            protected void configureSharedPool(WorkerPool sharedPool) {
-                sharedPool.assign(scrapeIntoPrometheusJob(sink));
+            protected void configureWorkerPools(final WorkerPool sharedPoolR, final WorkerPool sharedPoolW) {
+                sharedPoolW.assign(scrapeIntoPrometheusJob(sink));
             }
         };
-        WorkerPool p0 = workerPoolManager.getInstance(
+        WorkerPool p0 = workerPoolManager.getSharedNetworkPool(
                 workerPoolConfiguration("UP", 30L),
                 WorkerPoolManager.Requester.OTHER
         );
-        WorkerPool p1 = workerPoolManager.getInstance(
+        WorkerPool p1 = workerPoolManager.getSharedNetworkPool(
                 workerPoolConfiguration("DOWN", 10L),
                 WorkerPoolManager.Requester.OTHER
         );
@@ -267,7 +267,7 @@ public class WorkerPoolManagerTest {
             }
 
             @Override
-            public PGWireConfiguration getPGWireConfiguration() {
+            public PGConfiguration getPGWireConfiguration() {
                 return null;
             }
 
@@ -282,7 +282,17 @@ public class WorkerPoolManagerTest {
             }
 
             @Override
-            public WorkerPoolConfiguration getWorkerPoolConfiguration() {
+            public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
+                return () -> workerCount;
+            }
+
+            @Override
+            public WorkerPoolConfiguration getQueryWorkerPoolConfiguration() {
+                return () -> workerCount;
+            }
+
+            @Override
+            public WorkerPoolConfiguration getWriteWorkerPoolConfiguration() {
                 return () -> workerCount;
             }
         };
@@ -291,9 +301,9 @@ public class WorkerPoolManagerTest {
     private static WorkerPoolManager createWorkerPoolManager(int workerCount, Consumer<WorkerPool> call) {
         return new WorkerPoolManager(createServerConfig(workerCount)) {
             @Override
-            protected void configureSharedPool(WorkerPool sharedPool) {
+            protected void configureWorkerPools(final WorkerPool sharedPoolR, final WorkerPool sharedPoolW) {
                 if (call != null) {
-                    call.accept(sharedPool);
+                    call.accept(sharedPoolR);
                 }
             }
         };

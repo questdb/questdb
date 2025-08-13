@@ -83,7 +83,8 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
             CairoConfiguration configuration = engine.getConfiguration();
             this.clock = configuration.getMicrosecondClock();
 
-            this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+            // Set sharedQueryWorkerCount as 0, no need to do parallel query execution in this job,
+            this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 0);
             this.sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
             final String statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
             try (SqlCompiler compiler = engine.getSqlCompiler()) {

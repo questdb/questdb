@@ -41,7 +41,7 @@ public interface MemoryMA extends MemoryM, MemoryA {
 
     long getAppendAddressSize();
 
-    void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts);
+    void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, int opts);
 
     default void setSize(long size) {
         jumpTo(size);

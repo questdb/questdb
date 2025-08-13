@@ -364,6 +364,13 @@ public class TableReader implements Closeable, SymbolTableSource {
         return (byte) openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_FORMAT);
     }
 
+    public byte getPartitionFormatFromMetadata(int partitionIndex) {
+        if (txFile.isPartitionParquet(partitionIndex)) {
+            return PartitionFormat.PARQUET;
+        }
+        return PartitionFormat.NATIVE;
+    }
+
     @TestOnly
     public int getPartitionIndex(int columnBase) {
         return columnBase >>> columnCountShl;
@@ -379,8 +386,49 @@ public class TableReader implements Closeable, SymbolTableSource {
         return end / PARTITIONS_SLOT_SIZE;
     }
 
+    /**
+     * Pretty convoluted logic to calculate upper timestamp bound of the given partition, e.g. by partition index.
+     * First thing of note - the upper bound value is inclusive, it must be a value that will be able to reside in the
+     * partition.
+     * <p>
+     * The value of the upper bound is COMPUTED, rather than retrieved from a store. The inputs for the computation are:
+     * - min timestamp of the partition - this is a stored value
+     * - timestamp ceil function, which depends on the partition type. E.g. you could round any timestamp to the
+     * theoretical upper bound. But we cannot use only this method because of partition splits.
+     * - min timestamp of the next partition, e.g. if partition was split, we cannot use ceil function but rather
+     * the min timestamp of the next partition MINUS ONE (to ensure timestamp is inclusive). However, we cannot use this
+     * method only because of gaps in partitions. E.g. daily partition could have a gap for weekend.
+     * - we also cannot just grab next partition, and we need to be mindful of the partition count. To avoid index out of
+     * bounds errors.
+     * <p>
+     * To calculate the bound we will:
+     * 1. check if we can access next partition. If we cannot - it means this is the last partition, and we can
+     * use the ceil function and that would be it.
+     * 2. We can access next partition - great, we get its min timestamp but, next gotcha - there could be a gap,
+     * so we take a min between the ceil value and the next timestamp value.
+     * <p>
+     * <p>
+     * Clear?
+     *
+     * @param partitionIndex the index of the partition in question
+     * @return upper bound of the timestamp that can possibly be stored in this partition, which is an inclusive value.
+     */
+    public long getPartitionMaxTimestampFromMetadata(int partitionIndex) {
+        int next = partitionIndex + 1;
+        long minTimestampCeil = txFile.getNextLogicalPartitionTimestamp(getPartitionMinTimestampFromMetadata(partitionIndex));
+        return next < getPartitionCount() ? Math.min(getPartitionMinTimestampFromMetadata(next), minTimestampCeil) - 1 : minTimestampCeil;
+    }
+
+    public long getPartitionMinTimestampFromMetadata(int partitionIndex) {
+        return txFile.getPartitionTimestampByIndex(partitionIndex);
+    }
+
     public long getPartitionRowCount(int partitionIndex) {
         return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
+    }
+
+    public long getPartitionRowCountFromMetadata(int partitionIndex) {
+        return txFile.getPartitionSize(partitionIndex);
     }
 
     public long getPartitionTimestampByIndex(int partitionIndex) {
@@ -1090,7 +1138,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (txFile.isPartitionParquet(partitionIndex)) {
                 Path path = pathGenParquetPartition(partitionIndex, partitionNameTxn);
                 if (ff.exists(path.$())) {
-                    final long partitionSize = txFile.getPartitionSize(partitionIndex);
+                    final long partitionSize = getPartitionRowCountFromMetadata(partitionIndex);
                     if (partitionSize > -1) {
                         LOG.info()
                                 .$("open partition [path=").$substr(dbRootSize, path)
@@ -1124,7 +1172,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             } else { // native partition
                 Path path = pathGenNativePartition(partitionIndex, partitionNameTxn);
                 if (ff.exists(path.$())) {
-                    final long partitionSize = txFile.getPartitionSize(partitionIndex);
+                    final long partitionSize = getPartitionRowCountFromMetadata(partitionIndex);
                     if (partitionSize > -1) {
                         LOG.debug()
                                 .$("open partition [path=").$substr(dbRootSize, path)
@@ -1262,7 +1310,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     // partition that is not yet in memory
                     if (openPartitionSize > -1) {
                         final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
-                        final long txPartitionSize = txFile.getPartitionSize(partitionIndex);
+                        final long txPartitionSize = getPartitionRowCountFromMetadata(partitionIndex);
                         final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
                         if (openPartitionNameTxn == txPartitionNameTxn) {
                             // We used to skip reloading partition size if the row count is the same and name txn is the same.
