@@ -35,7 +35,7 @@ import io.questdb.std.datetime.DateLocale;
 
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
-public class DefaultPGWireConfiguration extends DefaultIODispatcherConfiguration implements PGWireConfiguration {
+public class DefaultPGConfiguration extends DefaultIODispatcherConfiguration implements PGConfiguration {
     private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
 
     @Override
@@ -197,11 +197,6 @@ public class DefaultPGWireConfiguration extends DefaultIODispatcherConfiguration
     @Override
     public boolean isInsertCacheEnabled() {
         return true;
-    }
-
-    @Override
-    public boolean isLegacyModeEnabled() {
-        return false;
     }
 
     @Override

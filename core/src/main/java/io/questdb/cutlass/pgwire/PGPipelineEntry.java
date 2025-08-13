@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.modern;
+package io.questdb.cutlass.pgwire;
 
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoEngine;
@@ -45,9 +45,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.cutlass.pgwire.BadProtocolException;
-import io.questdb.cutlass.pgwire.PGOids;
-import io.questdb.cutlass.pgwire.PGResponseSink;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.CompiledQuery;
@@ -100,10 +97,10 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.function.Consumer;
 
+import static io.questdb.cutlass.pgwire.PGConnectionContext.*;
 import static io.questdb.cutlass.pgwire.PGOids.*;
-import static io.questdb.cutlass.pgwire.modern.PGConnectionContextModern.*;
-import static io.questdb.cutlass.pgwire.modern.PGUtils.calculateColumnBinSize;
-import static io.questdb.cutlass.pgwire.modern.PGUtils.estimateColumnTxtSize;
+import static io.questdb.cutlass.pgwire.PGUtils.calculateColumnBinSize;
+import static io.questdb.cutlass.pgwire.PGUtils.estimateColumnTxtSize;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
@@ -125,7 +122,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private static final int SYNC_DESCRIBE = 2;
     private static final int SYNC_DONE = 5;
     private static final int SYNC_PARSE = 0;
-    private final ObjectPool<PgNonNullBinaryArrayView> arrayViewPool = new ObjectPool<>(PgNonNullBinaryArrayView::new, 1);
+    private final ObjectPool<PGNonNullBinaryArrayView> arrayViewPool = new ObjectPool<>(PGNonNullBinaryArrayView::new, 1);
     private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
     private final int maxRecompileAttempts;
@@ -204,8 +201,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private boolean stateParse;
     private boolean stateParseExecuted = false;
     private int stateSync = 0;
-    private TypesAndInsertModern tai = null;
-    private TypesAndSelectModern tas = null;
+    private TypesAndInsert tai = null;
+    private TypesAndSelect tas = null;
     // IMPORTANT: if you add a new state, make sure to add it to the close() method too!
     // PGPipelineEntry instances are pooled and reused, so we need to make sure
     // that all state is cleared before returning the instance to the pool
@@ -225,8 +222,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     public void cacheIfPossible(
-            @NotNull AssociativeCache<TypesAndSelectModern> tasCache,
-            @NotNull SimpleAssociativeCache<TypesAndInsertModern> taiCache
+            @NotNull AssociativeCache<TypesAndSelect> tasCache,
+            @NotNull SimpleAssociativeCache<TypesAndInsert> taiCache
     ) {
         if (isPortal() || isPreparedStatement()) {
             // must not cache prepared statements etc.; we must only cache abandoned pipeline entries (their contents)
@@ -336,7 +333,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8StringSink.clear();
     }
 
-    public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws BadProtocolException {
+    public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws PGMessageProcessingException {
         try {
             for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
                 final TableWriterAPI w = pendingWriter.value;
@@ -360,9 +357,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             CharSequence sqlText,
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
-            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool,
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool,
             boolean recompile
-    ) throws BadProtocolException {
+    ) throws PGMessageProcessingException {
         // pipeline entries begin life as anonymous, typical pipeline length is 1-3 entries
         // we do not need to create new objects until we know we're caching the entry
         this.sqlText = sqlText;
@@ -395,8 +392,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             }
             validatePgResultSetColumnTypesAndNames();
         } catch (Throwable th) {
-            if (th instanceof BadProtocolException) {
-                throw (BadProtocolException) th;
+            if (th instanceof PGMessageProcessingException) {
+                throw (PGMessageProcessingException) th;
             }
             throw kaput().put(th);
         }
@@ -424,7 +421,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return errorMessageSink;
     }
 
-    public int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
+    public int getInt(long address, long msgLimit, CharSequence errorMessage) throws PGMessageProcessingException {
         if (address + Integer.BYTES <= msgLimit) {
             return getIntUnsafe(address);
         }
@@ -447,7 +444,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return parentPreparedStatementPipelineEntry;
     }
 
-    public short getShort(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
+    public short getShort(long address, long msgLimit, CharSequence errorMessage) throws PGMessageProcessingException {
         if (address + Short.BYTES <= msgLimit) {
             return getShortUnsafe(address);
         }
@@ -487,7 +484,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             long msgLimit,
             short parameterFormatCodeCount,
             short parameterValueCount
-    ) throws BadProtocolException {
+    ) throws PGMessageProcessingException {
         this.msgBindParameterValueCount = parameterValueCount;
 
         // Format codes pertain the parameter values sent in the same "bind" message.
@@ -526,7 +523,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    public long msgBindCopyParameterValuesArea(long lo, long msgLimit) throws BadProtocolException {
+    public long msgBindCopyParameterValuesArea(long lo, long msgLimit) throws PGMessageProcessingException {
         long valueAreaSize = msgBindComputeParameterValueAreaSize(lo, msgLimit);
         if (valueAreaSize > 0) {
             long sz = Numbers.ceilPow2(valueAreaSize);
@@ -548,7 +545,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 parameterValueArenaLo += len;
                 // todo: create "receive" state machine in the context, so that client messages can be split
                 //       across multiple recv buffers
-                throw BadProtocolException.INSTANCE;
+                throw PGMessageProcessingException.INSTANCE;
             } else {
                 parameterValueArenaLo = parameterValueArenaPtr;
             }
@@ -575,7 +572,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     public int msgExecute(
             SqlExecutionContext sqlExecutionContext,
             int transactionState,
-            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool,
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             WriterSource writerSource,
             @Transient CharacterStore bindVariableCharacterStore,
@@ -583,7 +580,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
             @Transient SCSequence tempSequence,
             Consumer<? super Utf8Sequence> namedStatementDeallocator
-    ) throws BadProtocolException {
+    ) throws PGMessageProcessingException {
         // do not execute anything, that has been parse-executed
         if (stateParseExecuted) {
             stateParseExecuted = false;
@@ -673,7 +670,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     }
                     break;
             }
-        } catch (BadProtocolException e) {
+        } catch (PGMessageProcessingException e) {
             throw e;
         } catch (Throwable th) {
             if (th instanceof FlyweightMessageContainer) {
@@ -870,7 +867,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         clearState();
     }
 
-    public void ofCachedInsert(CharSequence utf16SqlText, TypesAndInsertModern tai) {
+    public void ofCachedInsert(CharSequence utf16SqlText, TypesAndInsert tai) {
         this.sqlText = utf16SqlText;
         this.sqlTag = tai.getSqlTag();
         this.sqlType = tai.getSqlType();
@@ -880,7 +877,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.outParameterTypeDescriptionTypes.addAll(tai.getPgOutParameterTypes());
     }
 
-    public void ofCachedSelect(CharSequence utf16SqlText, TypesAndSelectModern tas) {
+    public void ofCachedSelect(CharSequence utf16SqlText, TypesAndSelect tas) {
         this.sqlText = utf16SqlText;
         this.factory = tas.getFactory();
         this.sqlTag = tas.getSqlTag();
@@ -896,7 +893,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.empty = true;
     }
 
-    public void ofSimpleCachedSelect(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, TypesAndSelectModern tas) throws SqlException {
+    public void ofSimpleCachedSelect(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, TypesAndSelect tas) throws SqlException {
         setStateDesc(SYNC_DESC_ROW_DESCRIPTION); // send out the row description message
         this.empty = sqlText == null || sqlText.length() == 0;
         this.sqlText = sqlText;
@@ -922,8 +919,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             CharSequence sqlText,
             SqlExecutionContext sqlExecutionContext,
             CompiledQuery cq,
-            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
-    ) throws BadProtocolException {
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool
+    ) throws PGMessageProcessingException {
         // pipeline entries begin life as anonymous, typical pipeline length is 1-3 entries
         // we do not need to create new objects until we know we're caching the entry
         this.sqlText = sqlText;
@@ -1058,7 +1055,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             int columnCount,
             long maxBlobSize,
             long sendBufferSize
-    ) throws BadProtocolException {
+    ) throws PGMessageProcessingException {
         long recordSize = 0;
         for (int i = outResendColumnIndex; i < columnCount; i++) {
             final int columnType = pgResultSetColumnTypes.getQuick(2 * i);
@@ -1128,7 +1125,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             CharacterStore characterStore,
             @Transient DirectUtf8String directUtf8String,
             @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool
-    ) throws BadProtocolException, SqlException {
+    ) throws PGMessageProcessingException, SqlException {
         // Bind variables have to be configured for the cursor.
         // We have stored the following:
         // - outTypeDescriptionTypeOIDs - OIDS of the parameter types, these are all types present in the SQL
@@ -1332,7 +1329,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void ensureValueLength(int variableIndex, int sizeRequired, int sizeActual) throws BadProtocolException {
+    private void ensureValueLength(int variableIndex, int sizeRequired, int sizeActual) throws PGMessageProcessingException {
         if (sizeRequired == sizeActual) {
             return;
         }
@@ -1345,7 +1342,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     // Used to estimate required column size (or full record size in case of text format)
     // to be reported to the user in the insufficient send buffer size case.
-    private long estimateRecordSize(Record record, int columnCount) throws BadProtocolException {
+    private long estimateRecordSize(Record record, int columnCount) throws PGMessageProcessingException {
         long recordSize = 0;
         for (int i = 0; i < columnCount; i++) {
             final int columnType = pgResultSetColumnTypes.getQuick(2 * i);
@@ -1389,11 +1386,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return msgBindSelectFormatCodeCount == 0 || (msgBindSelectFormatCodeCount == 1 && !msgBindSelectFormatCodes.get(0));
     }
 
-    private BadProtocolException kaput() {
-        return BadProtocolException.instance(this);
+    private PGMessageProcessingException kaput() {
+        return PGMessageProcessingException.instance(this);
     }
 
-    private long msgBindComputeParameterValueAreaSize(long lo, long msgLimit) throws BadProtocolException {
+    private long msgBindComputeParameterValueAreaSize(long lo, long msgLimit) throws PGMessageProcessingException {
         if (msgBindParameterValueCount > 0) {
             long l = lo;
             for (int j = 0; j < msgBindParameterValueCount; j++) {
@@ -1412,8 +1409,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             SqlExecutionContext sqlExecutionContext,
             int transactionState,
             SCSequence tempSequence,
-            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
-    ) throws SqlException, BadProtocolException {
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool
+    ) throws SqlException, PGMessageProcessingException {
         if (transactionState != ERROR_TRANSACTION) {
             engine.getMetrics().pgWireMetrics().markStart();
             // execute against writer from the engine, synchronously (null sequence)
@@ -1446,8 +1443,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // todo: WriterSource is the interface used exclusively in PG Wire. We should not need to pass
             //    around heaps of state in very long call stacks
             WriterSource writerSource,
-            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
-    ) throws SqlException, BadProtocolException {
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool
+    ) throws SqlException, PGMessageProcessingException {
         switch (transactionState) {
             case IMPLICIT_TRANSACTION:
                 // fall through, there is no difference between implicit and explicit transaction at this stage
@@ -1498,9 +1495,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             SqlExecutionContext sqlExecutionContext,
             int transactionState,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
-            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool,
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool,
             int maxRecompileAttempts
-    ) throws SqlException, BadProtocolException {
+    ) throws SqlException, PGMessageProcessingException {
         if (cursor == null) {
             engine.getMetrics().pgWireMetrics().markStart();
 
@@ -1552,8 +1549,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             int transactionState,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             SCSequence tempSequence,
-            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
-    ) throws SqlException, BadProtocolException {
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool
+    ) throws SqlException, PGMessageProcessingException {
         if (transactionState != ERROR_TRANSACTION) {
             engine.getMetrics().pgWireMetrics().markStart();
             // execute against writer from the engine, synchronously (null sequence)
@@ -1846,7 +1843,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColBinary(PGResponseSink utf8Sink, Record record, int columnIndex) throws BadProtocolException {
+    private void outColBinary(PGResponseSink utf8Sink, Record record, int columnIndex) throws PGMessageProcessingException {
         BinarySequence sequence = record.getBin(columnIndex);
         if (sequence == null) {
             utf8Sink.setNullValue();
@@ -2246,7 +2243,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.putLen(offset);
     }
 
-    private void outRecord(PGResponseSink utf8Sink, Record record, int columnCount) throws BadProtocolException {
+    private void outRecord(PGResponseSink utf8Sink, Record record, int columnCount) throws PGMessageProcessingException {
         long messageLengthAddress = 0;
         // message header can be sent alone if we run out of space on the first column
         if (outResendColumnIndex == 0 && outResendRecordHeader) {
@@ -2422,7 +2419,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                 e.setBytesRequired(estimateRecordSize(record, columnCount));
                             }
                         }
-                    } catch (BadProtocolException bpe) {
+                    } catch (PGMessageProcessingException bpe) {
                         // we have binary data blob size > maxBlobSize
                         resetIncompleteRecord(utf8Sink, messageLengthAddress);
                         throw bpe;
@@ -2523,7 +2520,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.resetToBookmark(messageLengthAddress - Byte.BYTES);
     }
 
-    private void setBindVariableAsArray(int i, long lo, int valueSize, long msgLimit, BindVariableService bindVariableService) throws SqlException, BadProtocolException {
+    private void setBindVariableAsArray(int i, long lo, int valueSize, long msgLimit, BindVariableService bindVariableService) throws SqlException, PGMessageProcessingException {
         int dimensions = getInt(lo, msgLimit, "malformed array dimensions");
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
@@ -2544,7 +2541,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
 
-        PgNonNullBinaryArrayView arrayView = arrayViewPool.next();
+        PGNonNullBinaryArrayView arrayView = arrayViewPool.next();
         for (int j = 0; j < dimensions; j++) {
             int dimensionSize = getInt(lo, msgLimit, "malformed array dimension size");
             arrayView.addDimLen(dimensionSize);
@@ -2563,7 +2560,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             long valueAddr,
             int valueSize,
             BindVariableService bindVariableService
-    ) throws SqlException, BadProtocolException {
+    ) throws SqlException, PGMessageProcessingException {
         ensureValueLength(variableIndex, Byte.BYTES, valueSize);
         byte val = Unsafe.getUnsafe().getByte(valueAddr);
         bindVariableService.setBoolean(variableIndex, val == 1);
@@ -2575,7 +2572,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             int valueSize,
             BindVariableService bindVariableService,
             CharacterStore characterStore
-    ) throws BadProtocolException, SqlException {
+    ) throws PGMessageProcessingException, SqlException {
         CharacterStoreEntry e = characterStore.newEntry();
         if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
             bindVariableService.setChar(variableIndex, characterStore.toImmutable().charAt(0));
@@ -2589,7 +2586,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             long valueAddr,
             int valueSize,
             BindVariableService bindVariableService
-    ) throws SqlException, BadProtocolException {
+    ) throws SqlException, PGMessageProcessingException {
         ensureValueLength(variableIndex, Integer.BYTES, valueSize);
 
         // represents the number of days since 2000-01-01
@@ -2603,7 +2600,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             long valueAddr,
             int valueSize,
             BindVariableService bindVariableService
-    ) throws BadProtocolException, SqlException {
+    ) throws PGMessageProcessingException, SqlException {
         ensureValueLength(variableIndex, Double.BYTES, valueSize);
         bindVariableService.setDouble(variableIndex, Double.longBitsToDouble(getLongUnsafe(valueAddr)));
     }
@@ -2613,7 +2610,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             long valueAddr,
             int valueSize,
             BindVariableService bindVariableService
-    ) throws BadProtocolException, SqlException {
+    ) throws PGMessageProcessingException, SqlException {
         ensureValueLength(variableIndex, Float.BYTES, valueSize);
         bindVariableService.setFloat(variableIndex, Float.intBitsToFloat(getIntUnsafe(valueAddr)));
     }
@@ -2623,7 +2620,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             long valueAddr,
             int valueSize,
             BindVariableService bindVariableService
-    ) throws BadProtocolException, SqlException {
+    ) throws PGMessageProcessingException, SqlException {
         ensureValueLength(variableIndex, Integer.BYTES, valueSize);
         bindVariableService.setInt(variableIndex, getIntUnsafe(valueAddr));
     }
@@ -2633,7 +2630,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             long valueAddr,
             int valueSize,
             BindVariableService bindVariableService
-    ) throws BadProtocolException, SqlException {
+    ) throws PGMessageProcessingException, SqlException {
         ensureValueLength(variableIndex, Long.BYTES, valueSize);
         bindVariableService.setLong(variableIndex, getLongUnsafe(valueAddr));
     }
@@ -2643,7 +2640,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             long valueAddr,
             int valueSize,
             BindVariableService bindVariableService
-    ) throws BadProtocolException, SqlException {
+    ) throws PGMessageProcessingException, SqlException {
         ensureValueLength(variableIndex, Short.BYTES, valueSize);
         bindVariableService.setShort(variableIndex, getShortUnsafe(valueAddr));
     }
@@ -2655,7 +2652,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             BindVariableService bindVariableService,
             CharacterStore characterStore,
             DirectUtf8String utf8String
-    ) throws BadProtocolException {
+    ) throws PGMessageProcessingException {
         CharacterStoreEntry e = characterStore.newEntry();
         Function fn = bindVariableService.getFunction(variableIndex);
         // If the function type is VARCHAR, there's no need to convert to UTF-16
@@ -2688,7 +2685,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     throw kaput().put("invalid UTF8 encoding for string value [variableIndex=").put(variableIndex).put(']');
                 }
             }
-        } catch (BadProtocolException ex) {
+        } catch (PGMessageProcessingException ex) {
             throw ex;
         } catch (Throwable ex) {
             throw kaput().put(ex);
@@ -2700,7 +2697,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             long valueAddr,
             int valueSize,
             BindVariableService bindVariableService
-    ) throws BadProtocolException, SqlException {
+    ) throws PGMessageProcessingException, SqlException {
         ensureValueLength(variableIndex, Long.BYTES, valueSize);
         bindVariableService.setTimestampWithType(variableIndex, ColumnType.TIMESTAMP_MICRO, getLongUnsafe(valueAddr) + Numbers.JULIAN_EPOCH_OFFSET_USEC);
     }
@@ -2710,7 +2707,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             long valueAddr,
             int valueSize,
             BindVariableService bindVariableService
-    ) throws BadProtocolException, SqlException {
+    ) throws PGMessageProcessingException, SqlException {
         ensureValueLength(variableIndex, Long128.BYTES, valueSize);
         long hi = getLongUnsafe(valueAddr);
         long lo = getLongUnsafe(valueAddr + Long.BYTES);
@@ -2719,7 +2716,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     private void setupEntryAfterSQLCompilation(
             SqlExecutionContext sqlExecutionContext,
-            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool,
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool,
             CompiledQuery cq
     ) {
         sqlExecutionContext.storeTelemetry(cq.getType(), TelemetryOrigin.POSTGRES);
@@ -2738,7 +2735,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case CompiledQuery.EXPLAIN:
                 sqlTag = TAG_EXPLAIN;
                 factory = cq.getRecordCursorFactory();
-                tas = new TypesAndSelectModern(
+                tas = new TypesAndSelect(
                         this.factory,
                         sqlType,
                         TAG_EXPLAIN,
@@ -2749,7 +2746,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case CompiledQuery.SELECT:
                 sqlTag = TAG_SELECT;
                 factory = cq.getRecordCursorFactory();
-                tas = new TypesAndSelectModern(
+                tas = new TypesAndSelect(
                         factory,
                         sqlType,
                         sqlTag,
@@ -2842,7 +2839,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 && typeTag != ColumnType.SYMBOL;
     }
 
-    private void validatePgResultSetColumnTypesAndNames() throws BadProtocolException {
+    private void validatePgResultSetColumnTypesAndNames() throws PGMessageProcessingException {
         if (factory == null) {
             return;
         }

@@ -38,8 +38,8 @@ import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Numbers;
@@ -75,7 +75,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     private final WorkerPoolConfiguration confWalApplyPool;
     private final boolean enablePgWire;
     private final FactoryProvider factoryProvider;
-    private final PGWireConfiguration confPgWire = new DefaultPGWireConfiguration() {
+    private final PGConfiguration confPgWire = new DefaultPGConfiguration() {
         @Override
         public FactoryProvider getFactoryProvider() {
             return factoryProvider;
@@ -243,7 +243,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     }
 
     @Override
-    public PGWireConfiguration getPGWireConfiguration() {
+    public PGConfiguration getPGWireConfiguration() {
         return confPgWire;
     }
 

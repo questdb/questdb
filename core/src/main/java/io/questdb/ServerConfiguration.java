@@ -30,7 +30,7 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.str.Utf8StringSink;
@@ -78,7 +78,7 @@ public interface ServerConfiguration {
 
     MetricsConfiguration getMetricsConfiguration();
 
-    PGWireConfiguration getPGWireConfiguration();
+    PGConfiguration getPGWireConfiguration();
 
     PublicPassthroughConfiguration getPublicPassthroughConfiguration();
 
