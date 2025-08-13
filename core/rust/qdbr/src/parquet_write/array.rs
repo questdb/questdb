@@ -627,21 +627,16 @@ impl<'a> LevelsIterator<'a> {
                 return None;
             }
 
-            let rep_level = rep_level.unwrap();
-            if let Err(e) = rep_level {
-                return Some(Err(e.into()));
-            }
-            let rep_level = rep_level.unwrap();
-            let def_level = def_level.unwrap();
-            if let Err(e) = def_level {
-                return Some(Err(e.into()));
-            }
-            let def_level = def_level.unwrap();
+            self.last_rep_level = match rep_level.unwrap() {
+                Ok(level) => level as i64,
+                Err(e) => return Some(Err(e.into())),
+            };
+            self.last_def_level = match def_level.unwrap() {
+                Ok(level) => level as i64,
+                Err(e) => return Some(Err(e.into())),
+            };
 
-            self.last_rep_level = rep_level as i64;
-            self.last_def_level = def_level as i64;
-
-            if rep_level == 0 && !self.levels.is_empty() {
+            if self.last_rep_level == 0 && !self.levels.is_empty() {
                 self.clear_pending = true;
                 return Some(Ok(&self.levels));
             }

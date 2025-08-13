@@ -14,183 +14,135 @@ use parquet2::schema::types::{
 use parquet2::schema::Repetition;
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
-pub fn column_type_to_parquet_types(
-    parquet_types: &mut Vec<ParquetType>,
+pub fn column_type_to_parquet_type(
     column_id: i32,
     column_name: &str,
     column_type: ColumnType,
     designated_timestamp: bool,
     raw_array_encoding: bool,
-) -> ParquetResult<()> {
+) -> ParquetResult<ParquetType> {
     let name = column_name.to_string();
 
     match column_type.tag() {
-        ColumnTypeTag::Boolean => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::Boolean,
-                Repetition::Required,
-                None,
-                None,
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
-        }
-        ColumnTypeTag::Byte => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::Int32,
-                Repetition::Required,
-                Some(PrimitiveConvertedType::Int8),
-                Some(PrimitiveLogicalType::Integer(IntegerType::Int8)),
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
-        }
-        ColumnTypeTag::Short => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::Int32,
-                Repetition::Required,
-                Some(PrimitiveConvertedType::Int16),
-                Some(PrimitiveLogicalType::Integer(IntegerType::Int16)),
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
-        }
-        ColumnTypeTag::Char => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::Int32,
-                Repetition::Required,
-                Some(PrimitiveConvertedType::Int16),
-                Some(PrimitiveLogicalType::Integer(IntegerType::UInt16)),
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
-        }
-        ColumnTypeTag::Int => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::Int32,
-                Repetition::Optional,
-                None,
-                None,
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
-        }
-        ColumnTypeTag::Long => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::Int64,
-                Repetition::Optional,
-                None,
-                None,
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
-        }
-        ColumnTypeTag::Date => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::Int64,
-                Repetition::Optional,
-                Some(PrimitiveConvertedType::TimestampMillis),
-                Some(PrimitiveLogicalType::Timestamp {
-                    unit: TimeUnit::Milliseconds,
-                    is_adjusted_to_utc: true,
-                }),
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
-        }
-        ColumnTypeTag::Timestamp => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::Int64,
-                if designated_timestamp {
-                    Repetition::Required
-                } else {
-                    Repetition::Optional
-                },
-                Some(PrimitiveConvertedType::TimestampMicros),
-                Some(PrimitiveLogicalType::Timestamp {
-                    unit: TimeUnit::Microseconds,
-                    is_adjusted_to_utc: true,
-                }),
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
-        }
-        ColumnTypeTag::Float => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::Float,
-                Repetition::Optional,
-                None,
-                None,
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
-        }
-        ColumnTypeTag::Double => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::Double,
-                Repetition::Optional,
-                None,
-                None,
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
-        }
-        ColumnTypeTag::Binary => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::ByteArray,
-                Repetition::Optional,
-                None,
-                None,
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
-        }
+        ColumnTypeTag::Boolean => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::Boolean,
+            Repetition::Required,
+            None,
+            None,
+            Some(column_id),
+        )?),
+        ColumnTypeTag::Byte => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::Int32,
+            Repetition::Required,
+            Some(PrimitiveConvertedType::Int8),
+            Some(PrimitiveLogicalType::Integer(IntegerType::Int8)),
+            Some(column_id),
+        )?),
+        ColumnTypeTag::Short => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::Int32,
+            Repetition::Required,
+            Some(PrimitiveConvertedType::Int16),
+            Some(PrimitiveLogicalType::Integer(IntegerType::Int16)),
+            Some(column_id),
+        )?),
+        ColumnTypeTag::Char => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::Int32,
+            Repetition::Required,
+            Some(PrimitiveConvertedType::Int16),
+            Some(PrimitiveLogicalType::Integer(IntegerType::UInt16)),
+            Some(column_id),
+        )?),
+        ColumnTypeTag::Int => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::Int32,
+            Repetition::Optional,
+            None,
+            None,
+            Some(column_id),
+        )?),
+        ColumnTypeTag::Long => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::Int64,
+            Repetition::Optional,
+            None,
+            None,
+            Some(column_id),
+        )?),
+        ColumnTypeTag::Date => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::Int64,
+            Repetition::Optional,
+            Some(PrimitiveConvertedType::TimestampMillis),
+            Some(PrimitiveLogicalType::Timestamp {
+                unit: TimeUnit::Milliseconds,
+                is_adjusted_to_utc: true,
+            }),
+            Some(column_id),
+        )?),
+        ColumnTypeTag::Timestamp => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::Int64,
+            if designated_timestamp {
+                Repetition::Required
+            } else {
+                Repetition::Optional
+            },
+            Some(PrimitiveConvertedType::TimestampMicros),
+            Some(PrimitiveLogicalType::Timestamp {
+                unit: TimeUnit::Microseconds,
+                is_adjusted_to_utc: true,
+            }),
+            Some(column_id),
+        )?),
+        ColumnTypeTag::Float => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::Float,
+            Repetition::Optional,
+            None,
+            None,
+            Some(column_id),
+        )?),
+        ColumnTypeTag::Double => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::Double,
+            Repetition::Optional,
+            None,
+            None,
+            Some(column_id),
+        )?),
+        ColumnTypeTag::Binary => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::ByteArray,
+            Repetition::Optional,
+            None,
+            None,
+            Some(column_id),
+        )?),
         ColumnTypeTag::String | ColumnTypeTag::Symbol | ColumnTypeTag::Varchar => {
-            let t = ParquetType::try_from_primitive(
+            Ok(ParquetType::try_from_primitive(
                 name,
                 PhysicalType::ByteArray,
                 Repetition::Optional,
                 Some(PrimitiveConvertedType::Utf8),
                 Some(PrimitiveLogicalType::String),
                 Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
+            )?)
         }
         ColumnTypeTag::Array => {
             if raw_array_encoding {
                 // encode in native QDB array format
-                let t = ParquetType::try_from_primitive(
+                Ok(ParquetType::try_from_primitive(
                     name,
                     PhysicalType::ByteArray,
                     Repetition::Optional,
                     None,
                     None,
                     Some(column_id),
-                )?;
-                parquet_types.push(t);
+                )?)
             } else {
                 // encode as nested lists
                 // see https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists
@@ -242,106 +194,73 @@ pub fn column_type_to_parquet_types(
                         );
                     }
                 }
-                parquet_types.push(root_type);
+                Ok(root_type)
             }
-            Ok(())
         }
-        ColumnTypeTag::Long256 => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::FixedLenByteArray(32),
-                Repetition::Optional,
-                None,
-                None,
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
-        }
-        ColumnTypeTag::GeoByte => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::Int32,
-                Repetition::Optional,
-                Some(PrimitiveConvertedType::Int8),
-                Some(PrimitiveLogicalType::Integer(IntegerType::Int8)),
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
-        }
-        ColumnTypeTag::GeoShort => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::Int32,
-                Repetition::Optional,
-                Some(PrimitiveConvertedType::Int16),
-                Some(PrimitiveLogicalType::Integer(IntegerType::Int16)),
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
-        }
-        ColumnTypeTag::GeoInt => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::Int32,
-                Repetition::Optional,
-                Some(PrimitiveConvertedType::Int32),
-                Some(PrimitiveLogicalType::Integer(IntegerType::Int32)),
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
-        }
-        ColumnTypeTag::GeoLong => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::Int64,
-                Repetition::Optional,
-                Some(PrimitiveConvertedType::Int64),
-                Some(PrimitiveLogicalType::Integer(IntegerType::Int64)),
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
-        }
-        ColumnTypeTag::Long128 => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::FixedLenByteArray(16),
-                Repetition::Optional,
-                None,
-                None,
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
-        }
-        ColumnTypeTag::Uuid => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::FixedLenByteArray(16),
-                Repetition::Optional,
-                None,
-                Some(PrimitiveLogicalType::Uuid),
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
-        }
-        ColumnTypeTag::IPv4 => {
-            let t = ParquetType::try_from_primitive(
-                name,
-                PhysicalType::Int32,
-                Repetition::Optional,
-                None,
-                None,
-                Some(column_id),
-            )?;
-            parquet_types.push(t);
-            Ok(())
-        }
+        ColumnTypeTag::Long256 => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::FixedLenByteArray(32),
+            Repetition::Optional,
+            None,
+            None,
+            Some(column_id),
+        )?),
+        ColumnTypeTag::GeoByte => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::Int32,
+            Repetition::Optional,
+            Some(PrimitiveConvertedType::Int8),
+            Some(PrimitiveLogicalType::Integer(IntegerType::Int8)),
+            Some(column_id),
+        )?),
+        ColumnTypeTag::GeoShort => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::Int32,
+            Repetition::Optional,
+            Some(PrimitiveConvertedType::Int16),
+            Some(PrimitiveLogicalType::Integer(IntegerType::Int16)),
+            Some(column_id),
+        )?),
+        ColumnTypeTag::GeoInt => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::Int32,
+            Repetition::Optional,
+            Some(PrimitiveConvertedType::Int32),
+            Some(PrimitiveLogicalType::Integer(IntegerType::Int32)),
+            Some(column_id),
+        )?),
+        ColumnTypeTag::GeoLong => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::Int64,
+            Repetition::Optional,
+            Some(PrimitiveConvertedType::Int64),
+            Some(PrimitiveLogicalType::Integer(IntegerType::Int64)),
+            Some(column_id),
+        )?),
+        ColumnTypeTag::Long128 => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::FixedLenByteArray(16),
+            Repetition::Optional,
+            None,
+            None,
+            Some(column_id),
+        )?),
+        ColumnTypeTag::Uuid => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::FixedLenByteArray(16),
+            Repetition::Optional,
+            None,
+            Some(PrimitiveLogicalType::Uuid),
+            Some(column_id),
+        )?),
+        ColumnTypeTag::IPv4 => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::Int32,
+            Repetition::Optional,
+            None,
+            None,
+            Some(column_id),
+        )?),
     }
 }
 
@@ -429,17 +348,19 @@ pub fn to_parquet_schema(
     partition: &Partition,
     raw_array_encoding: bool,
 ) -> ParquetResult<(SchemaDescriptor, Vec<KeyValue>)> {
-    let mut parquet_types: Vec<ParquetType> = Vec::new();
-    for c in partition.columns.iter() {
-        column_type_to_parquet_types(
-            &mut parquet_types,
-            c.id,
-            c.name,
-            c.data_type,
-            c.designated_timestamp,
-            raw_array_encoding,
-        )?;
-    }
+    let parquet_types = partition
+        .columns
+        .iter()
+        .map(|c| {
+            column_type_to_parquet_type(
+                c.id,
+                c.name,
+                c.data_type,
+                c.designated_timestamp,
+                raw_array_encoding,
+            )
+        })
+        .collect::<ParquetResult<Vec<_>>>()?;
 
     let mut qdb_meta = QdbMeta::new();
     qdb_meta.schema = partition

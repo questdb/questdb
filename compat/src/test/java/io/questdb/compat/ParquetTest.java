@@ -138,6 +138,7 @@ public class ParquetTest extends AbstractTest {
             return;
         }
         ArrayList<?> actualList = (ArrayList<?>) actual;
+        Assert.assertEquals(expected.getFlatViewLength(), actualList.size());
         for (int i = 0, n = actualList.size(); i < n; i++) {
             GenericRecord record = (GenericRecord) actualList.get(i);
             Assert.assertEquals(expected.getDouble(i), (Double) record.get("element"), 0.0000001);
