@@ -135,8 +135,7 @@ public class RecordToRowCopierUtils {
         int implicitCastStrAsLong = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong", "(Ljava/lang/CharSequence;)J");
         int implicitCastStrAsLong256 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong256", "(Ljava/lang/CharSequence;)Lio/questdb/griffin/engine/functions/constants/Long256Constant;");
         int implicitCastStrAsDate = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDate", "(Ljava/lang/CharSequence;)J");
-        int transferStrToMicroTimestampCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferStrToMicroTimestampCol", "(Lio/questdb/cairo/TableWriter$Row;ILjava/lang/CharSequence;)V");
-        int transferStrToNanoTimestampCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferStrToNanoTimestampCol", "(Lio/questdb/cairo/TableWriter$Row;ILjava/lang/CharSequence;)V");
+        int implicitCastStrAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "implicitCast", "(Ljava/lang/CharSequence;)J");
         int implicitCastShortAsByte = asm.poolMethod(SqlUtil.class, "implicitCastShortAsByte", "(S)B");
         int implicitCastIntAsByte = asm.poolMethod(SqlUtil.class, "implicitCastIntAsByte", "(I)B");
         int implicitCastLongAsByte = asm.poolMethod(SqlUtil.class, "implicitCastLongAsByte", "(J)B");
@@ -176,8 +175,7 @@ public class RecordToRowCopierUtils {
         int transferUuidToVarcharCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferUuidToVarcharCol", "(Lio/questdb/cairo/TableWriter$Row;IJJ)V");
         int transferVarcharToStrCol = asm.poolInterfaceMethod(TableWriter.Row.class, "putStrUtf8", "(ILio/questdb/std/str/DirectUtf8Sequence;)V");
         int transferVarcharToSymbolCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToSymbolCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
-        int transferVarcharToMicroTimestampCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToMicroTimestampCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
-        int transferVarcharToNanoTimestampCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToNanoTimestampCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
+        int implicitCastVarcharAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "implicitCastVarchar", "(Lio/questdb/std/str/Utf8Sequence;)J");
         int transferVarcharToDateCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToDateCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
         int transferStrToVarcharCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferStrToVarcharCol", "(Lio/questdb/cairo/TableWriter$Row;ILjava/lang/CharSequence;)V");
         int validateArrayDimensionsAndTransferCol = asm.poolMethod(RecordToRowCopierUtils.class, "validateArrayDimensionsAndTransferCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/cutlass/pgwire/modern/DoubleArrayParser;Ljava/lang/CharSequence;I)V");
@@ -283,8 +281,9 @@ public class RecordToRowCopierUtils {
             // calling `ColumnType.getTimestampDriver()` at runtime much times.
             if (toColumnTypeTag == ColumnType.DATE && fromColumnTypeTag == ColumnType.TIMESTAMP) { // Timestamp -> Date
                 timestampTypeRef = fromColumnType_0 + 2 * i;
-            } else if (toColumnTypeTag == ColumnType.TIMESTAMP && (fromColumnTypeTag == ColumnType.DATE ||
-                    (fromColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != toColumnType))) { // Date -> Timestamp or Timestamp -> Timestamp
+            } else if (toColumnTypeTag == ColumnType.TIMESTAMP && (fromColumnTypeTag == ColumnType.DATE || // Date -> Timestamp
+                    fromColumnTypeTag == ColumnType.VARCHAR || fromColumnTypeTag == ColumnType.STRING || // Varchar -> Timestamp or String -> Timestamp
+                    (fromColumnTypeTag == ColumnType.TIMESTAMP && fromColumnType != toColumnType))) { // Timestamp -> Timestamp
                 timestampTypeRef = toColumnType_0 + 2 * i;
             }
 
@@ -795,13 +794,8 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.TIMESTAMP:
                             asm.invokeInterface(rGetVarchar);
-                            if (ColumnType.isTimestampMicro(toColumnType)) {
-                                asm.invokeStatic(transferVarcharToMicroTimestampCol);
-                            } else if (ColumnType.isTimestampNano(toColumnType)) {
-                                asm.invokeStatic(transferVarcharToNanoTimestampCol);
-                            } else {
-                                throw new UnsupportedOperationException("Unsupported timestamp type: " + toColumnType);
-                            }
+                            asm.invokeInterface(implicitCastVarcharAsTimestamp, 1);
+                            asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SYMBOL:
                             asm.invokeInterface(rGetVarchar);
@@ -893,13 +887,8 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.TIMESTAMP:
                             asm.invokeInterface(rGetStrA);
-                            if (ColumnType.isTimestampMicro(toColumnType)) {
-                                asm.invokeStatic(transferStrToMicroTimestampCol);
-                            } else if (ColumnType.isTimestampNano(toColumnType)) {
-                                asm.invokeStatic(transferStrToNanoTimestampCol);
-                            } else {
-                                throw new UnsupportedOperationException("Unsupported timestamp type: " + toColumnType);
-                            }
+                            asm.invokeInterface(implicitCastStrAsTimestamp, 1);
+                            asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.GEOBYTE:
                         case ColumnType.GEOSHORT:
